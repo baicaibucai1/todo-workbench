@@ -3,8 +3,21 @@ node_modules/
 dist/
 target/
 
+# 工具的大体积附属资源 —— 由 scripts/sync-tools.mjs 从源目录搬运过来，
+# 不是仓库里的源码：tools/image-crop/ai/ 约 50MB（ONNX Runtime + MI-GAN 模型，
+# 全部 base64 塞进 .js 用 script 标签加载，为的是绕开 file:// 下的 fetch 限制）。
+# 不进仓库是为了别让公开仓库暴涨；本地打包前跑一次 sync-tools 即可带上。
+# 缺失时工具会自己退回纯 JS 补全算法，不会崩。
+tools/*/ai/
+
 # Tauri 生成
 src-tauri/gen/
+
+# 本机工具链配置 —— 由 scripts/setup-gnu.mjs 生成，内容是本机 MinGW 的绝对路径。
+# 提交它有两个坏处：暴露本机用户名与目录结构；别人 clone 之后 cargo 会去找
+# 一个不存在的路径，直接构建失败（而报错里根本看不出是"配置来自别人机器"）。
+src-tauri/.cargo/config.toml
+src-tauri/.cargo/config.toml.bak
 
 # 本地环境
 .env
