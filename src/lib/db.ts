@@ -20,6 +20,15 @@ export interface Db {
   execute(sql: string, params?: Param[]): Promise<void>;
   /** 在事务中执行一批语句，任一步失败则整体回滚 */
   transaction(statements: Array<{ sql: string; params?: Param[] }>): Promise<void>;
+  /**
+   * 列出库里所有用户表名。
+   *
+   * 存在的理由是设置页的「数据库」分区：一个库文件里住着宿主的 core_*
+   * 和各工具的 tool_<id>_*，"有哪些命名空间"只能问数据库自己。
+   * 两个驱动的实现方式完全不同（SQLite 有 sqlite_master，内存库只有 Map 的键），
+   * 所以把它放进接口，而不是让上层各自去猜。
+   */
+  tableNames(): Promise<string[]>;
 }
 
 /** 供 UI 展示数据库当前状态 */
@@ -102,6 +111,18 @@ class MemoryDb implements Db {
     const create = /^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i.exec(s);
     if (create) {
       this.table(create[1]);
+      return 0;
+    }
+
+    // DROP TABLE —— 必须真删，不能"认了这条语句但什么都不做"。
+    //
+    // 不加这个分支时，DROP 会落到函数末尾的 `return 0`（看起来执行成功），
+    // 后果是"设置 → 数据库 → 清理"在浏览器 demo 里点了没反应，
+    // 而界面还提示"已清理 N 张表" —— 一个谎报成功的动作，比报错难查得多。
+    // 工具的私有表被清理、按声明重建都靠它，不是边角功能。
+    const drop = /^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(\w+)/i.exec(s);
+    if (drop) {
+      this.tables.delete(drop[1]);
       return 0;
     }
 
@@ -381,6 +402,10 @@ class MemoryDb implements Db {
     return this.query<T>(sql, params);
   }
 
+  async tableNames(): Promise<string[]> {
+    return [...this.tables.keys()].sort();
+  }
+
   async execute(sql: string, params?: Param[]): Promise<void> {
     // 一个 execute 里可能塞了多条语句（迁移脚本就是如此）
     for (const stmt of splitStatements(sql)) {
@@ -634,6 +659,15 @@ class SqliteDb implements Db {
 
   async select<T>(sql: string, params?: Param[]): Promise<T[]> {
     return (await this.conn.select(sql, params ?? [])) as T[];
+  }
+
+  async tableNames(): Promise<string[]> {
+    // 排除 SQLite 自己的内部表（自动索引、序列器等），它们对用户没有意义，
+    // 出现在设置页里只会让人以为数据多了 pointlessly
+    const rows = await this.select<{ name: string }>(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+    );
+    return rows.map((r) => r.name);
   }
 
   async execute(sql: string, params?: Param[]): Promise<void> {

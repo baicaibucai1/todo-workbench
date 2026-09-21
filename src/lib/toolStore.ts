@@ -32,6 +32,7 @@
 
 import { isTauri } from "./db";
 import { loadBundledTools } from "./tools";
+import { validateToolSchema } from "./toolSchema";
 import type { ToolManifest } from "../types";
 
 /** 单文件工具的体积上限 */
@@ -130,7 +131,13 @@ export function buildManifest(input: {
   icon?: string;
   version?: string;
   entry?: string;
+  /**
+   * 数据表声明。导入界面暂不暴露这个字段（还没设计出不给用户添堵的填法），
+   * 但**格式与目录型工具完全一致**，所以将来补 UI 只需要动调用方这一处。
+   */
+  schema?: ToolManifest["schema"];
 }): ToolManifest {
+  const schema = validateToolSchema(input.id.trim(), input.schema);
   return {
     id: input.id.trim(),
     name: input.name.trim(),
@@ -141,6 +148,8 @@ export function buildManifest(input: {
     dbVersion: 1,
     author: "导入",
     source: "user",
+    // 校验不通过就整份丢掉：宁可"这个工具没有表"，也不要一个半截可用的 schema
+    ...(schema ? { schema } : {}),
   };
 }
 
@@ -266,7 +275,7 @@ export async function uninstallTool(tool: ToolManifest): Promise<string> {
     const set = await readUninstalled();
     set.add(tool.id);
     await writeUninstalled(set);
-    return `已卸载「${tool.name}」；它随安装包分发，可以随时重新安装`;
+    return `已卸载「${tool.name}」；它随安装包分发，可以随时重新安装。它存的数据会留在库里（设置 → 数据库 可清理）`;
   }
 
   // 用户自己的工具：如果它恰好也在卸载清单里（曾经是内置工具、被卸载后
@@ -274,7 +283,7 @@ export async function uninstallTool(tool: ToolManifest): Promise<string> {
   // 会在下次启动被同步逻辑重新补上
   const set = await readUninstalled();
   if (set.delete(tool.id)) await writeUninstalled(set);
-  return `已删除自己导入的工具「${tool.name}」（文件已删除，无法恢复）`;
+  return `已删除自己导入的工具「${tool.name}」（文件已删除，无法恢复）。它存的数据会留在库里（设置 → 数据库 可清理）`;
 }
 
 /**

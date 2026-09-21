@@ -63,6 +63,9 @@ export type ViewKey = SmartView | "list";
  *   保持关 → 只留当前这一个（切走即卸载，就是改动之前的行为）
  *   两种情况都要剪掉"已启用集合之外的"工具
  */
+/** 工具意图的自增序号。只用来给 React 列表当 key，不参与出队判断 */
+let intentSeq = 0;
+
 function aliveAfterOpen(
   state: { settings: Record<string, string>; aliveToolIds: string[]; enabledTools: ToolManifest[] },
   id: string | null,
@@ -107,10 +110,19 @@ export type AttachOutcome =
   | { status: "link"; title: string; reason: string }
   | { status: "error"; message: string; url: string };
 
-export interface LocalAttachResult {
+export type LocalAttachResult = {
   added: number;
   /** 没能加进来的，附上原因 */
   failed: Array<{ name: string; reason: string }>;
+};
+
+/** 一次「把数据交给另一个工具」的意图，由宿主排队后投递 */
+export interface ToolIntent {
+  /** 投递序号，纯用来做 React 的 key —— 队列出队不靠它 */
+  seq: number;
+  /** 谁发起的；null 表示是宿主自己（比如图库里"用某工具打开"） */
+  from: string | null;
+  data: unknown;
 }
 
 interface State {
@@ -133,6 +145,34 @@ interface State {
    * 关掉那个开关就退化成"只有当前这一个"。
    */
   aliveToolIds: string[];
+  /**
+   * 待投递的工具意图，按目标工具 id 分组。
+   *
+   * 为什么先排队而不是由桥直接 postMessage 给对方的 iframe：
+   * 目标工具可能还没挂载（iframe 正在加载），这时候 post 出去的消息
+   * **没有任何地方接收，也不报错**。等对方 load 完再从这里取，
+   * 是唯一能保证"交出去的数据一定到"的写法。
+   */
+  /**
+   * 每个工具的表**被强制重建过几次**。
+   *
+   * 存在的理由：设置 → 数据库 → 清理，会把正在运行的那个工具的表直接删掉。
+   * 而工具的建表只在挂载时跑一次，于是它接下来的每一次读写都会撞上
+   * "表不存在" —— 直到用户关掉再重新打开这个工具才恢复。
+   *
+   * 这个计数器就是那次"请重新建一遍"的信号：清理动作 +1，
+   * 工具的挂载层看着它变就重跑一次建表。
+   */
+  toolSchemaStamps: Record<string, number>;
+  /**
+   * 待投递的工具意图，按目标工具 id 分组。
+   *
+   * 为什么先排队而不是由桥直接 postMessage 给对方的 iframe：
+   * 目标工具可能还没挂载（iframe 正在加载），这时候 post 出去的消息
+   * **没有任何地方接收，也不报错**。等对方 load 完再从这里取，
+   * 是唯一能保证"交出去的数据一定到"的写法。
+   */
+  toolIntents: Record<string, ToolIntent[]>;
   /**
    * 每个工具的重载次数。工具头部的「重置」按一下就 +1，
    * 工具区把它当 iframe 的 key —— key 变了 iframe 重建，工具回到初始状态。
@@ -244,6 +284,23 @@ interface State {
   openSettings: (open: boolean) => void;
   setView: (view: ViewKey, listId?: string) => Promise<void>;
   openTool: (id: string | null) => void;
+  /**
+   * 由**别的工具**发起的打开：除了切到那个工具，还要把一份数据交给它。
+   *
+   * 和用户点侧边栏走的是同一条路（同一个 openTool 的挂载逻辑），
+   * 这点很重要 —— 单独辟一条路径的话，"工具之间能不能互相拉起"
+   * 就和"用户能不能打开工具"成了两套规则，迟早出现
+   * 「被停用/被卸载的工具居然还能被别的工具拉起来」。
+   * 工具没安装或已被停用时会抛错，由桥把原话传回去。
+   */
+  openToolWithIntent: (id: string, data: unknown, from?: string | null) => Promise<void>;
+  /**
+   * 取出并移除目标工具的下一条意图。
+   *
+   * 队列而不是单个值：目标工具可能还没挂载完（iframe 还在加载），
+   * 这时进来的第二条数据要有地方放，否则会被丢掉。
+   */
+  takeToolIntent: (id: string) => ToolIntent | null;
   /** 关掉某个工具：从挂载集合里移除（真释放 iframe），必要时把焦点交给前一个 */
   closeTool: (id: string) => void;
   /** 关掉全部工具并退回待办 */
@@ -252,6 +309,11 @@ interface State {
   reloadTool: (id: string) => void;
   /** 重新扫描工具目录（安装 / 卸载之后调用） */
   reloadTools: () => Promise<void>;
+  /**
+   * 通知某个正在运行的工具"你的表被清了，重新建一遍"。
+   * 没挂载的工具不需要 —— 它下次挂载时本来就会建。
+   */
+  bustToolSchema: (id: string) => void;
   /** 打开/关闭右侧任务详情面板 */
   openTask: (id: string | null) => void;
   /** 打开右侧工单详情面板 */
@@ -281,6 +343,8 @@ interface State {
   /** 推进过程态（会留痕，是工单区别于待办的核心动作） */
   advanceOrder: (woId: string, stageId: string, note?: string) => Promise<void>;
   toggleOrderImportant: (o: WorkOrder) => Promise<void>;
+  /** 批量改标记类字段（记录视图的批量操作用），只刷新一次 */
+  bulkPatchOrders: (ids: string[], patch: { important?: boolean }) => Promise<void>;
   loadWoLogs: (woId: string) => Promise<void>;
 
   /** 当前详情工单绑定的相关信息（特殊单号：另一个快递单号、用户名…） */
@@ -356,6 +420,8 @@ export const useStore = create<State>((set, get) => ({
   bundledTools: [],
   toolsPath: "",
   aliveToolIds: [],
+  toolIntents: {},
+  toolSchemaStamps: {},
   toolReloads: {},
 
   flows: [],
@@ -516,6 +582,35 @@ export const useStore = create<State>((set, get) => ({
       aliveToolIds: aliveAfterOpen(get(), id),
     }),
 
+  openToolWithIntent: async (id, data, from = null) => {
+    const { enabledTools, tools } = get();
+    // 三句话分得清清楚楚，因为工具作者和用户看到的都是这段话：
+    // 「没装」和「装了但停用」的处置完全不同 —— 前者要去装，后者去设置里启用。
+    if (!tools.some((t) => t.id === id)) {
+      throw new Error(`没有 id 为「${id}」的工具（它可能已被卸载）`);
+    }
+    if (!enabledTools.some((t) => t.id === id)) {
+      throw new Error(`工具「${id}」已被停用，请先在设置 → 工具里启用它`);
+    }
+    set((s) => ({
+      activeToolId: id,
+      settingsOpen: false,
+      aliveToolIds: aliveAfterOpen(s, id),
+      toolIntents: {
+        ...s.toolIntents,
+        [id]: [...(s.toolIntents[id] ?? []), { seq: intentSeq++, from, data }],
+      },
+    }));
+  },
+
+  takeToolIntent: (id) => {
+    const queue = get().toolIntents[id];
+    if (!queue || queue.length === 0) return null;
+    const [head, ...rest] = queue;
+    set((s) => ({ toolIntents: { ...s.toolIntents, [id]: rest } }));
+    return head;
+  },
+
   closeTool: (id) => {
     const { aliveToolIds, activeToolId } = get();
     const rest = aliveToolIds.filter((x) => x !== id);
@@ -531,6 +626,9 @@ export const useStore = create<State>((set, get) => ({
 
   reloadTool: (id) =>
     set((s) => ({ toolReloads: { ...s.toolReloads, [id]: (s.toolReloads[id] ?? 0) + 1 } })),
+
+  bustToolSchema: (id) =>
+    set((s) => ({ toolSchemaStamps: { ...s.toolSchemaStamps, [id]: (s.toolSchemaStamps[id] ?? 0) + 1 } })),
 
   reloadTools: async () => {
     const [tools, bundledTools] = await Promise.all([loadTools(), loadBundledTools()]);
@@ -940,6 +1038,11 @@ export const useStore = create<State>((set, get) => ({
 
   toggleOrderImportant: async (o) => {
     await repo.updateWorkOrder(o.id, { important: !o.important });
+    await get().refresh();
+  },
+
+  bulkPatchOrders: async (ids, patch) => {
+    await repo.bulkPatchWorkOrders(ids, patch);
     await get().refresh();
   },
 

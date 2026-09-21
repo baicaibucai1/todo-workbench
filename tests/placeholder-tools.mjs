@@ -10,7 +10,12 @@
  * 注意「特殊单号记录」原来是个占位工具（tools/special-orders），
  * 现在改成了**原生专属视图**（见 tests/special-orders.mjs）：
  * 它的时效要挂在流转过程态上、要进底部紧急区、要参与排序，
- * 而工具在物理上碰不到 core_* 表，塞不进去。所以这里只剩三个工具。
+ * 而工具在物理上碰不到 core_* 表，塞不进去。
+ *
+ * 工具数量：三个业务工具（图片裁剪 / 尺码表 / AI 生成）+「随手记」（scratchpad，
+ * 自带一张数据表，是"网页工具怎么用宿主数据库"的样板，见 tests/tool-database.mjs）。
+ * 再增减内置工具时，下面「工具区正好几个工具」那条要跟着改 ——
+ * 写死数字是为了让"冒出一个陌生工具"能被立刻发现，而不是悄悄混进用户的侧边栏。
  *
  * 更深一层的 AI 接口验证在 tests/ai-gen.mjs（配置持久化 / 真实请求 / 错误映射）。
  *
@@ -93,7 +98,7 @@ check(
   (await page.locator('aside [data-nav="special"]').count()) === 1,
 );
 info("工具数", await page.locator('aside [data-nav^="tool:"]').count());
-check("工具区正好三个工具", (await page.locator('aside [data-nav^="tool:"]').count()) === 3);
+check("工具区正好四个工具", (await page.locator('aside [data-nav^="tool:"]').count()) === 4);
 check("初始无控制台错误", errors.length === 0, errors.slice(0, 3).join(" | "));
 
 // 越界防护：工具只能发裸表名，宿主强制拼前缀 ——

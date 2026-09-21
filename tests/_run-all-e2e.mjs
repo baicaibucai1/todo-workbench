@@ -12,9 +12,15 @@ const SUITES = [
   ["daily-settings.mjs", []],
   ["background.mjs", []],
   ["tool-browser.mjs", []],
+  // 工具自己的数据表与互相调用；依赖 tool-browser 之后仍在同一份 localStorage 上跑，
+  // 但结尾会自己清掉 namespace，所以放在 tool-browser 之后无副作用
+  ["tool-database.mjs", []],
   ["image-crop-ai.mjs", []],
   ["placeholder-tools.mjs", []],
   ["ai-gen.mjs", []],
+  // 跨源工具桥：dev 下工具与宿主同源，只有这一个套件能挡住 targetOrigin 那类
+  // "只在装出来的应用里复现"的断链（详见套件头注释）
+  ["cross-origin-bridge.mjs", []],
   ["gallery.mjs", ["--fresh"]],
   ["wallpapers.mjs", []],
   ["attachments.mjs", ["--fresh"]],

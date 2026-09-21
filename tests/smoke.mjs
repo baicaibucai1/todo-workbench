@@ -1474,12 +1474,37 @@ section("23. 特殊单号：时效、相关信息与专属视图");
   check("已完结的单不在紧急区里", !urgentIds.includes(spId));
   check("没有时效也没有交付日的单子不进紧急区", !urgentIds.includes(plainId));
 
+  /* --- 快递商：登记时指定了就按指定的，没指定就留空（以后按单号识别） --- */
+  const spCourierId = (
+    await repo.createWorkOrder({
+      title: "",
+      no: "123456789012", // 纯数字，形状上撞车，正需要人指定一次
+      kind: "special",
+      flowId: spFlow.id,
+      stageId: spTodo.id,
+      startDate: repo.today(),
+      courier: "zt",
+    })
+  ).id;
+  const spCourier = (await repo.fetchWorkOrders({ view: "special", includeDone: true })).find(
+    (o) => o.id === spCourierId,
+  );
+  check("登记时手动指定的快递商落库", spCourier?.courier === "zt", `实际 ${String(spCourier?.courier)}`);
+  await repo.updateWorkOrder(spCourierId, { courier: "yt" });
+  check("认错了能改一次（改完按指定的算）",
+    (await repo.fetchWorkOrders({ view: "special", includeDone: true }))
+      .find((o) => o.id === spCourierId)?.courier === "yt");
+  check("没指定的单子存空串（以后按单号识别，不把当时的猜测冻进库）",
+    spOrder.courier === "", `实际 ${String(spOrder.courier)}`);
+
   // 备份要带上相关信息与时效，否则换台机器就丢了绑定的号码
   const backup = await repo.exportBackup();
   check("备份含相关信息", Array.isArray(backup.woFields) && backup.woFields.some((f) => f.woId === spId));
   check("备份含特殊单号的时效",
     backup.workOrders.some((o) => o.id === spUrgent && o.stageDueAt && o.kind === "special"));
   check("备份含过程态的默认时效", backup.stages.some((s) => s.id === spDoing.id && s.defaultMinutes === 240));
+  check("备份含手动指定的快递商",
+    backup.workOrders.some((o) => o.id === spCourierId && o.courier === "yt"));
 }
 
 /* ---------- 24. 图库（数据层 + 跨表引用计数） ---------- */
@@ -1895,6 +1920,186 @@ section("25. 工具的启用、状态保持与单文件导入");
     `落库@${iWrite} 回退@${iRollback}`,
   );
   check("落库失败会回滚界面状态", !!storeSrc && storeSrc.includes("set({ settings: before })"));
+}
+
+/* ------------------------------------------------------------------ */
+/* 工具的数据表：声明式校验 + 桥的隔离边界                              */
+/* ------------------------------------------------------------------ */
+/**
+ * 工具能不能碰宿主的表，是这条通道**唯一重要的事**。
+ *
+ * 所以这里两路都查：
+ *   ① 跑 validateToolSchema 本身（它是纯函数，能真跑）——
+ *      各种畸形声明必须被整份驳回，而不是"通过一半"；
+ *   ② 静态盯住桥的实现：**工具传来的表名不许直接进 SQL**，
+ *      必须经 lookupTable() 换成宿主侧那份声明里的完整表名。
+ *
+ * 只做 ① 不够的原因：校验再严，实现里若图省事写了
+ * `SELECT * FROM ${payload.table}`，整条防线还是等于零。
+ * 而这类写法在浏览器 demo 里不会出错（内存库对陌生的表名只会返回空），
+ * 只有在真实 SQLite 上才会"能读别人的表" —— 等到那时就晚了。
+ */
+{
+  section("工具的数据表（声明校验 + 隔离边界）");
+
+  const projRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const readIfExists = (rel) => {
+    try {
+      return fs.readFileSync(path.join(projRoot, rel), "utf8");
+    } catch {
+      return null;
+    }
+  };
+  const bridgeSrc = readIfExists("src/lib/toolBridge.ts");
+  const storeSrc2 = readIfExists("src/store.ts");
+
+  const ts = await import("../src/lib/toolSchema.ts");
+  const good = {
+    tables: [
+      {
+        name: "notes",
+        columns: [
+          { name: "id", type: "text", pk: true },
+          { name: "amount", type: "real", default: 0 },
+          { name: "created_at", type: "text" },
+        ],
+        indexes: [{ columns: ["created_at"] }],
+      },
+    ],
+  };
+
+  check("合法 schema 通过", !!ts.validateToolSchema("demo", good));
+  check("null / 非对象被驳回", !ts.validateToolSchema("demo", null) && !ts.validateToolSchema("demo", "x"));
+  check("缺 tables 数组被驳回", !ts.validateToolSchema("demo", {}));
+  check("空表的声明被驳回", !ts.validateToolSchema("demo", { tables: [] }));
+
+  const clone = () => JSON.parse(JSON.stringify(good));
+  const bad = (mut) => {
+    const s = clone();
+    mut(s.tables[0]);
+    return !ts.validateToolSchema("demo", s);
+  };
+
+  check("大写列名被驳回", bad((t) => (t.name = "Notes")));
+  check("带连字符的列名被驳回", bad((t) => (t.columns[1].name = "creat-ed")));
+  check("空缺主键被驳回", bad((t) => t.columns.forEach((c) => delete c.pk)));
+  check("两个主键被驳回", bad((t) => (t.columns[1].pk = true)));
+  check("未知类型被驳回", bad((t) => (t.columns[1].type = "date")));
+  check("给 real 列塞字符串默认值被驳回", bad((t) => (t.columns[1].default = "abc")));
+  check("索引引用未声明的列被驳回", bad((t) => (t.indexes = [{ columns: ["nope"] }])));
+
+  const dup = () => !!ts.validateToolSchema("demo", { tables: [clone().tables[0], clone().tables[0]] });
+  check("同名表重复声明被驳回", !dup());
+  check("非法 tool id 直接驳回", !ts.validateToolSchema("../core", good));
+
+  // toolTable 之外的换算一致：declared name -> tool_<id>_<name>
+  const tables = ts.buildValidatedTables("demo", ts.validateToolSchema("demo", good) ?? { tables: [] });
+  check("表名按规则加前缀", tables[0]?.fullName === "tool_demo_notes", tables[0]?.fullName);
+  check("主键能被认出来", tables[0]?.pkColumn === "id", String(tables[0]?.pkColumn));
+
+  check("工具桥可读", bridgeSrc !== null);
+
+  // 把工具传来的表名直接拼进 SQL，是这条防线唯一真正害怕的写法 ——
+  // 一旦有人这么图省事，上面的所有校验都白做。这条静态守卫就是为它准备的。
+  const injects = [/\$\{[^}]*payload\?\.table[^}]*\}/, /\$\{[^}]*payload\.table[^}]*\}/];
+  const hasInjection = !!bridgeSrc && injects.some((re) => re.test(bridgeSrc));
+  check("工具传来的表名不会被拼进 SQL", !hasInjection, hasInjection ? "发现直接插值 payload.table" : "");
+  check("表名一律经 lookupTable 换成宿主那份声明", !!bridgeSrc && bridgeSrc.includes("const t = lookupTable(opts.getTables()"));
+  check("列名也经宿主那份声明校验", !!bridgeSrc && bridgeSrc.includes("function lookupColumn"));
+  check("值按声明类型强校验（两个驱动才不会分歧）", !!bridgeSrc && bridgeSrc.includes("function coerceValue"));
+  check("没有任意 SQL 通道（工具传不了 sql 串）", !!bridgeSrc && !/payload\?\.sql|payload\.sql/.test(bridgeSrc));
+
+  // 「用空表名去凑前缀」的坑：toolTable 的**表名**正则要求首字符是字母，
+  // 传 "" 会抛错。图省事这么写的人会得到"前缀永远取不到"，
+  // 表现为设置页里所有工具都标成"归属不明" —— 现象离原因很远，很难查。
+  const inspectSrc = readIfExists("src/lib/dbInspect.ts");
+  const toolsSrc = readIfExists("src/lib/tools.ts");
+  check("表前缀规则只有一处定义", !!toolsSrc && toolsSrc.includes("export function toolPrefix"));
+  // dbInspect 只该认识 toolPrefix，不该再去碰 toolTable ——
+  // 后者是用来拼**完整表名**的，拿它凑前缀必然踩上面那个坑。
+  check("数据库分区只引用前缀函数，不碰 toolTable", !!inspectSrc && inspectSrc.includes("toolPrefix") && !inspectSrc.includes("toolTable"));
+  check("数据库分区用的是同一份前缀规则", !!inspectSrc && inspectSrc.includes("function safePrefix"));
+
+  check("tools.send 只投已经在运行的工具", !!bridgeSrc && bridgeSrc.includes("此刻没有在运行，消息没送到"));
+
+  // 拉起别的工具必须走与用户点侧边栏同一条路径 —— 另开一条就等于绕过了"停用"
+  check("工具联动走 openToolWithIntent", !!storeSrc2 && storeSrc2.includes("openToolWithIntent: async (id, data"));
+  check("被停用/被卸载的工具拉不起来", !!storeSrc2 && storeSrc2.includes("已被停用，请先在设置 → 工具里启用它"));
+}
+
+/* ---------- 26. 快递单号：快递商识别与查询路径 ---------- */
+
+section("26. 快递单号的快递商识别与查询路径");
+
+{
+  const c = await import("../src/lib/couriers.ts");
+  const spMod = await import("../src/lib/special.ts");
+
+  /* --- 识别 --- */
+  const sf = c.detectCourier("SF7712345678901");
+  check("字母前缀认得出快递商", sf?.code === "sf", `实际 ${String(sf?.code)}`);
+  check("字母前缀算强特征（不是蒙的）", sf?.certain === true);
+  check("粘贴进来的空格与横杠不挡识别", c.detectCourier("SF 7712-3456-7890-1")?.code === "sf");
+  check("强命中时不带一堆候选来烦人", sf?.candidates.length === 1, (sf?.candidates ?? []).join(","));
+
+  const zt = c.detectCourier("781234567890");
+  check("纯数字按形状也能认（中通）", zt?.code === "zt", `实际 ${String(zt?.code)}`);
+  check("纯数字老实标成\"不确定\"", zt?.certain === false);
+  check("12 位纯数字不硬安给顺丰（认错的代价比认不出高）",
+    c.detectCourier("123456789012") === null, String(c.detectCourier("123456789012")?.code));
+  check("认不出就返回空，不猜一个", c.detectCourier("hello") === null);
+  check("空单号不识别", c.detectCourier("") === null && c.detectCourier("   ") === null);
+  check("每家都有对应的快递100 通道号",
+    c.COURIERS.every((x) => x.kuaidi100.length > 0),
+    c.COURIERS.filter((x) => !x.kuaidi100).map((x) => x.code).join(","));
+
+  /* --- 查询路径 --- */
+  const u1 = c.trackUrl("SF7712345678901", "sf", "kuaidi100");
+  check("快递100 带上对应的通道号", !!u1 && u1.includes("com=shunfeng") && u1.includes("nu=SF77"), String(u1));
+  const u2 = c.trackUrl("12345", "", "kuaidi100");
+  check("认不出时不带 com（让它自己再认一次）", !!u2 && !u2.includes("com=") && u2.includes("nu=12345"));
+  const u3 = c.trackUrl("SF77", "sf", "cainiao");
+  check("菜鸟渠道拼得出链接", !!u3 && u3.includes("cainiao.com") && u3.includes("SF77"), String(u3));
+  check("没单号就没有查询链接", c.trackUrl("", "sf", "kuaidi100") === null && c.trackUrl("   ", "", "cainiao") === null);
+
+  check("有官网查询页的走官网", (c.trackUrl("SF77", "sf", "official") ?? "").includes("sf-express.com"));
+  check("没有官网查询页的不硬拼一个（点了 404 比没有更糟）",
+    c.trackUrl("YT77", "yt", "official") === null, String(c.trackUrl("YT77", "yt", "official")));
+  const fb = c.resolveTrack("YT77", "yt", "official");
+  check("官网查不了时自动退回快递100", fb?.channel === "kuaidi100" && fb?.fellBack === true);
+  check("退回时给的链接仍然能用", !!fb?.url && fb.url.includes("nu=YT77"));
+  check("本来就走得到的不算回退", c.resolveTrack("YT77", "yt", "kuaidi100")?.fellBack === false);
+  check("认不出快递商也照样给得出查询页", !!c.resolveTrack("12345", "", "kuaidi100"));
+
+  /* --- 生效值与配置 --- */
+  check("手动指定过的按指定的算", c.courierCodeOf("SF77", "yt") === "yt");
+  check("没指定的按单号识别", c.courierCodeOf("SF7712345678901", "") === "sf");
+  check("没指定又认不出就是空（界面显示\"查询\"而不是瞎猜一家）", c.courierCodeOf("hello", "") === "");
+  check("渠道脏值退回快递100", c.parseTrackChannel("???") === "kuaidi100" && c.parseTrackChannel(undefined) === "kuaidi100");
+
+  /* --- 导出要带上快递商与链接 --- */
+  const csv = spMod.buildSpecialCsv(
+    [
+      {
+        no: "SF7712345678901",
+        courier: "顺丰速运",
+        trackUrl: "https://example.com/track",
+        title: "",
+        flowName: "",
+        stageName: "",
+        status: "处理中",
+        important: false,
+        createdAt: "",
+        dueAt: null,
+        dueState: "ok",
+        note: "",
+        fields: [],
+      },
+    ],
+    [],
+  );
+  check("导出的表里有快递商这一列", csv.includes("快递商") && csv.includes("顺丰速运"));
+  check("导出的表里有查询链接这一列", csv.includes("查询链接") && csv.includes("https://example.com/track"));
 }
 
 console.log(`\n${"=".repeat(52)}`);
