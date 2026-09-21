@@ -1,0 +1,10 @@
+{
+  "id": "image-crop",
+  "name": "图片裁剪",
+  "version": "2.0.0",
+  "description": "图片编辑器 Image Studio：裁剪 / 尺寸与比例 / 镜像 / 选区填充 / 批量导出；可从工作台图库直接取图，导出的图默认自动存回图库（开关可关）",
+  "icon": "crop",
+  "entry": "index.html",
+  "dbVersion": 1,
+  "author": "内置"
+}

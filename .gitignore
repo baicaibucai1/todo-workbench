@@ -1,0 +1,44 @@
+# 依赖与构建产物
+node_modules/
+dist/
+target/
+
+# Tauri 生成
+src-tauri/gen/
+
+# 本地环境
+.env
+.env.local
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 系统
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# 本地备份文件
+*.bak
+
+# 更新签名私钥 —— 绝对不要提交
+*.key
+# 注意：Tauri 的私钥文件名就叫 .tauri-key（没有 .key 后缀），
+# 上面的 *.key 匹配不到它，必须单独写出来。公钥可以提交。
+.tauri-key
+.tauri-key.bak
+
+# 本地调试产物：含本机绝对路径、构建与测试日志，与代码无关
+.setup-tmp/
+probe-result.txt
+环境自检报告.txt
+*.log
+tests/.*.log
+tests/.smoke.bundle.mjs
+tests/.tsc.log
+
+# e2e 截图：跑测试时抓的界面图，里面有真实待办与工单数据，不进仓库
+shots/
+tests/.shots/

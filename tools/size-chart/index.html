@@ -1,0 +1,3572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>尺码表生成器 — Size Studio</title>
+
+<style>
+  /* ================================================================
+     基础与变量
+     ================================================================ */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --app-bg: #f2f0ed;
+    --app-font: -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'WenQuanYi Micro Hei', sans-serif;
+    --panel-bg: #fff;
+    --panel-shadow: 0 2px 4px rgba(0,0,0,0.02), 0 8px 32px rgba(0,0,0,0.05);
+    --panel-radius: 14px;
+    --border-soft: #e8e4de;
+    --text-muted: #999;
+    --text-body: #555;
+    --accent: #c4a882;
+    --accent-light: #faf6f0;
+    --btn-dark-bg: linear-gradient(135deg, #3a3a3a, #2c2c2c);
+    --danger: #e55;
+    --danger-bg: #fee2e2;
+    --success: #2a9d5c;
+    /* 字体系统 */
+    --t-font-body: -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  }
+
+  body {
+    font-family: var(--app-font); background: var(--app-bg); min-height: 100vh; color: #333;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ================================================================
+     顶部导航
+     ================================================================ */
+  .app-nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; height: 56px;
+    background: rgba(255,255,255,0.92);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+  }
+  .app-logo { font-size: 14px; font-weight: 600; letter-spacing: 2px; color: #2c2c2c; display: flex; align-items: center; gap: 9px; }
+  .app-logo-mark {
+    width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0;
+    background: linear-gradient(135deg, #c4a882, #a88b62);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0;
+    box-shadow: 0 2px 6px rgba(196,168,130,0.4);
+  }
+  .app-logo-sub { font-size: 10px; color: #bbb; letter-spacing: 1px; font-weight: 400; }
+  .nav-actions { display: flex; gap: 8px; align-items: center; }
+  .nav-btn {
+    padding: 7px 16px; border-radius: 8px; border: none;
+    font-family: var(--app-font); font-size: 11px; font-weight: 500;
+    cursor: pointer; transition: all 0.2s; letter-spacing: 1px;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .nav-btn-outline { background: transparent; border: 1px solid var(--border-soft); color: #888; }
+  .nav-btn-outline:hover { background: #f5f3ef; color: #555; }
+  .nav-btn-outline.nav-btn-primary {
+    background: var(--btn-dark-bg); color: #fff; border-color: transparent;
+  }
+  .nav-btn-outline.nav-btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.18); color: #fff; }
+  .nav-btn-text { font-size: 11px; color: #bbb; cursor: pointer; background: none; border: none; font-family: var(--app-font); }
+  .nav-btn-text:hover { color: #888; }
+
+  /* ================================================================
+     左右主布局
+     ================================================================ */
+  .app-shell {
+    display: flex; align-items: flex-start;
+    padding-top: 56px;                 /* 让开固定导航 */
+    min-height: 100vh;
+  }
+
+  /* 左侧：控制面板（独立滚动） */
+  .side-panel {
+    width: 384px; flex-shrink: 0;
+    position: sticky; top: 56px;
+    height: calc(100vh - 56px);
+    overflow-y: auto; overflow-x: hidden;
+    background: #fbfaf8;
+    border-right: 1px solid #ece8e1;
+    padding: 18px 18px 90px;
+    scrollbar-width: thin; scrollbar-color: #ddd8d0 transparent;
+  }
+  .side-panel::-webkit-scrollbar { width: 8px; }
+  .side-panel::-webkit-scrollbar-track { background: transparent; }
+  .side-panel::-webkit-scrollbar-thumb { background: #e2ddd5; border-radius: 4px; border: 2px solid #fbfaf8; }
+  .side-panel::-webkit-scrollbar-thumb:hover { background: #d0c9be; }
+
+  /* 右侧：预览区（独立滚动） */
+  .stage {
+    flex: 1; min-width: 0;
+    height: calc(100vh - 56px);
+    overflow-y: auto; overflow-x: hidden;
+    background:
+      radial-gradient(circle at 18% 8%, rgba(196,168,130,0.10), transparent 42%),
+      radial-gradient(circle at 84% 92%, rgba(160,178,196,0.10), transparent 45%),
+      #f2f0ed;
+    scrollbar-width: thin; scrollbar-color: #d8d3cb transparent;
+  }
+  .stage::-webkit-scrollbar { width: 10px; }
+  .stage::-webkit-scrollbar-track { background: transparent; }
+  .stage::-webkit-scrollbar-thumb { background: #dcd7cf; border-radius: 5px; border: 2px solid #f2f0ed; }
+  .stage::-webkit-scrollbar-thumb:hover { background: #c9c3b9; }
+  .stage-inner { padding: 26px 30px 70px; max-width: 1000px; margin: 0 auto; }
+  /* 预览必须按「表格宽度」渲染，不能随中栏宽度缩放 ——
+     否则导出结果会因窗口大小而变。中栏不够宽时改为横向滚动。 */
+  .stage-preview { max-width: 900px; margin: 0 auto; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
+  .stage-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 18px; flex-wrap: wrap;
+    max-width: 900px; margin-left: auto; margin-right: auto;
+  }
+  .stage-title { font-size: 13px; font-weight: 600; color: #2c2c2c; letter-spacing: 1.5px; display: flex; align-items: center; gap: 8px; }
+  .stage-title::before {
+    content: ''; width: 3px; height: 14px; border-radius: 2px;
+    background: linear-gradient(180deg, var(--accent), #dcc9ad);
+  }
+  .stage-meta { font-size: 11px; color: #bbb; font-variant-numeric: tabular-nums; letter-spacing: 0.3px; }
+
+  /* 中栏：导出工具条（预览正上方，横向紧凑排布） */
+  .stage-toolbar {
+    max-width: 900px; margin: 0 auto 16px;
+    background: #fff; border: 1px solid #efece6; border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+    padding: 11px 13px;
+    display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap;
+  }
+  .stb-group { display: flex; align-items: center; gap: 7px; }
+  .stb-label { font-size: 10px; font-weight: 600; color: #b5ada1; letter-spacing: 1.2px; text-transform: uppercase; white-space: nowrap; }
+  .stb-sep { width: 1px; align-self: stretch; min-height: 22px; background: #f0ede7; }
+  .stb-spacer { flex: 1; min-width: 2px; }
+  .stb-input {
+    width: 62px; padding: 6px 8px; border: 1px solid #e8e4de; border-radius: 7px;
+    font-family: var(--app-font); font-size: 11.5px; color: #555; outline: none;
+    background: #fcfbf9; transition: border-color 0.2s; font-variant-numeric: tabular-nums;
+  }
+  .stb-input:focus { border-color: var(--accent); background: #fff; }
+  .stb-input.wide { width: 122px; }
+  .stb-select {
+    padding: 6px 6px; border: 1px solid #e8e4de; border-radius: 7px;
+    font-family: var(--app-font); font-size: 11.5px; color: #555; outline: none;
+    background: #fcfbf9; cursor: pointer;
+  }
+  .stb-select:focus { border-color: var(--accent); }
+  .stb-btn {
+    display: flex; align-items: center; gap: 5px;
+    padding: 7px 13px; border-radius: 8px; border: 1px solid #e8e4de;
+    background: #fcfbf9; font-family: var(--app-font); font-size: 11.5px; font-weight: 500;
+    color: #777; cursor: pointer; transition: all 0.2s; white-space: nowrap;
+  }
+  .stb-btn:hover { background: #f2efea; color: #555; border-color: #ddd7cd; }
+  .stb-btn:active { transform: scale(0.97); }
+  .stb-btn.copy-btn { background: var(--btn-dark-bg); color: #fff; border-color: transparent; }
+  .stb-btn.copy-btn:hover { background: #3a3a3a; color: #fff; }
+  .stb-preset {
+    padding: 6px 11px; border-radius: 20px; border: 1px solid #e8e4de;
+    background: #fff; font-family: var(--app-font); font-size: 11px; color: #888;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .stb-preset:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+  /* 切换型预设（如 1:1 方形）的激活态 */
+  .stb-preset.on {
+    border-color: var(--accent); color: #fff; background: var(--accent);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  }
+  .stb-preset.on:hover { color: #fff; background: var(--accent); }
+  .stb-input:disabled { opacity: 0.45; cursor: not-allowed; }
+  /* 工具栏上的小开关（「导出自动存图库」）。
+     ⚠️ 必须显式写 [hidden]：作者样式里的 display:flex 会盖掉浏览器默认的
+     [hidden]{display:none}，不写的话这行在没连工作台时会露出来 */
+  .stb-check {
+    display: flex; align-items: center; gap: 5px; cursor: pointer;
+    padding: 6px 10px; border-radius: 8px; border: 1px solid #e8e4de;
+    background: #fcfbf9; font-family: var(--app-font); font-size: 11.5px;
+    font-weight: 500; color: #777; white-space: nowrap;
+    user-select: none; transition: all 0.2s;
+  }
+  .stb-check:hover { background: #f2efea; color: #555; border-color: #ddd7cd; }
+  .stb-check input { margin: 0; accent-color: var(--accent); cursor: pointer; }
+  .stb-check[hidden] { display: none; }
+
+  /* 最右栏：外观面板（主题 / 字体 / 颜色） */
+  .style-panel {
+    width: 268px; flex-shrink: 0;
+    position: sticky; top: 56px;
+    height: calc(100vh - 56px);
+    overflow-y: auto; overflow-x: hidden;
+    background: #fbfaf8;
+    border-left: 1px solid #ece8e1;
+    padding: 18px 16px 32px;
+    scrollbar-width: thin; scrollbar-color: #ddd8d0 transparent;
+  }
+  .style-panel::-webkit-scrollbar { width: 8px; }
+  .style-panel::-webkit-scrollbar-track { background: transparent; }
+  .style-panel::-webkit-scrollbar-thumb { background: #e2ddd5; border-radius: 4px; border: 2px solid #fbfaf8; }
+  .style-panel::-webkit-scrollbar-thumb:hover { background: #d0c9be; }
+  /* 最右栏内主题/字体改为单列，窄栏更易读 */
+  .style-panel .theme-bar,
+  .style-panel .font-bar { grid-template-columns: 1fr; }
+
+  /* 侧栏内的分组卡片 */
+  .side-group { margin-bottom: 14px; }
+  .side-group-label {
+    font-size: 10px; font-weight: 600; color: #b5ada1; letter-spacing: 2px;
+    text-transform: uppercase; margin: 0 0 8px 3px; display: flex; align-items: center; gap: 6px;
+  }
+  .side-card {
+    background: #fff; border-radius: 12px;
+    border: 1px solid #efece6;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+    overflow: hidden;
+  }
+  .side-card-pad { padding: 13px 14px; }
+
+
+  /* ================================================================
+     通用组件
+     ================================================================ */
+  .section-label { font-size: 10px; font-weight: 600; color: #bbb; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 10px; }
+  .panel { background: var(--panel-bg); border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.02); border: 1px solid #efece6; overflow: hidden; margin-bottom: 14px; transition: border-color 0.25s, box-shadow 0.25s; }
+  .panel:hover { border-color: #e6e1d8; box-shadow: 0 2px 10px rgba(0,0,0,0.04); }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 11px 14px; background: #fcfbf9; border-bottom: 1px solid #f2efe9;
+    cursor: pointer; user-select: none; transition: background 0.2s;
+  }
+  .panel-head:hover { background: #f8f6f2; }
+  .panel-head-left { display: flex; align-items: center; gap: 8px; font-size: 11.5px; font-weight: 500; color: #666; letter-spacing: 0.3px; }
+  .panel-arrow { font-size: 11px; color: #ccc; transition: transform 0.3s; }
+  .panel-arrow.open { transform: rotate(180deg); }
+  .panel-body { max-height: 0; overflow: hidden; transition: max-height 0.4s ease, padding 0.3s ease; }
+  .panel-body.open { max-height: 1400px; padding: 14px; }
+
+  .btn { padding: 7px 16px; border-radius: 8px; border: none; font-family: var(--app-font); font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s; letter-spacing: 0.5px; }
+  .btn-primary { background: var(--btn-dark-bg); color: #fff; }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+  .btn-ghost { background: transparent; color: #bbb; }
+  .btn-ghost:hover { color: #888; }
+  .btn-sm { padding: 5px 10px; font-size: 11px; }
+  .btn-block { width: 100%; justify-content: center; }
+  .btn-danger { background: var(--danger-bg); color: var(--danger); }
+  .btn-danger:hover { background: #fcc; }
+
+  /* ================================================================
+     表单控件
+     ================================================================ */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .form-group { display: flex; flex-direction: column; gap: 5px; }
+  .form-group.full { grid-column: 1 / -1; }
+  .form-label { font-size: 10.5px; font-weight: 500; color: #a49a8d; letter-spacing: 0.3px; }
+  .form-label .hint { font-weight: 400; color: #ccc; margin-left: 4px; }
+  .form-input, .form-select, .form-textarea {
+    padding: 8px 11px; border: 1.5px solid #ebe7e0; border-radius: 8px;
+    font-family: var(--app-font); font-size: 12.5px; color: #555; width: 100%;
+    outline: none; transition: border-color 0.2s, background 0.2s; background: #fbfaf8;
+  }
+  .form-input:focus, .form-select:focus, .form-textarea:focus { border-color: var(--accent); background: #fff; }
+  .form-input::placeholder, .form-textarea::placeholder { color: #ccc; }
+  .form-textarea { resize: vertical; min-height: 60px; line-height: 1.6; }
+  .form-select { cursor: pointer; }
+  .form-row { display: flex; gap: 12px; align-items: end; }
+  .form-row .form-group { flex: 1; }
+
+  /* ================================================================
+     快速预设
+     ================================================================ */
+  .preset-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .preset-chip {
+    position: relative; display: inline-flex; align-items: center; gap: 4px;
+    padding: 5px 10px; border-radius: 20px; border: 1px solid #e8e4de;
+    background: #fff; font-size: 11px; color: #888; cursor: pointer;
+    transition: all 0.2s; font-family: var(--app-font);
+  }
+  .preset-chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); transform: translateY(-1px); box-shadow: 0 2px 8px rgba(196,168,130,0.15); }
+  .preset-chip.active { border-color: var(--accent); color: #5a4a30; background: var(--accent-light); font-weight: 500; }
+  .preset-chip .p-name { pointer-events: none; }
+  .preset-chip .p-actions {
+    display: flex; gap: 2px; align-items: center;
+    opacity: 0; transition: opacity 0.2s; margin-left: 2px;
+  }
+  .preset-chip:hover .p-actions { opacity: 1; }
+  .preset-chip .p-act {
+    width: 16px; height: 16px; border-radius: 4px; border: none;
+    background: transparent; color: #ccc; font-size: 10px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; padding: 0;
+    line-height: 1;
+  }
+  .preset-chip .p-act:hover { background: #e8e4de; color: #666; }
+  .preset-chip .p-act.del:hover { background: var(--danger-bg); color: var(--danger); }
+  .preset-actions-row { display: flex; gap: 8px; margin-top: 8px; }
+
+  /* ================================================================
+     编辑表格
+     ================================================================ */
+  .edit-toolbar { display: flex; align-items: center; padding: 10px 12px; border-bottom: 1px solid #f2efe9; gap: 6px; flex-wrap: wrap; }
+  .edit-toolbar-group { display: flex; gap: 4px; align-items: center; }
+  .tb-cap { font-size: 10px; color: #b5ada1; letter-spacing: 1px; margin-right: 1px; user-select: none; }
+  .tb-sep { width: 1px; height: 16px; background: #ece8e1; margin: 0 3px; }
+  .tb-spacer { flex: 1; min-width: 4px; }
+  .toolbar-btn {
+    width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--border-soft);
+    background: #fcfbf9; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all 0.2s; font-size: 13px; color: #aaa;
+    flex-shrink: 0; font-family: var(--app-font);
+  }
+  .toolbar-btn:hover { background: #f0ede8; color: #666; border-color: #ddd7cd; }
+  .toolbar-btn:active { transform: scale(0.94); }
+  .toolbar-label { font-size: 10px; color: #ccc; }
+  .edit-table-wrap { overflow-x: auto; padding: 2px 0 4px; }
+  .edit-table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 280px; }
+  .edit-table th, .edit-table td {
+    padding: 10px 8px; text-align: center;
+    border-bottom: 1px solid #f2efe9;
+    outline: none; font-size: 12px; color: var(--text-body);
+    transition: background 0.2s;
+    min-width: 50px; white-space: normal; overflow-wrap: break-word; word-break: normal;
+    vertical-align: middle; line-height: 1.5;
+  }
+  .edit-table th {
+    background: #fbfaf8; font-weight: 600; color: #555; font-size: 11px;
+    letter-spacing: 0.6px; border-bottom: 1.5px solid #ece8e1;
+    position: sticky; top: 0; z-index: 3;
+    padding-right: 16px;
+  }
+  .edit-table th:last-child { padding-right: 8px; }
+  .edit-table th:first-child, .edit-table td:first-child {
+    text-align: left; padding-left: 12px; min-width: 74px;
+    position: sticky; left: 0; z-index: 2; background: inherit;
+  }
+  .edit-table thead th:first-child { z-index: 4; background: #fbfaf8; }
+  .edit-table tbody td:first-child { background: #fff; box-shadow: 1px 0 0 #f2efe9; }
+  .edit-table tbody tr:nth-child(even) td:first-child { background: #fcfbfa; }
+  .edit-table td:focus { background: #fffbe6 !important; box-shadow: inset 0 0 0 2px var(--accent); border-radius: 3px; }
+  .edit-table tr { transition: background 0.15s; }
+  .edit-table tr:hover td { background: #fdfcf9; }
+  .edit-table tbody tr:nth-child(even) td { background: #fcfbfa; }
+  .edit-table tbody tr:nth-child(even):hover td { background: #f8f6f3; }
+
+  /* 行删除按钮 */
+  .edit-table td:last-child { position: relative; padding-right: 20px; }
+  .row-del-btn {
+    position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+    width: 17px; height: 17px; border-radius: 5px; border: none;
+    background: transparent; color: #ddd; font-size: 14px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: all 0.2s; padding: 0; line-height: 1; z-index: 2;
+  }
+  .edit-table tbody tr:hover td:last-child .row-del-btn { opacity: 1; }
+  .row-del-btn:hover { background: var(--danger-bg); color: var(--danger); }
+
+  /* 列删除按钮 */
+  .edit-table thead th { position: sticky; }
+  .col-del-btn {
+    position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
+    width: 15px; height: 15px; border-radius: 4px; border: none;
+    background: transparent; color: #ccc; font-size: 12px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: all 0.15s; padding: 0; line-height: 1; z-index: 2;
+  }
+  .edit-table thead th:hover .col-del-btn { opacity: 1; }
+  .col-del-btn:hover { background: var(--danger-bg); color: var(--danger); }
+
+  /* 空状态 */
+  .edit-empty-state {
+    text-align: center; padding: 34px 18px; color: #ccc;
+  }
+  .edit-empty-state svg { margin-bottom: 10px; opacity: 0.4; }
+  .edit-empty-state p { font-size: 12px; margin-bottom: 4px; }
+  .edit-empty-state .sub { font-size: 10.5px; color: #ddd; }
+
+  /* 预览区空状态 */
+  .preview-empty { padding: 40px 20px 80px; }
+  .preview-empty-card {
+    max-width: 460px; margin: 0 auto; text-align: center;
+    background: #fff; border: 1px dashed #e2ddd4; border-radius: 16px;
+    padding: 46px 30px 42px;
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+  }
+  .preview-empty-card svg { color: #d8d2c8; }
+  .preview-empty-card .pe-title { font-size: 13px; font-weight: 600; color: #8b8377; letter-spacing: 0.5px; }
+  .preview-empty-card .pe-sub { font-size: 11.5px; color: #b5ada1; line-height: 1.8; }
+  .preview-empty-card .btn { margin-top: 4px; }
+
+  /* ================================================================
+     粘贴区
+     ================================================================ */
+  .paste-textarea {
+    width: 100%; min-height: 96px; border: 2px dashed #e5e0d8; border-radius: 10px;
+    padding: 11px; font-family: var(--app-font), monospace; font-size: 11.5px;
+    color: var(--text-body); resize: vertical; outline: none;
+    transition: border-color 0.3s, background 0.3s; background: #fbfaf8; line-height: 1.7;
+  }
+  .paste-textarea:focus { border-color: var(--accent); background: #fff; }
+  .paste-textarea::placeholder { color: #ccc; }
+  .paste-actions { display: flex; gap: 8px; margin-top: 10px; justify-content: flex-end; }
+  .paste-hint { font-size: 10.5px; color: #ccc; margin-top: 6px; line-height: 1.6; }
+
+  /* ================================================================
+     预览页
+     ================================================================ */
+  .theme-bar { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
+  .theme-chip {
+    display: flex; align-items: center; gap: 7px; padding: 7px 10px;
+    border-radius: 9px; border: 1.5px solid #efece6; background: #fff;
+    cursor: pointer; transition: all 0.2s;
+    font-size: 11px; font-weight: 500; color: #888; letter-spacing: 0.2px;
+    font-family: var(--app-font); text-align: left;
+  }
+  .theme-chip:hover { border-color: #ddd7cd; background: #fcfbf9; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+  .theme-chip.active {
+    border-color: var(--accent); color: #5a4a30; background: var(--accent-light);
+    box-shadow: 0 2px 8px rgba(196,168,130,0.18);
+  }
+  .theme-dot { width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06); }
+
+  /* 字体选择 */
+  .font-bar { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
+  .font-chip {
+    display: flex; align-items: center; gap: 6px; padding: 7px 10px;
+    border-radius: 9px; border: 1.5px solid #efece6; background: #fff;
+    cursor: pointer; transition: all 0.2s;
+    font-size: 11px; font-weight: 500; color: #888;
+    font-family: var(--app-font); text-align: left;
+  }
+  .font-chip:hover { border-color: #ddd7cd; background: #fcfbf9; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+  .font-chip.active { border-color: var(--accent); color: #5a4a30; background: var(--accent-light); }
+  .font-chip .font-sample { font-size: 14px; font-weight: 700; flex-shrink: 0; }
+
+  /* 导出设置已迁至中栏顶部 .stage-toolbar，此处仅保留兜底浮层用到的 .size-preset */
+  .size-preset {
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    font-size: 11px; padding: 6px 10px; border-radius: 7px; border: 1px solid #ebe7e0;
+    background: #fbfaf8; color: #999; cursor: pointer; font-family: var(--app-font);
+    transition: all 0.2s; white-space: nowrap;
+  }
+  .size-preset svg { flex-shrink: 0; }
+  .size-preset:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+
+  /* 复制兜底：图片取用浮层（右键复制图像 / 下载） */
+  .img-pickup-overlay {
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex; align-items: center; justify-content: center;
+    padding: 32px; animation: pickupFade 0.18s ease;
+  }
+  @keyframes pickupFade { from { opacity: 0; } to { opacity: 1; } }
+  .img-pickup-box {
+    background: #fff; border-radius: 12px; max-width: 860px; width: 100%;
+    max-height: 100%; display: flex; flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3); overflow: hidden;
+  }
+  .img-pickup-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 16px; border-bottom: 1px solid #eee;
+    font-size: 12px; color: #666; line-height: 1.5;
+  }
+  .img-pickup-head b { color: #111; }
+  .img-pickup-close {
+    flex-shrink: 0; border: none; background: #f5f5f5; color: #888;
+    width: 24px; height: 24px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  .img-pickup-close:hover { background: #ececec; color: #333; }
+  .img-pickup-body { overflow: auto; padding: 16px; background: #f7f6f4; }
+  .img-pickup-body img {
+    display: block; max-width: 100%; height: auto; margin: 0 auto;
+    border-radius: 6px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1); background: #fff;
+  }
+  .img-pickup-foot {
+    padding: 12px 16px; border-top: 1px solid #eee;
+    display: flex; justify-content: flex-end;
+  }
+  .img-pickup-foot .size-preset {
+    font-size: 12px; padding: 6px 14px; border-radius: 6px;
+    border: 1px solid #e8e4de; background: #faf9f7; color: #666; cursor: pointer;
+  }
+  .img-pickup-foot .size-preset:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* 表格尺寸控制 */
+  .size-control-bar {
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .size-control-bar .sc-row { display: flex; align-items: center; gap: 10px; }
+  .size-control-bar label { font-size: 10.5px; color: #a49a8d; letter-spacing: 0.3px; white-space: nowrap; min-width: 46px; }
+  .size-control-bar input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    flex: 1; height: 4px; border-radius: 2px;
+    background: #ebe7e0; outline: none; cursor: pointer; min-width: 0;
+  }
+  .size-control-bar input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+  }
+  .size-control-bar input[type="range"]::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 50%; border: none;
+    background: var(--accent); cursor: pointer;
+  }
+  .size-control-bar .sc-val { font-size: 11px; color: #666; min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
+  .size-control-bar .sc-sep { display: none; }
+
+  /* 自定义颜色 */
+  .color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(46px, 1fr)); gap: 10px 6px; }
+  .color-item { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+  .color-swatch {
+    width: 32px; height: 32px; border-radius: 9px; border: 2px solid #ebe7e0;
+    cursor: pointer; position: relative; overflow: hidden; transition: border-color 0.2s, transform 0.2s;
+  }
+  .color-swatch:hover { border-color: var(--accent); transform: scale(1.06); }
+  .color-swatch input[type="color"] {
+    position: absolute; top: -4px; left: -4px;
+    width: 40px; height: 40px; border: none; cursor: pointer; opacity: 0;
+  }
+  .color-label { font-size: 9px; color: #bbb; letter-spacing: 0.2px; text-align: center; line-height: 1.2; }
+
+  /* ================================================================
+     提示 Toast
+     ================================================================ */
+  .toast {
+    position: fixed; top: auto; bottom: 46px; left: 50%;
+    transform: translateX(-50%) translateY(14px) scale(0.96);
+    background: rgba(44,44,44,0.96); color: #fff;
+    padding: 9px 20px; border-radius: 12px;
+    font-size: 11.5px; letter-spacing: 0.8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.22);
+    opacity: 0; transition: all 0.32s cubic-bezier(0.34,1.4,0.64,1);
+    z-index: 400; pointer-events: none; white-space: nowrap;
+    max-width: 42vw; overflow: hidden; text-overflow: ellipsis;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  .toast.show { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
+
+  /* ================================================================
+     模板面板
+     ================================================================ */
+  .tpl-overlay {
+    position: fixed; inset: 0; z-index: 300;
+    background: rgba(0,0,0,0.3);
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    opacity: 0; pointer-events: none; transition: opacity 0.25s;
+  }
+  .tpl-overlay.show { opacity: 1; pointer-events: auto; }
+  .tpl-panel {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -48%);
+    width: 480px; max-width: 92vw; max-height: 80vh; z-index: 301;
+    background: #fff; border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    display: flex; flex-direction: column;
+    opacity: 0; pointer-events: none; transition: all 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  .tpl-panel.show { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%); }
+  .tpl-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid #f0ede8;
+  }
+  .tpl-head-title { font-size: 14px; font-weight: 600; color: #333; letter-spacing: 1px; }
+  .tpl-head-close {
+    width: 28px; height: 28px; border-radius: 8px; border: none;
+    background: transparent; color: #bbb; font-size: 18px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: all 0.2s;
+  }
+  .tpl-head-close:hover { background: #f5f3ef; color: #666; }
+  .tpl-list { flex: 1; overflow-y: auto; padding: 12px; }
+  .tpl-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px; border-radius: 10px;
+    border: 1px solid #f0ede8; background: #fff;
+    margin-bottom: 8px; cursor: pointer; transition: all 0.2s;
+  }
+  .tpl-item:hover { border-color: var(--accent); background: #fdfaf5; transform: translateX(2px); }
+  .tpl-item-info { flex: 1; min-width: 0; }
+  .tpl-item-name {
+    font-size: 13px; font-weight: 500; color: #333;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    outline: none; cursor: text;
+  }
+  .tpl-item-name:hover { color: var(--accent); }
+  .tpl-item-name:focus {
+    background: #fffbe6; padding: 2px 6px; margin: -2px -6px;
+    border-radius: 4px; box-shadow: inset 0 0 0 1px var(--accent);
+    cursor: text;
+  }
+  .tpl-item-meta { font-size: 11px; color: #bbb; margin-top: 2px; }
+  .tpl-item-actions { display: flex; gap: 6px; }
+  .tpl-act-btn {
+    width: 28px; height: 28px; border-radius: 6px; border: 1px solid #e8e4de;
+    background: #faf9f7; color: #aaa; cursor: pointer; transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center; font-size: 13px;
+  }
+  .tpl-act-btn:hover { background: #edeae5; color: #666; }
+  .tpl-act-btn.del:hover { background: var(--danger-bg); color: var(--danger); border-color: #fcc; }
+  .tpl-empty {
+    text-align: center; padding: 40px 20px; color: #ccc; font-size: 13px;
+  }
+  .tpl-foot {
+    padding: 12px 20px; border-top: 1px solid #f0ede8;
+    display: flex; gap: 8px; justify-content: flex-end;
+  }
+  .tpl-save-input {
+    flex: 1; padding: 7px 12px; border: 1.5px solid #e8e4de; border-radius: 8px;
+    font-family: var(--app-font); font-size: 12px; color: #555; outline: none;
+    background: #faf9f7; transition: border-color 0.2s;
+  }
+  .tpl-save-input:focus { border-color: var(--accent); background: #fff; }
+
+  /* ================================================================
+     帮助面板
+     ================================================================ */
+  .help-overlay {
+    position: fixed; inset: 0; z-index: 300;
+    background: rgba(0,0,0,0.3);
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    opacity: 0; pointer-events: none; transition: opacity 0.25s;
+  }
+  .help-overlay.show { opacity: 1; pointer-events: auto; }
+  .help-panel {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -48%);
+    width: 420px; max-width: 92vw; max-height: 80vh; z-index: 301;
+    background: #fff; border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    display: flex; flex-direction: column;
+    opacity: 0; pointer-events: none; transition: all 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  .help-panel.show { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%); }
+  .help-body { padding: 20px; overflow-y: auto; }
+  .help-section { margin-bottom: 20px; }
+  .help-section-title { font-size: 12px; font-weight: 600; color: #333; margin-bottom: 10px; letter-spacing: 1px; }
+  .help-kb { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #f5f3ef; font-size: 12px; }
+  .help-kb-key { font-family: monospace; background: #f5f3ef; padding: 2px 8px; border-radius: 4px; font-size: 11px; color: #666; }
+  .help-tip { font-size: 12px; color: #888; line-height: 1.8; }
+  .help-tip code { background: #f5f3ef; padding: 1px 5px; border-radius: 3px; font-size: 11px; color: #666; }
+
+  /* ================================================================
+     底部快捷键提示条
+     ================================================================ */
+  .kb-hint-bar {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: rgba(255,255,255,0.94); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-top: 1px solid rgba(0,0,0,0.05); padding: 6px 20px;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 10px; color: #c4bcb0; z-index: 95;
+  }
+  .kb-hint-bar .left { display: flex; gap: 14px; flex-wrap: wrap; }
+  .kb-hint-bar kbd { font-family: monospace; background: #f3f0eb; padding: 1px 5px; border-radius: 3px; font-size: 10px; color: #a89e90; }
+
+  /* ================================================================
+     预览主题样式
+     ================================================================ */
+  [data-preview] {
+    --t-font-title: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --t-font-body: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --t-font-size-title: 28px; --t-font-weight-title: 700; --t-letter-spacing-title: 3px;
+    --t-font-size-subtitle: 12px; --t-font-weight-subtitle: 400;
+    --t-font-size-th: 13px; --t-font-weight-th: 500; --t-letter-spacing-th: 2px;
+    --t-font-size-td: 15px; --t-font-size-label: 13px; --t-font-size-footer: 11px;
+    --t-color-title: #2c2c2c; --t-color-subtitle: #aaa; --t-color-th-text: #fff;
+    --t-color-th-bg-from: #3a3a3a; --t-color-th-bg-to: #2c2c2c;
+    --t-color-td-text: #555; --t-color-label-text: #444;
+    --t-color-row-hover-bg: #faf7f3; --t-color-row-hover-label: #b8860b;
+    --t-color-border: #f0ede8; --t-color-footer: #bbb; --t-color-divider: #c4a882;
+    --t-radius-card: 14px; --t-radius-header: 14px;
+    --t-card-shadow: 0 4px 6px rgba(0,0,0,0.02), 0 12px 40px rgba(0,0,0,0.06);
+    --t-border-card: none; --t-padding: 56px 48px 44px;
+    --t-bg: linear-gradient(135deg, #f5f0eb 0%, #e8e0d8 50%, #f0e6dc 100%);
+    --t-card-bg: #fff; --t-header-text-align: center;
+    --t-th-border-bottom: none; --t-divider-style: gradient;
+    --t-title-transform: none; --t-th-transform: none; --t-subtitle-transform: none;
+  }
+
+  .preview-canvas {
+    /* 宽度跟随「表格宽度」设置，不随容器缩放；容器更窄时由 .stage-preview 横向滚动承接 */
+    width: max-content; min-width: 100%;
+    border-radius: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 12px 40px rgba(0,0,0,0.08);
+    overflow: hidden;
+  }
+  [data-preview] {
+    font-family: var(--t-font-body);
+    background: var(--t-bg);
+    padding: var(--t-padding);
+    /* 用 width（而非 max-width）锁定渲染宽度，保证导出尺寸与窗口大小完全无关 */
+    width: var(--t-preview-width, 720px);
+    max-width: none;
+    margin: 0 auto;
+    transition: background 0.4s ease;
+  }
+  [data-preview] .pv-header { text-align: var(--t-header-text-align); margin-bottom: 32px; }
+  [data-preview] .pv-title {
+    font-family: var(--t-font-title); font-size: var(--t-font-size-title);
+    font-weight: var(--t-font-weight-title); color: var(--t-color-title);
+    letter-spacing: var(--t-letter-spacing-title); text-transform: var(--t-title-transform);
+    margin-bottom: 7px; line-height: 1.3;
+  }
+  [data-preview] .pv-subtitle {
+    font-size: var(--t-font-size-subtitle); font-weight: var(--t-font-weight-subtitle);
+    color: var(--t-color-subtitle); letter-spacing: var(--t-letter-spacing-subtitle, 2px); text-transform: var(--t-subtitle-transform);
+    line-height: 1.5;
+  }
+  [data-preview] .pv-divider { margin: 16px 0 0; }
+  [data-preview] .pv-divider.gradient { width: 48px; height: 2px; background: linear-gradient(90deg, transparent, var(--t-color-divider), transparent); }
+  [data-preview] .pv-divider.center { margin-left: auto; margin-right: auto; }
+  [data-preview] .pv-divider.line { width: 32px; height: 3px; background: var(--t-color-divider); border-radius: 2px; }
+  [data-preview] .pv-divider.vline { width: 1px; height: 28px; background: var(--t-color-divider); }
+  [data-preview] .pv-divider.vline.center { margin: 12px auto 0; }
+  [data-preview] .pv-divider.none { display: none; }
+  [data-preview] .pv-divider.full { width: 100%; height: 1px; background: var(--t-color-border); margin: 20px 0 0; }
+
+  [data-preview] .pv-card {
+    background: var(--t-card-bg); border-radius: var(--t-radius-card);
+    box-shadow: var(--t-card-shadow); overflow: hidden; border: var(--t-border-card);
+  }
+  [data-preview] .pv-card.no-card { background: transparent; box-shadow: none; border-radius: 0; border: none; }
+
+  [data-preview] .pv-table { width: 100%; border-collapse: collapse; }
+  [data-preview] .pv-table thead th {
+    background: var(--t-th-bg, linear-gradient(135deg, var(--t-color-th-bg-from), var(--t-color-th-bg-to)));
+    color: var(--t-color-th-text); font-weight: var(--t-font-weight-th);
+    font-size: var(--t-font-size-th); letter-spacing: var(--t-letter-spacing-th);
+    padding: var(--t-cell-pad-y, 14px) 12px; text-align: center; text-transform: var(--t-th-transform);
+    border-bottom: var(--t-th-border-bottom);
+    vertical-align: var(--t-th-valign, middle);
+  }
+  [data-preview] .pv-table thead th:first-child { border-radius: var(--t-radius-header) 0 0 0; text-align: left; padding-left: 24px; }
+  [data-preview] .pv-table thead th:last-child { border-radius: 0 var(--t-radius-header) 0 0; }
+  [data-preview] .pv-table thead th.size-h { font-size: calc(var(--t-font-size-th) + var(--t-size-h-bump, 2px)); font-weight: calc(var(--t-font-weight-th) + 100); letter-spacing: var(--t-size-h-spacing, 4px); }
+  [data-preview] .pv-table tbody td {
+    padding: var(--t-cell-pad-y, 14px) 12px; text-align: center; font-size: var(--t-font-size-td);
+    color: var(--t-color-td-text);
+    border-bottom: var(--t-td-border-bottom, 1px solid var(--t-color-border));
+    white-space: normal; overflow-wrap: break-word; word-break: normal;
+    vertical-align: var(--t-td-valign, middle);
+  }
+  [data-preview] .pv-table tbody td:first-child { text-align: left; padding-left: 24px; font-weight: var(--t-label-weight, 500); color: var(--t-color-label-text); font-size: var(--t-font-size-label); }
+  /* 竖线模式：每个尺码列之间画一条细竖线（杂志/标牌风常用） */
+  [data-preview] .pv-table.vlines tbody td:not(:first-child),
+  [data-preview] .pv-table.vlines thead th:not(:first-child) {
+    border-left: var(--t-vline, 1px solid var(--t-color-border));
+  }
+  /* 网格模式：表头与单元格四边都有线（标牌数据风） */
+  [data-preview] .pv-table.gridlines { border: var(--t-grid-outer, 1px solid var(--t-color-border)); }
+  [data-preview] .pv-table.gridlines tbody td,
+  [data-preview] .pv-table.gridlines thead th {
+    border: var(--t-td-border-bottom, 1px solid var(--t-color-border));
+  }
+  [data-preview] .pv-table.gridlines thead th:first-child { border-left: none; }
+  [data-preview] .pv-table.gridlines thead th:last-child { border-right: none; }
+  [data-preview] .pv-table.gridlines tbody tr:last-child td { border-bottom: none; }
+  /* 末列右边线留出，避免与卡片边界重叠成双线 */
+  [data-preview] .pv-table.gridlines tbody td:last-child { border-right: none; }
+
+  /* 胶囊模式：表头独立成药丸，表体自成一块白底 */
+  /* border-collapse 必须改成 separate，否则 td/th 上的圆角在浏览器里不生效 */
+  [data-preview] .pv-table.capsule { border-collapse: separate; border-spacing: 0; }
+  /* 表头一律用纯色（--t-th-flat）：逐列渲染时纯色相邻无缝，
+     而逐列渲染渐变会让每个单元格各起止一次 135° 渐变，列边界肉眼可见断色。
+     thead 承载渐变也不行 —— Chrome 不给 table-row-group 应用 border-radius。 */
+  [data-preview] .pv-table.capsule thead th {
+    background: var(--t-th-flat, var(--t-th-bg, #2b5ce6));
+    border-bottom: none;
+    padding-top: calc(var(--t-cell-pad-y, 14px) + 4px);
+    padding-bottom: calc(var(--t-cell-pad-y, 14px) + 4px);
+  }
+  [data-preview] .pv-table.capsule thead th:first-child {
+    border-radius: var(--t-capsule-r, 999px) 0 0 var(--t-capsule-r, 999px);
+    padding-left: 30px;
+  }
+  [data-preview] .pv-table.capsule thead th:last-child {
+    border-radius: 0 var(--t-capsule-r, 999px) var(--t-capsule-r, 999px) 0;
+    padding-right: 30px;
+  }
+  /* 表体：白色块，底角收圆 */
+  [data-preview] .pv-table.capsule tbody tr { background: var(--t-capsule-body-bg, #fff); }
+  [data-preview] .pv-table.capsule tbody tr:nth-child(even) { background: var(--t-capsule-body-bg, #fff); }
+  [data-preview] .pv-table.capsule tbody tr:last-child td:first-child { border-radius: 0 0 0 var(--t-body-r, 14px); }
+  [data-preview] .pv-table.capsule tbody tr:last-child td:last-child { border-radius: 0 0 var(--t-body-r, 14px) 0; }
+  [data-preview] .pv-table.capsule tbody tr:last-child td { border-bottom: none; }
+
+  /* 行分离模式：每一行是一条独立的圆角白条，行与行之间留出底色的缝隙。
+     同样必须 border-collapse: separate，缝隙由 border-spacing 产生，
+     td 的圆角才会真正显示出来（collapse 模式下会被合并掉）。 */
+  [data-preview] .pv-table.rowsplit {
+    border-collapse: separate;
+    border-spacing: 0 var(--t-split-gap, 8px);
+    background: var(--t-split-bg, transparent);
+  }
+  /* 行间隙之后的第一个 tr 会被浏览器往上顶，抵掉一半间距，这里补回来 */
+  [data-preview] .pv-table.rowsplit tbody td {
+    background: var(--t-row-card-bg, #ffffff);
+    border-bottom: var(--t-row-card-border, none);
+    border-top: var(--t-row-card-border, none);
+  }
+  [data-preview] .pv-table.rowsplit tbody td:first-child {
+    border-radius: var(--t-row-card-r, 10px) 0 0 var(--t-row-card-r, 10px);
+  }
+  [data-preview] .pv-table.rowsplit tbody td:last-child {
+    border-radius: 0 var(--t-row-card-r, 10px) var(--t-row-card-r, 10px) 0;
+  }
+  /* 行背景画在 td 上会盖住 tr 的悬停色，所以悬停要改落到 td */
+  [data-preview].is-live .pv-table.rowsplit tbody tr:hover td { background: var(--t-color-row-hover-bg); }
+  [data-preview] .pv-table.rowsplit tbody td { transition: background 0.2s; }
+  /* 表头在分离模式下不做色块，靠下方留一道重线压住 */
+  [data-preview] .pv-table.rowsplit thead th {
+    background: transparent;
+    border-bottom: var(--t-th-border-bottom, 2px solid #d4d4d8);
+  }
+
+  [data-preview] .pv-table tbody tr:nth-child(even) { background: var(--t-color-row-alt-bg, transparent); }
+  [data-preview] .pv-table tbody tr { transition: background 0.2s; }
+  [data-preview] .pv-table tbody tr:last-child td { border-bottom: none; }
+  [data-preview] .pv-table tbody tr:last-child td:first-child { border-radius: 0 0 0 var(--t-radius-card); }
+  [data-preview] .pv-table tbody tr:last-child td:last-child { border-radius: 0 0 var(--t-radius-card) 0; }
+  /* 悬停高亮只在「预览态」（.is-live）生效。
+     否则用 Ctrl+E 导出时鼠标若正停在表格上，getComputedStyle 会读到 hover 样式，
+     导出图里就会凭空多出一行高亮底色 —— 同一份数据两次导出结果不一致。 */
+  [data-preview].is-live .pv-table tbody tr:hover { background: var(--t-color-row-hover-bg); }
+  [data-preview].is-live .pv-table tbody tr:hover td:first-child { color: var(--t-color-row-hover-label); }
+
+  /* 导出绘制期间关掉过渡与动画。
+     光是移除 .is-live 还不够：tr 上有 transition: background .2s，
+     移除后背景只是「开始过渡」，getComputedStyle 立刻读到的仍是过渡起始值（旧的悬停色），
+     结果那一行还是会被画成高亮色。必须同时掐掉 transition 才能立即拿到稳定值。 */
+  [data-preview].is-exporting,
+  [data-preview].is-exporting * {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  /* 行序号码：靠伪元素渲染，导出时由 canvas 侧按同一数字补绘 */
+  [data-preview] .pv-table.numbered tbody { counter-reset: pvrow; }
+  [data-preview] .pv-table.numbered tbody td:first-child { counter-increment: pvrow; }
+  [data-preview] .pv-table.numbered tbody td:first-child::before {
+    content: counter(pvrow, decimal-leading-zero);
+    display: inline-block; width: var(--t-num-w, 26px);
+    font-size: calc(var(--t-font-size-label) - 3px); font-weight: 500;
+    color: var(--t-color-num, var(--t-color-footer));
+    font-variant-numeric: tabular-nums; letter-spacing: 0.5px;
+  }
+
+  [data-preview] .pv-footer { margin-top: var(--t-footer-gap, 22px); }
+  [data-preview] .pv-footer.pf-center { text-align: center; }
+  [data-preview] .pv-footer.pf-dots { display: flex; justify-content: center; gap: 18px; flex-wrap: wrap; }
+  [data-preview] .pv-footer-item { display: flex; align-items: center; gap: 5px; font-size: var(--t-font-size-footer); color: var(--t-color-footer); letter-spacing: 0.3px; }
+  [data-preview] .pv-footer-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--t-color-divider); }
+  [data-preview] .pv-footer-inline { font-size: var(--t-font-size-footer); color: var(--t-color-footer); letter-spacing: 0.5px; }
+  [data-preview] .pv-footer-dash { font-size: var(--t-font-size-footer); color: var(--t-color-footer); letter-spacing: 1px; text-align: center; }
+  /* 页脚左侧对齐模式（杂志风）：靠一条短竖线与正文产生联系 */
+  [data-preview] .pv-footer.pf-left { display: block; padding-left: 2px; }
+  [data-preview] .pv-footer.pf-left .pv-footer-inline {
+    display: block;
+    border-left: var(--t-footer-rule, 2px solid var(--t-color-divider));
+    padding-left: 12px; line-height: 1.7;
+  }
+
+  /* ================================================================
+     响应式
+     ================================================================ */
+  /* 中等屏幕：收窄左右两栏 */
+  @media (max-width: 1440px) {
+    .style-panel { width: 240px; }
+  }
+  @media (max-width: 1280px) {
+    .side-panel { width: 336px; }
+    .style-panel { width: 224px; padding: 14px 12px 28px; }
+    .stage-inner { padding: 22px 22px 60px; }
+  }
+
+  /* 窄屏：三栏改为上下堆叠
+     阈值是按三栏的硬性宽度算出来的，不是拍脑袋定的：
+       左栏 336 + 右栏 224 + 预览区需要容纳默认 720px 表格 + 中栏左右内边距 60 = 1340
+     低于这个宽度还硬撑三栏，预览就会被挤到横向滚动 —— 表格右侧被切掉。
+     堆叠后每栏占满宽度，预览反而完整可见，所以这里宁可早点折。
+     注意：嵌入工作台时这个宽度是 iframe 的宽度，比浏览器窗口还要再窄一个侧边栏，
+     所以阈值偏大反而更稳妥。 */
+  @media (max-width: 1340px) {
+    .app-shell { display: block; }
+    .side-panel, .style-panel {
+      position: static; width: 100%; height: auto;
+      max-height: none; overflow: visible;
+      border-right: none; border-left: none;
+      border-bottom: 1px solid #ece8e1;
+      padding: 16px 16px 20px;
+    }
+    /* 堆叠后主题/字体恢复多列，避免窄栏单列拉得过长 */
+    .style-panel .theme-bar { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+    .style-panel .font-bar { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+    .stage { height: auto; overflow: visible; }
+    .stage-inner { padding: 18px 16px 70px; }
+    .app-nav { padding: 0 14px; }
+    .nav-btn span.nav-btn-label { display: none; }
+    .stb-spacer { display: none; }
+  }
+
+  @media (max-width: 640px) {
+    .app-logo-sub { display: none; }
+    .form-grid { grid-template-columns: 1fr; }
+    .theme-bar, .font-bar,
+    .style-panel .theme-bar, .style-panel .font-bar { grid-template-columns: 1fr; }
+    [data-preview] { padding: 32px 20px 28px !important; }
+    .kb-hint-bar { display: none; }
+    .side-panel { padding-bottom: 24px; }
+    .tpl-panel, .help-panel { width: 96vw; }
+    .stage-toolbar { flex-direction: column; align-items: stretch; gap: 9px; }
+    .stb-group { justify-content: space-between; }
+    .stb-sep { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="toast" class="toast"></div>
+
+<!-- ==================== 顶部导航 ==================== -->
+<nav class="app-nav">
+  <div class="app-logo">
+    <span class="app-logo-mark">S</span>
+    <span>SIZE STUDIO</span>
+    <span class="app-logo-sub">尺码表生成器</span>
+  </div>
+  <div class="nav-actions">
+    <button class="nav-btn-text" onclick="openHelpPanel()" title="帮助 (Ctrl + ?)">?</button>
+    <button class="nav-btn nav-btn-outline" onclick="quickSavePreset()" title="保存为预设 (Ctrl+S)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+      <span class="nav-btn-label">存为预设</span>
+    </button>
+    <button class="nav-btn nav-btn-outline nav-btn-primary" onclick="doExport(true)" title="复制图片到剪贴板">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+      <span class="nav-btn-label">复制图片</span>
+    </button>
+    <button class="nav-btn nav-btn-outline" onclick="doExport(false)" title="导出 PNG (Ctrl+E)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      <span class="nav-btn-label">导出图片</span>
+    </button>
+  </div>
+</nav>
+
+<!-- ==================== 左右主布局 ==================== -->
+<div class="app-shell">
+
+  <!-- ============ 左侧：控制面板 ============ -->
+  <aside class="side-panel" id="sidePanel">
+    <div id="pageEditor">
+
+      <!-- 快速预设 -->
+      <div class="side-group">
+        <div class="side-group-label">快速预设</div>
+        <div class="side-card side-card-pad">
+          <div class="preset-bar" id="presetBar"></div>
+          <div class="preset-actions-row">
+            <button class="btn btn-sm btn-ghost" onclick="saveCurrentAsPreset()">＋ 存为预设</button>
+            <button class="btn btn-sm btn-ghost" onclick="resetDefaultPresets()" title="恢复出厂预设">↺ 重置默认</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 标题与说明 -->
+      <div class="side-group">
+        <div class="side-group-label">标题与说明</div>
+        <div class="side-card">
+          <div class="panel-head" onclick="togglePanel('titleBody','titleArrow')">
+            <div class="panel-head-left">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#bbb" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              标题、副标题与底部说明
+            </div>
+            <span class="panel-arrow open" id="titleArrow">▾</span>
+          </div>
+          <div class="panel-body open" id="titleBody">
+            <div class="form-grid">
+              <div class="form-group">
+                <label class="form-label">主标题</label>
+                <input class="form-input" id="cfgTitle" value="" placeholder="请输入主标题" oninput="onEditorChange()">
+              </div>
+              <div class="form-group">
+                <label class="form-label">副标题</label>
+                <input class="form-input" id="cfgSubtitle" value="" placeholder="请输入副标题" oninput="onEditorChange()">
+              </div>
+              <div class="form-group full">
+                <label class="form-label">底部说明<span class="hint">用 | 分隔多条</span></label>
+                <input class="form-input" id="cfgFooter" value="" placeholder="例如：单位：厘米（cm）| 平铺测量，允许 ±2cm 误差" oninput="onEditorChange()">
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 粘贴导入 -->
+      <div class="side-group">
+        <div class="side-group-label">粘贴导入</div>
+        <div class="side-card">
+          <div class="panel-head" onclick="togglePanel('pasteBody','pasteArrow')">
+            <div class="panel-head-left">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#bbb" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              从 Excel / 表格文档粘贴
+            </div>
+            <span class="panel-arrow" id="pasteArrow">▾</span>
+          </div>
+          <div class="panel-body" id="pasteBody">
+            <textarea class="paste-textarea" id="pasteArea" placeholder="在此粘贴尺码数据，支持从Excel直接复制...&#10;示例：&#10;尺码/部位	S	M	L	XL&#10;衣长	35.5	36.5	37.5	38.5&#10;胸围	82	86	90	94"></textarea>
+            <p class="paste-hint">提示：在页面任意位置按 Ctrl+V 也可自动识别表格数据并填入。</p>
+            <div class="paste-actions">
+              <button class="btn btn-sm btn-ghost" onclick="document.getElementById('pasteArea').value=''">清空</button>
+              <button class="btn btn-primary btn-sm" onclick="importFromPaste()">导入表格</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 表格数据 -->
+      <div class="side-group">
+        <div class="side-group-label">表格数据</div>
+        <div class="side-card">
+          <div class="edit-toolbar">
+            <div class="edit-toolbar-group" title="行操作">
+              <span class="tb-cap">行</span>
+              <button class="toolbar-btn" title="增加行 (Ctrl+↓)" onclick="addEditRow()">＋</button>
+              <button class="toolbar-btn" title="删除末行" onclick="removeEditRow()">－</button>
+            </div>
+            <span class="tb-sep"></span>
+            <div class="edit-toolbar-group" title="列操作">
+              <span class="tb-cap">列</span>
+              <button class="toolbar-btn" title="增加列" onclick="addEditCol()">＋</button>
+              <button class="toolbar-btn" title="删除末列" onclick="removeEditCol()">－</button>
+            </div>
+            <span class="tb-spacer"></span>
+            <div class="edit-toolbar-group">
+              <button class="toolbar-btn" title="撤销 (Ctrl+Z)" onclick="undo()">↶</button>
+              <button class="toolbar-btn" title="重做 (Ctrl+Shift+Z)" onclick="redo()">↷</button>
+            </div>
+            <div class="edit-toolbar-group">
+              <button class="toolbar-btn" title="复制为Markdown" onclick="copyAsMarkdown()">M↓</button>
+              <button class="toolbar-btn" title="复制为CSV" onclick="copyAsCSV()">CSV</button>
+            </div>
+          </div>
+          <div class="edit-table-wrap">
+            <table class="edit-table" id="editTable">
+              <thead><tr id="editHeaderRow">
+                <th contenteditable="true" oninput="onEditorChange()">测量部位</th>
+                <th contenteditable="true" oninput="onEditorChange()">尺码<button class="col-del-btn" onclick="removeColByIndex(1)" title="删除此列">×</button></th>
+              </tr></thead>
+              <tbody id="editBody">
+              </tbody>
+            </table>
+          </div>
+          <div id="editEmptyState" class="edit-empty-state" style="display:none;">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+            <p>暂无数据</p>
+            <p class="sub">用上方「粘贴导入」或「快速预设」添加数据</p>
+          </div>
+          <div class="toolbar-label" id="tableCountLabel" style="padding:0 12px 10px;">悬停表头 × 删列 / 行尾 — 删行</div>
+        </div>
+      </div>
+
+      <!-- 清空 -->
+      <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:4px;">
+        <button class="btn btn-ghost btn-sm" onclick="clearAllData()">清空全部数据</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ 中栏：实时预览 + 导出 ============ -->
+  <main class="stage" id="pagePreview">
+    <div class="stage-inner">
+
+      <!-- 预览标题栏 -->
+      <div class="stage-head">
+        <div class="stage-title">实时预览</div>
+        <div class="stage-meta" id="stageMeta"></div>
+      </div>
+
+      <!-- 导出工具条：尺寸 / 预设 / 文件名 / 复制 / 下载 -->
+      <div class="stage-toolbar">
+        <div class="stb-group">
+          <span class="stb-label">尺寸</span>
+          <input class="stb-input" type="number" id="expW" value="1080" min="400" max="4000" step="10" title="导出宽度 px">
+          <select class="stb-select" id="expScale" title="倍率">
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+            <option value="3" selected>3x</option>
+            <option value="4">4x</option>
+          </select>
+          <input class="stb-input" type="number" id="expH" value="0" min="0" max="8000" step="10" title="导出高度，0 = 按比例自动（高度自动）">
+        </div>
+        <div class="stb-group">
+          <button class="stb-preset" onclick="setExportSize(800)">小红书</button>
+          <button class="stb-preset" onclick="setExportSize(1080)">淘宝</button>
+          <button class="stb-preset" onclick="setExportSize(1200)">宽屏</button>
+        </div>
+        <div class="stb-group">
+          <button class="stb-preset ratio-btn" id="squareBtn" onclick="toggleSquareExport()" title="正方形画布：表格等比缩放后居中，四周用主题背景色补齐，绝不拉伸">1:1 方形</button>
+        </div>
+        <span class="stb-sep"></span>
+        <div class="stb-group">
+          <input class="stb-input wide" type="text" id="expFileName" placeholder="文件名 size-chart">
+        </div>
+        <span class="stb-spacer"></span>
+        <div class="stb-group">
+          <button class="stb-btn copy-btn" onclick="doExport(true)" title="复制图片到剪贴板">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            复制图片
+          </button>
+          <button class="stb-btn" onclick="doExport(false)" title="下载 PNG 图片 (Ctrl+E)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            下载图片
+          </button>
+          <!-- 「下载图片」的兄弟动作：不落盘，直接进工作台图库当素材。
+               默认 hidden，只有被工作台嵌进去（宿主推来 gallery 标记）才出现 -->
+          <button class="stb-btn" id="btnChartToGallery" onclick="exportToGallery()" hidden
+                  title="直接存进工作台图库，不再落一份到下载目录">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            存进图库
+          </button>
+          <!-- 「导出自动存图库」：默认开。下载与复制都算「产出」，都按同一条规则
+               在图库留一份；字节相同的内容不会重复占一条记录（宿主按 hash 去重）。
+               同样默认 hidden —— 单机打开时没有图库可言。 -->
+          <label class="stb-check" id="chkAutoGalleryLine" hidden
+                 title="导出/复制的图默认在工作台图库留一份；同一份内容不会重复占一条">
+            <input type="checkbox" id="chkAutoGallery" checked>
+            导出自动存图库
+          </label>
+        </div>
+      </div>
+
+      <!-- 预览画布 -->
+      <div class="stage-preview">
+        <div class="preview-canvas" id="previewCanvas"></div>
+      </div>
+
+      <!-- 空状态 -->
+      <div id="previewEmptyState" class="preview-empty" style="display:none;">
+        <div class="preview-empty-card">
+          <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y="3" width="18" height="18" rx="2.5"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+          <p class="pe-title">暂无预览内容</p>
+          <p class="pe-sub">从左侧「快速预设」加载一套模板，<br>或在「粘贴导入」中贴入你的尺码数据</p>
+          <button class="btn btn-primary btn-sm" onclick="applyPreset('women_top')">载入示例数据</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ============ 最右栏：外观（主题 / 字体 / 尺寸 / 颜色） ============ -->
+  <aside class="style-panel" id="stylePanel">
+
+    <!-- 主题选择 -->
+    <div class="side-group">
+      <div class="side-group-label">主题风格</div>
+      <div class="side-card side-card-pad">
+        <div class="theme-bar" id="themeBar"></div>
+      </div>
+    </div>
+
+    <!-- 字体选择 -->
+    <div class="side-group">
+      <div class="side-group-label">字体搭配</div>
+      <div class="side-card side-card-pad">
+        <div class="font-bar" id="fontBar"></div>
+      </div>
+    </div>
+
+    <!-- 表格尺寸 -->
+    <div class="side-group">
+      <div class="side-group-label">表格尺寸</div>
+      <div class="side-card side-card-pad">
+        <div class="size-control-bar">
+          <div class="sc-row">
+            <label>表格宽度</label>
+            <input type="range" id="ctlTableWidth" min="400" max="1200" value="720" step="20" oninput="onSizeControlChange()">
+            <span class="sc-val" id="ctlTableWidthVal">720px</span>
+          </div>
+          <div class="sc-row">
+            <label>行高</label>
+            <input type="range" id="ctlCellPadding" min="6" max="30" value="14" step="1" oninput="onSizeControlChange()">
+            <span class="sc-val" id="ctlCellPaddingVal">14px</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 自定义颜色 -->
+    <div class="side-group">
+      <div class="side-group-label">自定义颜色</div>
+      <div class="side-card">
+        <div class="panel-head" onclick="togglePanel('customBody','customArrow')">
+          <div class="panel-head-left">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#bbb" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+            微调各项颜色
+          </div>
+          <span class="panel-arrow" id="customArrow">▾</span>
+        </div>
+        <div class="panel-body" id="customBody">
+          <div class="color-grid" id="colorGrid"></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- ==================== 帮助面板 ==================== -->
+<div class="help-overlay" id="helpOverlay" onclick="closeHelpPanel()"></div>
+<div class="help-panel" id="helpPanel">
+  <div class="tpl-head">
+    <span class="tpl-head-title">使用帮助</span>
+    <button class="tpl-head-close" onclick="closeHelpPanel()">×</button>
+  </div>
+  <div class="help-body">
+    <div class="help-section">
+      <div class="help-section-title">快捷键</div>
+      <div class="help-kb"><span>回到左栏（数据编辑）</span><span class="help-kb-key">Ctrl / Cmd + 1</span></div>
+      <div class="help-kb"><span>回到中栏（预览与导出）</span><span class="help-kb-key">Ctrl / Cmd + 2</span></div>
+      <div class="help-kb"><span>回到右栏（主题与字体）</span><span class="help-kb-key">Ctrl / Cmd + 3</span></div>
+      <div class="help-kb"><span>保存预设</span><span class="help-kb-key">Ctrl / Cmd + S</span></div>
+      <div class="help-kb"><span>导出图片</span><span class="help-kb-key">Ctrl / Cmd + E</span></div>
+      <div class="help-kb"><span>撤销</span><span class="help-kb-key">Ctrl / Cmd + Z</span></div>
+      <div class="help-kb"><span>重做</span><span class="help-kb-key">Ctrl / Cmd + Shift + Z</span></div>
+      <div class="help-kb"><span>打开帮助</span><span class="help-kb-key">Ctrl / Cmd + ?</span></div>
+    </div>
+    <div class="help-section">
+      <div class="help-section-title">使用指南</div>
+      <div class="help-tip">
+        <p>1. 界面分为三栏：<b>左栏</b>编辑尺码数据，<b>中栏</b>实时预览与导出，<b>右栏</b>调整主题和字体。任何改动都会立刻反映到预览上，无需切页。</p>
+        <p>2. 从 Excel 或任何表格中复制数据，直接粘贴到「粘贴导入」区域即可自动识别；在页面任意位置按 <code>Ctrl+V</code> 也会自动填入。</p>
+        <p>3. 「快速预设」可一键加载常见尺码数据，预设会保存完整的主题、字体和颜色设置。</p>
+        <p>4. 表格单元格可直接点击修改，悬停表头出现 <code>×</code> 可删列，悬停行尾出现 <code>—</code> 可删行。</p>
+        <p>5. 在<b>右栏</b>切换主题、字体搭配、表格尺寸和自定义颜色，然后在<b>中栏</b>顶部的工具条里设置导出尺寸，复制到剪贴板或下载高清图片。</p>
+        <p>6. 所有数据会自动保存到浏览器本地，下次打开自动恢复。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 底部快捷键提示 ==================== -->
+<div class="kb-hint-bar">
+  <div class="left">
+    <span><kbd>Ctrl</kbd>+<kbd>1</kbd> 数据</span>
+    <span><kbd>Ctrl</kbd>+<kbd>2</kbd> 预览</span>
+    <span><kbd>Ctrl</kbd>+<kbd>3</kbd> 外观</span>
+    <span><kbd>Ctrl</kbd>+<kbd>S</kbd> 存预设</span>
+    <span><kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销</span>
+    <span><kbd>Ctrl</kbd>+<kbd>E</kbd> 导出</span>
+  </div>
+  <span onclick="openHelpPanel()" style="cursor:pointer;">更多帮助</span>
+</div>
+
+<script>
+// ============================================================
+// 预设数据模板
+// ============================================================
+const DEFAULT_PRESETS = {
+  empty: {
+    name: '空白表格',
+    title: '', subtitle: '', footer: '',
+    headers: ['测量部位', '尺码'],
+    rows: []
+  },
+  women_top: {
+    name: '女装上衣',
+    title: '女装上衣尺码表', subtitle: 'WOMEN TOP SIZE CHART', footer: '单位：厘米（cm）| 平铺测量，允许 ±2cm 误差',
+    headers: ['测量部位', 'S', 'M', 'L', 'XL'],
+    rows: [
+      ['衣长', '58', '60', '62', '64'],
+      ['胸围', '84', '88', '92', '96'],
+      ['腰围', '70', '74', '78', '82'],
+      ['肩宽', '36', '37', '38', '39'],
+      ['袖长', '55', '56', '57', '58']
+    ]
+  },
+  women_pants: {
+    name: '女装裤子',
+    title: '女装裤子尺码表', subtitle: 'WOMEN PANTS SIZE CHART', footer: '单位：厘米（cm）| 平铺测量，允许 ±1.5cm 误差',
+    headers: ['测量部位', '26', '27', '28', '29', '30'],
+    rows: [
+      ['腰围', '66', '68', '70', '72', '74'],
+      ['臀围', '88', '90', '92', '94', '96'],
+      ['裤长', '96', '97', '98', '99', '100'],
+      ['前裆', '25', '26', '27', '28', '29'],
+      ['大腿围', '52', '54', '56', '58', '60']
+    ]
+  }
+};
+// 为默认预设补充主题/字体/颜色字段
+Object.values(DEFAULT_PRESETS).forEach(p => {
+  if (!p.theme || !THEMES[p.theme]) p.theme = 'minimal';
+  if (!p.font) p.font = 'system';
+  if (!p.customColors) p.customColors = {};
+});
+const PRESETS_KEY = 'size-studio-presets-v1';
+
+function getPresets() {
+  try {
+    const raw = localStorage.getItem(PRESETS_KEY);
+    if (!raw) return { ...DEFAULT_PRESETS };
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object') ? parsed : { ...DEFAULT_PRESETS };
+  } catch (e) { return { ...DEFAULT_PRESETS }; }
+}
+
+function savePresets(presets) {
+  try {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(presets));
+  } catch (e) { showToast('预设保存失败'); }
+}
+
+// ============================================================
+// 主题预设
+// ============================================================
+const THEMES = {
+  /* ------------------------------------------------------------------
+     极简黑白 —— 唯一保留的旧主题。
+     设计：表头无底色，仅靠 2px 粗下划线立规矩；全部靠横线分隔；
+     标题小字号大写 + 副标题超大字号，形成强烈的主次反差。
+     ------------------------------------------------------------------ */
+  minimal: {
+    name: '极简黑白', dot: 'linear-gradient(135deg,#111 50%,#eee 50%)',
+    overrides: {
+      '--t-font-title': "-apple-system, 'Segoe UI', 'Helvetica Neue', sans-serif",
+      '--t-font-size-title': '11px', '--t-font-weight-title': '600',
+      '--t-letter-spacing-title': '2px', '--t-title-transform': 'uppercase',
+      '--t-color-title': '#2c2c2c', '--t-color-subtitle': '#111',
+      '--t-font-size-subtitle': '32px', '--t-font-weight-subtitle': '700',
+      '--t-color-th-text': '#111',
+      '--t-th-bg': 'transparent',
+      '--t-th-border-bottom': '2px solid #111',
+      '--t-th-transform': 'uppercase', '--t-letter-spacing-th': '2px',
+      '--t-color-td-text': '#555', '--t-color-label-text': '#333',
+      '--t-color-row-hover-bg': '#fafafa', '--t-color-row-hover-label': '#111',
+      '--t-color-border': '#eee', '--t-color-footer': '#bbb', '--t-color-divider': '#111',
+      '--t-radius-card': '0px', '--t-radius-header': '0px',
+      '--t-card-shadow': 'none', '--t-border-card': 'none',
+      '--t-bg': '#ffffff', '--t-card-bg': 'transparent',
+      '--t-divider-style': 'line', '--t-header-text-align': 'left',
+      '--t-font-weight-th': '600',
+    }
+  },
+
+  /* ================================================================== */
+  /* 以下 3 个主题为完全重新设计，各自有独立的版式结构，不是换色        */
+  /* ================================================================== */
+
+  /* ------------------------------------------------------------------
+     1. 杂志编辑风 (editorial)
+     设计语言：真网格线 + 行序号 + 大量留白 + 左对齐页脚。
+     表头是细线框而不是色块，尺码用超大号衬线体做视觉锚点；
+     每行前面有 01/02/03 序号，像年鉴的测量清单。
+     ------------------------------------------------------------------ */
+  editorial: {
+    name: '杂志编辑', dot: 'linear-gradient(135deg,#c8402d 50%,#f5f2ec 50%)',
+    layout: { vlines: false, gridlines: true, numbered: true, footerStyle: 'left' },
+    overrides: {
+      /* 字体：标题用无衬线大写小字，副标题用衬线体撑场面 */
+      '--t-font-title': "-apple-system, 'Segoe UI', 'Helvetica Neue', sans-serif",
+      '--t-font-size-title': '12px', '--t-font-weight-title': '700',
+      '--t-letter-spacing-title': '4px', '--t-title-transform': 'uppercase',
+      '--t-color-title': '#c8402d',
+      /* 副标题反向做大，成为真正的视觉主角 */
+      '--t-font-size-subtitle': '34px', '--t-font-weight-subtitle': '700',
+      '--t-subtitle-transform': 'none',
+      '--t-color-subtitle': '#1a1a1a',
+
+      /* 表头：无底色，细线围成格子 */
+      '--t-th-bg': 'transparent',
+      '--t-color-th-text': '#1a1a1a',
+      '--t-font-size-th': '10px', '--t-font-weight-th': '700', '--t-letter-spacing-th': '2px',
+      '--t-th-transform': 'uppercase',
+
+      /* 表格线：网格要走细灰线，但表头底边必须压重，形成层次 */
+      '--t-td-border-bottom': '1px solid #cfc9be',
+      '--t-grid-outer': '1px solid #cfc9be',
+      '--t-th-border-bottom': '2px solid #1a1a1a',
+      '--t-vline': '1px solid #cfc9be',
+      /* 尺码号：缩到跟表头一致，克制 */
+      '--t-size-h-bump': '0px', '--t-size-h-spacing': '2px',
+
+      /* 正文：紧凑、字号收敛 */
+      '--t-font-size-td': '14px', '--t-font-size-label': '13px',
+      '--t-color-td-text': '#2a2a2a', '--t-color-label-text': '#1a1a1a',
+      '--t-label-weight': '600',
+
+      /* 行序号色 */
+      '--t-color-num': '#c8402d',
+
+      '--t-color-row-hover-bg': '#fbf7f5', '--t-color-row-hover-label': '#c8402d',
+      '--t-color-border': '#ddd8d0', '--t-color-footer': '#8a8378',
+      '--t-color-divider': '#c8402d',
+
+      /* 零圆角零阴影：印刷品的硬边直角 */
+      '--t-radius-card': '0px', '--t-radius-header': '0px',
+      '--t-card-shadow': 'none', '--t-border-card': 'none',
+      '--t-bg': '#f5f2ec', '--t-card-bg': 'transparent',
+      '--t-padding': '52px 46px 40px',
+      '--t-divider-style': 'none', '--t-header-text-align': 'left',
+      '--t-footer-gap': '26px', '--t-footer-rule': '2px solid #c8402d',
+    }
+  },
+
+  /* ------------------------------------------------------------------
+     2. 现代产品风 (product)
+     设计语言：深色实底胶囊表头 + 隔行浅底 + 大圆角 + 柔和投影。
+     表头不做满宽，用 inset 圆角做成一条"舵"；行高宽敞，像后台数据面板。
+     ------------------------------------------------------------------ */
+  product: {
+    name: '现代产品', dot: 'linear-gradient(135deg,#2563eb 50%,#e8eefc 50%)',
+    layout: { vlines: false, gridlines: false, numbered: false, footerStyle: 'center' },
+    overrides: {
+      '--t-font-title': "-apple-system, 'Segoe UI', 'Helvetica Neue', sans-serif",
+      '--t-font-size-title': '22px', '--t-font-weight-title': '700',
+      '--t-letter-spacing-title': '-0.3px', '--t-title-transform': 'none',
+      '--t-color-title': '#0f172a',
+      '--t-font-size-subtitle': '11px', '--t-font-weight-subtitle': '600',
+      '--t-subtitle-transform': 'uppercase',
+      '--t-color-subtitle': '#64748b',
+
+      /* 表头：深色实底 */
+      '--t-th-bg': 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)',
+      '--t-color-th-text': '#f8fafc',
+      '--t-font-size-th': '12px', '--t-font-weight-th': '600', '--t-letter-spacing-th': '1px',
+      '--t-th-transform': 'uppercase',
+      '--t-th-border-bottom': 'none',
+      /* 尺码号稍微放大一点点，不夸张 */
+      '--t-size-h-bump': '1px', '--t-size-h-spacing': '3px',
+
+      '--t-font-size-td': '15px', '--t-font-size-label': '13px',
+      '--t-color-td-text': '#334155', '--t-color-label-text': '#0f172a',
+      '--t-label-weight': '600',
+      '--t-td-border-bottom': '1px solid #e8eef6',
+
+      /* 隔行浅底是这个主题的节奏感来源（比 #f8fafc 再深一档才看得出来） */
+      '--t-color-row-alt-bg': '#f1f6fd',
+
+      '--t-color-row-hover-bg': '#eff6ff', '--t-color-row-hover-label': '#2563eb',
+      '--t-color-border': '#e8eef6', '--t-color-footer': '#94a3b8',
+      '--t-color-divider': '#2563eb',
+
+      /* 大圆角 + 柔和双层投影 */
+      '--t-radius-card': '16px', '--t-radius-header': '12px',
+      '--t-card-shadow': '0 1px 2px rgba(15,23,42,0.04), 0 8px 28px rgba(15,23,42,0.08)',
+      '--t-border-card': '1px solid #e2e8f0',
+      '--t-bg': 'linear-gradient(180deg, #f1f5f9 0%, #e8eef6 100%)',
+      '--t-card-bg': '#ffffff',
+      '--t-padding': '54px 46px 42px',
+      '--t-divider-style': 'none', '--t-header-text-align': 'left',
+      '--t-footer-gap': '24px',
+    }
+  },
+
+  /* ------------------------------------------------------------------
+     3. 品牌色胶囊 (brand)
+     设计语言：品牌色药丸表头 + 超大尺码字母 + 白色表体块。
+     电商详情页几乎都是白底，所以走「浅底 + 一个鲜明品牌色」的路子：
+     表头做成两端半圆的胶囊独立浮在表体上方，S/M/L/XL 放大到视觉主角，
+     手机端把长图缩到 1/3 也能一眼扫到尺码。整体克制、通用，不挑品类。
+     ------------------------------------------------------------------ */
+  brand: {
+    name: '品牌色胶囊', dot: 'linear-gradient(135deg,#2b5ce6 50%,#eef3fe 50%)',
+    layout: { capsule: true, footerStyle: 'center' },
+    overrides: {
+      '--t-font-title': "-apple-system, 'Segoe UI', 'Helvetica Neue', sans-serif",
+      '--t-font-size-title': '20px', '--t-font-weight-title': '700',
+      '--t-letter-spacing-title': '-0.2px', '--t-title-transform': 'none',
+      '--t-color-title': '#111a2e',
+      '--t-font-size-subtitle': '11px', '--t-font-weight-subtitle': '600',
+      '--t-subtitle-transform': 'uppercase',
+      '--t-color-subtitle': '#7c8aa5',
+
+      /* 表头：品牌纯色胶囊，两端半圆由 .capsule 规则给出。
+         这里必须用纯色而非渐变 —— 逐列渲染时每个 th 会各自起止一次渐变，
+         列边界会断色；而 thead 承载渐变又拿不到 border-radius。 */
+      '--t-th-flat': '#2b5ce6',
+      '--t-color-th-text': '#ffffff',
+      '--t-font-size-th': '11px', '--t-font-weight-th': '600', '--t-letter-spacing-th': '1.5px',
+      '--t-th-transform': 'uppercase',
+      '--t-th-border-bottom': 'none',
+      /* 尺码字母放大成主角：11 + 8 = 19px */
+      '--t-size-h-bump': '8px', '--t-size-h-spacing': '2px',
+      '--t-capsule-r': '999px',
+      '--t-capsule-body-bg': '#ffffff',
+      '--t-body-r': '14px',
+
+      '--t-font-size-td': '15px', '--t-font-size-label': '13.5px',
+      '--t-color-td-text': '#41506b', '--t-color-label-text': '#111a2e',
+      '--t-label-weight': '600',
+      '--t-td-border-bottom': '1px solid #e8edf6',
+
+      '--t-color-row-hover-bg': '#f3f7ff', '--t-color-row-hover-label': '#2b5ce6',
+      '--t-color-border': '#e8edf6', '--t-color-footer': '#93a0b8',
+      '--t-color-divider': '#2b5ce6',
+
+      /* 卡片让位给胶囊+表体两块，自身透明；圆角交给 .capsule 处理 */
+      '--t-radius-card': '0px', '--t-radius-header': '0px',
+      '--t-card-shadow': 'none', '--t-border-card': 'none',
+      '--t-bg': '#eef1f8', '--t-card-bg': 'transparent',
+      '--t-padding': '50px 44px 38px',
+      '--t-divider-style': 'none', '--t-header-text-align': 'left',
+      '--t-footer-gap': '24px',
+    }
+  },
+
+  /* ------------------------------------------------------------------
+     4. 灰白石阶 (cloud)
+     设计语言：暖灰底 + 一条条独立的白色圆角行，横向没有任何分隔线。
+     与「极简黑白」的区别在于气质而非颜色 —— minimal 是纯白背景上用黑线切，
+     克制但硬；cloud 反过来，让背景成为灰，表体是浮在灰上的白色台阶。
+     全链路零饱和（除了一处极淡的暖调），适合服饰 / 家居 / 母婴这类
+     需要「不抢戏」的详情页：贴到任意商品图旁边都不会打架。
+     ------------------------------------------------------------------ */
+  cloud: {
+    name: '灰白石阶', dot: 'linear-gradient(135deg,#9ca3af 50%,#f4f4f5 50%)',
+    layout: { rowsplit: true, footerStyle: 'center' },
+    overrides: {
+      /* 标题：中灰调，不做大写拉伸，保持松弛 */
+      '--t-font-title': "-apple-system, 'Segoe UI', 'Helvetica Neue', sans-serif",
+      '--t-font-size-title': '19px', '--t-font-weight-title': '600',
+      '--t-letter-spacing-title': '-0.2px', '--t-title-transform': 'none',
+      '--t-color-title': '#3f3f46',
+      '--t-font-size-subtitle': '11px', '--t-font-weight-subtitle': '500',
+      '--t-subtitle-transform': 'uppercase',
+      '--t-letter-spacing-subtitle': '2.5px',
+      '--t-color-subtitle': '#a1a1aa',
+
+      /* 表头：不做色块，靠一道偏重的灰线压住 */
+      '--t-th-bg': 'transparent',
+      '--t-color-th-text': '#71717a',
+      '--t-font-size-th': '11px', '--t-font-weight-th': '600', '--t-letter-spacing-th': '1.5px',
+      '--t-th-transform': 'uppercase',
+      '--t-th-border-bottom': '2px solid #d4d4d8',
+      /* 尺码号放大一点点，让白色行里有明确的视觉落点 */
+      '--t-size-h-bump': '5px', '--t-size-h-spacing': '1.5px',
+
+      /* 行：白色圆角条 + 8px 缝隙 */
+      '--t-row-card-bg': '#ffffff',
+      '--t-row-card-r': '10px',
+      '--t-row-card-border': 'none',
+      '--t-split-gap': '8px',
+      '--t-split-bg': 'transparent',
+
+      '--t-font-size-td': '15px', '--t-font-size-label': '13.5px',
+      '--t-color-td-text': '#52525b', '--t-color-label-text': '#27272a',
+      '--t-label-weight': '600',
+      '--t-td-border-bottom': 'none',
+
+      '--t-color-row-hover-bg': '#e4e4e7', '--t-color-row-hover-label': '#18181b',
+      '--t-color-border': '#e4e4e7', '--t-color-footer': '#a1a1aa',
+      '--t-color-divider': '#d4d4d8',
+
+      /* 卡片：白色大圆角 + 几乎看不见的投影，只为了从灰底上浮起来 */
+      '--t-radius-card': '20px', '--t-radius-header': '20px',
+      '--t-card-shadow': '0 1px 2px rgba(0,0,0,0.03), 0 10px 30px rgba(0,0,0,0.04)',
+      '--t-border-card': 'none',
+      '--t-bg': '#edeceb', '--t-card-bg': '#f4f4f5',
+      '--t-padding': '50px 44px 40px',
+      '--t-divider-style': 'none', '--t-header-text-align': 'left',
+      '--t-footer-gap': '26px',
+    }
+  },
+};
+
+// 可自定义的颜色项
+const COLOR_ITEMS = [
+  { key: '--t-color-title', label: '标题' },
+  { key: '--t-color-th-bg-from', label: '表头底' },
+  { key: '--t-color-th-text', label: '表头字' },
+  { key: '--t-color-td-text', label: '数值' },
+  { key: '--t-color-label-text', label: '标签' },
+  { key: '--t-color-divider', label: '分割线' },
+  { key: '--t-color-border', label: '边框' },
+  { key: '--t-color-footer', label: '底注' },
+];
+
+const FONT_PAIRS = {
+  system: { name: '系统默认', title: "-apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif", body: "-apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif", sample: 'Aa' },
+  serif: { name: '衬线优雅', title: "Georgia, 'Times New Roman', 'Noto Serif SC', 'Songti SC', serif", body: "Georgia, 'Times New Roman', 'Noto Serif SC', serif", sample: 'Gg' },
+  modern: { name: '现代无衬', title: "-apple-system, 'Segoe UI', 'Helvetica Neue', 'Arial', sans-serif", body: "-apple-system, 'Segoe UI', 'Helvetica Neue', 'Arial', sans-serif", sample: 'Mm' },
+  kai: { name: '楷体文艺', title: "'STKaiti', 'KaiTi', 'Kaiti SC', 'FangSong', serif", body: "'STKaiti', 'KaiTi', 'Kaiti SC', serif", sample: '楷' },
+  song: { name: '宋体经典', title: "'STSong', 'SimSun', 'Songti SC', 'Noto Serif SC', serif", body: "'STSong', 'SimSun', 'Songti SC', serif", sample: '宋' },
+  mono: { name: '等宽科技', title: "'SF Mono', 'Fira Code', 'Consolas', 'Courier New', monospace", body: "'SF Mono', 'Fira Code', 'Consolas', monospace", sample: '01' },
+  rounded: { name: '圆体可爱', title: "'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'WenQuanYi Micro Hei', sans-serif", body: "'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif", sample: '圆' },
+};
+let currentFont = 'system';
+let currentTableWidth = 720;
+let currentCellPadding = 14;
+let currentTheme = 'minimal';
+let customColors = {};
+
+// ============================================================
+// 撤销/重做系统
+// ============================================================
+const MAX_HISTORY = 50;
+let historyStack = [];
+let historyIndex = -1;
+let historyPaused = false;
+
+// 比较两个快照是否等价。
+// savedAt 是每次生成都会变的时间戳（loadFromLocal 的「保存于 …」提示要用它），
+// 必须排除在比较之外，否则下面的去重判断永远不会成立，历史里会堆满重复状态。
+function snapshotSig(s) {
+  if (!s) return '';
+  return JSON.stringify({ ...s, savedAt: undefined });
+}
+
+function pushHistory() {
+  if (historyPaused) return;
+  const snap = snapshotCurrent();
+  // 如果与上一个状态相同，不重复记录
+  if (historyIndex >= 0) {
+    const last = historyStack[historyIndex];
+    if (snapshotSig(last) === snapshotSig(snap)) return;
+  }
+  // 删除当前指针之后的历史
+  if (historyIndex < historyStack.length - 1) {
+    historyStack = historyStack.slice(0, historyIndex + 1);
+  }
+  historyStack.push(snap);
+  if (historyStack.length > MAX_HISTORY) historyStack.shift();
+  else historyIndex++;
+}
+
+// 立即落地尚未写入的防抖记录。
+// onEditorChange 有 500ms 防抖，这期间点撤销/重做时那条记录还没进栈，
+// 会引出两个问题：
+//   · 撤销会跨过刚做的操作，退到更早的状态（用户觉得「撤销跳了一步」）
+//   · 它稍后自己触发时，pushHistory 会切掉指针之后的记录，也就是吃掉重做分支
+// 先把它落地，再走正常的撤销/重做，步数就与用户操作一一对应了。
+function flushPendingHistory() {
+  if (historyTimer === null) return;
+  clearTimeout(historyTimer);
+  historyTimer = null;
+  pushHistory();
+}
+
+function undo() {
+  flushPendingHistory();
+  if (historyIndex <= 0) { showToast('没有可撤销的操作'); return; }
+  historyIndex--;
+  historyPaused = true;
+  applySnapshot(historyStack[historyIndex]);
+  historyPaused = false;
+  showToast('已撤销');
+}
+
+function redo() {
+  flushPendingHistory();
+  if (historyIndex >= historyStack.length - 1) { showToast('没有可重做的操作'); return; }
+  historyIndex++;
+  historyPaused = true;
+  applySnapshot(historyStack[historyIndex]);
+  historyPaused = false;
+  showToast('已重做');
+}
+
+// 防抖保存历史
+let historyTimer = null;
+function onEditorChange() {
+  renderPreview();
+  clearTimeout(historyTimer);
+  // 落地后把句柄清空，flushPendingHistory 才能靠它判断「有没有待写记录」
+  historyTimer = setTimeout(() => { historyTimer = null; pushHistory(); }, 500);
+  debouncedAutoSave();
+}
+
+// ============================================================
+// 页面切换（左右布局下不再切页，仅滚动到对应区域）
+// 保留此函数是为了兼容快捷键与旧调用点。
+// ============================================================
+// 三栏布局下没有"切页"概念，此函数退化为"滚动到指定栏"，
+// 保留是为了兼容快捷键 Ctrl+1 / Ctrl+2 与其它历史调用点。
+//   editor / 1 → 左栏（数据编辑）
+//   preview / 2 → 中栏（预览与导出）
+//   style / 3 → 右栏（主题与字体）
+function switchPage(name) {
+  renderPreview();
+  const map = {
+    editor: 'sidePanel',
+    preview: 'pagePreview',
+    style: 'stylePanel',
+    '1': 'sidePanel',
+    '2': 'pagePreview',
+    '3': 'stylePanel'
+  };
+  const el = document.getElementById(map[name] || 'pagePreview');
+  if (el) el.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function togglePanel(bodyId, arrowId) {
+  document.getElementById(bodyId).classList.toggle('open');
+  document.getElementById(arrowId).classList.toggle('open');
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ============================================================
+// 快速预设
+// ============================================================
+function initPresetBar() {
+  const bar = document.getElementById('presetBar');
+  bar.innerHTML = '';
+  const presets = getPresets();
+  const entries = Object.entries(presets);
+  if (entries.length === 0) {
+    bar.innerHTML = '<div style="color:#999;font-size:12px;padding:8px 0;">暂无预设，点击「将当前保存为预设」创建</div>';
+    return;
+  }
+  entries.forEach(([key, p]) => {
+    const chip = document.createElement('div');
+    chip.className = 'preset-chip';
+    chip.dataset.presetKey = key;
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'p-name';
+    nameSpan.textContent = p.name;
+    chip.appendChild(nameSpan);
+
+    const actions = document.createElement('span');
+    actions.className = 'p-actions';
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'p-act';
+    editBtn.title = '用当前数据更新此预设';
+    editBtn.textContent = '✎';
+    editBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      editPreset(key);
+    });
+    actions.appendChild(editBtn);
+
+    if (key !== 'empty') {
+      const delBtn = document.createElement('button');
+      delBtn.className = 'p-act del';
+      delBtn.title = '删除此预设';
+      delBtn.textContent = '×';
+      delBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        deletePreset(key);
+      });
+      actions.appendChild(delBtn);
+    }
+
+    chip.appendChild(actions);
+    chip.addEventListener('click', function() {
+      applyPreset(key);
+    });
+    bar.appendChild(chip);
+  });
+}
+
+function applyPreset(key) {
+  try {
+    const presets = getPresets();
+    const p = presets[key];
+    if (!p) {
+      showToast('预设不存在或已被删除');
+      initPresetBar();
+      return;
+    }
+    if (historyIndex >= 0) pushHistory();
+    historyPaused = true;
+    document.getElementById('cfgTitle').value = p.title || '';
+    document.getElementById('cfgSubtitle').value = p.subtitle || '';
+    document.getElementById('cfgFooter').value = p.footer || '';
+    if (p.theme && THEMES[p.theme]) currentTheme = p.theme;
+    if (p.font && FONT_PAIRS[p.font]) currentFont = p.font;
+    if (p.customColors && typeof p.customColors === 'object') customColors = { ...p.customColors };
+    else customColors = {};
+    if (p.tableWidth) currentTableWidth = p.tableWidth;
+    if (p.cellPadding) currentCellPadding = p.cellPadding;
+    if (Array.isArray(p.headers) && Array.isArray(p.rows)) {
+      restoreTable(p.headers, p.rows);
+    }
+    // 更新主题/字体/尺寸控件的激活状态
+    document.querySelectorAll('.theme-chip').forEach(c => c.classList.toggle('active', c.dataset.theme === currentTheme));
+    document.querySelectorAll('.font-chip').forEach(c => c.classList.toggle('active', c.dataset.font === currentFont));
+    updateColorGrid();
+    syncSizeControls();
+    historyPaused = false;
+    pushHistory();
+    renderPreview();
+    showToast('已加载预设：' + p.name);
+  } catch (e) {
+    console.error('applyPreset error:', e);
+    showToast('加载预设失败');
+    historyPaused = false;
+  }
+}
+
+function saveCurrentAsPreset() {
+  const name = prompt('请输入预设名称：', document.getElementById('cfgTitle').value.trim() || '自定义预设');
+  if (!name || !name.trim()) return;
+  const presets = getPresets();
+  const data = readTableData();
+  const key = 'custom_' + Date.now();
+  presets[key] = {
+    name: name.trim(),
+    title: document.getElementById('cfgTitle').value,
+    subtitle: document.getElementById('cfgSubtitle').value,
+    footer: document.getElementById('cfgFooter').value,
+    headers: data.headers,
+    rows: data.rows,
+    theme: currentTheme,
+    font: currentFont,
+    customColors: { ...customColors },
+    tableWidth: currentTableWidth,
+    cellPadding: currentCellPadding,
+    savedAt: new Date().toISOString()
+  };
+  savePresets(presets);
+  initPresetBar();
+  showToast('已保存为新预设：' + name.trim());
+}
+
+function quickSavePreset() {
+  const name = document.getElementById('cfgTitle').value.trim() || '未命名预设';
+  const presets = getPresets();
+  const data = readTableData();
+  // 查找同名预设，有则更新，无则新建
+  let key = null;
+  for (const [k, v] of Object.entries(presets)) {
+    if (v.name === name && k !== 'empty') { key = k; break; }
+  }
+  if (!key) key = 'custom_' + Date.now();
+  presets[key] = {
+    name: name,
+    title: document.getElementById('cfgTitle').value,
+    subtitle: document.getElementById('cfgSubtitle').value,
+    footer: document.getElementById('cfgFooter').value,
+    headers: data.headers,
+    rows: data.rows,
+    theme: currentTheme,
+    font: currentFont,
+    customColors: { ...customColors },
+    tableWidth: currentTableWidth,
+    cellPadding: currentCellPadding,
+    savedAt: new Date().toISOString()
+  };
+  savePresets(presets);
+  initPresetBar();
+  showToast('已保存预设：' + name);
+}
+
+function editPreset(key) {
+  try {
+    const presets = getPresets();
+    if (!presets[key]) return;
+    if (!confirm('确定用当前数据覆盖「' + presets[key].name + '」预设吗？')) return;
+    const data = readTableData();
+    presets[key] = {
+      ...presets[key],
+      title: document.getElementById('cfgTitle').value,
+      subtitle: document.getElementById('cfgSubtitle').value,
+      footer: document.getElementById('cfgFooter').value,
+      headers: data.headers,
+      rows: data.rows,
+      theme: currentTheme,
+      font: currentFont,
+      customColors: { ...customColors },
+      tableWidth: currentTableWidth,
+      cellPadding: currentCellPadding,
+      savedAt: new Date().toISOString()
+    };
+    savePresets(presets);
+    initPresetBar();
+    showToast('已更新预设：' + presets[key].name);
+  } catch (e) {
+    console.error('editPreset error:', e);
+    showToast('更新失败，请重试');
+  }
+}
+
+function deletePreset(key) {
+  try {
+    const presets = getPresets();
+    if (!presets[key]) return;
+    const name = presets[key].name;
+    if (!confirm('确定删除预设「' + name + '」吗？')) return;
+    delete presets[key];
+    savePresets(presets);
+    initPresetBar();
+    showToast('已删除预设：' + name);
+  } catch (e) {
+    console.error('deletePreset error:', e);
+    showToast('删除失败，请重试');
+  }
+}
+
+function resetDefaultPresets() {
+  if (!confirm('确定恢复出厂预设吗？所有自定义预设将被清除。')) return;
+  localStorage.removeItem(PRESETS_KEY);
+  initPresetBar();
+  showToast('已恢复默认预设');
+}
+
+// ============================================================
+// 表格数据读取
+// ============================================================
+function readTableData() {
+  const headers = Array.from(document.getElementById('editHeaderRow').children).map(th => {
+    const textNode = Array.from(th.childNodes).find(n => n.nodeType === Node.TEXT_NODE);
+    return textNode ? textNode.textContent.trim() : '';
+  });
+  let rows = Array.from(document.getElementById('editBody').children).map(tr =>
+    Array.from(tr.children).filter(c => c.tagName === 'TD').map(td => {
+      const textNode = Array.from(td.childNodes).find(n => n.nodeType === Node.TEXT_NODE);
+      return textNode ? textNode.textContent.trim() : '';
+    })
+  );
+  // 自动清理全空行（所有单元格都为空）
+  rows = rows.filter(row => row.some(cell => cell !== ''));
+  // 更新空状态
+  const emptyState = document.getElementById('editEmptyState');
+  const table = document.getElementById('editTable');
+  if (rows.length === 0) {
+    emptyState.style.display = 'block';
+    table.style.display = 'none';
+  } else {
+    emptyState.style.display = 'none';
+    table.style.display = '';
+  }
+  // 更新行列计数显示
+  const countLabel = document.getElementById('tableCountLabel');
+  if (countLabel) {
+    const colCount = headers.length;
+    const rowCount = rows.length;
+    countLabel.textContent = colCount + ' 列 × ' + rowCount + ' 行 ｜ 悬停表头 × 删列 / 行尾 — 删行';
+  }
+  return { headers, rows };
+}
+
+// ============================================================
+// 粘贴导入
+// ============================================================
+function importFromPaste() {
+  const raw = document.getElementById('pasteArea').value.trim();
+  if (!raw) { showToast('请先粘贴数据'); return; }
+  const lines = raw.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) { showToast('至少需要表头和一行数据'); return; }
+  let parsed = lines.map(l => l.split('\t').map(c => c.trim()));
+  // 过滤全空行
+  parsed = parsed.filter(row => row.some(cell => cell !== ''));
+  if (parsed.length < 2) { showToast('至少需要表头和一行数据'); return; }
+  const maxCols = Math.max(...parsed.map(r => r.length));
+  if (maxCols < 2) { showToast('至少需要两列'); return; }
+
+  pushHistory();
+  const headerRow = document.getElementById('editHeaderRow');
+  headerRow.innerHTML = '';
+  parsed[0].slice(0, maxCols).forEach((h, i) => {
+    const th = document.createElement('th');
+    th.contentEditable = 'true';
+    th.textContent = h;
+    th.oninput = onEditorChange;
+    if (i > 0) {
+      const btn = document.createElement('button');
+      btn.className = 'col-del-btn'; btn.title = '删除此列'; btn.textContent = '×';
+      btn.onclick = function() { removeColByIndex(i); };
+      th.appendChild(btn);
+    }
+    headerRow.appendChild(th);
+  });
+  const tbody = document.getElementById('editBody');
+  tbody.innerHTML = '';
+  parsed.slice(1).forEach(row => {
+    const tr = document.createElement('tr');
+    while (row.length < maxCols) row.push('');
+    row.slice(0, maxCols).forEach((cell, ci) => {
+      const td = document.createElement('td');
+      td.contentEditable = 'true'; td.textContent = cell;
+      td.oninput = onEditorChange;
+      if (ci === maxCols - 1) {
+        const rowBtn = document.createElement('button');
+        rowBtn.className = 'row-del-btn'; rowBtn.title = '删除此行'; rowBtn.textContent = '—';
+        rowBtn.onclick = function() { removeRowByIndex(this); };
+        td.appendChild(rowBtn);
+      }
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  togglePanel('pasteBody', 'pasteArrow');
+  showToast('导入成功，共 ' + (parsed.length - 1) + ' 行');
+  onEditorChange();
+}
+
+// ============================================================
+// 表格行列操作
+// ============================================================
+function addEditRow() {
+  const tbody = document.getElementById('editBody');
+  const colCount = document.getElementById('editHeaderRow').children.length;
+  const tr = document.createElement('tr');
+  for (let i = 0; i < colCount; i++) {
+    const td = document.createElement('td');
+    td.contentEditable = 'true';
+    td.textContent = i === 0 ? '新部位' : '0';
+    td.oninput = onEditorChange;
+    if (i === colCount - 1) {
+      const rowBtn = document.createElement('button');
+      rowBtn.className = 'row-del-btn'; rowBtn.title = '删除此行'; rowBtn.textContent = '—';
+      rowBtn.onclick = function() { removeRowByIndex(this); };
+      td.appendChild(rowBtn);
+    }
+    tr.appendChild(td);
+  }
+  tbody.appendChild(tr); showToast('已添加行');
+  onEditorChange();
+}
+function removeEditRow() {
+  const tbody = document.getElementById('editBody');
+  if (tbody.children.length <= 1) { showToast('至少保留一行'); return; }
+  tbody.removeChild(tbody.lastElementChild); showToast('已删除末行');
+  onEditorChange();
+}
+function removeRowByIndex(btn) {
+  const tbody = document.getElementById('editBody');
+  if (tbody.children.length <= 1) { showToast('至少保留一行'); return; }
+  const row = btn.closest('tr');
+  row.style.transition = 'opacity 0.2s, transform 0.2s';
+  row.style.opacity = '0';
+  row.style.transform = 'translateX(20px)';
+  setTimeout(() => { row.remove(); showToast('已删除该行'); onEditorChange(); }, 200);
+}
+function addEditCol() {
+  const headerRow = document.getElementById('editHeaderRow');
+  const colIndex = headerRow.children.length;
+  const th = document.createElement('th');
+  th.contentEditable = 'true'; th.textContent = '新尺码';
+  th.oninput = onEditorChange;
+  const btn = document.createElement('button');
+  btn.className = 'col-del-btn'; btn.title = '删除此列'; btn.textContent = '×';
+  btn.onclick = function() { removeColByIndex(colIndex); };
+  th.appendChild(btn);
+  headerRow.appendChild(th);
+
+  // 表头新列 append 到末尾；表体也必须 append 到末尾，两者顺序才能一致。
+  // 行删除按钮虽然寄居在最后一个 td 里，但它只是子元素，不影响 td 的列序，
+  // 所以直接 append 新 td 即可（曾误用 insertBefore，导致数值整体错位一格）。
+  // 新列成为末列后，把「删除行」按钮从旧末列迁移过来，否则按钮会停在中间列上。
+  document.querySelectorAll('#editBody tr').forEach(tr => {
+    const td = document.createElement('td');
+    td.contentEditable = 'true'; td.textContent = '0';
+    td.oninput = onEditorChange;
+    const rowBtn = tr.querySelector('.row-del-btn');
+    if (rowBtn) rowBtn.remove();
+    tr.appendChild(td);
+    if (rowBtn) td.appendChild(rowBtn);
+  });
+  rebuildColDeleteButtons();
+  showToast('已添加列');
+  onEditorChange();
+}
+function removeEditCol() {
+  const hr = document.getElementById('editHeaderRow');
+  if (hr.children.length <= 2) { showToast('至少保留部位列和一个尺码列'); return; }
+  hr.removeChild(hr.lastElementChild);
+  // 删除的是「最后一个数据列」；行删除按钮寄居其中时需先迁移到新的末列，
+  // 否则按钮会随单元格一起被删除，用户再也无法删行。
+  document.querySelectorAll('#editBody tr').forEach(tr => {
+    const tds = Array.from(tr.children).filter(c => c.tagName === 'TD');
+    if (tds.length < 2) return;
+    const rowBtn = tr.querySelector('.row-del-btn');
+    const target = tds[tds.length - 1];
+    if (rowBtn) rowBtn.remove();
+    target.remove();
+    if (rowBtn) {
+      const newLast = Array.from(tr.children).filter(c => c.tagName === 'TD').pop();
+      if (newLast) newLast.appendChild(rowBtn);
+    }
+  });
+  showToast('已删除末列');
+  rebuildColDeleteButtons();
+  onEditorChange();
+}
+function removeColByIndex(colIdx) {
+  const headerRow = document.getElementById('editHeaderRow');
+  if (headerRow.children.length <= 2) { showToast('至少保留部位列和一个尺码列'); return; }
+  const ths = Array.from(headerRow.children);
+  if (colIdx < 1 || colIdx >= ths.length) return;
+  ths[colIdx].remove();
+  document.querySelectorAll('#editBody tr').forEach(tr => {
+    const rowBtn = tr.querySelector('.row-del-btn');
+    const tds = Array.from(tr.children).filter(c => c.tagName === 'TD');
+    const victim = tds[colIdx];
+    if (!victim) return;
+    const holdsBtn = rowBtn && victim.contains(rowBtn);
+    if (holdsBtn) rowBtn.remove();
+    victim.remove();
+    // 若删掉的正是按钮所在列，把按钮迁移到新的最后一列
+    if (holdsBtn) {
+      const newLast = Array.from(tr.children).filter(c => c.tagName === 'TD').pop();
+      if (newLast) newLast.appendChild(rowBtn);
+    }
+  });
+  rebuildColDeleteButtons();
+  showToast('已删除该列');
+  onEditorChange();
+}
+function rebuildColDeleteButtons() {
+  const ths = Array.from(document.getElementById('editHeaderRow').children);
+  ths.forEach((th, i) => {
+    const oldBtn = th.querySelector('.col-del-btn');
+    if (oldBtn) oldBtn.remove();
+    if (i > 0) {
+      const btn = document.createElement('button');
+      btn.className = 'col-del-btn'; btn.title = '删除此列'; btn.textContent = '×';
+      btn.onclick = function() { removeColByIndex(i); };
+      th.appendChild(btn);
+    }
+  });
+}
+
+// ============================================================
+// 复制为 Markdown / CSV
+// ============================================================
+function copyAsMarkdown() {
+  const data = readTableData();
+  if (data.rows.length === 0) { showToast('表格为空'); return; }
+  let md = '| ' + data.headers.join(' | ') + ' |\n';
+  md += '| ' + data.headers.map(() => '---').join(' | ') + ' |\n';
+  data.rows.forEach(row => { md += '| ' + row.join(' | ') + ' |\n'; });
+  copyToClipboard(md, 'Markdown');
+}
+
+function copyAsCSV() {
+  const data = readTableData();
+  if (data.rows.length === 0) { showToast('表格为空'); return; }
+  let csv = data.headers.join(',') + '\n';
+  data.rows.forEach(row => { csv += row.map(c => '"' + (c || '').replace(/"/g, '""') + '"').join(',') + '\n'; });
+  copyToClipboard(csv, 'CSV');
+}
+
+function copyToClipboard(text, label) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => showToast('已复制为' + label), () => fallbackCopy(text, label));
+  } else {
+    fallbackCopy(text, label);
+  }
+}
+function fallbackCopy(text, label) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); showToast('已复制为' + label); }
+  catch (e) { showToast('复制失败，请手动复制'); }
+  document.body.removeChild(ta);
+}
+
+// ============================================================
+// 字体选择
+// ============================================================
+function initFontBar() {
+  const bar = document.getElementById('fontBar');
+  if (!bar) return;
+  bar.innerHTML = '';
+  Object.entries(FONT_PAIRS).forEach(([key, f]) => {
+    const chip = document.createElement('div');
+    chip.className = 'font-chip' + (key === currentFont ? ' active' : '');
+    chip.dataset.font = key;
+    chip.innerHTML = '<span class="font-sample" style="font-family:' + f.title + '">' + escHtml(f.sample) + '</span>' + escHtml(f.name);
+    chip.onclick = () => selectFont(key);
+    bar.appendChild(chip);
+  });
+}
+
+function selectFont(key) {
+  currentFont = key;
+  document.querySelectorAll('.font-chip').forEach(c => c.classList.toggle('active', c.dataset.font === key));
+  renderPreview();
+}
+
+// ============================================================
+// 主题选择
+// ============================================================
+function initThemeBar() {
+  const bar = document.getElementById('themeBar');
+  bar.innerHTML = '';
+  Object.entries(THEMES).forEach(([key, t]) => {
+    const chip = document.createElement('div');
+    chip.className = 'theme-chip' + (key === currentTheme ? ' active' : '');
+    chip.dataset.theme = key;
+    chip.innerHTML = '<span class="theme-dot" style="background:' + escHtml(t.dot) + '"></span>' + escHtml(t.name);
+    chip.onclick = () => selectTheme(key);
+    bar.appendChild(chip);
+  });
+}
+
+function selectTheme(key) {
+  if (!THEMES[key]) return;          // 防御：未知主题直接忽略，避免后续读 overrides 抛错
+  currentTheme = key;
+  customColors = {};
+  document.querySelectorAll('.theme-chip, .side-theme-chip').forEach(c => c.classList.toggle('active', c.dataset.theme === key));
+  updateColorGrid();
+  renderPreview();
+}
+
+// ============================================================
+// 自定义颜色
+// ============================================================
+function updateColorGrid() {
+  const grid = document.getElementById('colorGrid');
+  grid.innerHTML = '';
+  const theme = THEMES[currentTheme];
+  const defaults = getComputedThemeVars();
+  COLOR_ITEMS.forEach(item => {
+    const div = document.createElement('div');
+    div.className = 'color-item';
+    const color = customColors[item.key] || theme.overrides[item.key] || defaults[item.key] || '#000';
+    div.innerHTML = '<div class="color-swatch" style="background:' + escHtml(color) + '"><input type="color" value="' + escHtml(toHex(color)) + '" data-key="' + escHtml(item.key) + '" onchange="onColorChange(this)" oninput="onColorChange(this)"></div><span class="color-label">' + escHtml(item.label) + '</span>';
+    grid.appendChild(div);
+  });
+}
+
+function onColorChange(input) {
+  customColors[input.dataset.key] = input.value;
+  input.parentElement.style.background = input.value;
+  renderPreview();
+}
+
+function toHex(color) {
+  if (!color || color === 'transparent' || color === 'none') return '#000000';
+  if (color.startsWith('#') && (color.length === 4 || color.length === 7)) return color.length === 4 ?
+    '#' + color[1]+color[1]+color[2]+color[2]+color[3]+color[3] : color;
+  if (color.startsWith('rgb')) {
+    const m = color.match(/(\d+)/g);
+    if (m && m.length >= 3) return '#' + m.slice(0,3).map(n => (+n).toString(16).padStart(2,'0')).join('');
+  }
+  return '#000000';
+}
+
+function getComputedThemeVars() {
+  const tmp = document.createElement('div');
+  tmp.setAttribute('data-preview', '');
+  // 带上当前主题的内联变量，取到的才是「这个主题真实生效」的颜色，
+  // 否则拿到的永远是基础默认值，色板会误导用户。
+  tmp.style.cssText = 'position:absolute;visibility:hidden;' + (THEMES[currentTheme] ? buildCustomCSS() : '');
+  document.body.appendChild(tmp);
+  const cs = getComputedStyle(tmp);
+  const vars = {};
+  COLOR_ITEMS.forEach(i => { vars[i.key] = cs.getPropertyValue(i.key).trim(); });
+  document.body.removeChild(tmp);
+  return vars;
+}
+
+// ============================================================
+// 预览渲染
+// ============================================================
+function generatePreviewHTML() {
+  const title = document.getElementById('cfgTitle').value || '';
+  const subtitle = document.getElementById('cfgSubtitle').value || '';
+  const footerRaw = document.getElementById('cfgFooter').value || '';
+  const footers = footerRaw.split('|').map(s => s.trim()).filter(Boolean);
+  const data = readTableData();
+  const { headers, rows } = data;
+
+  if (rows.length === 0) return null;
+
+  let thHTML = '<th>' + escHtml(headers[0]) + '</th>';
+  headers.slice(1).forEach(h => { thHTML += '<th class="size-h">' + escHtml(h) + '</th>'; });
+
+  let trHTML = '';
+  rows.forEach(row => {
+    trHTML += '<tr>';
+    row.forEach(cell => { trHTML += '<td>' + escHtml(cell) + '</td>'; });
+    trHTML += '</tr>';
+  });
+
+  const themeDef = THEMES[currentTheme] || {};
+  const lay = themeDef.layout || {};
+  const dividerCls = (themeDef.overrides?.['--t-divider-style'] || 'gradient center').replace(/ /g, '.').replace(/center\./g, 'center ').trim();
+  const safeDividerCls = dividerCls.replace(/\./g, ' ');
+
+  // 表格结构修饰类：竖线 / 网格线 / 行序号 / 胶囊表头
+  const tableCls = 'pv-table' +
+    (lay.vlines ? ' vlines' : '') +
+    (lay.gridlines ? ' gridlines' : '') +
+    (lay.numbered ? ' numbered' : '') +
+    (lay.capsule ? ' capsule' : '') +
+    (lay.rowsplit ? ' rowsplit' : '');
+
+  // 页脚排布：left / center / dots
+  const footStyle = lay.footerStyle || 'center';
+  let footerHTML = '';
+  if (footers.length > 0) {
+    if (footStyle === 'left') {
+      footerHTML = '<div class="pv-footer pf-left"><span class="pv-footer-inline">' +
+        escHtml(footers.join('  ·  ')) + '</span></div>';
+    } else if (footers.length === 1) {
+      footerHTML = '<div class="pv-footer pf-center"><span class="pv-footer-dash">— ' + escHtml(footers[0]) + ' —</span></div>';
+    } else {
+      footerHTML = '<div class="pv-footer pf-dots">';
+      footers.forEach(f => { footerHTML += '<span class="pv-footer-item"><span class="pv-footer-dot"></span>' + escHtml(f) + '</span>'; });
+      footerHTML += '</div>';
+    }
+  }
+
+  // 标题/副标题/分隔线可能为空，用 hasHeader 控制整个头部块的间距，
+  // 避免无标题时顶部留出一大块空白（导出图上尤其明显）。
+  const hasHeader = !!(title || subtitle);
+
+  return '<div data-preview class="is-live" id="pvRoot" style="' + escHtml(buildCustomCSS()) + '">' +
+    (hasHeader
+      ? '<div class="pv-header">' +
+          (title ? '<div class="pv-title">' + escHtml(title) + '</div>' : '') +
+          (subtitle ? '<div class="pv-subtitle">' + escHtml(subtitle) + '</div>' : '') +
+          '<div class="pv-divider ' + safeDividerCls + '"></div>' +
+        '</div>'
+      : '') +
+    '<div class="pv-card">' +
+      '<table class="' + tableCls + '"><thead><tr>' + thHTML + '</tr></thead><tbody>' + trHTML + '</tbody></table>' +
+    '</div>' +
+    footerHTML +
+  '</div>';
+}
+
+function renderPreview() {
+  const html = generatePreviewHTML();
+
+  // 预览画布
+  const canvas = document.getElementById('previewCanvas');
+  const emptyState = document.getElementById('previewEmptyState');
+  if (!html) {
+    canvas.innerHTML = '';
+    if (emptyState) emptyState.style.display = 'block';
+  } else {
+    canvas.innerHTML = html;
+    if (emptyState) emptyState.style.display = 'none';
+  }
+  updateStageMeta();
+}
+
+// 右上角实时状态：尺寸 / 行数 / 主题名
+function updateStageMeta() {
+  const el = document.getElementById('stageMeta');
+  if (!el) return;
+  const pv = document.getElementById('pvRoot');
+  if (!pv) { el.textContent = '等待数据'; return; }
+  const rows = pv.querySelectorAll('.pv-table tbody tr').length;
+  const cols = pv.querySelectorAll('.pv-table thead th').length;
+  const th = THEMES[currentTheme];
+  const themeName = (th && th.name) ? th.name : currentTheme;
+  el.textContent = cols + ' 列 × ' + rows + ' 行 · ' + themeName + ' · 宽度 ' + currentTableWidth + 'px';
+}
+
+function buildCustomCSS() {
+  // 防御：主题被删除后，localStorage 里可能还留着旧 key（如 classic / spotlight），
+  // 直接读取会抛 "Cannot read properties of undefined"。
+  if (!THEMES[currentTheme]) currentTheme = 'minimal';
+  const theme = THEMES[currentTheme];
+  const fontPair = FONT_PAIRS[currentFont] || FONT_PAIRS.system;
+  let parts = [];
+  // 注入字体变量
+  if (fontPair) {
+    parts.push('--t-font-title:' + fontPair.title);
+    parts.push('--t-font-body:' + fontPair.body);
+  }
+  // 注入尺寸变量
+  parts.push('--t-preview-width:' + currentTableWidth + 'px');
+  parts.push('--t-cell-pad-y:' + currentCellPadding + 'px');
+  for (const [k, v] of Object.entries(theme.overrides)) {
+    if (customColors[k]) continue;
+    parts.push(k + ':' + v);
+  }
+  for (const [k, v] of Object.entries(customColors)) {
+    parts.push(k + ':' + v);
+  }
+  return parts.join(';');
+}
+
+function escHtml(str) {
+  if (str == null) return '';
+  return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ============================================================
+// 导出设置快捷
+// ============================================================
+function setExportSize(w) {
+  document.getElementById('expW').value = w;
+  showToast('导出宽度已设为 ' + w + 'px');
+}
+
+// ============================================================
+// 正方形（1:1）输出
+// 开启后画布强制为 正方形：宽 = 高 = 导出宽度 × 倍率。
+// 表格本身不会拉伸变形 —— 由 renderPreviewToCanvas 按 contain 等比缩放后居中，
+// 空出来的上下（或左右）留白用主题背景色铺满。
+// ============================================================
+let exportSquare = false;
+
+function toggleSquareExport() {
+  exportSquare = !exportSquare;
+  const btn = document.getElementById('squareBtn');
+  if (btn) btn.classList.toggle('on', exportSquare);
+  // 正方形模式下「输出高度」失去意义，禁用以免用户以为它还在生效
+  const h = document.getElementById('expH');
+  if (h) h.disabled = exportSquare;
+  showToast(exportSquare
+    ? '已开启 1:1 方形输出，表格居中留白不拉伸'
+    : '已关闭 1:1，按内容原始比例输出');
+}
+
+// ============================================================
+// 导出图片
+// ============================================================
+/* 导出图去哪里。download = 下载到本机（默认）；gallery = 交给工作台图库。
+   做成一个变量而不是把 doExport 复制一份，是因为渲染那一段（量高度、
+   方形补边、toBlob）一条都不能少 —— 复制出去的那份迟早会跟主流程漂移，
+   最后表现为「下载的图和存图库的图不一样」。 */
+let exportDest = 'download';
+
+function doExport(copyToClipboard = false) {
+  renderPreview();
+  const target = document.getElementById('pvRoot');
+  if (!target) { showToast('请先切换到预览页或添加数据'); return; }
+
+  const data = readTableData();
+  if (data.rows.length === 0) { showToast('表格为空，无法导出'); return; }
+
+  const userW = parseInt(document.getElementById('expW').value) || 1080;
+  const scale = parseInt(document.getElementById('expScale').value) || 3;
+  // 注意：输出尺寸必须在 renderPreviewToCanvas 里量（那时预览页保证已参与布局）。
+  // 这里若直接读 offsetHeight，用户在编辑页导出时预览页仍是隐藏的，会量到 0 而退化成错误高度。
+  const outW = Math.round(userW * scale);
+  const expHVal = parseInt(document.getElementById('expH').value) || 0;   // 0 = 按比例自动
+  // 方形模式：画布高度直接等于宽度，交给绘制层做 contain 居中（不拉伸）
+  const manualH = exportSquare ? outW : (expHVal > 0 ? Math.round(expHVal * scale) : 0);
+  const outH = manualH;
+
+  const customName = document.getElementById('expFileName').value.trim();
+  const titleVal = document.getElementById('cfgTitle').value.trim();
+  const fnameBase = customName || (titleVal ? titleVal.replace(/[^\w\u4e00-\u9fa5]+/g, '-') : currentTheme);
+  // 文件名带上画布形状，方便在素材文件夹里一眼区分 1:1 与长图
+  const fname = 'size-chart-' + fnameBase + '-' + userW + (exportSquare ? '-1x1' : '') + '.png';
+
+  showToast(copyToClipboard ? '正在生成图片并复制...' : '正在生成图片...');
+
+  let rendered;
+  try {
+    rendered = renderPreviewToCanvas(outW, outH);
+  } catch (e) {
+    console.error(e);
+    showToast('图片生成失败：' + (e && e.message ? e.message : e));
+    return;
+  }
+  if (!rendered) { showToast('表格为空，无法导出'); return; }
+
+  const canvas = rendered.canvas;
+  const finalW = rendered.width;
+  const finalH = rendered.height;
+
+  const finish = function (blob) {
+    if (!blob) { showToast('导出失败，浏览器不支持此操作'); exportDest = 'download'; return; }
+    // 立刻复位而不是等分支里再复位：任何分支提前 return 都不会把下一次导出
+    // 带成"存图库"（那种 bug 表现为"点了下载，图却进了图库、没落盘"）
+    const dest = exportDest;
+    exportDest = 'download';
+
+    if (copyToClipboard) {
+      copyImageToClipboard(blob, { canvas: canvas });
+      // 复制到剪贴板同样算产出 —— 那张图是要拿去用的，一样留一份
+      void archiveChartToGallery(blob, fname, finalW, finalH);
+    } else if (dest === 'gallery') {
+      // 同一个渲染管线，只换投递去处 —— 导出到图库和下载走的是**完全一样**
+      // 的那张图，不存在「图库版和下载版不一样」这种事。
+      // 这里是用户明说要存，不再叠一次自动存档
+      saveChartToGallery(blob, fname, finalW, finalH);
+      return;
+    } else {
+      const link = document.createElement('a');
+      link.download = fname;
+      link.href = URL.createObjectURL(blob);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      showToast('图片已导出 (' + finalW + ' × ' + finalH + ')');
+      void archiveChartToGallery(blob, fname, finalW, finalH);
+    }
+  };
+
+  try {
+    canvas.toBlob(finish, 'image/png');
+  } catch (e) {
+    console.error(e);
+    showToast('导出失败：' + (e && e.message ? e.message : e));
+  }
+}
+
+// ============================================================
+// Canvas 2D 绘制
+// 直接按主题把预览画到画布上，不经过 SVG / <img>，
+// 因此不存在跨源污染，file:// 下也能正常导出。
+// ============================================================
+function _pxNum(v) { const n = parseFloat(v); return isFinite(n) ? n : 0; }
+
+// 按顶层逗号切分（保护 rgba(...) 内部的逗号）
+function _splitTopLevel(str) {
+  const out = []; let depth = 0, cur = '';
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; }
+    else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+// 取出 fnName( ... ) 括号内的内容（支持嵌套括号）
+function _extractFn(str, fnName) {
+  const key = fnName + '(';
+  const i = str.indexOf(key);
+  if (i < 0) return null;
+  let depth = 0;
+  const start = i + key.length - 1;
+  for (let j = start; j < str.length; j++) {
+    if (str[j] === '(') depth++;
+    else if (str[j] === ')') { depth--; if (depth === 0) return str.slice(start + 1, j); }
+  }
+  return null;
+}
+
+// 把 CSS linear-gradient 转成 canvas 渐变
+function _gradientFill(ctx, bgImage, x, y, w, h) {
+  const inner = _extractFn(bgImage, 'linear-gradient');
+  if (inner == null) return null;
+  const parts = _splitTopLevel(inner);
+  if (!parts.length) return null;
+
+  let angle = 180, idx = 0;
+  const head = parts[0];
+  if (/^to\s+/i.test(head)) {
+    const map = { top: 0, right: 90, bottom: 180, left: 270 };
+    angle = map[head.replace(/^to\s+/i, '').trim().toLowerCase()];
+    if (angle == null) angle = 180;
+    idx = 1;
+  } else if (/^-?[\d.]+deg$/i.test(head)) {
+    angle = parseFloat(head); idx = 1;
+  }
+
+  const stops = parts.slice(idx).map(function (s) {
+    const m = s.match(/^(.*?)\s+(-?[\d.]+)%$/);
+    if (m) return { color: m[1].trim(), pos: parseFloat(m[2]) / 100 };
+    return { color: s.trim(), pos: null };
+  }).filter(function (s) { return s.color; });
+  if (!stops.length) return null;
+  stops.forEach(function (s, i) {
+    if (s.pos == null) s.pos = stops.length > 1 ? i / (stops.length - 1) : 0;
+  });
+
+  const rad = angle * Math.PI / 180;
+  const dx = Math.sin(rad), dy = -Math.cos(rad);
+  const L = Math.abs(w * dx) + Math.abs(h * dy);
+  const cx = x + w / 2, cy = y + h / 2;
+  let g;
+  try {
+    g = ctx.createLinearGradient(cx - dx * L / 2, cy - dy * L / 2, cx + dx * L / 2, cy + dy * L / 2);
+    stops.forEach(function (s) { g.addColorStop(Math.min(1, Math.max(0, s.pos)), s.color); });
+  } catch (e) { return null; }
+  return g;
+}
+
+function _roundRect(ctx, x, y, w, h, r) {
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath();
+  if (r === 0) { ctx.rect(x, y, w, h); return; }
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+// 四角半径各自独立的圆角路径 —— 胶囊表头需要（首列左半圆 / 末列右半圆）
+function _roundRectVar(ctx, x, y, w, h, tl, tr, br, bl) {
+  const lim = Math.min(w / 2, h / 2);
+  tl = Math.max(0, Math.min(tl, lim)); tr = Math.max(0, Math.min(tr, lim));
+  br = Math.max(0, Math.min(br, lim)); bl = Math.max(0, Math.min(bl, lim));
+  ctx.beginPath();
+  ctx.moveTo(x + tl, y);
+  ctx.lineTo(x + w - tr, y);
+  if (tr > 0) ctx.arcTo(x + w, y, x + w, y + tr, tr);
+  ctx.lineTo(x + w, y + h - br);
+  if (br > 0) ctx.arcTo(x + w, y + h, x + w - br, y + h, br);
+  ctx.lineTo(x + bl, y + h);
+  if (bl > 0) ctx.arcTo(x, y + h, x, y + h - bl, bl);
+  ctx.lineTo(x, y + tl);
+  if (tl > 0) ctx.arcTo(x, y, x + tl, y, tl);
+  ctx.closePath();
+}
+
+// 按元素计算样式里的四角圆角填充（有圆角走路径，没圆角走 fillRect，避免无谓开销）
+function _fillWithRadius(ctx, cs, fill, rect) {
+  const tl = _pxNum(cs.borderTopLeftRadius), tr = _pxNum(cs.borderTopRightRadius);
+  const br = _pxNum(cs.borderBottomRightRadius), bl = _pxNum(cs.borderBottomLeftRadius);
+  ctx.save();
+  ctx.fillStyle = fill;
+  if (tl || tr || br || bl) {
+    _roundRectVar(ctx, rect.x, rect.y, rect.w, rect.h, tl, tr, br, bl);
+    ctx.fill();
+  } else {
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  }
+  ctx.restore();
+}
+
+// 按宽度折行（按字符测量，中英文都适用）
+function _wrapText(ctx, text, maxW) {
+  const out = [];
+  String(text).split('\n').forEach(function (seg) {
+    if (!seg) return;
+    if (ctx.measureText(seg).width <= maxW) { out.push(seg); return; }
+    let line = '';
+    for (let i = 0; i < seg.length; i++) {
+      const test = line + seg[i];
+      if (line && ctx.measureText(test).width > maxW) { out.push(line); line = seg[i]; }
+      else line = test;
+    }
+    if (line) out.push(line);
+  });
+  return out.length ? out : [''];
+}
+
+// 依据计算样式把一个元素的文字画进它的矩形范围
+function _drawElText(ctx, el, rect) {
+  const cs = getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return;
+  let text = (el.textContent || '').trim();
+  if (!text) return;
+  if (cs.textTransform === 'uppercase') text = text.toUpperCase();
+
+  const fs = _pxNum(cs.fontSize) || 14;
+  const padL = _pxNum(cs.paddingLeft), padR = _pxNum(cs.paddingRight);
+  const padT = _pxNum(cs.paddingTop), padB = _pxNum(cs.paddingBottom);
+  const cx0 = rect.x + padL, cy0 = rect.y + padT;
+  const cw = Math.max(1, rect.w - padL - padR);
+  const ch = Math.max(1, rect.h - padT - padB);
+
+  ctx.save();
+  ctx.font = (cs.fontWeight || '400') + ' ' + fs + 'px ' + cs.fontFamily;
+  ctx.fillStyle = cs.color;
+  ctx.textBaseline = 'middle';
+  const ls = cs.letterSpacing;
+  if (ls && ls !== 'normal' && 'letterSpacing' in ctx) { try { ctx.letterSpacing = ls; } catch (e) {} }
+
+  const lines = _wrapText(ctx, text, cw);
+  const lh = fs * 1.35;
+  const totalH = lines.length * lh;
+  let y = cy0 + Math.max(0, (ch - totalH) / 2) + lh / 2;
+  const align = cs.textAlign;
+
+  lines.forEach(function (line) {
+    let x;
+    if (align === 'center') { ctx.textAlign = 'center'; x = cx0 + cw / 2; }
+    else if (align === 'right' || align === 'end') { ctx.textAlign = 'right'; x = cx0 + cw; }
+    else { ctx.textAlign = 'left'; x = cx0; }
+    ctx.fillText(line, x, y);
+    y += lh;
+  });
+  ctx.restore();
+}
+
+// 与 CSS counter(pvrow, decimal-leading-zero) 保持一致：1 → 01
+function _padNum(n) {
+  return (n < 10 ? '0' : '') + n;
+}
+
+// 画单元格四边边框（网格线主题需要）
+function _drawBorders(ctx, cs, rect) {
+  const sides = [
+    ['Top', rect.x, rect.y, rect.w, 'h'],
+    ['Bottom', rect.x, rect.y + rect.h, rect.w, 'h'],
+    ['Left', rect.x, rect.y, rect.h, 'v'],
+    ['Right', rect.x + rect.w, rect.y, rect.h, 'v']
+  ];
+  ctx.save();
+  sides.forEach(function (s) {
+    const name = s[0];
+    const bw = _pxNum(cs['border' + name + 'Width']);
+    const style = cs['border' + name + 'Style'];
+    if (bw <= 0 || style === 'none' || style === 'hidden') return;
+    ctx.fillStyle = cs['border' + name + 'Color'];
+    if (s[4] === 'h') ctx.fillRect(s[1], s[2] - bw, s[3], bw);
+    else ctx.fillRect(s[1] - bw, s[2], bw, s[3]);
+  });
+  ctx.restore();
+}
+
+// 把当前预览按 outW × outH 绘制成 canvas
+// 前置条件：预览 [data-preview] 用固定 width（--t-preview-width）渲染，
+// 宽度不随窗口/栏宽变化，因此 natW 在各视口下恒定 —— 这是导出结果可复现的前提。
+// 若预览容器横向被裁切，getBoundingClientRect 仍是完整宽度，测量不受影响。
+function renderPreviewToCanvas(outW, outH) {
+  const pv = document.getElementById('pvRoot');
+  if (!pv) return null;
+
+  // 绘制期间摘掉 is-live（让 :hover 失效）并加上 is-exporting（掐掉 transition）。
+  // 两者缺一不可：只摘 is-live 的话，tr 的 background transition 会让
+  // getComputedStyle 读到过渡起始值，悬停高亮色照样被画进导出图。
+  const wasLive = pv.classList.contains('is-live');
+  if (wasLive) pv.classList.remove('is-live');
+  pv.classList.add('is-exporting');
+
+  try {
+    const natW = pv.offsetWidth || 720;
+    const natH = pv.offsetHeight || 400;
+    const base = pv.getBoundingClientRect();
+
+    // 输出尺寸：outH 为 0 时按自然比例自动推算
+    const finalW = Math.max(1, Math.round(outW || natW));
+    const finalH = Math.max(1, Math.round(outH > 0 ? outH : (outW > 0 ? outW * natH / natW : natH)));
+
+    // contain 适配：按 x/y 两个方向里「更小的那个」缩放，再把内容平移到画布中心。
+    // · 常规输出：finalW/finalH 与自然比例一致 ⇒ sx === sy，偏移为 0，行为与旧实现完全相同
+    // · 1:1 方形（或用户手填了高度）：画布比内容更「方」的那个方向会多出空白，
+    //   等比缩放后居中，用背景色补齐 —— 而不是把表格拉伸变形。
+    const sx = finalW / natW, sy = finalH / natH;
+    const s = Math.min(sx, sy);
+    const viewW = finalW / s, viewH = finalH / s;   // 画布在世界坐标下的可视范围
+    const ox = (viewW - natW) / 2, oy = (viewH - natH) / 2;
+
+    const cvs = document.createElement('canvas');
+    cvs.width = finalW;
+    cvs.height = finalH;
+    const ctx = cvs.getContext('2d');
+    if (!ctx) return null;
+    ctx.scale(s, s);
+    // 画布坐标 = (世界坐标 + o) × s：内容整体向右/向下挪半个留白，正好居中。
+    // （之前写成 translate(-ox,-oy) 是反的 —— 内容被向上顶出画布，标题直接被裁掉。）
+    ctx.translate(ox, oy);
+    ctx.textBaseline = 'middle';
+
+    const rectOf = function (el) {
+      const r = el.getBoundingClientRect();
+      return { x: r.left - base.left, y: r.top - base.top, w: r.width, h: r.height };
+    };
+
+    // 1) 页面背景
+    const pvCs = getComputedStyle(pv);
+    let bgFill = null;
+    if (pvCs.backgroundImage && pvCs.backgroundImage.indexOf('gradient') >= 0) {
+      // 渐变范围必须按「画布」量而不是按「内容」量，否则 1:1 留白区会由渐变末色硬撑出来；
+      // 画布原点在世界坐标里是 (-ox,-oy)
+      bgFill = _gradientFill(ctx, pvCs.backgroundImage, -ox, -oy, viewW, viewH);
+    }
+    if (!bgFill) {
+      const bc = pvCs.backgroundColor;
+      bgFill = (bc && bc !== 'rgba(0, 0, 0, 0)' && bc !== 'transparent') ? bc : '#ffffff';
+    }
+    ctx.fillStyle = bgFill;
+    // 铺满整个画布（含居中留白区），常规模式时这就是 0,0,natW,natH
+    ctx.fillRect(-ox, -oy, viewW, viewH);
+
+    // 2) 卡片：阴影 → 底色 → 边框
+    const card = pv.querySelector('.pv-card');
+    let cardRect = null, cardRadius = 0;
+    if (card) {
+      cardRect = rectOf(card);
+      const cs = getComputedStyle(card);
+      cardRadius = _pxNum(cs.borderTopLeftRadius);
+      const rawBg = cs.backgroundColor;
+      const isTransparent = (!rawBg || rawBg === 'rgba(0, 0, 0, 0)' || rawBg === 'transparent');
+      const shadows = (cs.boxShadow && cs.boxShadow !== 'none') ? _splitTopLevel(cs.boxShadow) : [];
+
+      shadows.forEach(function (s) {
+        const m = s.match(/(rgba?\([^)]*\)|#[0-9a-fA-F]{3,8})\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px/);
+        if (!m) return;
+        ctx.save();
+        ctx.shadowColor = m[1];
+        ctx.shadowOffsetX = _pxNum(m[2]);
+        ctx.shadowOffsetY = _pxNum(m[3]);
+        ctx.shadowBlur = _pxNum(m[4]);
+        ctx.fillStyle = isTransparent ? '#ffffff' : rawBg;
+        _roundRect(ctx, cardRect.x, cardRect.y, cardRect.w, cardRect.h, cardRadius);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      if (!isTransparent) {
+        ctx.fillStyle = rawBg;
+        _roundRect(ctx, cardRect.x, cardRect.y, cardRect.w, cardRect.h, cardRadius);
+        ctx.fill();
+      }
+
+      const bw = _pxNum(cs.borderTopWidth);
+      if (bw > 0 && cs.borderTopStyle !== 'none') {
+        ctx.strokeStyle = cs.borderTopColor;
+        ctx.lineWidth = bw;
+        _roundRect(ctx, cardRect.x + bw / 2, cardRect.y + bw / 2, cardRect.w - bw, cardRect.h - bw, cardRadius);
+        ctx.stroke();
+      }
+    }
+
+    // 3) 标题 / 副标题 / 分隔线
+    ['pv-title', 'pv-subtitle'].forEach(function (cls) {
+      const el = pv.querySelector('.' + cls);
+      if (el) _drawElText(ctx, el, rectOf(el));
+    });
+    const divider = pv.querySelector('.pv-divider');
+    if (divider) {
+      const r = rectOf(divider);
+      const cs = getComputedStyle(divider);
+      if (cs.display !== 'none' && r.w > 0 && r.h > 0) {
+        let f = null;
+        if (cs.backgroundImage && cs.backgroundImage.indexOf('gradient') >= 0) {
+          f = _gradientFill(ctx, cs.backgroundImage, r.x, r.y, r.w, r.h);
+        }
+        if (!f) f = cs.backgroundColor;
+        if (f && f !== 'rgba(0, 0, 0, 0)' && f !== 'transparent') {
+          ctx.fillStyle = f;
+          ctx.fillRect(r.x, r.y, r.w, r.h);
+        }
+      }
+    }
+
+    // 4) 表格（裁剪在卡片圆角内，末行圆角自然成立）
+    const table = pv.querySelector('.pv-table');
+    if (table) {
+      if (cardRect) {
+        ctx.save();
+        _roundRect(ctx, cardRect.x, cardRect.y, cardRect.w, cardRect.h, cardRadius);
+        ctx.clip();
+      }
+
+      // 表头：先算出整条表头的区域。
+      // 用整条而非单列来算 linear-gradient 的起止，否则每列各自起止会让
+      // 渐变在列边界跳变（product 等带渐变表头的主题会看出竖缝）。
+      const ths = Array.prototype.slice.call(table.querySelectorAll('thead th'));
+      let thBandRect = null;
+      if (ths.length) {
+        const f0 = rectOf(ths[0]);
+        const l0 = rectOf(ths[ths.length - 1]);
+        thBandRect = { x: f0.x, y: f0.y, w: (l0.x + l0.w) - f0.x, h: f0.h };
+      }
+
+      ths.forEach(function (th, thIdx) {
+        const r = rectOf(th);
+        const cs = getComputedStyle(th);
+        let f = null;
+        if (cs.backgroundImage && cs.backgroundImage.indexOf('gradient') >= 0) {
+          const g = thBandRect || r;
+          f = _gradientFill(ctx, cs.backgroundImage, g.x, g.y, g.w, g.h);
+        }
+        if (!f) f = cs.backgroundColor;
+        if (f && f !== 'rgba(0, 0, 0, 0)' && f !== 'transparent') {
+          const tl = _pxNum(cs.borderTopLeftRadius), tr = _pxNum(cs.borderTopRightRadius);
+          const br = _pxNum(cs.borderBottomRightRadius), bl = _pxNum(cs.borderBottomLeftRadius);
+          if (tl || tr || br || bl) {
+            // 胶囊两端带圆角，走路径填充
+            _fillWithRadius(ctx, cs, f, r);
+          } else {
+            ctx.save();
+            ctx.fillStyle = f;
+            // 左右各铺出 0.5px 与相邻单元格重叠：圆角列走的是路径填充，
+            // 与矩形填充在边界各贡献半格 alpha 会留下一条浅色细缝。
+            const overL = (thIdx > 0) ? 0.5 : 0;
+            const overR = (thIdx < ths.length - 1) ? 0.5 : 0;
+            ctx.fillRect(r.x - overL, r.y, r.w + overL + overR, r.h);
+            ctx.restore();
+          }
+        }
+        _drawBorders(ctx, cs, r);
+        _drawElText(ctx, th, r);
+      });
+
+      // 行序号由 CSS counter 生成，canvas 里取不到；按同一格式补绘（decimal-leading-zero）
+      const numbered = table.classList.contains('numbered');
+      const numStyle = numbered ? getComputedStyle(table.querySelector('tbody td:first-child'), '::before') : null;
+      let rowSeq = 0;
+
+      Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (tr) {
+        const trRect = rectOf(tr);
+        const trCs = getComputedStyle(tr);
+        if (trCs.backgroundColor && trCs.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+          // 行背景铺在 tr 上，但圆角定义在首末 td 上（胶囊主题的末行下圆角），
+          // 所以要从两端的 td 取半径，否则白色会溢出圆弧。
+          const trTds = Array.prototype.slice.call(tr.children);
+          let tl = 0, trr = 0, br = 0, bl = 0;
+          if (trTds.length) {
+            const fCs = getComputedStyle(trTds[0]);
+            const lCs = getComputedStyle(trTds[trTds.length - 1]);
+            tl = _pxNum(fCs.borderTopLeftRadius);
+            bl = _pxNum(fCs.borderBottomLeftRadius);
+            trr = _pxNum(lCs.borderTopRightRadius);
+            br = _pxNum(lCs.borderBottomRightRadius);
+          }
+          ctx.save();
+          ctx.fillStyle = trCs.backgroundColor;
+          if (tl || trr || br || bl) {
+            _roundRectVar(ctx, trRect.x, trRect.y, trRect.w, trRect.h, tl, trr, br, bl);
+            ctx.fill();
+          } else {
+            ctx.fillRect(trRect.x, trRect.y, trRect.w, trRect.h);
+          }
+          ctx.restore();
+        }
+        rowSeq++;
+        Array.prototype.forEach.call(tr.children, function (td, tdIdx) {
+          const r = rectOf(td);
+          const cs = getComputedStyle(td);
+          // td 自身也可能带背景（row-split 主题的白条就画在这里）。
+          // 以前只画 tr 背景，这类主题导出后会整块丢失。
+          const tdBg = cs.backgroundColor;
+          if (tdBg && tdBg !== 'rgba(0, 0, 0, 0)' && tdBg !== 'transparent') {
+            const tl2 = _pxNum(cs.borderTopLeftRadius), tr2 = _pxNum(cs.borderTopRightRadius);
+            const br2 = _pxNum(cs.borderBottomRightRadius), bl2 = _pxNum(cs.borderBottomLeftRadius);
+            if (tl2 || tr2 || br2 || bl2) {
+              _fillWithRadius(ctx, cs, tdBg, r);
+            } else {
+              // 中间列走矩形填充，左右各铺出 0.5px 与邻列重叠，
+              // 否则相邻 fillRect 各自贡献半格 alpha，行内会留下一条浅色竖缝。
+              ctx.save();
+              ctx.fillStyle = tdBg;
+              ctx.fillRect(r.x - 0.5, r.y, r.w + 1, r.h);
+              ctx.restore();
+            }
+          }
+          _drawBorders(ctx, cs, r);
+          // 序号占用首列左侧固定宽度，正文需相应右移，避免与序号重叠
+          let textRect = r;
+          if (numbered && tdIdx === 0 && numStyle) {
+            const numW = _pxNum(numStyle.width);
+            const padL = _pxNum(cs.paddingLeft);
+            ctx.save();
+            ctx.font = numStyle.fontWeight + ' ' + numStyle.fontSize + ' ' + numStyle.fontFamily;
+            ctx.fillStyle = numStyle.color;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(_padNum(rowSeq), r.x + padL, r.y + r.h / 2);
+            ctx.restore();
+            textRect = { x: r.x + (numW || 0), y: r.y, w: Math.max(0, r.w - (numW || 0)), h: r.h };
+          }
+          _drawElText(ctx, td, textRect);
+        });
+      });
+
+      if (cardRect) ctx.restore();
+    }
+
+    // 5) 页脚
+    const dash = pv.querySelector('.pv-footer-dash');
+    if (dash) _drawElText(ctx, dash, rectOf(dash));
+
+    // 杂志风左对齐页脚：先画左侧竖线（border-left），再画文字
+    const inlineFoot = pv.querySelector('.pv-footer-inline');
+    if (inlineFoot) {
+      const fr = rectOf(inlineFoot);
+      const fcs = getComputedStyle(inlineFoot);
+      _drawBorders(ctx, fcs, fr);
+      _drawElText(ctx, inlineFoot, fr);
+    }
+
+    Array.prototype.forEach.call(pv.querySelectorAll('.pv-footer-item'), function (item) {
+      const ir = rectOf(item);
+      const cs = getComputedStyle(item);
+      const gap = _pxNum(cs.columnGap || cs.gap);
+      let cursorX = ir.x;
+      Array.prototype.forEach.call(item.childNodes, function (node) {
+        if (node.nodeType === 1) {
+          const dcs = getComputedStyle(node);
+          const dr = rectOf(node);
+          if (dcs.backgroundColor && dcs.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+            ctx.fillStyle = dcs.backgroundColor;
+            ctx.beginPath();
+            ctx.ellipse(dr.x + dr.w / 2, dr.y + dr.h / 2, Math.max(dr.w / 2, 1), Math.max(dr.h / 2, 1), 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          cursorX = dr.x + dr.w + gap;
+        } else if (node.nodeType === 3) {
+          const txt = (node.textContent || '').trim();
+          if (!txt) return;
+          const fs = _pxNum(cs.fontSize) || 12;
+          ctx.save();
+          ctx.font = (cs.fontWeight || '400') + ' ' + fs + 'px ' + cs.fontFamily;
+          ctx.fillStyle = cs.color;
+          ctx.textBaseline = 'middle';
+          ctx.textAlign = 'left';
+          ctx.fillText(txt, cursorX, ir.y + ir.h / 2);
+          cursorX += ctx.measureText(txt).width + gap;
+          ctx.restore();
+        }
+      });
+    });
+
+    return { canvas: cvs, width: finalW, height: finalH, natW: natW, natH: natH };
+  } catch (e) {
+    console.error('renderPreviewToCanvas error:', e);
+    return null;
+  } finally {
+    // 无论成功失败都要还原，否则表格会永久失去悬停反馈
+    pv.classList.remove('is-exporting');
+    if (wasLive) pv.classList.add('is-live');
+  }
+}
+
+// ============================================================
+// 复制图片到剪贴板（含 file:// 降级链）
+// ============================================================
+// 注意：<img> + Range + execCommand('copy') 这条“经典”路径在 Chromium 里
+// 会返回 true 却往剪贴板写入一个 *没有像素数据* 的图片占位符
+// （实测：execCommand 返回 true，但系统剪贴板 FORMATS 为空），
+// 用户粘贴出来就是一张空白图。所以这里不再把它当作可用的复制方案，
+// 而是改为：真正的 ClipboardItem 写入 → 失败则改存 PNG 到剪贴板旁路（打开新窗口/下载）。
+function copyImageToClipboard(blob, opts) {
+  opts = opts || {};
+  const srcCanvas = opts.canvas || null;
+
+  // 方案1：异步 Clipboard API（真实图片写入）。
+  // file:// 在 Chrome 中属于 secure context，navigator.clipboard 通常可用；
+  // 若被权限策略拦截会 reject，此时进入兜底。
+  if (navigator.clipboard && navigator.clipboard.write && typeof ClipboardItem !== 'undefined') {
+    try {
+      const item = new ClipboardItem({ 'image/png': blob });
+      navigator.clipboard.write([item]).then(
+        function () { showToast('图片已复制到剪贴板，可直接粘贴'); },
+        function (err) {
+          console.warn('clipboard.write 被拒绝，改用兜底方案', err);
+          copyFallbackOpen(blob, srcCanvas, err);
+        }
+      );
+      return;
+    } catch (e) {
+      console.warn('ClipboardItem 构造失败，改用兜底方案', e);
+      copyFallbackOpen(blob, srcCanvas, e);
+    }
+  }
+  copyFallbackOpen(blob, srcCanvas, null);
+}
+
+// 兜底：无法写剪贴板时，把图片直接呈现在用户面前（内嵌预览 + 右键复制/另存），
+// 这是唯一在 file:// 下 100% 可用且不会得到空白图的方案。
+function copyFallbackOpen(blob, srcCanvas, err) {
+  const url = URL.createObjectURL(blob);
+
+  // 打开一个内嵌预览层：图片真实渲染在页面上，用户可直接右键“复制图像”
+  const overlay = document.createElement('div');
+  overlay.className = 'img-pickup-overlay';
+  overlay.innerHTML =
+    '<div class="img-pickup-box">' +
+      '<div class="img-pickup-head">' +
+        '<span>浏览器未允许直接写入剪贴板，请在图片上<b>右键 → 复制图像</b>（或点“下载图片”）</span>' +
+        '<button class="img-pickup-close" title="关闭">✕</button>' +
+      '</div>' +
+      '<div class="img-pickup-body"><img alt="尺码表图片" src="' + url + '"></div>' +
+      '<div class="img-pickup-foot">' +
+        '<button class="size-preset img-pickup-dl">下载图片</button>' +
+      '</div>' +
+    '</div>';
+
+  function close() {
+    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    document.removeEventListener('keydown', onKey);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+  }
+  function onKey(e) { if (e.key === 'Escape') close(); }
+
+  overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+  overlay.querySelector('.img-pickup-close').addEventListener('click', close);
+  overlay.querySelector('.img-pickup-dl').addEventListener('click', function () {
+    const a = document.createElement('a');
+    a.download = 'size-chart-copy.png';
+    a.href = url;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  });
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(overlay);
+  showToast('已打开图片：请右键“复制图像”，或点下载按钮');
+}
+
+// ============================================================
+// 全局粘贴监听
+// ============================================================
+document.addEventListener('paste', function(e) {
+  const active = document.activeElement;
+  if (active && (active.closest('#editTable') || active.id === 'pasteArea' || active.classList.contains('form-input'))) return;
+  const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+  if (!text || !text.includes('\t')) return;
+  const body = document.getElementById('pasteBody');
+  if (!body.classList.contains('open')) togglePanel('pasteBody', 'pasteArrow');
+  document.getElementById('pasteArea').value = text;
+  showToast('检测到表格数据，已填入粘贴区');
+});
+
+// ============================================================
+// 上次状态持久化
+// ============================================================
+const LAST_KEY = 'size-studio-last-v1';
+
+function snapshotCurrent() {
+  const data = readTableData();
+  return {
+    headers: data.headers,
+    rows: data.rows,
+    title: document.getElementById('cfgTitle').value,
+    subtitle: document.getElementById('cfgSubtitle').value,
+    footer: document.getElementById('cfgFooter').value,
+    theme: currentTheme,
+    font: currentFont,
+    customColors: { ...customColors },
+    tableWidth: currentTableWidth,
+    cellPadding: currentCellPadding,
+    savedAt: new Date().toISOString()
+  };
+}
+
+function applySnapshot(p) {
+  if (p == null) return;
+  if (p.title != null) document.getElementById('cfgTitle').value = p.title;
+  if (p.subtitle != null) document.getElementById('cfgSubtitle').value = p.subtitle;
+  if (p.footer != null) document.getElementById('cfgFooter').value = p.footer;
+  if (p.theme && THEMES[p.theme]) currentTheme = p.theme;
+  if (p.font && FONT_PAIRS[p.font]) currentFont = p.font;
+  customColors = (p.customColors && typeof p.customColors === 'object') ? { ...p.customColors } : {};
+  if (p.tableWidth) currentTableWidth = p.tableWidth;
+  if (p.cellPadding) currentCellPadding = p.cellPadding;
+  if (Array.isArray(p.headers) && Array.isArray(p.rows) && p.headers.length > 0) {
+    restoreTable(p.headers, p.rows);
+  }
+  document.querySelectorAll('.theme-chip').forEach(c => c.classList.toggle('active', c.dataset.theme === currentTheme));
+  document.querySelectorAll('.font-chip').forEach(c => c.classList.toggle('active', c.dataset.font === currentFont));
+  updateColorGrid();
+  syncSizeControls();
+  renderPreview();
+}
+
+// 表格尺寸控制
+function onSizeControlChange() {
+  currentTableWidth = parseInt(document.getElementById('ctlTableWidth').value) || 720;
+  currentCellPadding = parseInt(document.getElementById('ctlCellPadding').value) || 14;
+  document.getElementById('ctlTableWidthVal').textContent = currentTableWidth + 'px';
+  document.getElementById('ctlCellPaddingVal').textContent = currentCellPadding + 'px';
+  renderPreview();
+  debouncedAutoSave();
+}
+
+function syncSizeControls() {
+  const wEl = document.getElementById('ctlTableWidth');
+  const pEl = document.getElementById('ctlCellPadding');
+  const wVal = document.getElementById('ctlTableWidthVal');
+  const pVal = document.getElementById('ctlCellPaddingVal');
+  if (wEl) { wEl.value = currentTableWidth; }
+  if (pEl) { pEl.value = currentCellPadding; }
+  if (wVal) { wVal.textContent = currentTableWidth + 'px'; }
+  if (pVal) { pVal.textContent = currentCellPadding + 'px'; }
+}
+
+// 帮助面板
+function openHelpPanel() { document.getElementById('helpOverlay').classList.add('show'); document.getElementById('helpPanel').classList.add('show'); }
+function closeHelpPanel() { document.getElementById('helpOverlay').classList.remove('show'); document.getElementById('helpPanel').classList.remove('show'); }
+
+// 上次状态
+function saveLast(snap) {
+  try {
+    const json = JSON.stringify(snap);
+    if (json.length * 2 > 1 * 1024 * 1024) return; // last只存1MB
+    localStorage.setItem(LAST_KEY, json);
+  } catch (e) {}
+}
+function loadLast() {
+  try {
+    const raw = localStorage.getItem(LAST_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) { return null; }
+}
+
+function clearAllData() {
+  if (!confirm('确定要清空所有数据吗？此操作不可撤销。')) return;
+  pushHistory();
+  document.getElementById('cfgTitle').value = '';
+  document.getElementById('cfgSubtitle').value = '';
+  document.getElementById('cfgFooter').value = '';
+  currentTheme = 'minimal';
+  currentFont = 'system';
+  customColors = {};
+  currentTableWidth = 720;
+  currentCellPadding = 14;
+  restoreTable(['测量部位', '尺码'], []);
+  document.querySelectorAll('.theme-chip').forEach(c => c.classList.toggle('active', c.dataset.theme === 'minimal'));
+  document.querySelectorAll('.font-chip').forEach(c => c.classList.toggle('active', c.dataset.font === 'system'));
+  updateColorGrid();
+  syncSizeControls();
+  renderPreview();
+  showToast('已清空全部数据');
+}
+
+function loadFromLocal(showMsg) {
+  const last = loadLast();
+  if (!last) { if (showMsg) showToast('本地暂无保存的数据'); return false; }
+  applySnapshot(last);
+  if (showMsg) {
+    const t = last.savedAt ? new Date(last.savedAt) : null;
+    const timeStr = t ? '（保存于 ' + t.toLocaleString('zh-CN') + '）' : '';
+    showToast('已恢复本地数据' + timeStr);
+  }
+  return true;
+}
+
+// 防抖自动保存
+let autoSaveTimer = null;
+function debouncedAutoSave() {
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => saveLast(snapshotCurrent()), 1000);
+}
+function autoSave() { saveLast(snapshotCurrent()); }
+
+// 默认表格数据
+const DEFAULT_HEADERS = ['测量部位', '尺码'];
+const DEFAULT_ROWS = [];
+
+// 根据数据重建编辑表格
+function restoreTable(headers, rows) {
+  const headerRow = document.getElementById('editHeaderRow');
+  headerRow.innerHTML = '';
+  headers.forEach((h, i) => {
+    const th = document.createElement('th');
+    th.contentEditable = 'true';
+    th.textContent = h;
+    th.oninput = onEditorChange;
+    if (i > 0) {
+      const btn = document.createElement('button');
+      btn.className = 'col-del-btn'; btn.title = '删除此列'; btn.textContent = '×';
+      btn.onclick = function() { removeColByIndex(i); };
+      th.appendChild(btn);
+    }
+    headerRow.appendChild(th);
+  });
+  const tbody = document.getElementById('editBody');
+  tbody.innerHTML = '';
+  const colCount = headers.length;
+  rows.forEach(row => {
+    const tr = document.createElement('tr');
+    for (let i = 0; i < colCount; i++) {
+      const td = document.createElement('td');
+      td.contentEditable = 'true';
+      td.textContent = (row[i] != null) ? row[i] : '';
+      td.oninput = onEditorChange;
+      if (i === colCount - 1) {
+        const rowBtn = document.createElement('button');
+        rowBtn.className = 'row-del-btn'; rowBtn.title = '删除此行'; rowBtn.textContent = '—';
+        rowBtn.onclick = function() { removeRowByIndex(this); };
+        td.appendChild(rowBtn);
+      }
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  });
+  // 更新空状态
+  readTableData();
+}
+
+// ============================================================
+// 键盘快捷键
+// ============================================================
+document.addEventListener('keydown', function(e) {
+  const mod = e.ctrlKey || e.metaKey;
+  if (!mod) return;
+  const key = e.key.toLowerCase();
+  const active = document.activeElement;
+  const isEditing = active && (active.isContentEditable || active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
+
+  switch (key) {
+    case 's':
+      e.preventDefault();
+      quickSavePreset();
+      break;
+    case 'e':
+      e.preventDefault();
+      doExport();
+      break;
+    case 'z':
+      if (isEditing) return;
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+      break;
+    case 'y':
+      if (isEditing) return;
+      e.preventDefault();
+      redo();
+      break;
+    case '1':
+      e.preventDefault();
+      switchPage('editor');
+      break;
+    case '2':
+      e.preventDefault();
+      switchPage('preview');
+      break;
+    case '3':
+      e.preventDefault();
+      switchPage('style');
+      break;
+    case '?':
+    case '/':
+      if (e.shiftKey) {
+        e.preventDefault();
+        openHelpPanel();
+      }
+      break;
+  }
+});
+
+// Tab键在表格中横向导航
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Tab') return;
+  const active = document.activeElement;
+  if (!active || !active.closest('#editTable')) return;
+  const cells = Array.from(document.querySelectorAll('#editTable th, #editTable td'));
+  const idx = cells.indexOf(active);
+  if (idx < 0) return;
+  e.preventDefault();
+  const next = e.shiftKey ? (idx - 1 + cells.length) % cells.length : (idx + 1) % cells.length;
+  cells[next].focus();
+});
+
+// 方向键在表格中导航（↑↓←→）
+document.addEventListener('keydown', function(e) {
+  const active = document.activeElement;
+  if (!active || !active.closest('#editTable')) return;
+  const key = e.key;
+  if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) return;
+  e.preventDefault();
+
+  const rows = Array.from(document.querySelectorAll('#editTable thead tr, #editTable tbody tr'));
+  const currentRow = active.closest('tr');
+  const rowIdx = rows.indexOf(currentRow);
+  if (rowIdx < 0) return;
+
+  const cells = Array.from(currentRow.querySelectorAll('th, td'));
+  const colIdx = cells.indexOf(active);
+  if (colIdx < 0) return;
+
+  let nextRowIdx = rowIdx;
+  let nextColIdx = colIdx;
+
+  if (key === 'ArrowUp') nextRowIdx = Math.max(0, rowIdx - 1);
+  if (key === 'ArrowDown') nextRowIdx = Math.min(rows.length - 1, rowIdx + 1);
+  if (key === 'ArrowLeft') nextColIdx = Math.max(0, colIdx - 1);
+  if (key === 'ArrowRight') nextColIdx = Math.min(cells.length - 1, colIdx + 1);
+
+  const nextRow = rows[nextRowIdx];
+  const nextCells = Array.from(nextRow.querySelectorAll('th, td'));
+  const target = nextCells[Math.min(nextColIdx, nextCells.length - 1)];
+  if (target) target.focus();
+});
+
+// ============================================================
+// 图库联动（工作台宿主）
+// ------------------------------------------------------------
+// 这个 HTML 有两副面孔：
+//   · 双击直接打开 —— 一个自足的单文件生成器，下面这些东西**全部不出现**
+//   · 被工作台当工具嵌进 iframe —— 通过 postMessage 跟宿主说话，
+//     多出一个「存进图库」
+// 判定靠宿主主动推来的 tool:context（见宿主 src/lib/toolBridge.ts），
+// 不是 UA 或 query。因为工具和宿主是**分开升级**的：新工具装在旧宿主上时
+// ctx 里没有 gallery 标记，这时要把入口藏起来，而不是让用户点了报
+// 「不支持的操作」。
+//
+// 这个工具只出不进：它没有图片输入（表格来自手输或粘贴 Excel），
+// 所以只接「写进图库」这一个方向 —— 不像图片裁剪 / AI 生成那样还能从图库
+// 挑一张回来当素材。这不是漏做，是它**没有可读图的场景**；哪天加了「商品图」
+// 之类的插图位，再顺着 list / get 补上就行（宿主那两个操作一直是开着的）。
+//
+// ⚠️ 往图库写时，来源标记由宿主按 tool_id 盖（这里是 size-chart），
+// 工具说了不算 —— 这样图库里的「出处」才可信。
+// ============================================================
+var Gallery = (function () {
+  var HOST_SOURCE = 'workbench-host', TOOL_SOURCE = 'workbench-tool';
+  var seq = 0, pending = Object.create(null), ctx = null;
+
+  /* gallery.put 传的是**一整张 PNG** 的 base64（1080×3 倍的表格能有几百 KB
+     到几 MB），要穿过 postMessage 再落盘，8 秒衡量不了它 */
+  function ask(op, payload, timeoutMs) {
+    return new Promise(function (resolve, reject) {
+      if (parent === window) { reject(new Error('未连接工作台')); return; }
+      var id = 'q' + (++seq);
+      pending[id] = { resolve: resolve, reject: reject };
+      try {
+        parent.postMessage({ source: TOOL_SOURCE, type: 'tool:request', id: id, op: op, payload: payload || {} },
+          window.location.origin);
+      } catch (e) { delete pending[id]; reject(e); return; }
+      setTimeout(function () {
+        if (pending[id]) { delete pending[id]; reject(new Error('工作台无响应（' + op + '）')); }
+      }, timeoutMs || 8000);
+    });
+  }
+
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.source !== HOST_SOURCE) return;
+    if (d.type === 'tool:context') {
+      ctx = d.data;
+      syncGalleryUI();
+      // 偏好存在宿主（工具私有 KV）里，必须等连接确认后再读 ——
+      // 双击打开时 kv 请求注定失败，提前发只会多一条无用报错
+      loadAutoGalleryPref();
+      return;
+    }
+    if (d.type === 'tool:response') {
+      var p = pending[d.id];
+      if (!p) return;
+      delete pending[d.id];
+      if (d.ok) p.resolve(d.data); else p.reject(new Error(d.error));
+    }
+  });
+
+  return {
+    supports: function () { return !!(ctx && ctx.gallery); },
+    /* 宿主**连上了**但不一定**支持图库**（旧宿主推来的 ctx 里没有 gallery 标记）。
+       读偏好用 connected：连都没连上就别发请求。 */
+    connected: function () { return !!ctx; },
+    put: function (o) { return ask('gallery.put', o, 120000); },
+    /* 工具私有 KV：存「导出是否自动存图库」这类偏好。
+       只在本工具命名空间下读写（宿主按 tool_id 隔离），碰不到别工具的键。 */
+    kvGet: function (k) { return ask('kv.get', { key: k }).then(function (r) { return r.value; }); },
+    kvSet: function (k, v) { return ask('kv.set', { key: k, value: v }); }
+  };
+})();
+
+function syncGalleryUI() {
+  var ok = Gallery.supports();
+  var btn = document.getElementById('btnChartToGallery');
+  if (btn) btn.hidden = !ok;
+  syncAutoGalleryUI();
+}
+
+// ============================================================
+// 导出自动留档（默认开）
+// ------------------------------------------------------------
+// 三条纪律：
+//   1. **存档失败绝不能把「导出成功」翻成「导出失败」** —— 用户的动作是导出，
+//      图库只是顺手留底。所以是 void 火后不管 + 自己吞异常 + 只提示。
+//   2. 自动存档传 dedupe，手动「存进图库」不传 —— 自动是悄悄做的，不该
+//      每次导出都堆一张一模一样的卡；手动点那一按钮，他要的就是「再留一份」。
+//   3. 开关默认开、且可关：方向是「宁可多存一张，也别丢一张」。
+// ============================================================
+var KV_AUTO_GALLERY = 'autoGallery';
+var autoGallery = true;
+
+function autoGalleryOn() { return autoGallery !== false && Gallery.supports(); }
+
+function blobToDataUrl(blob) {
+  return new Promise(function (resolve, reject) {
+    var r = new FileReader();
+    r.onerror = function () { reject(new Error('读取结果失败')); };
+    r.onload = function () { resolve(String(r.result)); };
+    r.readAsDataURL(blob);
+  });
+}
+
+/**
+ * 单一出口：手动「存进图库」与导出后的自动存档走同一个函数，只有 dedupe 不同。
+ * 复制成两份迟早会漂移成「手动存的图和自动存的不是同一张」。
+ */
+async function putChartToGallery(blob, fname, w, h, dedupe) {
+  if (!Gallery.supports()) throw new Error('没连上工作台，图库用不了');
+  var dataUrl = await blobToDataUrl(blob);
+  return Gallery.put({
+    dataUrl: dataUrl,
+    title: fname,
+    // 标题那行文字一起存进 note：图库里搜「尺码表」能搜到，
+    // 也省得为了确认是哪张再开一次图
+    note: w + '×' + h + ' · PNG',
+    dedupe: dedupe === true,
+  });
+}
+
+/** 手动「存进图库」：要按钮忙态、失败要看得见 —— 这是用户主动发起的动作 */
+async function saveChartToGallery(blob, fname, w, h) {
+  var btn = document.getElementById('btnChartToGallery');
+  var old = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+  try {
+    var item = await putChartToGallery(blob, fname, w, h, false);
+    showToast('已存进图库' + (item && item.title ? '：' + item.title : ''));
+  } catch (err) {
+    showToast('存图库失败：' + String(err && err.message || err));
+  } finally {
+    if (btn) { btn.textContent = old; btn.disabled = false; }
+  }
+}
+
+/** 导出后的自动留档：失败只提示，不改「导出已成功」这个事实 */
+async function archiveChartToGallery(blob, fname, w, h) {
+  if (!autoGalleryOn()) return;
+  try {
+    var item = await putChartToGallery(blob, fname, w, h, true);
+    showToast(item && item.dup ? '图库里已有这一份' : '已自动存入图库：' + (item && item.title || fname));
+    document.body.dataset.autoArchived = '1';
+  } catch (err) {
+    showToast('自动存图库失败：' + String(err && err.message || err));
+  }
+}
+
+/** 「存进图库」按钮 → 复用 doExport 的渲染管线，只换投递去处 */
+function exportToGallery() {
+  if (!Gallery.supports()) { showToast('没连上工作台，图库用不了'); return; }
+  exportDest = 'gallery';
+  doExport(false);
+}
+
+/** 开关只在连上宿主时出现；改动立刻写库，不等别的保存动作 */
+function syncAutoGalleryUI() {
+  var line = document.getElementById('chkAutoGalleryLine');
+  if (!line) return;
+  line.hidden = !Gallery.supports();
+  var box = document.getElementById('chkAutoGallery');
+  if (box) box.checked = autoGallery !== false;
+  // 供 e2e 断言：单机打开时这两个 data-* 不会出现
+  document.body.dataset.autoGallery = String(autoGallery !== false);
+}
+
+function loadAutoGalleryPref() {
+  if (!Gallery.connected()) return;
+  // 只有用户明确关过（存 "0"）才是关；读不到一律按开 ——
+  // 这个开关的方向是"宁可多存一张，也别丢一张"
+  Gallery.kvGet(KV_AUTO_GALLERY).then(function (v) {
+    if (v === '0' || v === '1') { autoGallery = v !== '0'; syncAutoGalleryUI(); }
+  }).catch(function () { /* 读不到就用默认的开 */ });
+}
+
+document.getElementById('chkAutoGallery').addEventListener('change', function () {
+  autoGallery = this.checked;
+  syncAutoGalleryUI();
+  Gallery.kvSet(KV_AUTO_GALLERY, autoGallery ? '1' : '0').catch(function () {
+    showToast('开关没能写进工作台（下次打开会回到默认的开）');
+  });
+});
+
+// ============================================================
+// 初始化
+// ============================================================
+initPresetBar();
+initThemeBar();
+initFontBar();
+// updateColorGrid 必须在这里也调一次：它原本只由 selectTheme / applySnapshot 触发，
+// 于是首次打开（本地没有存档）时「微调各项颜色」里是空的，要切一次主题才冒出来。
+updateColorGrid();
+syncSizeControls();
+
+// 从本地读取保存的数据
+const restored = loadFromLocal(false);
+if (restored) {
+  setTimeout(() => showToast('已自动恢复上次保存的数据'), 300);
+}
+
+// 如果没有恢复数据，显示空状态
+readTableData();
+renderPreview();
+
+// 初始化历史记录
+setTimeout(() => pushHistory(), 500);
+
+// 定时自动保存（每 30 秒）
+setInterval(autoSave, 30000);
+</script>
+</body>
+</html>

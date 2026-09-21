@@ -1,0 +1,10 @@
+{
+  "id": "ai-gen",
+  "name": "AI 生成",
+  "version": "0.5.0",
+  "description": "文生图 / 图生图、文生视频与对话。已接入阿里云百炼（万相、千问图像、Z-Image 共 21 档，按族走各自接口）与 Agnes AI，出图默认自动存进图库（开关可关）、参考图可从图库挑，生成结果可一键放回参考图继续编辑",
+  "icon": "sparkles",
+  "entry": "index.html",
+  "dbVersion": 1,
+  "author": "内置"
+}

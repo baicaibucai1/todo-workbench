@@ -1,0 +1,45 @@
+[package]
+name = "todo-workbench"
+version = "0.1.0"
+description = "待办工作台 - 可扩展的桌面工作台"
+authors = ["sogapopo"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "todo_workbench_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-fs = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 附件仓库要的几样东西。**全部是刻意与 tauri-plugin-updater 对齐的写法**，
+# 因为 updater 已经把这些 crate 拉进依赖树并编译过了：
+#   reqwest / rustls(features= ["ring"]) / infer / percent-encoding —— 都是它带的。
+# 对齐 feature 就能复用已编译的产物，而不是因为 feature 不一致而整条重编
+# （rustls 换个 provider 意味着连带编译 aws-lc-rs，那是个需要 cmake/nasm 的大家伙）。
+# ring 与 reqwest 额外显式声明，是为了能直接用它们的 API（哈希、装 TLS provider）。
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+ring = "0.17"
+infer = "0.19"
+percent-encoding = "2"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

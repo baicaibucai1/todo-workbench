@@ -1,0 +1,21 @@
+# Cargo 配置：GNU 工具链（由 scripts/setup-gnu.mjs 生成，请勿手工编辑）
+#
+# 生成于 2026/9/18 10:11:47
+# MinGW 位置：C:\Users\Sogap\msys64\mingw64\bin
+#
+# 关键参数 -Wl,-exclude-all-symbols：
+#   MinGW 构建 DLL 时默认导出全部静态库符号，而 Windows PE 限制导出序号 <= 65535。
+#   Tauri 依赖的 windows crate 远超此限，会报 export ordinal too large。
+#   此参数让链接器只导出显式标记的函数，Tauri 的 cdylib 只需少量 FFI 导出。
+#
+# 关闭本配置：npm run setup:gnu -- --off
+
+[build]
+target = "x86_64-pc-windows-gnu"
+
+[target.x86_64-pc-windows-gnu]
+linker = "C:\\Users\\Sogap\\msys64\\mingw64\\bin\\gcc.exe"
+ar = "C:\\Users\\Sogap\\msys64\\mingw64\\bin\\ar.exe"
+rustflags = [
+  "-C", "link-arg=-Wl,-exclude-all-symbols",
+]

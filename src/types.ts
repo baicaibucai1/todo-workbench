@@ -1,0 +1,404 @@
+/**
+ * 数据模型定义。
+ *
+ * 设计约定：
+ * - 核心业务表统一以 core_ 前缀
+ * - 工具私有表以 tool_<toolId>_ 前缀（见 src/lib/db.ts）
+ * - 时间统一存 ISO 8601 字符串，便于排序与跨库迁移
+ */
+
+/** 智能视图，对应 To Do 左侧固定入口 */
+/**
+ * 智能视图。
+ *
+ * `orders` 是工单的**专属入口**：工单平时混在「全部」「我的一天」「计划内」里，
+ * 想要"只看手上的单子"就得有个专门的地方。它和待办共用一套视图语义，
+ * 区别只在取数时把待办挡掉（见 repo.fetchTasks 的 orders 分支）。
+ *
+ * `special` 是工单里**带处理时效**的那一类（以快递单号为起点，见 WorkOrderKind）。
+ * 它是工单的真子集，不是另一种东西 —— 所以它同时照旧出现在「工单」视图里；
+ * 这个入口只是把"有时效、等不起"的那些单独摆出来，让人先处理快超时的。
+ *
+ * `gallery` 与前面几个**不同类**：它不是"待办的某种筛选"，而是一个独立的
+ * 素材库（见 types.ts 的 GalleryItem）。放进这个枚举是因为侧边栏入口、
+ * 启动视图、以及"当前该渲染哪个主区组件"都归它管，代价是取数层必须
+ * **显式把它挡掉**（repo.fetchTasks / fetchWorkOrders 都有专门的 case），
+ * 否则未知视图会落空条件、把全部待办捞回来。
+ */
+export type SmartView =
+  | "myday"
+  | "important"
+  | "planned"
+  | "all"
+  | "orders"
+  | "special"
+  | "gallery";
+
+/**
+ * 任务重复规则。
+ *
+ * daily 的语义是"每天都会重新出现一次"：今天勾掉，明天自动变回未完成。
+ * 它和普通任务共用 done 字段，区别只在跨天时会被重置。
+ */
+export type Repeat = "none" | "daily";
+
+/** 待办清单（用户自建列表） */
+export interface TaskList {
+  id: string;
+  name: string;
+  /** 主题色，十六进制 */
+  color: string;
+  /** 侧边栏排序序号，越小越靠前 */
+  sortOrder: number;
+  /** 是否已删除（软删除，保留任务历史） */
+  deleted: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 待办任务 */
+export interface Task {
+  id: string;
+  listId: string;
+  title: string;
+  note: string;
+  /** 是否已完成 */
+  done: boolean;
+  /** 是否标记为重要 */
+  important: boolean;
+  /** 是否加入「我的一天」 */
+  myDay: boolean;
+  /** 计划日期 YYYY-MM-DD，null 表示未安排 */
+  dueDate: string | null;
+  /** 提醒时间 ISO，null 表示无提醒 */
+  remindAt: string | null;
+  /** 完成时间 ISO */
+  completedAt: string | null;
+  /** 重复规则，daily 表示每日任务 */
+  repeat: Repeat;
+  /**
+   * 每日任务最近一次完成的日期 YYYY-MM-DD。
+   * 跨天时用它判断是否该把任务重置回未完成 —— 不用 completed_at 比较，
+   * 因为那是 UTC 时间，和本地"哪一天"会差上半天。
+   */
+  repeatDoneOn: string | null;
+  sortOrder: number;
+  /** 软删除，支持撤销删除 */
+  deleted: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 步骤（子任务） */
+export interface Step {
+  id: string;
+  taskId: string;
+  title: string;
+  done: boolean;
+  sortOrder: number;
+}
+
+/** 视图筛选条件 */
+export interface ViewFilter {
+  view: SmartView | "list";
+  listId?: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* 工单                                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 工单与待办的区别（这是整个模块的设计前提）：
+ *
+ * - 待办是「一件事」，只有未完成/已完成两种状态，做完就没了。
+ * - 工单是「一个流程」，有单号、有开始时间、会沿着一条**过程态序列**往前走，
+ *   每走一步都留痕。过程态序列（流程）由用户自己定义，可以有多个模板。
+ *
+ * 所以工单不复用 core_tasks：把 stage_id / flow_id / 单号 塞进待办表，
+ * 会让待办表里一半的列对另一半的行永远为空，后续每次加功能都要判断"这行是啥"。
+ * 两者在界面上混排展示，在存储上各自独立。
+ */
+
+/** 流程模板：一套可复用的过程态序列 */
+export interface WorkFlow {
+  id: string;
+  name: string;
+  /** 是否为默认流程（新建工单时预选它）。全局只应有一个 */
+  isDefault: boolean;
+  sortOrder: number;
+  deleted: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 过程态：工单在某一步的状态，如「处理中」 */
+export interface WorkStage {
+  id: string;
+  flowId: string;
+  name: string;
+  /** 十六进制色值，用于工单行的色条与进度条 */
+  color: string;
+  sortOrder: number;
+  /** 是否为终态。走到终态即视为工单完结，会记 completed_at */
+  isTerminal: boolean;
+  /**
+   * 进入这个步骤后默认给多久（**分钟**，0 表示不预设）。
+   *
+   * 这是给「特殊单号」的时效用的：每一步都有"到下一步之前还剩多久"，
+   * 推进时按它自动续上，省得每一步都手填。放在过程态上而不是写死在代码里，
+   * 是因为"这一步该给多久"本身就是流程的一部分，只有用户知道。
+   */
+  defaultMinutes: number;
+}
+
+/**
+ * 工单种类。
+ *
+ * - normal  普通工单：只有流转，没有时效
+ * - special 特殊单号：以快递单号为起点，每一步带「到下一步之前还剩多久」
+ *
+ * 做成**类型标记而不是独立表**：两者共用过程态、流转记录、计划表、附件，
+ * 唯一多出来的只是时效与若干自定义字段。另起一张表就意味着整套工单子系统
+ * 要来第二遍。
+ */
+export type WorkOrderKind = "normal" | "special";
+
+/** 工单 */
+export interface WorkOrder {
+  id: string;
+  /**
+   * 工单种类。special 是「特殊单号」——以快递单号为起点、每一步带处理时效的那类。
+   * 它只是工单的一个子集，视图与流转逻辑完全共用。
+   */
+  kind: WorkOrderKind;
+  /** 单号，可为空（用户不一定要编号）。特殊单号这里放的就是**快递单号** */
+  no: string;
+  title: string;
+  flowId: string;
+  /** 当前过程态 */
+  stageId: string;
+  note: string;
+  important: boolean;
+  /** 是否加入「我的一天」 */
+  myDay: boolean;
+  /** 开始日期 YYYY-MM-DD，决定它何时开始在待办里露面 */
+  startDate: string | null;
+  /** 交付日期 YYYY-MM-DD */
+  dueDate: string | null;
+  /**
+   * 当前这一步的**处理时效截止时刻**（ISO），null 表示这一步没设时效。
+   *
+   * 语义是"到下一步之前还剩多久"，所以它是**当前过程态**的属性，
+   * 每次推进都会被重设（见 repo.moveOrderToStage）。
+   * 只存绝对时刻：存时长的话还得再记一个起点，跨重启就算不清了。
+   */
+  stageDueAt: string | null;
+  /**
+   * 内部用：这个时效已经提醒到哪一档（'' / soon / overdue）。
+   *
+   * 提醒队列是内存态、重启即空，光靠"队列里有没有"去重会让每次启动都重弹一遍。
+   * 放到列上，重启后也知道该不该再提醒。
+   */
+  stageDueNotifiedAt: string;
+  completedAt: string | null;
+  sortOrder: number;
+  deleted: boolean;
+  createdAt: string;
+  updatedAt: string;
+  /**
+   * 是否已完结 —— **派生字段，不是数据库列**。
+   * 由当前过程态是否 is_terminal 决定，查询时 join 出来。
+   * 放在这里是因为「按完成状态分组」是每个视图都要做的判断，
+   * 让每个调用方各自去查阶段表既啰嗦又容易漏。
+   */
+  closed: boolean;
+}
+
+/** 过程态流转记录：工单「过程」的留痕 */
+export interface WoLog {
+  id: string;
+  woId: string;
+  fromStage: string | null;
+  toStage: string;
+  at: string;
+  note: string;
+}
+
+/**
+ * 工单绑定的相关信息（一条 key-value）。
+ *
+ * 这是「特殊单号」要绑的那批东西：另一个快递单号、用户名、收件人、手机号…
+ * 字段名（label）由用户自己定，所以**不设唯一约束** ——
+ * 同一张单上有两个「快递单号」是正常的，反而"同名字段只能有一个"
+ * 才是错的假设。
+ *
+ * 为什么不复用 note：note 是一段自由文本，而这些东西要**逐条复制**
+ * （value 要能单独一键复制走），还要能被搜到。塞进一段文本里两件事都做不到。
+ */
+export interface WoField {
+  id: string;
+  woId: string;
+  /** 字段名，用户自定义 */
+  label: string;
+  value: string;
+  sortOrder: number;
+  deleted: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * 计划表条目。
+ *
+ * @deprecated 计划表已下线（取而代之的是侧边栏底部的「紧急区」，
+ * 它按剩余时间自动算，不需要用户编排、也就不需要存）。
+ *
+ * 类型**保留**下来的唯一理由：老备份里带这个字段，删掉类型会让
+ * 那些备份在导入时被当成结构不对而整份作废（见 repo.BackupPayload）。
+ *
+ * 当初为什么要单独存而不用「按日期查任务 + 查工单」算出来：
+ * 「编排」的核心是**顺序**，而顺序是用户显式决定的，无法从数据里推导。
+ */
+export interface PlanItem {
+  id: string;
+  /** 归属日期 YYYY-MM-DD，当前只编排今天，留日期字段是为了以后能排未来 */
+  date: string;
+  /** 指的是哪一种 */
+  kind: "task" | "order";
+  refId: string;
+  sortOrder: number;
+  createdAt: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* 工单附件                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 附件类型。
+ *
+ * 这个三分法不是为了显示好看，而是对应**两条完全不同的存放策略**：
+ * - image / video：二进制资源 → **下载进本地仓库**，之后只看本地文件
+ * - link：文件与网址 → **只存链接**，不在本地留副本
+ *
+ * 为什么这么分：图片视频最容易被外链拔掉、图床限流、跨域拦。
+ * 而且工单里回头要反复看的正是这些图，本地有一份才踏实；
+ * 而一个几百 MB 的安装包、一个在线文档，留链接比留副本合理得多。
+ */
+export type AttachmentKind = "image" | "video" | "link";
+
+/** 工单附件 */
+export interface WoAttachment {
+  id: string;
+  woId: string;
+  kind: AttachmentKind;
+  /** 显示名。媒体是文件名，链接是标题 */
+  title: string;
+  /**
+   * 仓库内**相对**路径，形如 `2026-09/a1b2c3d4-产品图.jpg`。
+   * 存相对路径而不是绝对路径：换了机器或改了用户名，绝对路径就失效了。
+   * kind 为 link 时是 null。
+   */
+  relPath: string | null;
+  /** 媒体：当初的下载来源；链接：目标网址 */
+  sourceUrl: string | null;
+  mime: string;
+  /** 字节数；链接为 null */
+  size: number | null;
+  /**
+   * 内容指纹（SHA-256）。
+   * 同一个文件被加进两张工单时，磁盘上只存一份 —— 靠它认出来。
+   */
+  hash: string | null;
+  /** 尺寸。探测到之前为 null（图片靠 img.onload，视频靠 loadedmetadata） */
+  width: number | null;
+  height: number | null;
+  /** 视频时长（毫秒）。图片与链接恒为 null */
+  durationMs: number | null;
+  note: string;
+  sortOrder: number;
+  deleted: boolean;
+  createdAt: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* 图库                                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 图库条目类型。
+ *
+ * 只收图片和视频 —— 与附件的三分法不同（那里还有 link）。
+ * 原因是图库的界面就是一片缩略图，一条"没有缩略图可画"的链接
+ * 在里面没有位置；链接该留在工单附件的语境里。
+ */
+export type GalleryKind = "image" | "video";
+
+/**
+ * 条目是谁放进来的。
+ *
+ * 这不是为了分类浏览（那是 kind 的事），而是为了两件具体的事：
+ *   1. AI 生成的结果要能按提示词回溯、换个模型重跑一次；
+ *   2. 工具写入的内容出问题时，能一眼看出是从哪条路径进来的。
+ * 所以它必须落在数据里，而不是只在界面上推导。
+ */
+export type GalleryOrigin = "manual" | "ai-gen" | "image-crop" | "size-chart";
+
+/**
+ * 图库条目。
+ *
+ * 与工单附件（WoAttachment）是**两张表、同一个文件仓库**：
+ * rel_path / hash 都指向同一个内容寻址池，所以同一份字节
+ * "既在工单里又在图库里"时磁盘上只有一份。
+ * 代价是删除前必须跨两张表数引用（见 repo.refCountByHash）。
+ */
+export interface GalleryItem {
+  id: string;
+  title: string;
+  kind: GalleryKind;
+  /** 仓库内相对路径，形如 `2026-09/a1b2c3d4-产品图.png` */
+  relPath: string | null;
+  /** 原始来源：AI 生成时是接口给的临时 URL，导入时是原地址，手工新建时为 null */
+  sourceUrl: string | null;
+  mime: string;
+  size: number | null;
+  /** 内容指纹，跨条目/跨表去重用 */
+  hash: string | null;
+  width: number | null;
+  height: number | null;
+  durationMs: number | null;
+  origin: GalleryOrigin;
+  /**
+   * AI 生成时的提示词。
+   * 单独一列而不是塞进 note：它是**可复用的输入**（换个模型再来一次），
+   * note 是给人看的备注，两者生命周期不同。
+   */
+  prompt: string;
+  note: string;
+  createdAt: string;
+  /**
+   * 非持久字段：只在 `addToGallery(…, { dedupe: true })` 命中已有内容时回填，
+   * **不写进数据库**。true 表示"这一份图库里本来就有，没有新建记录"。
+   *
+   * 为什么不给它单独一个返回值：`addToGallery` 的调用方（图库视图、
+   * 工具通道）要的都是"这条记录"，多返回一个布尔会让每处都得解构。
+   * 挂在返回值上，现有调用点一行都不用改。
+   */
+  dup?: boolean;
+}
+
+/** 工具清单项（manifest.json 解析结果） */
+export interface ToolManifest {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  /** 侧边栏图标名，对应 lucide 图标 */
+  icon?: string;
+  /** 入口 HTML，相对工具目录 */
+  entry: string;
+  /** 工具私有表的 schema 版本，用于独立迁移 */
+  dbVersion: number;
+  author?: string;
+}

@@ -1,0 +1,3428 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 生成</title>
+<!--
+  AI 生成 —— 生图 / 生视频 / 对话。
+
+  ============================ 设计要点 ============================
+
+  1) 一切按「能力描述符」组织，而不是按「厂商」写分支。
+     加一家新 API = 往 PROVIDERS 里加一个对象，UI 代码一行都不用改。
+     每个 provider 声明自己有哪些能力（chat / image / video），
+     UI 据此隐藏或置灰对应的页签 —— 所以「这家没有视频能力」是数据，
+     不是散落在各处的 if (provider === 'xxx')。
+
+  2) 供应商的能力差异全都收进描述符的三个函数：
+       build(options)  参数 → 请求体
+       pick(json)      响应 → 统一结果
+       poll(json)      轮询响应 → 统一进度
+     换一家 API 要改的就是这几个函数。
+
+  3) 配置存在宿主数据库（core_tool_kv），不是 localStorage。
+     工具跑在 iframe 里拿不到数据库连接，走 postMessage 让宿主代存，
+     协议见宿主 src/lib/toolBridge.ts。
+
+  4) API Key 以明文存在本机 SQLite 里。这是刻意的取舍，但必须写在界面上 ——
+     装作没这回事比说出来更糟。见配置面板里的提示。
+
+  5) 不写假按钮。没配 Key 时生成按钮是禁用的，并直接告诉你缺什么。
+
+  6) **价格必须标在模型旁边，而不是藏在文档里。**
+     生图是按张计费的，一次点下去就是真金白银。所以：模型列表里带单价，
+     生成前给出「这次大概花多少」的预估，失败不计费也要说明。
+     价格写在各家描述符的 `price` 字段里（元/张），
+     来源是各家官方计费文档 —— **改价时要一起改这里**，
+     界面上也标注了价格随官方调整而变、以控制台账单为准。
+
+  7) **和图库是双向联动的**（宿主侧见 src/lib/toolBridge.ts 的 gallery.*）：
+       · 参考图可以直接从图库挑（不用先下载到本机再上传）
+       · 生成结果一键存进图库（从此不再是一次性的、关掉就找不回来）
+     存图走宿主：生图接口回报的往往是不给 CORS 头的临时链接，
+     在 iframe 里 fetch 会被浏览器拦掉，交给宿主下载才稳。
+-->
+<style>
+  :root {
+    --app: #f6f5f3; --surface: #fafaf9; --card: #ffffff; --panel: #f1f0ee;
+    --fg: #1a1a1a; --fg-2: #2f2f2b; --fg-3: #5a5955; --dim: #8a8985;
+    --line: rgba(0,0,0,.09); --line-2: rgba(0,0,0,.06);
+    --chip: rgba(0,0,0,.055); --hover: rgba(0,0,0,.045);
+    --accent: #4a6cf7; --accent-fg: #fff;
+    --violet: #7c5cff; --ok: #1d9e75; --warn: #b0730f; --danger: #d1443c;
+    --radius: 9px;
+  }
+  html[data-theme="dark"] {
+    --app: #171715; --surface: #1f1f1d; --card: #262523; --panel: #1b1b19;
+    --fg: #ededeb; --fg-2: #dcdcd8; --fg-3: #a8a8a2; --dim: #8b8b85;
+    --line: rgba(255,255,255,.11); --line-2: rgba(255,255,255,.07);
+    --chip: rgba(255,255,255,.08); --hover: rgba(255,255,255,.06);
+    --accent: #6d86ff; --accent-fg: #0f0f0e;
+    --violet: #9b86ff; --ok: #2fb98c; --warn: #d69a2a; --danger: #e2665e;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--app); color: var(--fg);
+    font: 13px/1.55 "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  code, kbd, .mono { font-family: "Cascadia Mono", Consolas, "Courier New", monospace; }
+
+  /* ===================== 页签行 =====================
+     顶栏（返回 / 工具名 / 版本）由宿主提供，工具内不再画一遍 ——
+     之前两行各有一个「AI 生成 v0.3.0」和一个「配置」按钮，是整个界面
+     最像半成品的来源。这里只保留工具真正独有的一排：页签 + 连接状态 + 服务。 */
+  .tabs {
+    display: flex; align-items: center; gap: 2px; padding: 0 12px;
+    background: var(--card); border-bottom: 1px solid var(--line); flex: none;
+  }
+  .tabs .spacer { flex: 1; }
+  .tabs .dot { margin-left: 6px; }
+  .tabs select { width: auto; min-width: 128px; padding: 4px 8px; font-size: 12px; }
+  .tabs .btn { padding: 4px 10px; }
+  .spacer { flex: 1; }
+  .tag {
+    font-size: 10.5px; padding: 1px 7px; border-radius: 999px;
+    background: var(--chip); color: var(--fg-3); font-weight: 500; white-space: nowrap;
+  }
+  .tag.ok { background: rgba(29,158,117,.14); color: var(--ok); }
+  .tag.warn { background: rgba(176,115,15,.16); color: var(--warn); }
+  .tag.err { background: rgba(209,68,60,.14); color: var(--danger); }
+  .dot { width: 7px; height: 7px; border-radius: 999px; background: var(--dim); flex: none; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.err { background: var(--danger); }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 11px; border-radius: 7px; font-size: 12.5px;
+    border: 1px solid var(--line); background: var(--card); color: var(--fg-2);
+    transition: background .13s, border-color .13s, opacity .13s;
+  }
+  .btn:hover:not(:disabled) { background: var(--hover); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 500; }
+  .btn.primary:hover:not(:disabled) { filter: brightness(1.07); }
+  .btn:disabled { opacity: .45; }
+  .btn.sm { padding: 3px 8px; font-size: 12px; border-radius: 6px; }
+  .btn.ghost { border-color: transparent; background: transparent; }
+  .btn.ghost:hover:not(:disabled) { background: var(--hover); }
+  .btn.danger { color: var(--danger); }
+
+  /* ===================== 页签 ===================== */
+  .tabs {
+    display: flex; gap: 2px; padding: 0 12px;
+    background: var(--card); border-bottom: 1px solid var(--line); flex: none;
+  }
+  .tab {
+    position: relative; padding: 9px 13px; border: 0; background: transparent;
+    color: var(--fg-3); font-size: 13px; border-radius: 0;
+  }
+  .tab:hover:not(:disabled) { color: var(--fg); }
+  .tab[aria-selected="true"] { color: var(--fg); font-weight: 600; }
+  .tab[aria-selected="true"]::after {
+    content: ''; position: absolute; left: 9px; right: 9px; bottom: -1px; height: 2px;
+    background: var(--accent); border-radius: 2px 2px 0 0;
+  }
+  .tab:disabled { opacity: .38; }
+  .tab .sub { font-size: 10.5px; color: var(--dim); font-weight: 400; margin-left: 5px; }
+
+  /* ===================== 提示条 ===================== */
+  .notice {
+    display: flex; align-items: flex-start; gap: 9px;
+    margin: 10px 14px 0; padding: 9px 12px; border-radius: var(--radius);
+    background: var(--panel); border: 1px solid var(--line); color: var(--fg-2);
+    font-size: 12.5px; flex: none;
+  }
+  .notice.warn { background: rgba(176,115,15,.09); border-color: rgba(176,115,15,.3); }
+  .notice.err { background: rgba(209,68,60,.08); border-color: rgba(209,68,60,.28); }
+  .notice b { color: var(--fg); }
+  .notice .x { margin-left: auto; background: none; border: 0; color: var(--dim); padding: 0 2px; }
+
+  /* ===================== 主体两栏 ===================== */
+  .body { flex: 1; min-height: 0; display: flex; }
+  .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .pane[hidden] { display: none; }
+  .cols { flex: 1; min-height: 0; display: flex; }
+  .col-form {
+    width: 330px; flex: none; overflow-y: auto;
+    background: var(--card); border-right: 1px solid var(--line);
+    padding: 14px 14px 24px;
+  }
+  .col-out { flex: 1; min-width: 0; overflow-y: auto; padding: 14px 16px 24px; }
+  @media (max-width: 900px) {
+    .cols { flex-direction: column; }
+    .col-form { width: auto; border-right: 0; border-bottom: 1px solid var(--line); max-height: 46%; }
+    .col-out { flex: 1; }
+  }
+
+  /* ===================== 表单 ===================== */
+  .field { margin-bottom: 12px; }
+  .field > label {
+    display: block; font-size: 11.5px; color: var(--fg-3);
+    margin-bottom: 5px; font-weight: 500;
+  }
+  .field .hint { font-size: 11.5px; color: var(--dim); margin: 5px 0 0; }
+  input[type=text], input[type=password], input[type=number], input[type=url], select, textarea {
+    width: 100%; min-width: 0; padding: 6px 9px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--fg);
+    outline: none; transition: border-color .13s, box-shadow .13s;
+  }
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--accent); box-shadow: 0 0 0 3px rgba(74,108,247,.14);
+  }
+  input:disabled, select:disabled, textarea:disabled { opacity: .55; }
+  textarea { resize: vertical; min-height: 84px; line-height: 1.5; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 9px; }
+  .inline { display: flex; align-items: center; gap: 7px; }
+  .inline input[type=checkbox] { width: auto; }
+  .swatch-label { font-size: 12px; color: var(--fg-2); }
+  .sep { height: 1px; background: var(--line-2); margin: 14px 0; }
+  .sect-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--dim); font-weight: 600; margin: 0 0 9px;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip {
+    padding: 3px 9px; border-radius: 999px; font-size: 11.5px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--fg-3);
+  }
+  .chip:hover { background: var(--hover); }
+  .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+
+  /* 参考图 */
+  .refs { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ref {
+    position: relative; width: 54px; height: 54px; border-radius: 7px;
+    border: 1px solid var(--line); overflow: hidden; background: var(--panel);
+  }
+  .ref img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ref .del {
+    position: absolute; top: 1px; right: 1px; width: 15px; height: 15px;
+    border-radius: 999px; border: 0; background: rgba(0,0,0,.6); color: #fff;
+    font-size: 11px; line-height: 1; display: grid; place-items: center;
+  }
+  .ref-add {
+    width: 54px; height: 54px; border-radius: 7px; border: 1px dashed var(--line);
+    background: var(--surface); color: var(--dim); font-size: 17px;
+    display: grid; place-items: center;
+  }
+  .ref-add:hover { background: var(--hover); color: var(--fg-2); }
+
+  /* ===================== 结果区 ===================== */
+  .out-head {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 11px;
+    font-size: 12px; color: var(--fg-3);
+  }
+  .out-head .spacer { flex: 1; }
+  .empty {
+    border: 1px dashed var(--line); border-radius: var(--radius);
+    padding: 34px 18px; text-align: center; color: var(--dim); font-size: 12.5px;
+    background: var(--panel);
+  }
+  .empty .big { font-size: 22px; display: block; margin-bottom: 7px; opacity: .65; }
+  /* 瀑布流而不是等高网格：生成的图有方有长（1:1 / 16:9 / 9:16），
+     之前的做法是每格强制 1:1 再 contain，竖图上下、横图左右的空白
+     比图还大，四张图摆出来像没加载完。columns 让每张图按真实比例排。 */
+  .grid-img { columns: 4 210px; column-gap: 12px; }
+  .grid-img .shot { break-inside: avoid; margin-bottom: 12px; }
+  .shot {
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--card); overflow: hidden; display: flex; flex-direction: column;
+  }
+  .shot .im {
+    position: relative; background: var(--panel);
+    display: grid; place-items: center; overflow: hidden; min-height: 46px;
+  }
+  .shot .im img { width: 100%; height: auto; display: block; cursor: zoom-in; }
+  .shot .im .busy { color: var(--dim); font-size: 12px; padding: 34px 0; }
+  .shot .meta { padding: 6px 9px 0; font-size: 11.5px; color: var(--dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .shot .acts { display: flex; gap: 4px; padding: 6px 7px 8px; align-items: center; }
+  /* 图标操作钮：一行最多摆得下六个动作，文字按钮必然挤成两行 */
+  .ibtn {
+    width: 27px; height: 27px; flex: none; border-radius: 6px;
+    display: grid; place-items: center;
+    border: 1px solid var(--line); background: var(--surface); color: var(--fg-3);
+    transition: background .13s, color .13s;
+  }
+  .ibtn:hover:not(:disabled) { background: var(--hover); color: var(--fg); }
+  .ibtn:disabled { opacity: .45; }
+  .ibtn.saved { color: var(--ok); border-color: rgba(29,158,117,.35); }
+  .ibtn.reuse {
+    width: auto; padding: 0 9px; gap: 5px; display: inline-flex; align-items: center;
+    font-size: 12px; font-weight: 500;
+    background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+    margin-right: auto;
+  }
+  .ibtn.reuse:hover:not(:disabled) { filter: brightness(1.07); background: var(--accent); color: var(--accent-fg); }
+  .prog {
+    height: 3px; background: var(--chip); border-radius: 999px; overflow: hidden;
+  }
+  .prog > i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+
+  /* 视频任务卡 */
+  .vcard {
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--card); padding: 12px 14px; margin-bottom: 11px;
+  }
+  .vcard h4 { margin: 0 0 8px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .vcard video { width: 100%; max-height: 420px; border-radius: 7px; background: #000; display: block; margin-top: 9px; }
+  .kv { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 12px; }
+  .kv .k { color: var(--dim); flex: none; }
+  .kv .v { color: var(--fg-2); text-align: right; word-break: break-all; }
+
+  /* 对话 */
+  .chat-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .msgs { flex: 1; overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { display: flex; gap: 9px; max-width: 760px; }
+  .msg .who {
+    width: 24px; height: 24px; border-radius: 7px; flex: none; display: grid; place-items: center;
+    font-size: 11px; font-weight: 600; background: var(--chip); color: var(--fg-3);
+  }
+  .msg.user .who { background: rgba(74,108,247,.16); color: var(--accent); }
+  .msg .txt { white-space: pre-wrap; word-break: break-word; padding-top: 2px; }
+  .msg.err .txt { color: var(--danger); }
+  .composer {
+    flex: none; border-top: 1px solid var(--line); background: var(--card);
+    padding: 10px 14px 12px;
+  }
+  .composer .box { display: flex; gap: 8px; align-items: flex-end; }
+  .composer textarea { min-height: 40px; max-height: 168px; }
+  .composer .opts { display: flex; align-items: center; gap: 12px; margin-top: 8px; font-size: 11.5px; color: var(--dim); }
+  .composer .opts input[type=text] { width: 170px; padding: 3px 7px; font-size: 12px; }
+
+  /* ===================== 历史 ===================== */
+  .hist { margin-top: 22px; }
+  .hist h3 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--dim); margin: 0 0 9px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .hist-list { display: flex; flex-direction: column; gap: 1px; }
+  .hrow {
+    display: flex; align-items: center; gap: 9px; padding: 6px 8px;
+    border-radius: 6px; font-size: 12px; color: var(--fg-3);
+  }
+  .hrow:hover { background: var(--hover); }
+  .hrow .thumb {
+    width: 30px; height: 30px; border-radius: 5px; flex: none; object-fit: cover;
+    background: var(--panel); border: 1px solid var(--line-2);
+  }
+  .hrow .p { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg-2); }
+  .hrow .t { font-size: 11px; color: var(--dim); flex: none; }
+
+  /* ===================== 配置弹层 ===================== */
+  .modal {
+    position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+    background: rgba(16,18,24,.44); padding: 22px;
+  }
+  .modal[hidden] { display: none; }
+  .sheet {
+    width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,.28);
+  }
+  .sheet header {
+    display: flex; align-items: center; gap: 9px; padding: 14px 18px;
+    border-bottom: 1px solid var(--line); position: sticky; top: 0;
+    background: var(--card); border-radius: 12px 12px 0 0;
+  }
+  .sheet header h2 { margin: 0; font-size: 14.5px; font-weight: 600; }
+  .sheet .inner { padding: 16px 18px 6px; }
+  .sheet footer {
+    display: flex; align-items: center; gap: 8px; padding: 12px 18px 15px;
+    border-top: 1px solid var(--line);
+  }
+  .sheet footer .spacer { flex: 1; }
+  .warnbox {
+    background: rgba(176,115,15,.1); border: 1px solid rgba(176,115,15,.3);
+    border-radius: 8px; padding: 9px 11px; font-size: 12px; color: var(--fg-2); line-height: 1.5;
+  }
+  .prov-card {
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+  }
+  .prov-card[data-on="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(74,108,247,.13); }
+  .prov-card .t { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
+  .prov-card .d { color: var(--dim); font-size: 11.5px; margin-top: 3px; }
+  .cap-badges { display: flex; gap: 4px; margin-top: 7px; flex-wrap: wrap; }
+  .cap-badges .b {
+    font-size: 10.5px; padding: 1px 6px; border-radius: 999px;
+    background: var(--chip); color: var(--fg-3);
+  }
+  .cap-badges .b.no { opacity: .45; text-decoration: line-through; }
+
+  /* ---------- 大图预览 ---------- */
+  .lb {
+    position: fixed; inset: 0; z-index: 70; background: rgba(12,13,16,.86);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 30px 56px 74px;
+  }
+  .lb[hidden] { display: none; }
+  .lb img {
+    max-width: 100%; max-height: 100%; border-radius: 6px;
+    box-shadow: 0 12px 48px rgba(0,0,0,.5); user-select: none;
+  }
+  .lb .lb-x {
+    position: absolute; top: 12px; right: 14px; width: 32px; height: 32px;
+    border-radius: 8px; border: 0; background: rgba(255,255,255,.1); color: #fff;
+    font-size: 17px; display: grid; place-items: center;
+  }
+  .lb .lb-x:hover { background: rgba(255,255,255,.2); }
+  .lb .lb-nav {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    width: 38px; height: 56px; border: 0; border-radius: 9px;
+    background: rgba(255,255,255,.1); color: #fff; font-size: 22px;
+    display: grid; place-items: center;
+  }
+  .lb .lb-nav:hover { background: rgba(255,255,255,.22); }
+  .lb .lb-nav.prev { left: 12px; }
+  .lb .lb-nav.next { right: 12px; }
+  .lb .lb-nav[hidden] { display: none; }
+  .lb .lb-bar {
+    position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 6px; max-width: calc(100% - 40px);
+    background: rgba(22,23,26,.92); border: 1px solid rgba(255,255,255,.12);
+    border-radius: 10px; padding: 7px 10px;
+  }
+  .lb .lb-bar .ibtn { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.14); color: #e8e8e6; }
+  .lb .lb-bar .ibtn:hover:not(:disabled) { background: rgba(255,255,255,.18); color: #fff; }
+  .lb .lb-bar .ibtn.saved { color: #4fd6a8; }
+  .lb .lb-bar .ibtn.reuse { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .lb .lb-meta {
+    font-size: 11.5px; color: rgba(255,255,255,.55); max-width: 320px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-right: 4px;
+  }
+  .lb .lb-count { font-size: 11.5px; color: rgba(255,255,255,.55); flex: none; }
+
+  /* toast */
+  .toast-wrap { position: fixed; right: 14px; bottom: 14px; z-index: 80; display: flex; flex-direction: column; gap: 7px; }
+  .toast {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 12px; font-size: 12.5px; color: var(--fg-2);
+    box-shadow: 0 8px 24px rgba(0,0,0,.16); max-width: 340px;
+  }
+  .toast.err { border-color: rgba(209,68,60,.4); color: var(--danger); }
+  .toast.ok { border-color: rgba(29,158,117,.4); }
+
+  .spin { display: inline-block; width: 12px; height: 12px; border-radius: 999px;
+    border: 2px solid var(--chip); border-top-color: var(--accent); animation: sp .7s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 2s; } .prog > i { transition: none; } }
+
+  /* ---------- 图库选择器 ---------- */
+  .gmask { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.55);
+    display: flex; align-items: center; justify-content: center; padding: 24px; }
+  /* ⚠️ 这条不能省：.gmask 自己写了 display:flex，作者样式会盖掉浏览器默认的
+     [hidden]{display:none} —— 少了它，那个「hidden」的遮罩会一直铺在整页最上层
+     （fixed + z-index 60），把下面所有按钮的点击全吃掉。 */
+  .gmask[hidden] { display: none; }
+  .gpanel { width: min(760px, 100%); max-height: 100%; display: flex; flex-direction: column;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+    box-shadow: 0 18px 48px rgba(0,0,0,.28); }
+  .gpanel > header { display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .gbar { display: flex; align-items: center; gap: 6px; padding: 8px 14px;
+    border-bottom: 1px solid var(--line-2); background: var(--surface); }
+  .gbody { flex: 1; min-height: 180px; overflow-y: auto; padding: 12px 14px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+  .gitem { position: relative; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 8px;
+    overflow: hidden; background: var(--panel); padding: 0; cursor: pointer; }
+  .gitem img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* 已选中的格子：描边 + 角标。只靠缩略图本身看不出选没选，
+     而这里是可以多选的（wan2.6-image 最多 3 张），所以需要明确反馈 */
+  .gitem[aria-selected="true"] { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .gitem[aria-selected="true"]::after { content: "✓"; position: absolute; top: 4px; right: 4px;
+    width: 16px; height: 16px; border-radius: 50%; background: var(--accent); color: var(--accent-fg);
+    font-size: 11px; line-height: 16px; text-align: center; }
+  .gitem .nm { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 5px;
+    font-size: 10px; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,.72));
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gitem .none { display: grid; place-items: center; height: 100%; color: var(--dim); font-size: 11px; }
+  .gpanel > footer { display: flex; align-items: center; gap: 8px;
+    padding: 9px 14px; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+
+<nav class="tabs" id="tabs">
+  <button class="tab" data-tab="image" aria-selected="true">生图<span class="sub" id="subImage">—</span></button>
+  <button class="tab" data-tab="video" aria-selected="false">生视频<span class="sub" id="subVideo">—</span></button>
+  <button class="tab" data-tab="chat"  aria-selected="false">对话<span class="sub" id="subChat">—</span></button>
+
+  <!-- 右端：工具真正独有的东西。品牌名 / 版本 / 返回按钮宿主顶栏已有，不再重复 -->
+  <span class="spacer"></span>
+  <span class="dot" id="hostDot" title="宿主连接状态"></span>
+  <span class="tag" id="hostTag">连接中…</span>
+  <label class="mono" style="font-size:11px;color:var(--dim);margin-left:8px">服务</label>
+  <select id="provSel"></select>
+  <button class="btn" id="btnCfg" title="配置接口与密钥">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-2.87 1.2V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 2.6 15H2.5a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6h.09A1.7 1.7 0 0 0 11 2.5V2.5a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v.09a1.7 1.7 0 0 0 1.2 1.91H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z" transform="scale(.86) translate(2 2)"/></svg>
+    配置
+  </button>
+</nav>
+
+<div id="notices"></div>
+
+<div class="body">
+
+  <!-- ============ 生图 ============ -->
+  <section class="pane" data-pane="image">
+    <div class="cols">
+      <div class="col-form">
+        <p class="sect-title">描述</p>
+        <div class="field">
+          <textarea id="imgPrompt" placeholder="主体 + 场景/环境 + 风格 + 光照 + 构图 + 质量要求"></textarea>
+          <div class="chips" style="margin-top:6px">
+            <button class="chip" data-tpl="product">商品主图</button>
+            <button class="chip" data-tpl="scene">生活场景</button>
+            <button class="chip" data-tpl="poster">海报</button>
+          </div>
+        </div>
+
+        <div class="sep"></div>
+        <p class="sect-title">参数</p>
+        <div class="field">
+          <label>模型</label>
+          <input list="modelsImage" id="imgModel" placeholder="模型 ID">
+          <datalist id="modelsImage"></datalist>
+          <!-- 单价与描述上限随模型变，所以放在模型下面而不是别处：
+               用户改模型时眼睛就在这一行，价格提示跟得越近越不可能被忽略 -->
+          <p class="hint" id="imgPrice"></p>
+        </div>
+        <div class="row2">
+          <div class="field"><label>分辨率档</label><select id="imgSize"></select></div>
+          <div class="field" id="fieldImgRatio"><label>画幅</label><select id="imgRatio"></select></div>
+        </div>
+        <div class="field">
+          <label>生成张数</label>
+          <select id="imgN"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+        </div>
+
+        <div class="sep"></div>
+        <p class="sect-title">参考图（可选 · 图生图）</p>
+        <div class="field">
+          <div class="refs" id="refList"></div>
+          <p class="hint" id="refHint">加图后即变为图生图：在描述里写「保留什么 / 改什么」。</p>
+          <button class="btn sm" id="btnRefFromGallery" style="margin-top:6px">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            从图库选
+          </button>
+        </div>
+
+        <div class="sep"></div>
+        <button class="btn primary" id="btnGenImg" style="width:100%;justify-content:center">开始生成</button>
+        <button class="btn" id="btnStopImg" style="width:100%;justify-content:center;margin-top:7px" hidden>取消</button>
+        <p class="hint" id="imgCostHint" style="text-align:center"></p>
+      </div>
+
+      <div class="col-out">
+        <div class="out-head">
+          <span id="imgOutLabel">尚未生成</span>
+          <span class="spacer"></span>
+          <button class="btn sm ghost" id="btnClearImg">清空结果</button>
+        </div>
+        <div id="imgResults"><div class="empty"><span class="big">◇</span>配好接口与密钥后，这里出图</div></div>
+        <div id="imgHist"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 生视频 ============ -->
+  <section class="pane" data-pane="video" hidden>
+    <div class="cols">
+      <div class="col-form">
+        <p class="sect-title">描述</p>
+        <div class="field">
+          <textarea id="vidPrompt" placeholder="镜头语言 + 主体动作 + 环境 + 光线 + 音效"></textarea>
+        </div>
+
+        <div class="sep"></div>
+        <p class="sect-title">参数</p>
+        <div class="field">
+          <label>模型</label>
+          <input list="modelsVideo" id="vidModel" placeholder="模型 ID">
+          <datalist id="modelsVideo"></datalist>
+        </div>
+        <div class="field">
+          <label>生成模式</label>
+          <select id="vidMode"></select>
+          <p class="hint" id="modeHint"></p>
+        </div>
+        <div class="row2">
+          <div class="field"><label>分辨率</label><select id="vidSize"></select></div>
+          <div class="field" id="fieldVidRatio"><label>画幅</label><select id="vidRatio"></select></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>时长（秒）</label><select id="vidSeconds"></select></div>
+          <div class="field"><label>种子（可空）</label><input type="number" id="vidSeed" placeholder="留空随机"></div>
+        </div>
+
+        <div id="vidKeyframe">
+          <div class="sep"></div>
+          <p class="sect-title">首尾帧</p>
+          <div class="field">
+            <label>首帧 URL</label>
+            <input type="url" id="vidFirst" placeholder="https://…">
+          </div>
+          <div class="field">
+            <label>尾帧 URL</label>
+            <input type="url" id="vidLast" placeholder="https://…（可留空）">
+          </div>
+          <p class="hint">至少填一个。必须是生成服务能公开访问的 URL —— 本机文件不行。</p>
+        </div>
+
+        <div id="vidReference">
+          <div class="sep"></div>
+          <p class="sect-title">参考素材</p>
+          <div class="field">
+            <label>参考图 URL（每行一个）</label>
+            <textarea id="vidRefUrls" style="min-height:56px" placeholder="https://…"></textarea>
+            <p class="hint" id="vidRefHint"></p>
+          </div>
+        </div>
+
+        <div class="sep"></div>
+        <button class="btn primary" id="btnGenVid" style="width:100%;justify-content:center">提交生成</button>
+        <button class="btn" id="btnStopVid" style="width:100%;justify-content:center;margin-top:7px" hidden>停止轮询</button>
+      </div>
+
+      <div class="col-out">
+        <div class="out-head">
+          <span id="vidOutLabel">尚无任务</span>
+          <span class="spacer"></span>
+          <button class="btn sm ghost" id="btnClearVid">清空结果</button>
+        </div>
+        <div id="vidResults"><div class="empty"><span class="big">◇</span>提交后在这里等待出片</div></div>
+        <div id="vidHist"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 对话 ============ -->
+  <section class="pane" data-pane="chat" hidden>
+    <div class="chat-wrap">
+      <div class="msgs" id="msgs">
+        <div class="empty"><span class="big">◇</span>用同一个服务商做对话，方便写提示词、翻译、生成批量文案</div>
+      </div>
+      <div class="composer">
+        <div class="box">
+          <textarea id="chatInput" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+          <button class="btn primary" id="btnSend">发送</button>
+          <button class="btn" id="btnStopChat" hidden>停止</button>
+        </div>
+        <div class="opts">
+          <div class="inline"><input type="checkbox" id="chatStream" checked><label for="chatStream" class="swatch-label">流式输出</label></div>
+          <div class="inline"><span>模型</span><input list="modelsChat" id="chatModel" style="width:190px"></div>
+          <datalist id="modelsChat"></datalist>
+          <div class="inline"><span>系统提示</span><input type="text" id="chatSystem" placeholder="可空"></div>
+          <span class="spacer" style="flex:1"></span>
+          <button class="btn sm ghost" id="btnClearChat">清空对话</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- ===================== 配置 ===================== -->
+<div class="modal" id="cfgModal" hidden>
+  <div class="sheet" role="dialog" aria-label="接口配置">
+    <header>
+      <h2>接口配置</h2>
+      <span class="spacer" style="flex:1"></span>
+      <button class="btn sm ghost" id="btnCfgClose">关闭</button>
+    </header>
+    <div class="inner">
+      <p class="sect-title">服务商</p>
+      <div id="provCards"></div>
+
+      <div class="sep"></div>
+      <p class="sect-title">接入参数</p>
+      <div class="field">
+        <label>Base URL</label>
+        <input type="text" id="cfgBase" class="mono" spellcheck="false" placeholder="https://…/v1">
+        <div class="chips" style="margin-top:6px" id="basePresets"></div>
+      </div>
+      <div class="field">
+        <label>API Key</label>
+        <div class="inline">
+          <input type="password" id="cfgKey" class="mono" spellcheck="false" placeholder="粘贴 key" style="flex:1">
+          <button class="btn sm" id="btnEye" title="显示/隐藏">显示</button>
+        </div>
+      </div>
+
+      <div class="sep"></div>
+      <p class="sect-title">默认模型</p>
+      <div class="row3">
+        <div class="field"><label>生图</label><input id="cfgModelImage" class="mono" list="modelsImage"></div>
+        <div class="field"><label>生视频</label><input id="cfgModelVideo" class="mono" list="modelsVideo"></div>
+        <div class="field"><label>对话</label><input id="cfgModelChat" class="mono" list="modelsChat"></div>
+      </div>
+
+      <div class="sep"></div>
+      <p class="sect-title">产出去向</p>
+      <div class="inline">
+        <input type="checkbox" id="cfgAutoGallery" checked>
+        <label for="cfgAutoGallery" class="swatch-label">出图 / 出视频后自动在图库留一份</label>
+      </div>
+      <p class="hint" id="autoGalleryHint" style="margin:6px 0 0"></p>
+
+      <div class="sep"></div>
+      <div class="warnbox">
+        <b>关于密钥存放</b>：Key 会以明文保存在本机数据库（设置里可整个导出/清空）。
+        本应用不联网上传任何东西，但这个 key 也不受系统密钥库保护 ——
+        如果你在共用电脑上使用，建议改用临时 key 或降低额度。
+      </div>
+
+      <div class="sep"></div>
+      <p class="sect-title">连接测试</p>
+      <div class="inline">
+        <button class="btn" id="btnTest">测试连接</button>
+        <span id="testOut" style="font-size:12px;color:var(--fg-3)"></span>
+      </div>
+      <p class="hint" id="docsLink" style="margin-bottom:16px"></p>
+    </div>
+    <footer>
+      <button class="btn danger" id="btnWipe">清空配置</button>
+      <span class="spacer"></span>
+      <span id="saveState" style="font-size:12px;color:var(--dim)"></span>
+      <button class="btn primary" id="btnSave">保存到本机数据库</button>
+    </footer>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+<input type="file" id="filePick" accept="image/*" multiple hidden>
+
+<!-- 大图预览：以前「打开」是新开浏览器标签，看完要切回来，出图一多就是一排标签页。
+     这里原地全屏预览 + 左右切换，操作条跟在图下面。 -->
+<div class="lb" id="lightbox" hidden role="dialog" aria-label="大图预览">
+  <button class="lb-x" id="lbClose" title="关闭 (Esc)">✕</button>
+  <button class="lb-nav prev" id="lbPrev" title="上一张 (←)" hidden>‹</button>
+  <img id="lbImg" alt="预览大图">
+  <button class="lb-nav next" id="lbNext" title="下一张 (→)" hidden>›</button>
+  <div class="lb-bar">
+    <span class="lb-count" id="lbCount"></span>
+    <span class="lb-meta" id="lbMeta"></span>
+    <span style="flex:1"></span>
+    <button class="ibtn reuse" data-lb="reuse" title="把这张放回参考图，继续改">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+      继续编辑
+    </button>
+    <button class="ibtn" data-lb="togallery" title="存进图库">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+    </button>
+    <button class="ibtn" data-lb="dl" title="下载">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+    </button>
+    <button class="ibtn" data-lb="copy" title="复制图片地址">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+    </button>
+    <button class="ibtn" data-lb="tofirst" title="用作视频首帧">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m10 9 5 3-5 3z"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- 图库选择器：给「参考图」用的来源。
+     它存在的意义是省掉"先下载到本机、再上传"这一圈 ——
+     而那一圈正是用户在图库功能之前每天在做的事。 -->
+<div class="gmask" id="galleryMask" hidden>
+  <div class="gpanel">
+    <header>
+      <b style="font-size:13px">从图库选参考图</b>
+      <span class="tag" id="galleryCount">—</span>
+      <span class="spacer" style="flex:1"></span>
+      <button class="btn sm ghost" id="btnGalleryClose">关闭</button>
+    </header>
+    <div class="gbar">
+      <button class="chip" data-gkind="image" aria-selected="true">图片</button>
+      <button class="chip" data-gkind="video" aria-selected="false">视频</button>
+      <span class="spacer" style="flex:1"></span>
+      <input id="gallerySearch" placeholder="搜标题 / 提示词" style="width:190px">
+      <button class="btn sm" id="btnGalleryReload">刷新</button>
+    </div>
+    <div class="gbody" id="galleryBody"></div>
+    <footer>
+      <span class="hint" id="galleryHint" style="margin:0"></span>
+      <span class="spacer" style="flex:1"></span>
+      <button class="btn primary sm" id="btnGalleryUse">加入参考图</button>
+    </footer>
+  </div>
+</div>
+
+<script>
+/* ==================================================================
+ * 0. 与宿主的通道
+ *
+ * 工具跑在 iframe 里，拿不到宿主的数据库 —— 这是隔离设计的一部分。
+ * 需要存配置就发消息，宿主代存。协议见宿主 src/lib/toolBridge.ts：
+ *   · 工具只发裸表名 / 裸键名，tool_id 由宿主从「谁发的」推导，
+ *     所以工具在物理上读写不到别的工具的数据
+ *   · 只认白名单操作（info / count / kv.* / gallery.*）
+ *
+ * gallery.* 是宿主那边**有意放宽**的一条：图库是全局资源，
+ * 任何工具都能列、能读、能往里写（理由写在 toolBridge.ts 的文件头）。
+ * 三条约束仍然在：工具只能传 id 与内容（传不了路径）、
+ * 写入的来源标记由宿主按 tool_id 盖章（工具无法伪装出处）、
+ * 单条读取有字节上限。
+ * ================================================================== */
+var Host = (function () {
+  var HOST_SOURCE = "workbench-host";
+  var TOOL_SOURCE = "workbench-tool";
+  var seq = 0, pending = Object.create(null), connected = false, ctx = null;
+
+  /**
+   * 发一条请求给宿主。
+   *
+   * timeoutMs 可覆盖：默认 8 秒是给 kv 那种小操作的，
+   * 而 gallery.put 传网址时**宿主真的要去下载一张图**，
+   * gallery.get 要把图读成 base64 再穿过 postMessage 回来 ——
+   * 用 8 秒去衡量它们，会在网慢的时候把"正在做"报成"宿主无响应"。
+   */
+  function ask(op, payload, timeoutMs) {
+    return new Promise(function (resolve, reject) {
+      if (parent === window) { reject(new Error("未连接宿主")); return; }
+      var id = "q" + (++seq);
+      pending[id] = { resolve: resolve, reject: reject };
+      try {
+        parent.postMessage(
+          { source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} },
+          window.location.origin
+        );
+      } catch (e) { delete pending[id]; reject(e); return; }
+      setTimeout(function () {
+        if (pending[id]) { delete pending[id]; reject(new Error("宿主无响应（" + op + "）")); }
+      }, timeoutMs || 8000);
+    });
+  }
+
+  window.addEventListener("message", function (e) {
+    var d = e.data;
+    if (!d || d.source !== HOST_SOURCE) return;
+    if (d.type === "tool:context") {
+      connected = true; ctx = d.data;
+      var th = d.data && d.data.theme;
+      if (th === "dark" || th === "light") document.documentElement.dataset.theme = th;
+      document.dispatchEvent(new CustomEvent("host-context"));
+      return;
+    }
+    if (d.type === "tool:response") {
+      var p = pending[d.id];
+      if (!p) return;
+      delete pending[d.id];
+      if (d.ok) p.resolve(d.data); else p.reject(new Error(d.error));
+    }
+  });
+
+  return {
+    ask: ask,
+    isConnected: function () { return connected; },
+    context: function () { return ctx; },
+    kvGet: function (k) { return ask("kv.get", { key: k }).then(function (r) { return r.value; }); },
+    kvSet: function (k, v) { return ask("kv.set", { key: k, value: v }); },
+    kvAll: function () { return ask("kv.all").then(function (r) { return r.entries || {}; }); },
+    kvDel: function (k) { return ask("kv.del", { key: k }); },
+
+    /* ---- 图库 ----
+     * 宿主是否支持图库，看 context 里有没有 gallery 这个标记 ——
+     * 工具和宿主是分开升级的，在旧宿主上装新工具时这个标记不存在，
+     * 这时要把入口禁用并说明原因，而不是让用户对着一个
+     * "不支持的操作" 猜是自己装错了还是软件坏了。 */
+    supportsGallery: function () { return !!(ctx && ctx.gallery); },
+    galleryList: function (opts) {
+      return ask("gallery.list", opts || {}, 20000).then(function (r) { return r.items || []; });
+    },
+    galleryGet: function (id) { return ask("gallery.get", { id: id }, 30000); },
+    /** 传 dataUrl（内存内容）或 url（由宿主去下载）二者之一 */
+    galleryPut: function (opts) { return ask("gallery.put", opts, 120000); },
+  };
+})();
+
+/* ------------------------------------------------------------------
+ * 0. 描述符用到的小工具
+ *
+ * 放在 PROVIDERS 之前：注册表里的函数在**被调用时**才解析这些名字，
+ * 但 priceOf / priceText 这类会被 UI 直接调用，提前定义省得依赖提升顺序。
+ * ------------------------------------------------------------------ */
+
+/**
+ * 判断是不是万相 2.6 及以后的模型。
+ *
+ * 为什么要判这个：万相**两代接口形态不同**，
+ *   2.5 及以下：input.prompt   + /services/aigc/text2image/image-synthesis
+ *   2.6 起   ：input.messages[] + /services/aigc/image-generation/generation
+ * 提示词长度上限、尺寸档位、支持的参考图数量也都不一样。
+ * 统一按 model id 里的 "2.6"/"2.7" 前缀判，而不是在界面里到处写 if。
+ */
+function isWan26(model) {
+  var m = String(model || "");
+  return m.indexOf("wan2.6") === 0 || m.indexOf("wan2.7") === 0;
+}
+
+/**
+ * 阿里云生图的请求体。同步与异步共用一份 —— 两族请求的**形状是一样的**
+ * （messages 或老代的 input.prompt），差别只在路径和异步头。
+ */
+function aliBuildBody(o) {
+  // Z-Image 那条接口只认 size / prompt_extend / seed / n，
+  // 多塞 watermark 属于自找 400（千问与万相都认，Z-Image 文档里没有）
+  var cap = aliCap(o.model);
+  var params = { n: o.n, size: o.size, prompt_extend: true };
+  if (cap.family !== "zimage") {
+    // 服务端水印（商用出图必须关）。官方有默认值，显式写出来是因为
+    // 它会明显改变出图，不能指望默认值哪天不改。
+    params.watermark = false;
+  }
+
+  // 万相 2.6 起、千问图像、Z-Image 都用 messages；只有万相老代还是 input.prompt
+  var useMessages = isWan26(o.model) || aliCap(o.model).family !== "wan";
+  if (useMessages) {
+    // 参考图作为 content 里的 image 项与文本并列 —— 官方说的"图文一体化"用法
+    var content = [{ text: o.prompt }];
+    (o.refImages || []).forEach(function (src) {
+      content.push({ image: src });
+    });
+    return {
+      model: o.model,
+      input: { messages: [{ role: "user", content: content }] },
+      parameters: params,
+    };
+  }
+
+  return {
+    model: o.model,
+    input: { prompt: o.prompt },
+    parameters: params,
+  };
+}
+
+/**
+ * 阿里云某模型的能力档。
+ *
+ * 为什么需要这个函数而不是到处判字符串：模型框是**可以手填**的，
+ * 清单外的 ID（比如官方刚上线的快照版 qwen-image-2.0-pro-2026-06-22）
+ * 照样要能跑。所以查不到时按前缀猜族、按族给保守能力，
+ * 而不是当成"不支持"把人卡住。
+ */
+function aliCap(model) {
+  var id = String(model || "").trim();
+  var p = provider("aliyun");
+  var list = (p && p.image && p.image.models) || [];
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].id === id) return list[i];
+  }
+  var family = id.indexOf("qwen-image") === 0 ? "qwen"
+    : id.indexOf("z-image") === 0 ? "zimage"
+      : "wan";
+  return {
+    id: id,
+    family: family,
+    mode: family === "wan" ? "async" : "sync",
+    // 手填的未知档：张数按 4 给（多数模型都支持），参考图保守给 0，
+    // 提示词上限不拦（0 = 不校验），免得拿猜测的数字挡住真能跑的模型
+    maxN: 4, maxRef: 0, promptLimit: 0,
+  };
+}
+
+/** 元 → 显示文本。分位是真实存在的价格（0.04 元），不能四舍五入成 0。 */
+function priceText(price) {
+  if (typeof price !== "number" || !isFinite(price)) return "价格以控制台为准";
+  // 0.04 / 0.14 / 0.20 / 0.54 —— 统一两位小数，便于竖着扫一眼比较
+  return price.toFixed(2) + " 元/张";
+}
+
+/** 取当前 provider 当前生图模型的单价，取不到返回 null */
+function imagePriceOf(model) {
+  var p = provider(S.providerId);
+  if (!p || !p.image || !p.image.models) return null;
+  for (var i = 0; i < p.image.models.length; i++) {
+    if (p.image.models[i].id === model) return p.image.models[i];
+  }
+  return null;
+}
+
+/** 这次生成大概花多少。n 是张数，失败不计费（各家的共同规则）。 */
+function estimateCost(model, n) {
+  var m = imagePriceOf(model);
+  if (!m || typeof m.price !== "number") return "";
+  var total = m.price * (Number(n) || 1);
+  return "预估 " + total.toFixed(2) + " 元（" + priceText(m.price) + " × " + (Number(n) || 1) +
+    "，失败不计费）";
+}
+
+/**
+ * 生成按钮下方那行提示。
+ *
+ * 有单价就用「预估花费」（这是用户真正想知道的），没有才退回
+ * provider 的静态说明（例如 Agnes 的「官方建议客户端超时 60–360 秒」）。
+ *
+ * 收在一处是因为它有两个触发点（模型/张数变化、界面开关收口），
+ * 之前 refreshGates 里又写了一遍 `= p.image.costHint`，会把刚算出来的
+ * 预估价冲掉 —— 换阿里云后这个 bug 立刻显形。
+ */
+function imageCostHint(model) {
+  var p = provider(S.providerId);
+  if (!p || !p.image) return "";
+  return estimateCost(model, el("imgN").value) || (p.image.costHint || "");
+}
+
+/**
+ * 当前 provider 允许加几张参考图。
+ *
+ * 做成"按模型算"而不是 provider 上一个固定值：万相里只有
+ * wan2.6-image 这类支持图片输入，纯文生图的模型加图只会被服务端拒绝。
+ * 让界面提前把「+」收起来，比让用户加完图再吃一个 400 好得多。
+ */
+function maxRefsFor(model) {
+  var p = provider(S.providerId);
+  if (!p || !p.image) return 0;
+  if (typeof p.image.maxRefFor === "function") return p.image.maxRefFor(model);
+  return p.image.maxRef || 0;
+}
+
+/** 当前模型可用的尺寸档位。有 sizesFor 就按模型算，否则用 provider 级的固定表。 */
+function imageSizesFor(model) {
+  var p = provider(S.providerId);
+  if (!p || !p.image) return [];
+  if (typeof p.image.sizesFor === "function") return p.image.sizesFor(model);
+  return p.image.sizes || [];
+}
+
+function imageDefaultSizeFor(model) {
+  var p = provider(S.providerId);
+  if (!p || !p.image) return "";
+  if (typeof p.image.defaultSizeFor === "function") return p.image.defaultSizeFor(model);
+  return p.image.defaultSize || "";
+}
+
+/** 描述长度上限。没有声明的 provider 返回 0 表示"不限制"（不做本地拦截）。 */
+function imagePromptLimitFor(model) {
+  var p = provider(S.providerId);
+  if (!p || !p.image) return 0;
+  return typeof p.image.promptLimitFor === "function" ? p.image.promptLimitFor(model) : 0;
+}
+
+/* ==================================================================
+ * 1. 服务商注册表
+ *
+ * ★ 这是整个工具唯一需要为「多厂商」改动的地方 ★
+ *
+ * 每家服务商 = 一个对象。它声明自己有哪些能力（chat / image / video），
+ * 每种能力是一组描述符函数，把「供应商的接口形状」翻译成「工具的统一结果」：
+ *
+ *   build(o)  —— 表单参数 → 请求体（这里是各家差异最大的地方）
+ *   pick(j)   —— 响应 → 统一结果 [{url|b64}] / 文本 / 任务
+ *   poll(j)   —— 轮询响应 → {status, progress, url, error}
+ *
+ * UI 代码只调用这三个函数，不做任何 if (provider === ...) 判断。
+ * 所以「加一家 OpenAI 兼容的网关」= 复制 agnes 那段改字段，界面一行不动。
+ * 如果新厂商缺某种能力，把对应键设为 null 即可 —— 页签会自动置灰。
+ * ================================================================== */
+var PROVIDERS = [
+  {
+    id: "agnes",
+    name: "Agnes AI",
+    desc: "全模态：对话 / 生图 / 生视频，OpenAI 风格接口",
+    docs: "https://wiki.agnes-ai.com/",
+    defaultBase: "https://apihub.agnes-ai.com/v1",
+    basePresets: [
+      { label: "国际站", value: "https://apihub.agnes-ai.com/v1" },
+      { label: "国内站", value: "https://apihub.agnes-ai.cn/v1" },
+    ],
+    auth: function (key) { return { Authorization: "Bearer " + key }; },
+
+    chat: {
+      path: "/chat/completions",
+      models: [
+        { id: "agnes-3.0-flash", label: "agnes-3.0-flash（Agent / 编程）" },
+        { id: "agnes-2.5-flash", label: "agnes-2.5-flash（通用对话）" },
+        { id: "agnes-2.0-flash", label: "agnes-2.0-flash（旧版兼容）" },
+        { id: "agnes-2.5-pro", label: "agnes-2.5-pro（高级推理 · 付费）" },
+      ],
+      build: function (o) {
+        var body = { model: o.model, messages: o.messages, stream: !!o.stream };
+        return body;
+      },
+      pickText: function (j) {
+        var c = j && j.choices && j.choices[0];
+        return (c && c.message && c.message.content) || "";
+      },
+      pickDelta: function (j) {
+        var c = j && j.choices && j.choices[0];
+        return (c && c.delta && c.delta.content) || "";
+      },
+    },
+
+    image: {
+      path: "/images/generations",
+      models: [
+        { id: "agnes-image-2.5-flash", label: "agnes-image-2.5-flash（最新）" },
+        { id: "agnes-image-2.1-flash", label: "agnes-image-2.1-flash" },
+        { id: "agnes-image-2.0-flash", label: "agnes-image-2.0-flash" },
+      ],
+      sizes: ["1K", "2K", "3K", "4K"],
+      defaultSize: "2K",
+      ratios: ["1:1", "3:4", "4:3", "16:9", "9:16", "2:3", "3:2", "21:9"],
+      defaultRatio: "16:9",
+      maxRef: 4,
+      timeoutMs: 360000,
+      costHint: "官方建议客户端超时 60–360 秒",
+      // 官方文档明确标注了两个坑，这里照做：
+      //   · response_format 不能放请求体顶层，要放 extra_body
+      //   · 图生图的输入图也放 extra_body.image（公共 URL 或 Data URI）
+      build: function (o) {
+        var body = {
+          model: o.model,
+          prompt: o.prompt,
+          n: o.n,
+          size: o.size,
+          ratio: o.ratio,
+          extra_body: { response_format: "url" },
+        };
+        if (o.refImages && o.refImages.length) body.extra_body.image = o.refImages;
+        return body;
+      },
+      pick: function (j) {
+        var arr = (j && j.data) || (j && j.images) || [];
+        if (!Array.isArray(arr)) arr = [arr];
+        var out = [];
+        for (var i = 0; i < arr.length; i++) {
+          var it = arr[i];
+          if (typeof it === "string") { out.push({ url: it }); continue; }
+          if (!it) continue;
+          if (it.url) out.push({ url: it.url });
+          else if (it.b64_json) out.push({ b64: it.b64_json });
+          else if (it.image_url) out.push({ url: it.image_url });
+        }
+        return out;
+      },
+    },
+
+    video: {
+      createPath: "/videos",
+      // ★ 轮询路径在站点根，不在 /v1 下面 —— 这是最容易踩空的一个点
+      pollPath: "/agnesapi",
+      models: [
+        { id: "agnes-video-2.5-flash", label: "agnes-video-2.5-flash（推荐 · 限免）" },
+        { id: "agnes-video-2.5", label: "agnes-video-2.5（高清 · 付费）" },
+        { id: "agnes-video-v2.0", label: "agnes-video-v2.0（旧版）" },
+      ],
+      modes: [
+        { id: "text", label: "text · 纯文本" },
+        { id: "keyframe", label: "keyframe · 首尾帧控制" },
+        { id: "reference", label: "reference · 图片/音频参考" },
+      ],
+      sizesFor: function (model) {
+        // Flash 只支持 720P，传别的直接 400
+        return model && model.indexOf("flash") >= 0
+          ? ["720P"]
+          : ["720P", "1080P", "1K", "2K"];
+      },
+      ratios: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+      defaultRatio: "16:9",
+      durations: ["4", "5", "6", "7", "8", "9", "10", "11", "12"],
+      defaultDuration: "5",
+      maxRefImages: 5,
+      timeoutMs: 15 * 60 * 1000,
+      build: function (o) {
+        var body = {
+          model: o.model, prompt: o.prompt, mode: o.mode,
+          seconds: o.seconds, size: o.size, aspect_ratio: o.ratio,
+        };
+        if (o.seed !== null && o.seed !== undefined && o.seed !== "") body.seed = Number(o.seed);
+        if (o.mode === "keyframe") {
+          if (o.first) body.first_frame = o.first;
+          if (o.last) body.last_frame = o.last;
+        }
+        if (o.mode === "reference" && o.refImages && o.refImages.length) {
+          body.images = o.refImages;
+        }
+        return body;
+      },
+      pickTask: function (j) {
+        return {
+          taskId: (j && (j.task_id || j.id)) || "",
+          videoId: (j && j.video_id) || "",
+          status: (j && j.status) || "queued",
+          progress: typeof (j && j.progress) === "number" ? j.progress : 0,
+        };
+      },
+      pickPoll: function (j) {
+        return {
+          status: (j && j.status) || "unknown",
+          progress: typeof (j && j.progress) === "number" ? j.progress : 0,
+          url: (j && j.metadata && j.metadata.url) || "",
+          error: (j && j.error && (j.error.message || j.error)) || "",
+        };
+      },
+    },
+  },
+
+  {
+    /*
+     * 阿里云百炼（DashScope）· 通义万相图像生成
+     *
+     * 与 Agnes 最大的结构差异：**这一家是异步任务式**。
+     * 提交只拿到 task_id，图要轮询才回来（见 image.async）。
+     * 所以它的 image 描述符比 Agnes 多一层 —— 这也正是这次给描述符模型
+     * 补上的能力：「生图也可以是异步的」。
+     *
+     * 站点用最通用的 dashscope.aliyuncs.com，而不是文档里那个
+     * {WorkspaceId}.cn-beijing.maas.aliyuncs.com：后者要填业务空间 ID，
+     * 而多数人手上只有一个 API Key。实测通用站点上两条创建路径与
+     * /api/v1/tasks/{id} 轮询路径都在（不带 Key 返回 401 而不是 404），
+     * 且都回 Access-Control-Allow-Origin —— 也就是 iframe 里能直连，
+     * 不必绕宿主代理。
+     *
+     * ⚠️ 价格随官方调整。单价抄自官方计费页，priceSource 标了来源等级：
+     *   official  = 阿里云帮助中心 / 百炼控制台 / 官方产品月刊
+     *   secondary = 二手整理（页面上会显示成"参考价"）
+     * 真要算账以百炼控制台的账单为准，界面上的数字只作选型参考。
+     */
+    id: "aliyun",
+    name: "阿里云百炼",
+    desc: "通义万相文生图 / 图生图，按张计费，失败不计费",
+    docs: "https://help.aliyun.com/zh/model-studio/text-to-image-v2-api-reference",
+    defaultBase: "https://dashscope.aliyuncs.com",
+    basePresets: [
+      { label: "中国内地（北京）", value: "https://dashscope.aliyuncs.com" },
+      { label: "新加坡（国际）", value: "https://dashscope-intl.aliyuncs.com" },
+    ],
+    auth: function (key) { return { Authorization: "Bearer " + key }; },
+
+    // 百炼的对话走另一套（/compatible-mode/v1）且要另选模型名。
+    // 这里不接 —— 接了也是半吊子，用户会在"为什么对话不能用"上白花时间。
+    chat: null,
+
+    image: {
+      /**
+       * 走同步还是异步，以及**走哪条路径** —— 全按模型族决定。
+       *
+       * 阿里云三族图像模型的接口是不同的，不是换个 model 字符串就行：
+       *   万相  ：/api/v1/services/aigc/image-generation/generation（异步，提交后轮询）
+       *           老代（2.5 及以下）：/api/v1/services/aigc/text2image/image-synthesis
+       *   千问  ：/api/v1/services/aigc/multimodal-generation/generation（同步，直接回图）
+       *   Z-Image：同上（同步）
+       * 把它们塞进同一个"异步提交"流程会在千问上拿到 400，因为千问那条
+       * 路径根本不认 X-DashScope-Async 的任务语义。
+       */
+      modeFor: function (model) { return aliCap(model).mode; },
+
+      pathFor: function (model) {
+        var cap = aliCap(model);
+        if (cap.family !== "wan") return "/api/v1/services/aigc/multimodal-generation/generation";
+        return isWan26(model)
+          ? "/api/v1/services/aigc/image-generation/generation"
+          : "/api/v1/services/aigc/text2image/image-synthesis";
+      },
+
+      /** 同步调用的请求体：与异步共用同一套"messages 或 prompt"构造 */
+      build: function (o) { return aliBuildBody(o); },
+
+      /**
+       * 同步响应解析。
+       * 形状是 output.choices[].message.content[].image（和异步轮询回来的一样），
+       * 所以遍历收集，不取某条固定路径 —— n>1 时那里面有好几张。
+       */
+      pick: function (json) {
+        var out = (json && (json.output || json)) || {};
+        var urls = [];
+        var choices = out.choices || [];
+        for (var i = 0; i < choices.length; i++) {
+          var msg = (choices[i] && choices[i].message) || {};
+          var content = msg.content || [];
+          for (var k = 0; k < content.length; k++) {
+            if (content[k] && content[k].image) urls.push(content[k].image);
+          }
+        }
+        return urls.map(function (u) { return { url: u }; });
+      },
+
+      /* ---- 异步任务 ----
+       * 描述符里出现 async 就表示"这家有异步生图"（万相走这条），
+       * 生成流程改走提交 → 轮询（见 doGenerateImageAsync）。 */
+      async: {
+        createPathFor: function (model) {
+          // 两代路径不同，这是最容易写死写错的一处
+          return isWan26(model)
+            ? "/api/v1/services/aigc/image-generation/generation"
+            : "/api/v1/services/aigc/text2image/image-synthesis";
+        },
+        pollPathFor: function (taskId) {
+          return "/api/v1/tasks/" + encodeURIComponent(taskId);
+        },
+        // 异步提交**必须**显式声明，缺了会报
+        // "current user api does not support synchronous calls"
+        headers: { "X-DashScope-Async": "enable" },
+
+        build: function (o) {
+          // 万相老代（2.5 及以下）用的是另一条路径，请求体形状也随之不同，
+          // 所以两代不能共用一份构造 —— 具体分支在 aliBuildBody 里
+          return aliBuildBody(o);
+        },
+
+        pickTask: function (j) {
+          var out = (j && j.output) || {};
+          return {
+            taskId: out.task_id || "",
+            status: out.task_status || "PENDING",
+          };
+        },
+
+        pollPathIsCreatePath: false,
+        // 轮询节流：官方同步接口约 25 秒出图，异步任务多在 10–40 秒，
+        // 2.5 秒一次足够，再密只是无谓打接口
+        intervalMs: 2500,
+        pollTimeoutMs: 180000,
+
+        pickPoll: function (j) {
+          var out = (j && j.output) || {};
+          var raw = out.task_status || "UNKNOWN";
+
+          // 把服务端的状态词表翻译成本工具内部的三态。
+          // UNKNOWN 归到 failed：它表示"任务不存在"（比如 task_id 过期），
+          // 继续轮询是白等，必须让用户看到。
+          var status = "running";
+          if (raw === "SUCCEEDED") status = "completed";
+          else if (raw === "FAILED" || raw === "CANCELED" || raw === "UNKNOWN") status = "failed";
+
+          // 图片地址在 output.choices[].message.content[].image，
+          // 层级深且是数组套数组，所以遍历收集而不是取某一条固定路径
+          var urls = [];
+          var choices = out.choices || [];
+          for (var i = 0; i < choices.length; i++) {
+            var msg = (choices[i] && choices[i].message) || {};
+            var content = msg.content || [];
+            for (var k = 0; k < content.length; k++) {
+              if (content[k] && content[k].image) urls.push(content[k].image);
+            }
+          }
+
+          var errText = "";
+          if (status === "failed") {
+            if (raw === "UNKNOWN") errText = "任务不存在或已过期（task_id 有效期 24 小时）";
+            else errText = (j && (j.message || (j.code && j.code))) || "生成失败";
+          }
+
+          return { status: status, raw: raw, urls: urls, error: errText };
+        },
+      },
+
+      /* ---- 模型档位（带单价） ----
+       * price 单位：元/张（中国内地）。按**成功生成的张数**计费，
+       * 生成失败不扣费 —— 这条要显示在界面上，用户才敢按。
+       *
+       * 每档除了价还带四项能力，因为阿里云这几家的差别**不是价格而是接口**：
+       *   family  wan（万相）/ qwen（千问图像）/ zimage（Z-Image）
+       *           —— 决定走哪条路径、请求体与响应长什么样
+       *   mode    async（提交 task_id 轮询）/ sync（一次请求直接回图）
+       *   maxN    单次最多出几张（写死 4 会在 z-image 上直接报
+       *           "num_images_per_prompt must be 1"）
+       *   maxRef  最多带几张参考图；0 = 纯文生图，带图会被服务端拒；
+       *           requireRef 为真表示"这档只能图生图 / 编辑，没图跑不了"
+       * 清单抄自官方《图片生成与编辑》文档的全量模型表（2026-09）。
+       * 价格：只写有据可查的，查不到就留空 —— 界面会显示
+       * "未收录单价，以控制台为准"，比编一个数字强。
+       */
+      models: [
+        /* ---------- 万相 Wan ---------- */
+        // wan2.6-t2i 放第一位：它是默认档，得是"有价可标 + 主力"的那一个。
+        // 2.7 那两档能力更新但没有可查的公开单价，排在后面供手动选。
+        { id: "wan2.6-t2i", label: "万相 2.6 文生图 · 主力",
+          family: "wan", mode: "async", maxN: 4, maxRef: 3, promptLimit: 2100,
+          price: 0.20, priceSource: "official", note: "当前主力档，2K 内尺寸自由，也支持编辑" },
+        { id: "wan2.6-image", label: "万相 2.6 图像生成 · 可带参考图",
+          family: "wan", mode: "async", maxN: 4, maxRef: 3, promptLimit: 2100,
+          price: 0.20, priceSource: "official", note: "图文一体化，最多 3 张参考图" },
+        { id: "wan2.7-image-pro", label: "万相 2.7 图像生成 Pro · 4K",
+          family: "wan", mode: "async", maxN: 4, maxRef: 9, promptLimit: 2100,
+          note: "最高 4096×4096，多图参考最多 9 张、带边界框交互编辑" },
+        { id: "wan2.7-image", label: "万相 2.7 图像生成",
+          family: "wan", mode: "async", maxN: 4, maxRef: 3, promptLimit: 2100,
+          note: "最高 2048×2048，速度更快" },
+        { id: "wan2.5-t2i-preview", label: "万相 2.5 文生图 · 预览",
+          family: "wan", mode: "async", maxN: 4, maxRef: 0, promptLimit: 2000,
+          price: 0.20, priceSource: "secondary", note: "只能文生图" },
+        // ⚠️ wan2.5-i2i-preview（万相 2.5 图生图）官方表里有，这里**不列**：
+        // 它走的是老代 text2image 路径，而老代那条接口不收 messages 形式的
+        // 图输入，工具现在的图生图构造（content 里塞 image 项）在它上面
+        // 传不进去。列上去等于给一个点了必失败的按钮，不如不列 ——
+        // 真要用它，模型框里手填 ID 也能提交，只是不带图。
+        { id: "wan2.2-t2i-plus", label: "万相 2.2 文生图 Plus",
+          family: "wan", mode: "async", maxN: 4, maxRef: 0, promptLimit: 500,
+          price: 0.20, priceSource: "secondary", note: "细节更好，速度稍慢" },
+        { id: "wan2.2-t2i-flash", label: "万相 2.2 文生图 Flash",
+          family: "wan", mode: "async", maxN: 4, maxRef: 0, promptLimit: 500,
+          price: 0.14, priceSource: "secondary", note: "速度快" },
+        { id: "wan2.1-t2i-plus", label: "万相 2.1 文生图 Plus",
+          family: "wan", mode: "async", maxN: 4, maxRef: 0, promptLimit: 500,
+          price: 0.20, priceSource: "official" },
+        { id: "wan2.1-t2i-turbo", label: "万相 2.1 文生图 Turbo",
+          family: "wan", mode: "async", maxN: 4, maxRef: 0, promptLimit: 500,
+          price: 0.14, priceSource: "official", note: "通用生成，速度快" },
+        { id: "wan2.0-t2i-turbo", label: "万相 2.0 文生图 Turbo · 最便宜",
+          family: "wan", mode: "async", maxN: 4, maxRef: 0, promptLimit: 800,
+          price: 0.04, priceSource: "official", note: "质感人像与创意设计，性价比最高" },
+
+        /* ---------- 千问图像 Qwen Image ---------- */
+        { id: "qwen-image-3.0-pro", label: "千问图像 3.0 Pro · 旗舰",
+          family: "qwen", mode: "sync", maxN: 6, maxRef: 3, promptLimit: 4000,
+          note: "复杂版面、小字与多语言字体渲染最强，可生图也可编辑" },
+        { id: "qwen-image-3.0", label: "千问图像 3.0",
+          family: "qwen", mode: "sync", maxN: 6, maxRef: 3, promptLimit: 4000,
+          note: "同上，生成速度更快" },
+        { id: "qwen-image-2.0-pro", label: "千问图像 2.0 Pro",
+          family: "qwen", mode: "sync", maxN: 6, maxRef: 3, promptLimit: 4000,
+          price: 0.20, priceSource: "secondary" },
+        { id: "qwen-image-2.0", label: "千问图像 2.0",
+          family: "qwen", mode: "sync", maxN: 6, maxRef: 3, promptLimit: 4000,
+          price: 0.20, priceSource: "secondary" },
+        { id: "qwen-image-max", label: "千问图像 Max",
+          family: "qwen", mode: "sync", maxN: 1, maxRef: 0, promptLimit: 2000,
+          price: 0.50, priceSource: "secondary", note: "AI 感最低、质感最真实，一次一张" },
+        { id: "qwen-image-plus", label: "千问图像 Plus",
+          family: "qwen", mode: "sync", maxN: 1, maxRef: 0, promptLimit: 2000,
+          price: 0.20, priceSource: "secondary", note: "复杂文本渲染表现好" },
+        { id: "qwen-image", label: "千问图像",
+          family: "qwen", mode: "sync", maxN: 1, maxRef: 0, promptLimit: 2000,
+          price: 0.25, priceSource: "secondary" },
+        { id: "qwen-image-edit-max", label: "千问图像编辑 Max",
+          family: "qwen", mode: "sync", maxN: 6, maxRef: 3, requireRef: true,
+          promptLimit: 2000, price: 0.50, priceSource: "secondary",
+          note: "只做编辑：必须先放一张要改的图" },
+        { id: "qwen-image-edit-plus", label: "千问图像编辑 Plus",
+          family: "qwen", mode: "sync", maxN: 6, maxRef: 3, requireRef: true,
+          promptLimit: 2000, price: 0.20, priceSource: "secondary",
+          note: "只做编辑：必须先放一张要改的图" },
+        { id: "qwen-image-edit", label: "千问图像编辑",
+          family: "qwen", mode: "sync", maxN: 1, maxRef: 1, requireRef: true,
+          promptLimit: 2000, price: 0.30, priceSource: "secondary",
+          note: "只做编辑，一次一张" },
+
+        /* ---------- Z-Image ---------- */
+        { id: "z-image-turbo", label: "Z-Image Turbo · 快且便宜",
+          family: "zimage", mode: "sync", maxN: 1, maxRef: 0, promptLimit: 800,
+          note: "写实人像与产品图，速度快约 10 倍；描述上限 800 字符，一次一张" },
+      ],
+
+      /**
+       * 每档的尺寸档位。
+       *
+       * 两代的**约束完全不同**，所以不能共用一份列表：
+       *   2.6 起：只约束总像素落在 [1280², 1440²] 且宽高比在 [1:4, 4:1]，单边不限
+       *   2.5 及以下：宽高**各自**落在 [512, 1440]
+       * 列表里的值都是按这两条规则算过、确实合法的，不是随手写的。
+       * 用户也可以直接在模型框里手填其它模型 ID，那时按 2.5 的规则给档位。
+       */
+      sizesFor: function (model) {
+        var cap = aliCap(model);
+        if (cap.family === "zimage") {
+          // 官方推荐档：总像素 1024² 与 1280² 两档里挑的常见比例
+          return ["1024*1024", "832*1248", "1248*832", "864*1152", "1152*864",
+            "720*1280", "1280*720", "1024*1536", "1536*1024", "1344*576"];
+        }
+        if (cap.family === "qwen") {
+          // 3.0 / 2.0 系列 512*512–2048*2048 自由；1.0 系列上限 1664*928
+          if (model.indexOf("qwen-image-3.0") === 0 || model.indexOf("qwen-image-2.0") === 0) {
+            return ["1024*1024", "1664*928", "928*1664", "2048*2048",
+              "1536*1024", "1024*1536", "1280*720", "720*1280"];
+          }
+          if (model.indexOf("qwen-image-edit") === 0) {
+            return model.indexOf("qwen-image-edit-plus") === 0 ||
+              model.indexOf("qwen-image-edit-max") === 0
+              ? ["1024*1024", "2048*2048", "1536*1024", "1024*1536"]
+              : ["1024*1024"];
+          }
+          return ["1664*928", "928*1664", "1328*1328", "1024*1024"];
+        }
+        if (isWan26(model)) {
+          return [
+            "1280*1280", // 1:1   下限像素
+            "1440*1440", // 1:1   上限像素，最清晰
+            "2048*2048", // 2.7 系列才吃得住，2.6 会报分辨率超限
+            "1600*1200", // 4:3
+            "1200*1600", // 3:4
+            "1728*972",  // 16:9
+            "972*1728",  // 9:16
+            "1620*1080", // 3:2
+            "1080*1620", // 2:3
+            "1968*843",  // 21:9 超宽横幅
+          ];
+        }
+        return [
+          "1024*1024", "1440*1440",
+          "1280*720", "720*1280",
+          "1152*864", "864*1152",
+          "1440*810", "810*1440",
+        ];
+      },
+      defaultSizeFor: function (model) {
+        return isWan26(model) ? "1280*1280" : "1024*1024";
+      },
+      /** 万象不接受比例参数，宽高比是靠 size 表达的 */
+      ratios: [],
+      defaultRatio: "",
+
+      /**
+       * 这一档能带几张参考图。
+       *
+       * 以能力表为准，而不是按名字猜：wan2.6-t2i 名字里没有 image
+       * 但官方标了它支持编辑；反过来 z-image-turbo 名字里也有 image
+       * 却一张都不收。手填清单外的模型时按老规则兜底。
+       */
+      maxRefFor: function (model) {
+        if (typeof model !== "string") return 0;
+        var cap = aliCap(model);
+        if (typeof cap.maxRef === "number") return cap.maxRef;
+        return isWan26(model) && model.indexOf("image") >= 0 ? 3 : 0;
+      },
+      maxRef: 0,
+      /** 这一档是不是"只做图生图 / 编辑"（没图跑不了） */
+      requireRefFor: function (model) { return aliCap(model).requireRef === true; },
+      /** 一次最多出几张。z-image 写死 1，多要一张都是 400 */
+      maxNFor: function (model) { return aliCap(model).maxN || 4; },
+
+      /** 提示词长度上限，各家按代不同（超了服务端直接 400，提前拦掉更友好） */
+      promptLimitFor: function (model) {
+        var cap = aliCap(model);
+        if (cap.promptLimit) return cap.promptLimit;
+        if (isWan26(model)) return 2100;
+        if (String(model).indexOf("wan2.5") === 0) return 2000;
+        if (String(model).indexOf("wan2.0") === 0) return 800;
+        return 500;
+      },
+
+      largeRefImage: true,
+      costHint: "异步任务：提交后自动轮询，通常 10–40 秒出图",
+      timeoutMs: 60000,
+      sizes: [],
+      defaultSize: "",
+    },
+
+    // 视频这次不接：万相的视频按秒计费且贵得多（720P 0.6 元/秒），
+    // 要接得先把"按秒预估花费"这套也算清楚，不适合顺手带上
+    video: null,
+  },
+
+  {
+    // 这一条是「拓展性」的活证明：一个通用 OpenAI 兼容网关。
+    // 它没有视频能力（video: null），所以生视频页签会自动置灰 ——
+    // 界面行为由数据决定，不是写死的。
+    id: "openai-compatible",
+    name: "通用 OpenAI 兼容",
+    desc: "任何 OpenAI 风格网关（自建中转 / 其他厂商），模型 ID 自己填",
+    docs: "",
+    defaultBase: "",
+    basePresets: [],
+    auth: function (key) { return { Authorization: "Bearer " + key }; },
+    chat: {
+      path: "/chat/completions",
+      models: [],
+      build: function (o) { return { model: o.model, messages: o.messages, stream: !!o.stream }; },
+      pickText: function (j) {
+        var c = j && j.choices && j.choices[0];
+        return (c && c.message && c.message.content) || "";
+      },
+      pickDelta: function (j) {
+        var c = j && j.choices && j.choices[0];
+        return (c && c.delta && c.delta.content) || "";
+      },
+    },
+    image: {
+      path: "/images/generations",
+      models: [],
+      sizes: ["1024x1024", "1280x720", "720x1280", "1536x1024"],
+      defaultSize: "1024x1024",
+      ratios: [],
+      defaultRatio: "",
+      maxRef: 0,
+      timeoutMs: 300000,
+      // 通用网关多数只认 OpenAI 原生字段，没有 size 档位/ratio 的说法，
+      // 所以直接把尺寸字符串原样传过去。
+      build: function (o) {
+        var body = { model: o.model, prompt: o.prompt, n: o.n, size: o.size };
+        return body;
+      },
+      pick: function (j) {
+        var arr = (j && j.data) || [];
+        if (!Array.isArray(arr)) arr = [arr];
+        var out = [];
+        for (var i = 0; i < arr.length; i++) {
+          var it = arr[i];
+          if (typeof it === "string") out.push({ url: it });
+          else if (it && it.url) out.push({ url: it.url });
+          else if (it && it.b64_json) out.push({ b64: it.b64_json });
+        }
+        return out;
+      },
+    },
+    video: null,
+  },
+];
+
+function provider(id) {
+  for (var i = 0; i < PROVIDERS.length; i++) if (PROVIDERS[i].id === id) return PROVIDERS[i];
+  return PROVIDERS[0];
+}
+
+/* ==================================================================
+ * 2. 小工具
+ * ================================================================== */
+var $ = function (s, r) { return (r || document).querySelector(s); };
+var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+var el = function (id) { return document.getElementById(id); };
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function nowIso() { return new Date().toISOString(); }
+function fmtTime(iso) {
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  function p(n) { return n < 10 ? "0" + n : "" + n; }
+  return p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+function toast(msg, kind) {
+  var t = document.createElement("div");
+  t.className = "toast" + (kind ? " " + kind : "");
+  t.textContent = msg;
+  el("toasts").appendChild(t);
+  setTimeout(function () { t.remove(); }, kind === "err" ? 7000 : 3200);
+}
+function trimBase(u) { return String(u || "").trim().replace(/\/+$/, ""); }
+/** 轮询地址在站点根，所以要从 base 里剥出 origin */
+function originOf(base) {
+  try { return new URL(base).origin; } catch (e) { return ""; }
+}
+function fillSelect(sel, values, current) {
+  sel.innerHTML = "";
+  (values || []).forEach(function (v) {
+    var o = document.createElement("option");
+    o.value = v; o.textContent = v;
+    if (String(v) === String(current)) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+function fillDatalist(id, models) {
+  var dl = el(id);
+  dl.innerHTML = "";
+  (models || []).forEach(function (m) {
+    var o = document.createElement("option");
+    o.value = m.id; o.label = m.label || m.id;
+    dl.appendChild(o);
+  });
+}
+
+/** HTTP 状态码 → 人话。集中在一处，免得每处调用点各写一遍。 */
+function explainHttp(status, bodyText) {
+  var detail = "";
+  try {
+    var j = JSON.parse(bodyText);
+    detail = (j.error && (j.error.message || j.error)) || j.detail || j.message || "";
+    if (typeof detail === "object") detail = JSON.stringify(detail);
+  } catch (e) { detail = String(bodyText || "").slice(0, 200); }
+
+  var head;
+  switch (status) {
+    case 400: head = "参数不对（400）"; break;
+    case 401: head = "密钥无效或没提供（401）"; break;
+    case 403: head = "密钥无权访问该模型（403）"; break;
+    case 404: head = "接口路径或模型不存在（404）"; break;
+    case 413: head = "请求体过大（413）"; break;
+    case 429: head = "触发限流（429），稍后重试"; break;
+    case 500: case 502: case 503: case 520:
+      head = "服务端错误（" + status + "），可重试"; break;
+    default: head = "请求失败（HTTP " + status + "）";
+  }
+  return head + (detail ? "：" + detail : "");
+}
+
+/* ==================================================================
+ * 3. 状态
+ * ================================================================== */
+var S = {
+  tab: "image",
+  providerId: "agnes",
+  baseUrl: "",
+  apiKey: "",
+  models: { image: "", video: "", chat: "" },
+  refs: [],          // 生图参考图（Data URI）
+  results: [],       // 生图结果
+  videoJobs: [],     // 视频任务卡
+  messages: [],      // 对话
+  history: [],       // 生成历史
+  busy: { image: false, video: false, chat: false },
+  /**
+   * 生图的取消信号。
+   *
+   * 以前「取消」按钮只是把 busy 标志翻回 false —— 请求照跑，图照回来，
+   * 只是界面不再显示。对同步生图还能糊过去（反正一次就回来了），
+   * 但异步生图是"提交后轮询"的循环，没有真的中断信号就会一直转下去，
+   * 用户按了取消却看到后台还在打接口，是明确的功能缺陷。
+   */
+  imgCancel: null,
+  /**
+   * 产出是否自动在图库留一份。默认开 —— 这是"关掉就找不回来"的反面：
+   * 生成结果本来只活在一次会话里（万相的地址 24 小时失效），
+   * 让用户记得每次去点保存，等于没保存。
+   */
+  autoGallery: true,
+};
+
+var KV_CONFIG = "config";
+var KV_HISTORY = "history";
+var KV_AUTO_GALLERY = "autoGallery";
+var HISTORY_MAX = 60;
+
+function cfgReady() { return !!(trimBase(S.baseUrl) && S.apiKey); }
+
+/**
+ * 换服务商时清掉带不过去的模型 ID。
+ *
+ * 场景：在 Agnes 里配好模型 → 切到阿里云 → 模型框里还留着 agnes-image-2.5-flash。
+ * 这时页面上会出现「未收录单价」，真去生成还会把别家的模型名发给万相，
+ * 换回一个看不懂的 400。用户只会觉得"这工具坏了"。
+ *
+ * 所以只在新服务商**有明确档位表**、且当前模型不在表里时才清；
+ * 档位表为空的（通用网关靠手填）一律保留，不能把用户自己填的删了。
+ */
+function sanitizeModelsFor(p) {
+  // 这三个输入框要一起清：syncModelInputs 是「S.models 有值就盖回输入框，
+  // 没值才补默认档」，只清变量不清 DOM 的话，旧模型名还留在框里，
+  // 后面的「空才填默认」判断就永远不会触发。
+  var box = { image: "imgModel", video: "vidModel", chat: "chatModel" };
+  ["image", "video", "chat"].forEach(function (k) {
+    var list = (p[k] && p[k].models) || [];
+    if (!list.length) return;               // 自由填写的服务商，不干预
+    var input = el(box[k]);
+    // 用户可能是直接手填在框里（没走配置弹窗），所以框里的值也要看
+    var cur = S.models[k] || (input ? input.value.trim() : "");
+    if (!cur) return;
+    for (var i = 0; i < list.length; i++) if (list[i].id === cur) return;
+    S.models[k] = "";
+    if (input) input.value = "";
+  });
+}
+
+function applyProvider(id, keepBase) {
+  S.providerId = id;
+  var p = provider(id);
+  sanitizeModelsFor(p);
+  if (!keepBase) S.baseUrl = p.defaultBase || S.baseUrl;
+  el("provSel").value = id;
+  document.body.dataset.provider = id;
+  var caps = { image: !!p.image, video: !!p.video, chat: !!p.chat };
+  $$("#tabs .tab").forEach(function (t) {
+    var k = t.dataset.tab;
+    t.disabled = !caps[k];
+    var sub = t.querySelector(".sub");
+    if (sub) sub.textContent = caps[k] ? "" : "此服务不支持";
+  });
+  // 当前页签被关掉了就退回第一个可用能力
+  if (!caps[S.tab]) switchTab(caps.image ? "image" : caps.chat ? "chat" : "video");
+  renderProviderCards();
+  renderBasePresets();
+  syncModelInputs();
+  refreshGates();
+}
+
+function switchTab(tab) {
+  S.tab = tab;
+  $$("#tabs .tab").forEach(function (t) { t.setAttribute("aria-selected", String(t.dataset.tab === tab)); });
+  $$(".pane").forEach(function (p) { p.hidden = p.dataset.pane !== tab; });
+  document.body.dataset.activeTab = tab;
+}
+
+function syncModelInputs() {
+  var p = provider(S.providerId);
+  fillDatalist("modelsImage", p.image ? p.image.models : []);
+  fillDatalist("modelsVideo", p.video ? p.video.models : []);
+  fillDatalist("modelsChat", p.chat ? p.chat.models : []);
+  if (p.video) {
+    fillSelect(el("vidMode"), p.video.modes.map(function (m) { return m.id; }), el("vidMode").value || "text");
+    fillSelect(el("vidRatio"), p.video.ratios, el("vidRatio").value || p.video.defaultRatio);
+    fillSelect(el("vidSeconds"), p.video.durations, el("vidSeconds").value || p.video.defaultDuration);
+  }
+  if (S.models.image) el("imgModel").value = S.models.image;
+  if (S.models.video) el("vidModel").value = S.models.video;
+  if (S.models.chat) el("chatModel").value = S.models.chat;
+  el("fieldVidRatio").hidden = !p.video || !p.video.ratios.length;
+  if (!el("imgModel").value && p.image && p.image.models[0]) el("imgModel").value = p.image.models[0].id;
+  if (!el("vidModel").value && p.video && p.video.models[0]) el("vidModel").value = p.video.models[0].id;
+  if (!el("chatModel").value && p.chat && p.chat.models[0]) el("chatModel").value = p.chat.models[0].id;
+  refreshVideoFields();
+  refreshImageFields();
+}
+
+/**
+ * 生图表单里**随模型变化**的那部分。
+ *
+ * 为什么必须是单独一个函数：换模型不只是换一个字符串。
+ * 尺寸档位、能不能带参考图、描述字数上限、单价 —— 这四样都跟着模型走，
+ * 而它们原本是挂在 provider 上的（Agnes 所有模型共用一套）。
+ * 接阿里云之后就不成立了：同一家下面 wan2.0 是 0.04 元、wan2.7-pro 是 0.54 元，
+ * 一个纯文生图模型加参考图还会被服务端直接 400。
+ * 所以模型输入框的 input 事件、以及 provider 切换，都要过这里。
+ */
+function refreshImageFields() {
+  var p = provider(S.providerId);
+  if (!p.image) return;
+
+  var model = el("imgModel").value.trim() ||
+    (p.image.models[0] ? p.image.models[0].id : "");
+
+  // 换模型时尺寸档位会整表换掉。保留用户当前选的档，但只有它在新模型里
+  // 还有效时才保留 —— 否则浏览器会默默落到第一项，用户以为选的还是原来那个。
+  var sizes = imageSizesFor(model);
+  var cur = el("imgSize").value;
+  fillSelect(el("imgSize"), sizes, sizes.indexOf(cur) >= 0 ? cur : imageDefaultSizeFor(model));
+  el("fieldImgRatio").hidden = !p.image.ratios || !p.image.ratios.length;
+  // ⚠️ 这行不能漏。画幅这一栏只被「显示 / 隐藏」过而没被填过 —— 于是用户看得见
+  // 一个空下拉，选不了任何值，`build()` 拿到的 ratio 恒为空字符串，生成请求就少了画幅。
+  // 换模型时保留用户已经选的档，只在它对新模型还有效时才留着（和上面 imgSize 同一套规则）。
+  fillSelect(
+    el("imgRatio"),
+    p.image.ratios,
+    (p.image.ratios || []).indexOf(el("imgRatio").value) >= 0
+      ? el("imgRatio").value
+      : p.image.defaultRatio,
+  );
+
+  // 参考图上限随模型变。超出的**不静默丢弃** —— 那会让用户以为图还在，
+  // 生成时却发现没带上。这里截断的同时明确说一句。
+  var max = maxRefsFor(model);
+  if (S.refs.length > max) {
+    var dropped = S.refs.length - max;
+    S.refs = S.refs.slice(0, max);
+    toast("这个模型最多 " + max + " 张参考图，已移除超出的 " + dropped + " 张", "err");
+  }
+
+  // 张数同样随模型变：z-image-turbo 与千问图像 1.0 系列一次只出 1 张，
+  // 千问 3.0 / 2.0 能到 6 张。写死 1–4 的话，前者会被服务端直接拒
+  //（num_images_per_prompt must be 1），后者又拿不满它能给的张数。
+  var maxN = typeof p.image.maxNFor === "function" ? p.image.maxNFor(model) : 4;
+  var nOpts = [];
+  for (var ni = 1; ni <= maxN; ni++) nOpts.push(String(ni));
+  var curN = el("imgN").value;
+  fillSelect(el("imgN"), nOpts, nOpts.indexOf(curN) >= 0 ? curN : "1");
+  // 只能出一张时把控件锁掉并说明，而不是让人选了 3 张再挨一发 400
+  el("imgN").disabled = maxN <= 1;
+  el("imgN").title = maxN <= 1 ? "这一档一次只能生成 1 张" : "";
+
+  renderRefs();
+
+  // 单价 + 描述上限
+  var info = imagePriceOf(model);
+  var bits = [];
+  if (info && typeof info.price === "number") {
+    bits.push((info.priceSource === "secondary" ? "参考价 " : "") + priceText(info.price));
+  } else {
+    bits.push("未收录单价，以控制台为准");
+  }
+  var limit = imagePromptLimitFor(model);
+  if (limit) bits.push("描述上限 " + limit + " 字");
+  if (info && info.note) bits.push(info.note);
+  el("imgPrice").textContent = bits.join(" · ");
+
+  // 生成按钮下方的预估花费。失败不计费这条要一直跟着，
+  // 否则用户不敢按这个按钮
+  el("imgCostHint").textContent = imageCostHint(model);
+
+  document.body.dataset.tierPrice = info && typeof info.price === "number" ? String(info.price) : "";
+}
+
+function refreshVideoFields() {
+  var p = provider(S.providerId);
+  if (!p.video) return;
+  var mode = el("vidMode").value;
+  el("vidKeyframe").hidden = mode !== "keyframe";
+  el("vidReference").hidden = mode !== "reference";
+  var hint = {
+    text: "只用文字描述生成，不能带任何媒体参数。",
+    keyframe: "用首帧/尾帧图约束起止构图，至少给一张。",
+    reference: "把图片当内容或风格参考（提示词里用 <Picture 1> 指代），结果可能重新构图。",
+  };
+  el("modeHint").textContent = hint[mode] || "";
+  el("vidRefHint").textContent = "最多 " + p.video.maxRefImages + " 张，必须是生成服务能公开访问的 URL。";
+  var sizes = p.video.sizesFor(el("vidModel").value);
+  fillSelect(el("vidSize"), sizes, el("vidSize").value);
+}
+
+/* ==================================================================
+ * 4. 请求
+ * ================================================================== */
+function authHeaders(p, extra) {
+  var h = { "Content-Type": "application/json" };
+  var a = p.auth ? p.auth(S.apiKey) : {};
+  for (var k in a) h[k] = a[k];
+  for (var k2 in (extra || {})) h[k2] = extra[k2];
+  return h;
+}
+
+/** 统一的 JSON 请求；用 AbortController 支持取消，用超时兜住挂死的请求。
+ *  生图官方建议超时 60–360 秒，所以超时是必填项而不是可选项。 */
+function apiFetch(url, opts, timeoutMs, externalSignal) {
+  var ctl = new AbortController();
+  var timedOut = false;
+  var timer = setTimeout(function () { timedOut = true; ctl.abort(); }, timeoutMs || 120000);
+  if (externalSignal) {
+    if (externalSignal.aborted) ctl.abort();
+    else externalSignal.addEventListener("abort", function () { ctl.abort(); });
+  }
+  return fetch(url, Object.assign({}, opts, { signal: ctl.signal })).then(
+    function (res) {
+      clearTimeout(timer);
+      return res.text().then(function (txt) {
+        if (!res.ok) throw new Error(explainHttp(res.status, txt));
+        if (!txt) return {};
+        try { return JSON.parse(txt); } catch (e) { throw new Error("响应不是合法 JSON：" + txt.slice(0, 160)); }
+      });
+    },
+    function (err) {
+      clearTimeout(timer);
+      if (err && err.name === "AbortError") throw new Error(timedOut ? "请求超时" : "已取消");
+      // 网络层错误最常见的就是跨域被拦或地址写错，提示里点出来，别让人对着 "Failed to fetch" 猜
+      throw new Error("网络请求失败（" + (err && err.message ? err.message : err) +
+        "）。常见原因：地址写错、被网络拦截、或该服务未开放跨域（本机浏览器里调用要求服务端允许 CORS）。");
+    }
+  );
+}
+
+/* ==================================================================
+ * 5. 生图
+ * ================================================================== */
+function renderRefs() {
+  var p = provider(S.providerId);
+  var max = maxRefsFor(el("imgModel").value.trim());
+  var host = el("refList");
+  host.innerHTML = "";
+  S.refs.forEach(function (r, i) {
+    var d = document.createElement("div");
+    d.className = "ref";
+    d.innerHTML = '<img src="' + esc(r) + '" alt="参考图 ' + (i + 1) + '">' +
+      '<button class="del" title="移除" data-rm="' + i + '">×</button>';
+    host.appendChild(d);
+  });
+  if (S.refs.length < max) {
+    var add = document.createElement("button");
+    add.className = "ref-add"; add.id = "refAdd"; add.title = "从本机添加参考图";
+    add.textContent = "+";
+    host.appendChild(add);
+  }
+  var needRef = typeof p.image.requireRefFor === "function" && p.image.requireRefFor(el("imgModel").value.trim());
+  el("refHint").textContent = max === 0
+    ? "当前模型不支持参考图（图生图）。要带图请换一档（如 wan2.6-image、qwen-image-3.0）。"
+    : (needRef
+      ? "这一档只做图生图 / 编辑：**必须**放一张图，在描述里写「改什么」。已加 "
+      : "加图后即变为图生图：在描述里写「保留什么 / 改什么」。已加 ") + S.refs.length + " / " + max +
+      (p.image && p.image.largeRefImage ? "（图片以 base64 直传，过大的图会拖慢提交）" : "");
+  // 参考图数量给 e2e 用
+  document.body.dataset.refCount = String(S.refs.length);
+
+  // 「从图库选」在旧宿主上要禁用并说明，而不是点了没反应
+  var gb = el("btnRefFromGallery");
+  if (gb) {
+    var ok = Host.supportsGallery() && max > 0;
+    gb.disabled = !ok;
+    gb.dataset.max = String(max);   // 上限写进 DOM，e2e 不用猜"这个档能带几张"
+    gb.title = !Host.supportsGallery()
+      ? "当前宿主不支持图库（先升级工作台）"
+      : (max === 0 ? "当前模型不支持参考图" : "从图库挑一张当参考图");
+    gb.style.opacity = ok ? "1" : ".5";
+  }
+}
+
+/* 卡片操作的小图标。内联 SVG 而不是字符：字符图标（◇ □）在小尺寸下发虚，
+   且和工具其它地方的线性图标不一致。 */
+var ICONS = {
+  zoom: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/><path d="M11 8v6M8 11h6"/></svg>',
+  dl: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>',
+  copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  gallery: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>',
+  first: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m10 9 5 3-5 3z"/></svg>',
+  reuse: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>',
+  check: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+};
+
+function renderImageResults() {
+  var host = el("imgResults");
+  if (!S.results.length) {
+    host.innerHTML = '<div class="empty"><span class="big">◇</span>' +
+      (cfgReady() ? "填好描述后点「开始生成」" : "先在右上角「配置」里填 Base URL 与 API Key") + "</div>";
+    el("imgOutLabel").textContent = "尚未生成";
+    return;
+  }
+  var canGallery = Host.supportsGallery();
+  el("imgOutLabel").textContent = "本次 " + S.results.length + " 张";
+  host.innerHTML = '<div class="grid-img">' + S.results.map(function (r, i) {
+    var src = r.url || ("data:image/png;base64," + r.b64);
+    return '<div class="shot" data-shot="' + i + '">' +
+      '<div class="im">' + (r.status === "waiting"
+        ? '<span class="busy"><span class="spin"></span> 生成中…</span>'
+        // 点图直接进大图预览（zoom-in 光标提示可点），比"打开"按钮更顺手
+        : '<img src="' + esc(r.url || src) + '" alt="生成结果 ' + (i + 1) + '" loading="lazy" data-zoom="' + i + '">') + "</div>" +
+      '<div class="meta" title="' + esc(r.note || "") + '">' + esc(r.model || "") + (r.note ? " · " + esc(r.note) : "") + "</div>" +
+      '<div class="acts">' +
+        (r.status === "waiting" ? "" :
+          // 主操作：把这张图放回参考图接着改 —— 生成不是终点，迭代才是
+          '<button class="ibtn reuse" data-act="reuse" data-i="' + i + '" title="放回参考图，改描述继续生成">' + ICONS.reuse + "继续编辑</button>" +
+          '<button class="ibtn" data-act="open" data-i="' + i + '" title="大图预览">' + ICONS.zoom + "</button>" +
+          '<button class="ibtn" data-act="dl" data-i="' + i + '" title="下载">' + ICONS.dl + "</button>" +
+          '<button class="ibtn" data-act="copy" data-i="' + i + '" title="复制图片地址">' + ICONS.copy + "</button>" +
+          // 存图库：把"一次性的出图"变成"素材"。
+          // 保存后按钮变已存态，避免用户重复点（重复存会占两条记录）
+          (canGallery
+            ? '<button class="ibtn' + (r.savedInGallery ? " saved" : "") + '" data-act="togallery" data-i="' + i + '"' +
+              (r.savedInGallery ? " disabled" : "") + ' title="' + (r.savedInGallery ? "已存图库" : "存进图库") + '">' +
+              (r.savedInGallery ? ICONS.check : ICONS.gallery) + "</button>"
+            : "") +
+          (provider(S.providerId).video ? '<button class="ibtn" data-act="tofirst" data-i="' + i + '" title="用作视频首帧">' + ICONS.first + "</button>" : "")) +
+      "</div></div>";
+  }).join("") + "</div>";
+  document.body.dataset.imageCount = String(S.results.length);
+}
+
+/* ------------------------------------------------------------------
+ * 5a-b. 再编辑与大图预览
+ *
+ * 「继续编辑」是这个工具和一次性玩具生图站的分界线：把刚生成的图
+ * 直接放回参考图、提示词也还原，用户改两句描述再点一次生成，
+ * 就是在原图基础上迭代 —— 而不是每次都从零开始碰运气。
+ *
+ * 大图预览解决的是"看完要切回来"：以前「打开」新开浏览器标签，
+ * 一次生成四张就是一排标签页。这里原地全屏 + 左右切换。
+ * ------------------------------------------------------------------ */
+function resultSrc(r) { return r.url || ("data:image/png;base64," + r.b64); }
+
+/**
+ * 把一张结果放回参考图并还原当时的描述。
+ * 参考图上限按**当前模型**算：用户可能已经把模型换成不支持参考图的那档，
+ * 这时要明确说"换模型"，而不是默默把图塞进去然后提交时报错。
+ */
+function reuseForEdit(r) {
+  var max = maxRefsFor(el("imgModel").value.trim());
+  if (max === 0) {
+    toast("当前模型不支持参考图（图生图），换名字带 image 的模型档再继续编辑", "err");
+    return;
+  }
+  var src = resultSrc(r);
+  if (S.refs.indexOf(src) === -1) {
+    S.refs.push(src);
+    // 超上限挤掉最早的：迭代场景里最新放进去的才是要改的那张
+    if (S.refs.length > max) S.refs.shift();
+  }
+  if (r.prompt) {
+    el("imgPrompt").value = r.prompt;
+    document.body.dataset.promptLen = String(r.prompt.length);
+  }
+  renderRefs();
+  switchTab("image");
+  var ta = el("imgPrompt");
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  el("imgPrompt").scrollIntoView({ block: "center" });
+  toast("已把这张图放回参考图，改改描述继续生成", "ok");
+}
+
+/* --- 单张结果的共同动作。结果卡片和 lightbox 的操作条共用 --- */
+async function resultAction(act, i, btn) {
+  var r = S.results[i];
+  if (!r) return;
+  var src = resultSrc(r);
+
+  if (act === "open") { openLightbox(i); return; }
+  if (act === "reuse") { closeLightbox(); reuseForEdit(r); return; }
+
+  if (act === "togallery") {
+    if (btn) btn.disabled = true;
+    try {
+      await saveResultToGallery(r, i);
+      r.savedInGallery = true;
+      toast("已存进图库", "ok");
+    } catch (err) {
+      toast("存图库失败：" + String(err && err.message || err), "err");
+    }
+    renderImageResults();
+    if (LB.open) renderLightbox();
+    return;
+  }
+
+  if (act === "tofirst") {
+    el("vidFirst").value = r.url || "";
+    closeLightbox();
+    switchTab("video");
+    toast(r.url ? "已填入首帧 URL" : "这张是 base64，视频接口只收公开 URL，无法使用", r.url ? "ok" : "err");
+    return;
+  }
+  if (act === "dl") {
+    var a = document.createElement("a");
+    a.href = src; a.download = "ai-" + Date.now() + (r.b64 ? ".png" : ".jpg");
+    document.body.appendChild(a); a.click(); a.remove();
+    return;
+  }
+  if (act === "copy") {
+    try { await navigator.clipboard.writeText(src); toast("已复制图片地址", "ok"); }
+    catch (err) { toast("复制失败，可先「下载」再另存", "err"); }
+  }
+}
+
+/* --- 大图预览 --- */
+var LB = { open: false, idx: -1 };
+
+function openLightbox(i) {
+  if (!S.results[i] || S.results[i].status === "waiting") return;
+  LB.open = true; LB.idx = i;
+  renderLightbox();
+  el("lightbox").hidden = false;
+  document.body.dataset.lightbox = "1";
+}
+
+function closeLightbox() {
+  if (!LB.open) return;
+  LB.open = false;
+  el("lightbox").hidden = true;
+  document.body.dataset.lightbox = "0";
+}
+
+function renderLightbox() {
+  var r = S.results[LB.idx];
+  if (!r) { closeLightbox(); return; }
+  el("lbImg").src = resultSrc(r);
+  el("lbMeta").textContent = (r.model || "") + (r.note ? " · " + r.note : "") +
+    (r.prompt ? " · " + r.prompt : "");
+  var done = S.results.filter(function (x) { return x.status !== "waiting"; });
+  var pos = done.indexOf(r);
+  el("lbCount").textContent = done.length > 1 ? (pos + 1) + " / " + done.length : "";
+  el("lbPrev").hidden = pos <= 0;
+  el("lbNext").hidden = pos < 0 || pos >= done.length - 1;
+  var saved = el("lightbox").querySelector('[data-lb="togallery"]');
+  if (saved) {
+    saved.disabled = !!r.savedInGallery || !Host.supportsGallery();
+    saved.classList.toggle("saved", !!r.savedInGallery);
+    saved.title = r.savedInGallery ? "已存图库"
+      : Host.supportsGallery() ? "存进图库" : "当前宿主不支持图库";
+  }
+}
+
+function lbStep(dir) {
+  var done = S.results.filter(function (x) { return x.status !== "waiting"; });
+  var cur = S.results[LB.idx];
+  var pos = done.indexOf(cur);
+  var next = done[pos + dir];
+  if (!next) return;
+  LB.idx = S.results.indexOf(next);
+  renderLightbox();
+}
+
+function readFileAsDataUri(file) {
+  return new Promise(function (resolve, reject) {
+    var fr = new FileReader();
+    fr.onload = function () { resolve(String(fr.result)); };
+    fr.onerror = function () { reject(new Error("读取图片失败")); };
+    fr.readAsDataURL(file);
+  });
+}
+
+function addHistory(entry) {
+  entry.id = entry.id || ("h" + Date.now() + "-" + Math.floor(Math.random() * 1e4));
+  entry.at = nowIso();
+  S.history.unshift(entry);
+  if (S.history.length > HISTORY_MAX) S.history.length = HISTORY_MAX;
+  void persistHistory();
+  renderHistory();
+  return entry.id;
+}
+
+/**
+ * 就地更新一条历史。
+ *
+ * 视频任务是「提交 → 轮询 → 完成」三段一体的，如果完成时再 addHistory 一条，
+ * 同一支视频会在历史里出现两次（一次 queued 一次 completed）——
+ * 用户看到的就是莫名其妙的重复项。所以提交时记 id，完成时改那一条。
+ */
+function updateHistory(id, patch) {
+  for (var i = 0; i < S.history.length; i++) {
+    if (S.history[i].id === id) {
+      for (var k in patch) S.history[i][k] = patch[k];
+      S.history[i].at = nowIso();
+      break;
+    }
+  }
+  void persistHistory();
+  renderHistory();
+}
+
+var histTimer = null;
+function persistHistory() {
+  clearTimeout(histTimer);
+  return new Promise(function (resolve) {
+    histTimer = setTimeout(function () {
+      if (!Host.isConnected()) { resolve(); return; }
+      Host.kvSet(KV_HISTORY, JSON.stringify(S.history))
+        .then(function () { resolve(); })
+        .catch(function () { resolve(); });
+    }, 400);
+  });
+}
+
+function renderHistory() {
+  renderHistInto("imgHist", "image");
+  renderHistInto("vidHist", "video");
+}
+
+function renderHistInto(hostId, kind) {
+  var host = el(hostId);
+  var rows = S.history.filter(function (h) { return h.kind === kind; }).slice(0, 10);
+  if (!rows.length) { host.innerHTML = ""; return; }
+  host.innerHTML = '<div class="hist"><h3>最近' + (kind === "image" ? "出图" : "出片") +
+    "<span style='flex:1'></span>" +
+    '<button class="btn sm ghost" data-hist-clear="' + kind + '">清空历史</button></h3><div class="hist-list">' +
+    rows.map(function (h) {
+      var thumb = kind === "image" && h.url
+        ? '<img class="thumb" src="' + esc(h.url) + '" alt="">'
+        : '<div class="thumb"></div>';
+      var label = h.status === "failed" ? "失败" : h.status === "completed" ? "完成" : h.status || "完成";
+      return '<div class="hrow" data-hist="' + esc(h.id) + '">' + thumb +
+        '<span class="p" title="' + esc(h.prompt) + '">' + esc(h.prompt || "(无描述)") + "</span>" +
+        '<span class="t">' + esc(h.model || "") + "</span>" +
+        '<span class="t">' + esc(label) + "</span>" +
+        '<span class="t">' + esc(fmtTime(h.at)) + "</span></div>";
+    }).join("") + "</div></div>";
+}
+
+async function doGenerateImage() {
+  var p = provider(S.providerId);
+  if (!p.image) { toast("当前服务不支持生图", "err"); return; }
+  if (!cfgReady()) { openCfg(); toast("先配置 Base URL 与 API Key", "err"); return; }
+
+  var prompt = el("imgPrompt").value.trim();
+  if (!prompt) { toast("请先写描述", "err"); el("imgPrompt").focus(); return; }
+
+  var model = el("imgModel").value.trim();
+  var n = Number(el("imgN").value) || 1;
+  var size = el("imgSize").value;
+  var ratio = el("imgRatio").value;
+
+  // 描述超限本地先拦：服务端超限只会回一个 400，而这里能说清"超了多少字"。
+  // 各代的字数上限差很多（万相 2.1 是 500，2.6 是 2100），
+  // 不提醒的话用户会以为是自己网络的问题。
+  var limit = imagePromptLimitFor(model);
+  if (limit && prompt.length > limit) {
+    toast("描述 " + prompt.length + " 字，超过 " + model + " 的 " + limit + " 字上限", "err");
+    el("imgPrompt").focus();
+    return;
+  }
+
+  // 参考图按**当前模型**的上限再截一次：模型可能刚被改成不支持参考图的那种
+  var refs = S.refs.slice(0, maxRefsFor(model));
+
+  // 只做图生图 / 编辑的档位（比如千问图像编辑系列）没图跑不了。
+  // 在提交前拦下来，好过让服务端回一句看不懂的参数错误
+  if (typeof p.image.requireRefFor === "function" && p.image.requireRefFor(model) && !refs.length) {
+    toast("这一档只做图生图 / 图像编辑，先在「参考图」里放一张图", "err");
+    return;
+  }
+
+  S.busy.image = true;
+  S.imgCancel = new AbortController();
+  refreshGates();
+  S.results = [];
+  // prompt / size / ratio 跟着每张结果走：「继续编辑」要靠它们还原
+  // 当时是怎么生成的，而不是让用户对着一张图凭记忆重打一遍提示词
+  for (var i = 0; i < n; i++) {
+    S.results.push({ status: "waiting", model: model, prompt: prompt, size: size, ratio: ratio });
+  }
+  renderImageResults();
+
+  var opts = {
+    prompt: prompt, model: model, n: n, size: size, ratio: ratio, refImages: refs,
+  };
+
+  try {
+    // 同一家服务商里也可能有同步和异步两种模型：万相走"提交 → 轮询"，
+    // 千问图像与 Z-Image 是一次请求直接回图。由描述符的 modeFor 决定，
+    // 而不是把"有没有 async"当唯一开关 —— 后者会让千问走上万相的轮询路径。
+    var useAsync = typeof p.image.modeFor === "function"
+      ? p.image.modeFor(model) === "async"
+      : !!p.image.async;
+    if (useAsync) {
+      await runImageAsync(p, opts);
+    } else {
+      await runImageSync(p, opts);
+    }
+  } catch (err) {
+    S.results = [];
+    renderImageResults();
+    document.body.dataset.lastError = String(err && err.message || err);
+    toast(String(err && err.message || err), "err");
+    addHistory({
+      kind: "image", model: model, prompt: prompt,
+      status: "failed", error: String(err && err.message || err),
+    });
+  } finally {
+    S.busy.image = false;
+    S.imgCancel = null;
+    refreshGates();
+  }
+}
+
+/** 同步生图：一次请求直接拿图（OpenAI 风格的那些服务商走这条） */
+async function runImageSync(p, opts) {
+  var body = p.image.build({
+    prompt: opts.prompt, model: opts.model, n: opts.n,
+    size: opts.size, ratio: opts.ratio, refImages: opts.refImages,
+  });
+  // 路径按模型取（阿里云里千问 / Z-Image 与万相不是同一条），
+  // 没有 pathFor 的服务商继续用 provider 级的固定路径
+  var url = trimBase(S.baseUrl) +
+    (typeof p.image.pathFor === "function" ? p.image.pathFor(opts.model) : p.image.path);
+
+  var json = await apiFetch(url, {
+    method: "POST", headers: authHeaders(p), body: JSON.stringify(body),
+  }, p.image.timeoutMs, S.imgCancel && S.imgCancel.signal);
+
+  var picked = p.image.pick(json);
+  if (!picked.length) {
+    S.results = [];
+    renderImageResults();
+    throw new Error("服务返回成功但没找到图片字段，响应结构可能是新的：" + JSON.stringify(json).slice(0, 200));
+  }
+  S.results = picked.map(function (r) { return Object.assign({ model: opts.model }, r); });
+  renderImageResults();
+  addHistory({
+    kind: "image", model: opts.model, prompt: opts.prompt, status: "completed",
+    url: picked[0].url || "", count: picked.length,
+    params: { size: opts.size, ratio: opts.ratio, n: opts.n, refs: opts.refImages.length },
+  });
+  toast("出图完成，" + picked.length + " 张", "ok");
+  // 不 await：图已经出来了，存档在后台跑完再刷新按钮状态
+  void archiveResults();
+}
+
+/**
+ * 异步生图：提交拿 task_id → 轮询取图。阿里云百炼的万相走这条。
+ *
+ * 和生视频的轮询是同一套形状，但**没有合并成一份代码**，因为两者
+ * 的产出与失败语义不同：视频一支一片、有进度百分比；生图一次 n 张、
+ * 没有进度只有状态。硬合并会得到一堆 if (kind === ...)，不如各自清楚。
+ */
+async function runImageAsync(p, opts) {
+  var A = p.image.async;
+  var createUrl = trimBase(S.baseUrl) + A.createPathFor(opts.model);
+  var body = A.build(opts);
+  var signal = S.imgCancel && S.imgCancel.signal;
+
+  var created = await apiFetch(createUrl, {
+    method: "POST", headers: authHeaders(p, A.headers || {}), body: JSON.stringify(body),
+  }, p.image.timeoutMs, signal);
+
+  var task = A.pickTask(created);
+  if (!task.taskId) {
+    throw new Error("提交成功但没拿到 task_id，响应结构可能是新的：" + JSON.stringify(created).slice(0, 200));
+  }
+  // task_id 写进 DOM：出问题时用户能拿着它去控制台查，
+  // 也方便 e2e 断言"确实提交了任务"
+  document.body.dataset.taskId = task.taskId;
+  S.results.forEach(function (r) { r.note = "任务 " + String(task.taskId).slice(0, 8); });
+  renderImageResults();
+
+  var histId = addHistory({
+    kind: "image", model: opts.model, prompt: opts.prompt, status: "queued",
+    taskId: task.taskId, count: opts.n,
+    params: { size: opts.size, n: opts.n, refs: opts.refImages.length },
+  });
+
+  var pollUrl = trimBase(S.baseUrl) + A.pollPathFor(task.taskId);
+  var deadline = Date.now() + (A.pollTimeoutMs || 180000);
+  var interval = A.intervalMs || 2500;
+
+  while (Date.now() < deadline) {
+    await new Promise(function (r) { setTimeout(r, interval); });
+    if (signal && signal.aborted) {
+      // 真取消：不再打接口，并把这一条历史标成取消，而不是留在 queued 上
+      S.results = [];
+      renderImageResults();
+      updateHistory(histId, { status: "failed", error: "已取消" });
+      toast("已取消（任务可能仍在服务端跑完并计费）");
+      return;
+    }
+
+    var res;
+    try {
+      res = await fetch(pollUrl, { headers: authHeaders(p), signal: signal });
+    } catch (err) {
+      // 取消发生在"正等这一次轮询"的窗口里时，fetch 直接抛 AbortError。
+      // 不接住的话会一路冒到最外层，用户看到的是英文的
+      // "The user aborted a request."，而不是自己刚按的「取消」。
+      if (err && err.name === "AbortError") {
+        S.results = [];
+        renderImageResults();
+        updateHistory(histId, { status: "failed", error: "已取消" });
+        toast("已取消（任务可能仍在服务端跑完并计费）");
+        return;
+      }
+      throw err;
+    }
+    var txt = await res.text();
+
+    // 限流退避：轮询期间撞上 429 不该让整个任务失败，放慢继续问
+    if (res.status === 429) {
+      interval = Math.min(interval * 2, 12000);
+      S.results.forEach(function (r) { r.note = "被限流，退避到 " + Math.round(interval / 1000) + " 秒"; });
+      renderImageResults();
+      continue;
+    }
+    if (!res.ok) {
+      S.results.forEach(function (r) { r.note = explainHttp(res.status, txt); });
+      renderImageResults();
+      continue;
+    }
+
+    var st = A.pickPoll(JSON.parse(txt));
+    if (st.status === "completed") {
+      var urls = st.urls && st.urls.length ? st.urls : [];
+      if (!urls.length) {
+        // 状态是成功却没有图，属于响应结构变了。
+        // 明确报出来，好过留一个永远"生成中"的占位
+        throw new Error("任务成功但响应里没有图片地址，结构可能是新的");
+      }
+      // n 可能大于返回张数（服务端会按内容决定），以**实际返回**为准，
+      // 否则界面上会留下空的格子
+      S.results = urls.map(function (u) {
+        return { status: "done", url: u, model: opts.model, prompt: opts.prompt, size: opts.size, ratio: opts.ratio, note: "任务 " + String(task.taskId).slice(0, 8) };
+      });
+      renderImageResults();
+      updateHistory(histId, { status: "completed", url: urls[0], count: urls.length });
+      toast("出图完成，" + urls.length + " 张", "ok");
+      void archiveResults();
+      return;
+    }
+
+    if (st.status === "failed") {
+      S.results = [];
+      renderImageResults();
+      updateHistory(histId, { status: "failed", error: st.error || "生成失败" });
+      throw new Error(st.error || "生成失败");
+    }
+
+    // 还在跑：把服务端的原始状态显示出来（PENDING / RUNNING），
+    // 比统一显示"生成中"更有信息量 —— 卡在 PENDING 说明在排队
+    S.results.forEach(function (r) { r.note = "任务 " + String(task.taskId).slice(0, 8) + " · " + st.raw; });
+    renderImageResults();
+  }
+
+  S.results = [];
+  renderImageResults();
+  updateHistory(histId, { status: "failed", error: "超过最大等待时间" });
+  throw new Error("超过最大等待时间（" + Math.round((A.pollTimeoutMs || 180000) / 1000) +
+    " 秒），任务可能仍在服务端跑，可稍后用 task_id 重查");
+}
+
+/* ==================================================================
+ * 5b. 图库联动
+ *
+ * 两个方向，都走宿主的 gallery.* 通道（协议见宿主 src/lib/toolBridge.ts）：
+ *   图库 → 这里：参考图不必先下载到本机再上传，直接从图库里挑
+ *   这里 → 图库：出图结果一键存成素材，不再"关掉页面就找不回来"
+ *
+ * ⚠️ 存图**交给宿主下载**，不是这里 fetch：
+ * 生图接口回报的常常是不给 CORS 头的临时对象存储链接
+ * （万相是 OSS，24 小时失效），在 iframe 里 fetch 会被浏览器拦掉，
+ * 而那种失败在本工具里只能报成一句含糊的"网络错误"。
+ * 宿主有 Rust reqwest（桌面）或直接 fetch（浏览器 demo），早就跑熟了。
+ * ================================================================== */
+
+/**
+ * 把一张生成结果存进图库。有 url 就交给宿主下，只有 b64 就直接给内容。
+ *
+ * dedupe 只由**自动存档**传 true：那一次保存不是用户点的，同样的内容
+ * 再存一条只会让图库里排满一模一样的卡片。用户亲手点「存进图库」时
+ * 不去重 —— 他要的就是"再留一份"（同一个提示词重新生成也该是两条）。
+ */
+async function saveResultToGallery(r, index, dedupe) {
+  if (!Host.supportsGallery()) throw new Error("当前宿主不支持图库");
+
+  var opts = {
+    title: "AI 生成 " + fmtTime(nowIso()) + (S.results.length > 1 ? " #" + (index + 1) : ""),
+    // 提示词一起存：图库里能按提示词搜，还能"换个模型再来一次"。
+    // 优先取结果上记的（「继续编辑」后输入框可能已经换成了下一轮的描述）
+    prompt: (r.prompt || el("imgPrompt").value || "").trim(),
+    note: el("imgModel").value.trim(),
+    dedupe: dedupe === true,
+  };
+  if (r.url) opts.url = r.url;
+  else if (r.b64) opts.dataUrl = "data:image/png;base64," + r.b64;
+  else throw new Error("这一张既没有地址也没有内容");
+
+  return Host.galleryPut(opts);
+}
+
+/* ------------------------------------------------------------------
+ * 5c. 产出自动进图库
+ *
+ * 生成结果原本只活在这一次会话里：万相回报的是 OSS 临时地址，24 小时就失效，
+ * 关掉工具再打开只剩一条历史记录。所以产出**默认**在图库留一份 ——
+ * 用户不必记得去点「存进图库」，那条按钮留着给"我就想再存一次"。
+ *
+ * 三条纪律：
+ *   1. **存档失败绝不能把"生成成功"变成"生成失败"**：出图已经成功了，
+ *      图没存进去只是可惜，不是错误。所以这里 try/catch 兜住，最多报一句。
+ *   2. **自动存档走 dedupe**，手动存档不走（理由见 saveResultToGallery）。
+ *   3. 开关默认开，但**关得掉** —— 有人只想试个提示词，不想弄脏图库。
+ * ------------------------------------------------------------------ */
+
+/** 开关开着 + 宿主确实有图库，才自动存 */
+function autoGalleryOn() {
+  return S.autoGallery !== false && Host.supportsGallery();
+}
+
+/** 把本次还没存过的图依次存进图库。串行：一次并发十几张会把两边内存压满。 */
+async function archiveResults() {
+  if (!autoGalleryOn()) return;
+  var list = [];
+  S.results.forEach(function (r, i) {
+    if (r.status === "waiting" || r.savedInGallery) return;
+    list.push({ r: r, i: i });
+  });
+  if (!list.length) return;
+
+  var ok = 0, dup = 0, firstErr = "";
+  for (var k = 0; k < list.length; k++) {
+    try {
+      var item = await saveResultToGallery(list[k].r, list[k].i, true);
+      list[k].r.savedInGallery = true;
+      if (item && item.dup) dup++; else ok++;
+    } catch (err) {
+      // 单张失败不中断其余：能存几张是几张
+      if (!firstErr) firstErr = String(err && err.message || err);
+    }
+  }
+  renderImageResults();
+  document.body.dataset.autoArchived = String(ok + dup);
+  if (ok || dup) {
+    toast("已自动存入图库：" + ok + " 张" +
+      (dup ? "（" + dup + " 张图库里本来就有）" : ""), "ok");
+  } else if (firstErr) {
+    toast("自动存入图库失败：" + firstErr, "err");
+  }
+}
+
+/** 视频同理：临时地址更短命，更要留一份 */
+async function archiveVideoJob(job) {
+  if (!autoGalleryOn() || !job || !job.url || job.savedInGallery) return;
+  try {
+    var item = await Host.galleryPut({
+      url: job.url,
+      title: "AI 视频 " + fmtTime(nowIso()),
+      prompt: job.prompt || "",
+      note: (job.model || "") + (job.seconds ? " · " + job.seconds + "s" : ""),
+      dedupe: true,
+    });
+    job.savedInGallery = true;
+    renderVideoJobs();
+    toast(item && item.dup ? "图库里已有这一份视频" : "已自动存入图库", "ok");
+  } catch (err) {
+    // 同图片：存档失败不影响"视频已经生成好了"这个事实
+    toast("自动存入图库失败：" + String(err && err.message || err), "err");
+  }
+}
+
+/** 图库选择器的状态 */
+var G = { kind: "image", items: [], picked: [] };
+
+function openGalleryPicker() {
+  if (!Host.supportsGallery()) {
+    toast("当前宿主不支持图库，先升级工作台", "err");
+    return;
+  }
+  if (maxRefsFor(el("imgModel").value.trim()) === 0) {
+    toast("当前模型不支持参考图，换带 image 的模型档", "err");
+    return;
+  }
+  G.picked = [];
+  el("galleryMask").hidden = false;
+  document.body.dataset.galleryOpen = "1";
+  void loadGalleryPicker();
+}
+
+function closeGalleryPicker() {
+  el("galleryMask").hidden = true;
+  document.body.dataset.galleryOpen = "0";
+}
+
+async function loadGalleryPicker() {
+  var body = el("galleryBody");
+  body.innerHTML = '<p class="hint" style="grid-column:1/-1">正在读取图库…</p>';
+  el("galleryCount").textContent = "…";
+  try {
+    G.items = await Host.galleryList({
+      kind: G.kind,
+      search: el("gallerySearch").value.trim(),
+      limit: 120,
+    });
+  } catch (err) {
+    body.innerHTML = '<p class="hint" style="grid-column:1/-1;color:var(--danger)">' +
+      esc(String(err && err.message || err)) + "</p>";
+    el("galleryCount").textContent = "读取失败";
+    document.body.dataset.galleryCount = "0";
+    return;
+  }
+  el("galleryCount").textContent = G.items.length + " 项";
+  document.body.dataset.galleryCount = String(G.items.length);
+  renderGalleryPicker();
+}
+
+function renderGalleryPicker() {
+  var body = el("galleryBody");
+  if (!G.items.length) {
+    body.innerHTML = '<p class="hint" style="grid-column:1/-1">图库里还没有内容。' +
+      "先去侧边栏「图库」导入图片，或者直接生成几张再存进去。</p>";
+    updateGalleryHint();
+    return;
+  }
+  body.innerHTML = G.items.map(function (it) {
+    var on = G.picked.indexOf(it.id) >= 0;
+    var inner = it.thumb
+      ? '<img src="' + esc(it.thumb) + '" alt="">'
+      : '<span class="none">' + (it.kind === "video" ? "视频" : "无预览") + "</span>";
+    return '<button class="gitem" data-gid="' + esc(it.id) + '"' +
+      ' aria-selected="' + (on ? "true" : "false") + '"' +
+      ' title="' + esc(it.title) + '">' + inner +
+      '<span class="nm">' + esc(it.title) + "</span></button>";
+  }).join("");
+  updateGalleryHint();
+}
+
+function updateGalleryHint() {
+  var max = maxRefsFor(el("imgModel").value.trim());
+  var room = Math.max(0, max - S.refs.length);
+  el("galleryHint").textContent =
+    "已选 " + G.picked.length + " 项 · 这个模型还能加 " + room + " 张";
+  el("btnGalleryUse").disabled = G.picked.length === 0 || room === 0;
+}
+
+/**
+ * 把选中的图库项加进参考图。
+ *
+ * 必须走 gallery.get 把图读成 data URI，而不是直接用某个本地路径：
+ * 参考图最终要交给**生图接口**，而接口只认公开 URL 或 data URI，
+ * 仓库里的本地文件两者都不是。转换这一步只能由宿主做
+ * （它才拿得到文件内容）。
+ */
+async function useGalleryPicked() {
+  var max = maxRefsFor(el("imgModel").value.trim());
+  var room = Math.max(0, max - S.refs.length);
+  if (!G.picked.length) return;
+  if (room === 0) { toast("参考图已达上限（" + max + " 张）", "err"); return; }
+
+  var ids = G.picked.slice(0, room);
+  var btn = el("btnGalleryUse");
+  btn.disabled = true;
+  btn.textContent = "读取中…";
+
+  var failed = [];
+  for (var i = 0; i < ids.length; i++) {
+    try {
+      var got = await Host.galleryGet(ids[i]);
+      if (got && got.dataUrl) S.refs.push(got.dataUrl);
+    } catch (err) {
+      failed.push(String(err && err.message || err));
+    }
+  }
+
+  btn.textContent = "加入参考图";
+  renderRefs();
+  closeGalleryPicker();
+  if (failed.length) toast("有 " + failed.length + " 张读不动：" + failed[0], "err");
+  else toast("已加入 " + (ids.length - failed.length) + " 张参考图", "ok");
+}
+
+/* ==================================================================
+ * 6. 生视频（提交 → 轮询）
+ * ================================================================== */
+function renderVideoJobs() {
+  var host = el("vidResults");
+  if (!S.videoJobs.length) {
+    host.innerHTML = '<div class="empty"><span class="big">◇</span>' +
+      (provider(S.providerId).video
+        ? (cfgReady() ? "填好描述后点「提交生成」" : "先在右上角「配置」里填 Base URL 与 API Key")
+        : "当前服务只声明了对话/生图能力，没有视频接口") + "</div>";
+    el("vidOutLabel").textContent = "尚无任务";
+    return;
+  }
+  el("vidOutLabel").textContent = S.videoJobs.length + " 个任务";
+  host.innerHTML = S.videoJobs.map(function (j, i) {
+    var statusText = {
+      queued: "排队中", in_progress: "生成中", completed: "已完成", failed: "失败", unknown: "未知状态",
+    }[j.status] || j.status;
+    var body = "";
+    if (j.status === "completed" && j.url) {
+      body = '<video src="' + esc(j.url) + '" controls preload="metadata"></video>' +
+        '<div class="acts" style="margin-top:8px">' +
+        '<a class="btn sm" href="' + esc(j.url) + '" target="_blank" rel="noreferrer">新窗口打开</a>' +
+        '<a class="btn sm" href="' + esc(j.url) + '" download>下载</a>' +
+        '<button class="btn sm" data-act="vcopy" data-i="' + i + '">复制地址</button></div>';
+    } else if (j.status === "failed") {
+      body = '<p style="color:var(--danger);font-size:12.5px;margin:8px 0 0">' + esc(j.error || "生成失败") + "</p>";
+    } else {
+      body = '<div class="prog"><i style="width:' + Math.max(2, j.progress || 0) + '%"></i></div>' +
+        '<p style="font-size:12px;color:var(--dim);margin:7px 0 0">' + esc(statusText) +
+        " · " + (j.progress || 0) + "% · 已轮询 " + (j.polls || 0) + " 次</p>" +
+        (j.pollError ? '<p style="font-size:12px;color:var(--warn);margin:5px 0 0">上次轮询出错：' + esc(j.pollError) + "</p>" : "");
+    }
+    return '<div class="vcard" data-job="' + i + '">' +
+      "<h4>" + esc(j.model) + ' <span class="tag ' +
+        (j.status === "completed" ? "ok" : j.status === "failed" ? "err" : "warn") + '">' + esc(statusText) + "</span>" +
+        (j.seconds ? '<span class="tag">' + esc(j.seconds) + "s</span>" : "") +
+        (j.size ? '<span class="tag">' + esc(j.size) + "</span>" : "") +
+        (j.savedInGallery ? '<span class="tag ok">已存图库</span>' : "") +
+      "</h4>" +
+      '<div class="kv"><span class="k">video_id</span><span class="v mono">' + esc(j.videoId || "—") + "</span></div>" +
+      '<div class="kv"><span class="k">描述</span><span class="v">' + esc(j.prompt) + "</span></div>" +
+      body +
+      (j.status === "completed" || j.status === "failed"
+        ? '<div style="margin-top:8px"><button class="btn sm ghost danger" data-act="vdrop" data-i="' + i + '">移除这张卡</button></div>'
+        : "") +
+      "</div>";
+  }).join("");
+  document.body.dataset.jobCount = String(S.videoJobs.length);
+}
+
+async function doGenerateVideo() {
+  var p = provider(S.providerId);
+  if (!p.video) { toast("当前服务不支持生视频", "err"); return; }
+  if (!cfgReady()) { openCfg(); toast("先配置 Base URL 与 API Key", "err"); return; }
+
+  var prompt = el("vidPrompt").value.trim();
+  if (!prompt) { toast("请先写描述", "err"); el("vidPrompt").focus(); return; }
+
+  var model = el("vidModel").value.trim();
+  var mode = el("vidMode").value;
+  var first = el("vidFirst").value.trim();
+  var last = el("vidLast").value.trim();
+  if (mode === "keyframe" && !first && !last) {
+    toast("keyframe 模式至少要给首帧或尾帧 URL", "err"); return;
+  }
+  var refs = el("vidRefUrls").value.split(/\s*\n\s*/).map(function (s) { return s.trim(); }).filter(Boolean);
+  if (mode === "reference" && !refs.length) {
+    toast("reference 模式至少要给一张参考图 URL", "err"); return;
+  }
+
+  var body = p.video.build({
+    model: model, prompt: prompt, mode: mode,
+    seconds: el("vidSeconds").value, size: el("vidSize").value,
+    ratio: el("vidRatio").value, seed: el("vidSeed").value,
+    first: first, last: last, refImages: refs,
+  });
+
+  S.busy.video = true;
+  refreshGates();
+
+  var job = {
+    model: model, prompt: prompt, mode: mode, status: "queued", progress: 0, polls: 0,
+    videoId: "", taskId: "", url: "", error: "", pollError: "",
+    seconds: el("vidSeconds").value, size: el("vidSize").value,
+  };
+  S.videoJobs.unshift(job);
+  renderVideoJobs();
+
+  var base = trimBase(S.baseUrl);
+  try {
+    var created = await apiFetch(base + p.video.createPath, {
+      method: "POST", headers: authHeaders(p), body: JSON.stringify(body),
+    }, 120000);
+
+    var t = p.video.pickTask(created);
+    job.videoId = t.videoId;
+    job.taskId = t.taskId;
+    job.status = t.status;
+    job.progress = t.progress;
+    renderVideoJobs();
+
+    if (!job.videoId) {
+      throw new Error("创建成功但响应里没有 video_id：" + JSON.stringify(created).slice(0, 200));
+    }
+
+    var histId = addHistory({
+      kind: "video", model: model, prompt: prompt, status: "queued",
+      videoId: job.videoId, params: { mode: mode, seconds: job.seconds, size: job.size },
+    });
+
+    await pollVideo(job, p, histId);
+    renderVideoJobs();
+  } catch (err) {
+    job.status = "failed";
+    job.error = String(err && err.message || err);
+    document.body.dataset.lastError = job.error;
+    renderVideoJobs();
+    toast(job.error, "err");
+    // 已经记过历史（说明失败发生在建任务之后）就改那一条，别再插一条
+    if (histId) updateHistory(histId, { status: "failed", error: job.error });
+    else addHistory({ kind: "video", model: model, prompt: prompt, status: "failed", error: job.error });
+  } finally {
+    S.busy.video = false;
+    refreshGates();
+  }
+}
+
+/** 轮询到 completed / failed / 取消 / 超时。
+ *  官方建议 1–2 秒一次；这里 1.6 秒起步，遇到 429 就把间隔翻倍（指数退避）。 */
+async function pollVideo(job, p, histId) {
+  var origin = originOf(S.baseUrl);
+  if (!origin) throw new Error("Base URL 不合法，无法推导轮询地址：" + S.baseUrl);
+
+  var qs = "?video_id=" + encodeURIComponent(job.videoId) + "&model_name=" + encodeURIComponent(job.model);
+  var url = origin + p.video.pollPath + qs;
+  var interval = 1600;
+  var deadline = Date.now() + (p.video.timeoutMs || 900000);
+  var ctl = new AbortController();
+  S.videoCancel = ctl;
+
+  while (Date.now() < deadline) {
+    if (ctl.signal.aborted) { job.pollError = "已手动停止"; return; }
+    await new Promise(function (r) { setTimeout(r, interval); });
+    if (ctl.signal.aborted) { job.pollError = "已手动停止"; return; }
+
+    try {
+      var res = await fetch(url, { headers: authHeaders(p, {}), signal: ctl.signal });
+      var txt = await res.text();
+      if (res.status === 429) {
+        interval = Math.min(interval * 2, 12000);
+        job.pollError = "被限流，退避到 " + Math.round(interval / 1000) + " 秒";
+        renderVideoJobs();
+        continue;
+      }
+      if (!res.ok) { job.pollError = explainHttp(res.status, txt); renderVideoJobs(); continue; }
+
+      var j = JSON.parse(txt);
+      var st = p.video.pickPoll(j);
+      job.status = st.status;
+      job.progress = st.progress;
+      job.pollError = "";
+      job.polls++;
+      if (st.url) job.url = st.url;
+      if (st.error) job.error = st.error;
+      renderVideoJobs();
+
+      if (st.status === "completed") {
+        updateHistory(histId, { status: "completed", url: st.url });
+        toast("视频生成完成", "ok");
+        void archiveVideoJob(job);
+        return;
+      }
+      if (st.status === "failed") {
+        updateHistory(histId, { status: "failed", error: job.error || "生成失败" });
+        return;
+      }
+    } catch (err) {
+      if (ctl.signal.aborted) { job.pollError = "已手动停止"; return; }
+      // 网络抖动不该让整个任务失败 —— 记下来继续轮询
+      job.pollError = String(err && err.message || err);
+      renderVideoJobs();
+      await new Promise(function (r) { setTimeout(r, 2000); });
+    }
+  }
+  job.pollError = "超过最大等待时间，已停止轮询（任务可能仍在服务端跑，可稍后用 video_id 重查）";
+  renderVideoJobs();
+}
+
+/* ==================================================================
+ * 7. 对话
+ * ================================================================== */
+function renderMessages() {
+  var host = el("msgs");
+  if (!S.messages.length) {
+    host.innerHTML = '<div class="empty"><span class="big">◇</span>用同一个服务商做对话，方便写提示词、翻译、生成批量文案</div>';
+    return;
+  }
+  host.innerHTML = S.messages.map(function (m) {
+    if (m.role === "system") return "";
+    var who = m.role === "user" ? "我" : "AI";
+    return '<div class="msg ' + (m.role === "user" ? "user" : m.error ? "err" : "ai") + '">' +
+      '<div class="who">' + who + "</div>" +
+      '<div class="txt">' + esc(m.content || (m.streaming ? "…" : "")) + "</div></div>";
+  }).join("");
+  host.scrollTop = host.scrollHeight;
+  document.body.dataset.msgCount = String(S.messages.length);
+}
+
+async function doSend() {
+  var p = provider(S.providerId);
+  if (!p.chat) { toast("当前服务不支持对话", "err"); return; }
+  if (!cfgReady()) { openCfg(); toast("先配置 Base URL 与 API Key", "err"); return; }
+
+  var text = el("chatInput").value.trim();
+  if (!text) return;
+  el("chatInput").value = "";
+  S.messages.push({ role: "user", content: text });
+
+  var sys = el("chatSystem").value.trim();
+  var stream = el("chatStream").checked;
+  var model = el("chatModel").value.trim();
+
+  var payload = [];
+  if (sys) payload.push({ role: "system", content: sys });
+  S.messages.forEach(function (m) { if (m.role !== "system" && !m.error) payload.push({ role: m.role, content: m.content }); });
+
+  var ai = { role: "assistant", content: "", streaming: true };
+  S.messages.push(ai);
+  S.busy.chat = true;
+  renderMessages();
+  refreshGates();
+
+  var url = trimBase(S.baseUrl) + p.chat.path;
+  var ctl = new AbortController();
+  S.chatCancel = ctl;
+
+  try {
+    var body = p.chat.build({ model: model, messages: payload, stream: stream });
+    var res = await fetch(url, {
+      method: "POST", headers: authHeaders(p), body: JSON.stringify(body), signal: ctl.signal,
+    });
+
+    if (!res.ok) {
+      var t = await res.text();
+      throw new Error(explainHttp(res.status, t));
+    }
+
+    if (stream && res.body && res.body.getReader) {
+      var reader = res.body.getReader();
+      var dec = new TextDecoder();
+      var buf = "";
+      while (true) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        buf += dec.decode(chunk.value, { stream: true });
+        var lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i].trim();
+          if (!line || line.indexOf("data:") !== 0) continue;
+          var data = line.slice(5).trim();
+          if (data === "[DONE]") continue;
+          try {
+            var j = JSON.parse(data);
+            var delta = p.chat.pickDelta(j);
+            if (delta) { ai.content += delta; renderMessages(); }
+          } catch (e) { /* 心跳或半截行，跳过 */ }
+        }
+      }
+    } else {
+      var j2 = await res.json();
+      ai.content = p.chat.pickText(j2);
+    }
+
+    ai.streaming = false;
+    if (!ai.content) ai.content = "(服务返回了空内容)";
+    renderMessages();
+  } catch (err) {
+    ai.streaming = false;
+    ai.error = true;
+    ai.content = String(err && err.message || err);
+    document.body.dataset.lastError = ai.content;
+    renderMessages();
+  } finally {
+    S.busy.chat = false;
+    refreshGates();
+  }
+}
+
+/* ==================================================================
+ * 8. 配置面板
+ * ================================================================== */
+function renderProviderCards() {
+  var host = el("provCards");
+  host.innerHTML = PROVIDERS.map(function (p) {
+    var caps = [["对话", !!p.chat], ["生图", !!p.image], ["生视频", !!p.video]];
+    return '<div class="prov-card" data-on="' + (p.id === S.providerId) + '" data-prov="' + esc(p.id) + '">' +
+      '<div class="t">' + esc(p.name) + (p.id === S.providerId ? ' <span class="tag ok">使用中</span>' : "") + "</div>" +
+      '<div class="d">' + esc(p.desc) + "</div>" +
+      '<div class="cap-badges">' + caps.map(function (c) {
+        return '<span class="b' + (c[1] ? "" : " no") + '">' + c[0] + "</span>";
+      }).join("") + "</div></div>";
+  }).join("");
+}
+
+function renderBasePresets() {
+  var p = provider(S.providerId);
+  var host = el("basePresets");
+  host.innerHTML = (p.basePresets || []).map(function (b) {
+    return '<button class="chip" data-base="' + esc(b.value) + '">' + esc(b.label) + "</button>";
+  }).join("");
+  el("docsLink").innerHTML = p.docs
+    ? '官方文档：<a href="' + esc(p.docs) + '" target="_blank" rel="noreferrer">' + esc(p.docs) + "</a>"
+    : "";
+}
+
+function openCfg() {
+  el("cfgBase").value = S.baseUrl;
+  el("cfgKey").value = S.apiKey;
+  el("cfgModelImage").value = S.models.image;
+  el("cfgModelVideo").value = S.models.video;
+  el("cfgModelChat").value = S.models.chat;
+  syncAutoGalleryUI();
+  renderProviderCards();
+  renderBasePresets();
+  el("testOut").textContent = "";
+  el("cfgModal").hidden = false;
+  document.body.dataset.cfgOpen = "true";
+}
+function closeCfg() {
+  el("cfgModal").hidden = true;
+  document.body.dataset.cfgOpen = "false";
+}
+
+async function saveConfig() {
+  S.baseUrl = trimBase(el("cfgBase").value);
+  S.apiKey = el("cfgKey").value.trim();
+  S.models.image = el("cfgModelImage").value.trim();
+  S.models.video = el("cfgModelVideo").value.trim();
+  S.models.chat = el("cfgModelChat").value.trim();
+
+  syncModelInputs();
+  refreshGates();
+  renderImageResults();
+  renderVideoJobs();
+
+  var payload = JSON.stringify({
+    providerId: S.providerId, baseUrl: S.baseUrl, apiKey: S.apiKey, models: S.models,
+  });
+  if (!Host.isConnected()) {
+    el("saveState").textContent = "未连接宿主，仅本次会话有效";
+    document.body.dataset.configState = "memory-only";
+    toast("未连接宿主，配置只存在内存里（独立打开时正常，嵌在工作台里请刷新页面）", "err");
+    return;
+  }
+  try {
+    await Host.kvSet(KV_CONFIG, payload);
+    el("saveState").textContent = "已保存 " + fmtTime(nowIso());
+    document.body.dataset.configState = "saved";
+    toast("配置已写入本机数据库", "ok");
+  } catch (err) {
+    document.body.dataset.configState = "error";
+    toast("保存失败：" + (err && err.message || err), "err");
+  }
+}
+
+async function loadConfig() {
+  try {
+    var raw = await Host.kvGet(KV_CONFIG);
+    if (raw) {
+      var c = JSON.parse(raw);
+      if (c.providerId) S.providerId = c.providerId;
+      S.baseUrl = c.baseUrl || provider(S.providerId).defaultBase || "";
+      S.apiKey = c.apiKey || "";
+      S.models = Object.assign({ image: "", video: "", chat: "" }, c.models || {});
+      document.body.dataset.configState = "loaded";
+    } else {
+      S.baseUrl = provider(S.providerId).defaultBase || "";
+      document.body.dataset.configState = "empty";
+    }
+    var hraw = await Host.kvGet(KV_HISTORY);
+    if (hraw) { S.history = JSON.parse(hraw) || []; }
+    // 默认开：只有用户明确关过（存 "0"）才是关。读不到就按开算 ——
+    // 这个开关的方向是"宁可多存一张，也别丢一张"。
+    var a = await Host.kvGet(KV_AUTO_GALLERY);
+    S.autoGallery = a !== "0";
+  } catch (err) {
+    toast("读取配置失败：" + (err && err.message || err), "err");
+  }
+  applyProvider(S.providerId, true);
+  el("cfgBase").value = S.baseUrl;
+  el("cfgKey").value = S.apiKey;
+  el("cfgModelImage").value = S.models.image;
+  el("cfgModelVideo").value = S.models.video;
+  el("cfgModelChat").value = S.models.chat;
+  syncAutoGalleryUI();
+  renderHistory();
+}
+
+/**
+ * 「产出自动进图库」开关的 UI 与说明。
+ *
+ * 宿主没有图库时把框禁用并写清原因 —— 一个点了没反应、也不说为什么的
+ * 复选框比没有这个开关更让人困惑。
+ */
+function syncAutoGalleryUI() {
+  var box = el("cfgAutoGallery");
+  if (!box) return;
+  var on = S.autoGallery !== false;
+  var ok = Host.supportsGallery();
+  box.checked = on;
+  box.disabled = !ok;
+  var hint = el("autoGalleryHint");
+  if (hint) {
+    hint.textContent = ok
+      ? "开着的出图 / 出视频结果会自动进图库，不必再点「存进图库」。图库里已有的同一份不会重复占一条。"
+      : "当前宿主不支持图库（先把工作台升到带图库的版本），产出只能手动下载。";
+  }
+  document.body.dataset.autoGallery = String(on);
+}
+
+/* ==================================================================
+ * 9. 界面开关的一处收口
+ * ================================================================== */
+function refreshGates() {
+  var p = provider(S.providerId);
+  var ready = cfgReady();
+  var imgBusy = S.busy.image, vidBusy = S.busy.video, chatBusy = S.busy.chat;
+
+  el("btnGenImg").disabled = !ready || !p.image || imgBusy;
+  el("btnGenVid").disabled = !ready || !p.video || vidBusy;
+  el("btnSend").disabled = !ready || !p.chat || chatBusy;
+  el("btnStopImg").hidden = !imgBusy;
+  el("btnStopVid").hidden = !vidBusy;
+  el("btnStopChat").hidden = !chatBusy;
+
+  el("btnGenImg").textContent = imgBusy ? "生成中…" : "开始生成";
+  el("btnGenVid").textContent = vidBusy ? "生成中…" : "提交生成";
+
+  var notices = [];
+  if (!Host.isConnected()) {
+    notices.push(["warn", "未连接宿主（独立打开）。配置只留在内存里，刷新即丢 —— 在工作台的「工具」里打开本页才会写进本机数据库。"]);
+  }
+  if (!ready) {
+    var miss = [];
+    if (!trimBase(S.baseUrl)) miss.push("Base URL");
+    if (!S.apiKey) miss.push("API Key");
+    notices.push(["warn", "还缺 " + miss.join(" 与 ") + "，生成按钮在配好之前是禁用的。点右上角「配置」填写。"]);
+  }
+  var host0 = el("notices");
+  host0.innerHTML = notices.map(function (n) {
+    return '<div class="notice ' + n[0] + '"><span>⚠️</span><div>' + n[1] + "</div></div>";
+  }).join("");
+
+  // ⚠️ 这里**不能**再写 `el("imgCostHint").textContent = p2.image.costHint`。
+  // 有单价的 provider（阿里云全档位）必须显示「预估 X 元」，
+  // 直接用 provider 的静态说明会把刚算好的价钱冲掉。
+  if (p.image) el("imgCostHint").textContent = imageCostHint(el("imgModel").value.trim());
+}
+
+/* ==================================================================
+ * 10. 事件绑定
+ * ================================================================== */
+$$("#tabs .tab").forEach(function (t) {
+  t.addEventListener("click", function () { if (!t.disabled) switchTab(t.dataset.tab); });
+});
+
+el("provSel").addEventListener("change", function () {
+  applyProvider(el("provSel").value, false);
+  if (!el("cfgModal").hidden) { el("cfgBase").value = S.baseUrl; renderProviderCards(); renderBasePresets(); }
+});
+
+el("btnCfg").addEventListener("click", openCfg);
+el("btnCfgClose").addEventListener("click", closeCfg);
+el("cfgModal").addEventListener("click", function (e) { if (e.target === el("cfgModal")) closeCfg(); });
+// （Esc 的按键处理统一放在下面「图库选择器」那一段 —— 两个弹层都要吃 Esc，
+//   分散成两个监听器会同时关闭两层）
+
+el("btnEye").addEventListener("click", function () {
+  var i = el("cfgKey");
+  var hidden = i.type === "password";
+  i.type = hidden ? "text" : "password";
+  el("btnEye").textContent = hidden ? "隐藏" : "显示";
+});
+
+el("btnSave").addEventListener("click", function () { void saveConfig(); });
+
+/* 自动存档开关：即时生效、即时落库，不等「保存到本机数据库」——
+   它是界面偏好，不该被"忘了点保存"带着回到上一个状态。 */
+el("cfgAutoGallery").addEventListener("change", function () {
+  S.autoGallery = el("cfgAutoGallery").checked;
+  document.body.dataset.autoGallery = String(S.autoGallery);
+  if (!Host.isConnected()) return;
+  Host.kvSet(KV_AUTO_GALLERY, S.autoGallery ? "1" : "0").catch(function () {
+    toast("开关没能写进本机数据库（刷新后会回到默认的开）", "err");
+  });
+});
+
+el("btnWipe").addEventListener("click", async function () {
+  S.apiKey = "";
+  S.models = { image: "", video: "", chat: "" };
+  el("cfgKey").value = "";
+  el("cfgModelImage").value = ""; el("cfgModelVideo").value = ""; el("cfgModelChat").value = "";
+  if (Host.isConnected()) {
+    try { await Host.kvDel(KV_CONFIG); } catch (e) { /* 无所谓 */ }
+  }
+  document.body.dataset.configState = "wiped";
+  el("saveState").textContent = "已清空密钥";
+  refreshGates();
+  toast("已清空本机保存的密钥", "ok");
+});
+
+el("btnTest").addEventListener("click", async function () {
+  var p = provider(S.providerId);
+  var base = trimBase(el("cfgBase").value);
+  var key = el("cfgKey").value.trim();
+  if (!base) { el("testOut").textContent = "先填 Base URL"; return; }
+  el("testOut").innerHTML = '<span class="spin"></span> 测试中…';
+  try {
+    // 用 /models 探活：能通说明地址对、key 对、跨域也通
+    var res = await fetch(base + "/models", { headers: p.auth ? p.auth(key) : {} });
+    var txt = await res.text();
+    if (res.ok) {
+      var j = {};
+      try { j = JSON.parse(txt); } catch (e) { /* 有的网关不返回 JSON */ }
+      var n = j && j.data && j.data.length ? j.data.length : 0;
+      el("testOut").innerHTML = '<span style="color:var(--ok)">✓ 连通' + (n ? "，可用模型 " + n + " 个" : "") + "</span>";
+    } else {
+      el("testOut").innerHTML = '<span style="color:var(--danger)">✗ ' + esc(explainHttp(res.status, txt)) + "</span>";
+    }
+  } catch (err) {
+    el("testOut").innerHTML = '<span style="color:var(--danger)">✗ 连不上：' + esc(String(err && err.message || err)) + "</span>";
+  }
+});
+
+el("provCards").addEventListener("click", function (e) {
+  var card = e.target.closest("[data-prov]");
+  if (!card) return;
+  var id = card.dataset.prov;
+  if (id === S.providerId) return;
+  applyProvider(id, false);
+  el("cfgBase").value = S.baseUrl;
+  el("cfgKey").value = S.apiKey;
+  renderProviderCards();
+  renderBasePresets();
+});
+el("basePresets").addEventListener("click", function (e) {
+  var b = e.target.closest("[data-base]");
+  if (!b) return;
+  el("cfgBase").value = b.dataset.base;
+});
+
+// 生图
+// 模型/张数一变，价格、尺寸档、参考图上限全都要跟着变 ——
+// 这三个字段以前散在各处，接阿里云之后（同 provider 内单价差 13 倍）
+// 必须收口到 refreshImageFields 一个函数里。
+el("imgModel").addEventListener("input", refreshImageFields);
+el("imgModel").addEventListener("change", refreshImageFields);
+el("imgN").addEventListener("change", refreshImageFields);
+el("btnGenImg").addEventListener("click", function () { void doGenerateImage(); });
+el("btnStopImg").addEventListener("click", function () {
+  // 真的中断：abort 会让轮询循环里那次 fetch 抛出，走"已取消"分支。
+  // 只把 busy 置 false 是假的 —— 循环还在跑、还在计费。
+  if (S.imgCancel) S.imgCancel.abort();
+  refreshGates();
+});
+el("btnClearImg").addEventListener("click", function () { S.results = []; renderImageResults(); });
+el("filePick").addEventListener("change", async function () {
+  var p = provider(S.providerId);
+  var max = p.image ? p.image.maxRef : 0;
+  var files = Array.prototype.slice.call(el("filePick").files || []);
+  for (var i = 0; i < files.length; i++) {
+    if (S.refs.length >= max) { toast("最多 " + max + " 张参考图", "err"); break; }
+    if (!/^image\//.test(files[i].type)) continue;
+    if (files[i].size > 8 * 1024 * 1024) { toast(files[i].name + " 超过 8 MB，已跳过", "err"); continue; }
+    try { S.refs.push(await readFileAsDataUri(files[i])); } catch (e) { toast("读取失败：" + files[i].name, "err"); }
+  }
+  el("filePick").value = "";
+  renderRefs();
+});
+el("refList").addEventListener("click", function (e) {
+  if (e.target.id === "refAdd") { el("filePick").click(); return; }
+  var rm = e.target.closest("[data-rm]");
+  if (rm) { S.refs.splice(Number(rm.dataset.rm), 1); renderRefs(); }
+});
+
+// 图库选择器。选中的是"图库项 id"，点「加入参考图」才真正读文件 ——
+// 读一次要过一次 IPC + base64，勾选时就预读会在选十张时卡住界面。
+el("btnRefFromGallery").addEventListener("click", openGalleryPicker);
+el("btnGalleryClose").addEventListener("click", closeGalleryPicker);
+el("galleryMask").addEventListener("click", function (e) {
+  if (e.target === el("galleryMask")) closeGalleryPicker();
+});
+el("btnGalleryReload").addEventListener("click", function () { void loadGalleryPicker(); });
+el("gallerySearch").addEventListener("input", function () {
+  // 不做防抖：图库列表最多 120 条，本地查询，输了就查最跟手
+  void loadGalleryPicker();
+});
+$$("[data-gkind]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    if (G.kind === b.dataset.gkind) return;
+    G.kind = b.dataset.gkind;
+    $$("[data-gkind]").forEach(function (x) {
+      x.setAttribute("aria-selected", x === b ? "true" : "false");
+    });
+    void loadGalleryPicker();
+  });
+});
+el("galleryBody").addEventListener("click", function (e) {
+  var it = e.target.closest("[data-gid]");
+  if (!it) return;
+  var id = it.dataset.gid;
+  var at = G.picked.indexOf(id);
+  if (at >= 0) G.picked.splice(at, 1); else G.picked.push(id);
+  it.setAttribute("aria-selected", at >= 0 ? "false" : "true");
+  updateGalleryHint();
+});
+el("btnGalleryUse").addEventListener("click", function () { void useGalleryPicked(); });
+
+// 大图预览：操作条复用 resultAction，卡片和预览的动作永远一致
+el("lightbox").addEventListener("click", function (e) {
+  if (e.target === el("lightbox")) { closeLightbox(); return; }   // 点空白处关闭
+  var b = e.target.closest("[data-lb]");
+  if (b) { void resultAction(b.dataset.lb, LB.idx, b); }
+});
+el("lbClose").addEventListener("click", closeLightbox);
+el("lbPrev").addEventListener("click", function () { lbStep(-1); });
+el("lbNext").addEventListener("click", function () { lbStep(1); });
+
+// Esc 关弹层。配置弹窗也吃 Esc，所以两者都开时只关最上层的一个 ——
+// 从用户视角看，"最近打开的那个"才是"最上层"。lightbox 永远在最上（z-index 70）。
+document.addEventListener("keydown", function (e) {
+  if (LB.open) {
+    if (e.key === "Escape") { closeLightbox(); e.preventDefault(); return; }
+    if (e.key === "ArrowLeft") { lbStep(-1); e.preventDefault(); return; }
+    if (e.key === "ArrowRight") { lbStep(1); e.preventDefault(); return; }
+    return; // 预览开着时别让 Esc 顺手把下面的图库选择器也关了
+  }
+  if (e.key !== "Escape") return;
+  if (!el("galleryMask").hidden) { closeGalleryPicker(); e.preventDefault(); return; }
+  if (!el("cfgModal").hidden) closeCfg();
+});
+el("imgResults").addEventListener("click", function (e) {
+  // 点图本身 = 大图预览；点按钮 = 对应动作。两个入口不冲突
+  var z = e.target.closest("[data-zoom]");
+  if (z) { openLightbox(Number(z.dataset.zoom)); return; }
+  var b = e.target.closest("[data-act]");
+  if (!b) return;
+  void resultAction(b.dataset.act, Number(b.dataset.i), b);
+});
+el("imgPrompt").addEventListener("input", function () {
+  document.body.dataset.promptLen = String(el("imgPrompt").value.length);
+});
+$$("[data-tpl]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    var tpl = {
+      product: "白色背景下的商品主体，柔和的顶光，45 度俯拍，细节清晰，商业摄影质感，高清",
+      scene: "商品置于真实生活场景中，自然光从侧面照入，浅景深，氛围温暖自然，中景构图",
+      poster: "以商品为视觉中心的竖版海报，几何色块背景，强对比配色，留出上方标题空间，平面设计风格",
+    }[b.dataset.tpl];
+    var ta = el("imgPrompt");
+    ta.value = ta.value.trim() ? ta.value.trim() + "，" + tpl : tpl;
+    ta.focus();
+    document.body.dataset.promptLen = String(ta.value.length);
+  });
+});
+
+// 生视频
+el("btnGenVid").addEventListener("click", function () { void doGenerateVideo(); });
+el("btnStopVid").addEventListener("click", function () {
+  if (S.videoCancel) S.videoCancel.abort();
+  toast("已停止轮询");
+  renderVideoJobs();
+});
+el("btnClearVid").addEventListener("click", function () { S.videoJobs = []; renderVideoJobs(); });
+el("vidMode").addEventListener("change", refreshVideoFields);
+el("vidModel").addEventListener("change", refreshVideoFields);
+el("vidResults").addEventListener("click", async function (e) {
+  var b = e.target.closest("[data-act]");
+  if (!b) return;
+  var i = Number(b.dataset.i), j = S.videoJobs[i];
+  if (!j) return;
+  if (b.dataset.act === "vdrop") { S.videoJobs.splice(i, 1); renderVideoJobs(); return; }
+  if (b.dataset.act === "vcopy") {
+    try { await navigator.clipboard.writeText(j.url); toast("已复制视频地址", "ok"); }
+    catch (err) { toast("复制失败", "err"); }
+  }
+});
+
+// 对话
+el("btnSend").addEventListener("click", function () { void doSend(); });
+el("btnStopChat").addEventListener("click", function () { if (S.chatCancel) S.chatCancel.abort(); });
+el("btnClearChat").addEventListener("click", function () { S.messages = []; renderMessages(); });
+el("chatInput").addEventListener("keydown", function (e) {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void doSend(); }
+});
+el("chatInput").addEventListener("input", function () {
+  var t = el("chatInput");
+  t.style.height = "auto";
+  t.style.height = Math.min(t.scrollHeight, 168) + "px";
+});
+
+// 历史
+document.addEventListener("click", function (e) {
+  var c = e.target.closest("[data-hist-clear]");
+  if (c) {
+    var kind = c.dataset.histClear;
+    S.history = S.history.filter(function (h) { return h.kind !== kind; });
+    void persistHistory(); renderHistory();
+    toast("已清空" + (kind === "image" ? "出图" : "出片") + "历史", "ok");
+    return;
+  }
+  var row = e.target.closest("[data-hist]");
+  if (row) {
+    var h = S.history.filter(function (x) { return x.id === row.dataset.hist; })[0];
+    if (!h) return;
+    if (h.kind === "image" && h.prompt) { el("imgPrompt").value = h.prompt; switchTab("image"); }
+    if (h.kind === "video" && h.prompt) { el("vidPrompt").value = h.prompt; switchTab("video"); }
+  }
+});
+
+/* ==================================================================
+ * 11. 启动
+ * ================================================================== */
+
+/**
+ * 配置只读一次。
+ *
+ * 必须定义在 boot 之前：boot 里那次调用会把它置为 true，
+ * 如果定义写在后面，`var` 提升会让 `= false` 把 true 覆盖掉 ——
+ * 结果就是读两次库，第二次可能盖掉用户正在改的内容。
+ */
+var configTried = false;
+function tryLoadConfig() {
+  if (configTried || !Host.isConnected()) return;
+  configTried = true;
+  void loadConfig();
+}
+
+(function boot() {
+  // 服务商下拉
+  el("provSel").innerHTML = PROVIDERS.map(function (p) {
+    return '<option value="' + esc(p.id) + '">' + esc(p.name) + "</option>";
+  }).join("");
+
+  applyProvider(S.providerId, true);
+  S.baseUrl = provider(S.providerId).defaultBase || "";
+  renderRefs();
+  renderImageResults();
+  renderVideoJobs();
+  renderMessages();
+  switchTab("image");
+  refreshGates();
+
+  document.addEventListener("host-context", function () {
+    el("hostDot").className = "dot ok";
+    var c = Host.context() || {};
+    el("hostTag").textContent = (c.runtime === "desktop" ? "桌面端" : "浏览器") + " · schema v" + c.schemaVersion;
+    document.body.dataset.bindState = "bound";
+    // 上一条的 dataset 也要跟着改，否则提示条会一直说"未连接宿主"
+    refreshGates();
+    tryLoadConfig();
+  });
+
+  // 独立打开时给个明确状态，而不是永远"连接中…"
+  setTimeout(function () {
+    if (!Host.isConnected()) {
+      el("hostDot").className = "dot warn";
+      el("hostTag").textContent = parent === window ? "独立打开" : "未连接宿主";
+      document.body.dataset.bindState = "standalone";
+    }
+  }, 1200);
+
+  // 注意：宿主是在 iframe 的 load 事件之后才下发上下文的，
+  // 而本脚本在 load 之前就跑完了 —— 所以这里连不上是**正常时序**，不是异常。
+  // 真正的读取放在 host-context 到达时（见下面的监听器），
+  // 这里只兜一下"上下文已经先到了"的情况。
+  tryLoadConfig();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "id": "size-chart",
+  "name": "尺码表生成器",
+  "version": "1.1.0",
+  "description": "粘贴 Excel 尺码数据，套用主题生成可直接发布的尺码表图片；导出的图默认在工作台图库留一份（开关可关），同一份内容不重复占条目",
+  "icon": "list",
+  "entry": "index.html",
+  "dbVersion": 1,
+  "author": "内置工具"
+}
