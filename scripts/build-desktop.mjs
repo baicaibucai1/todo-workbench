@@ -128,16 +128,23 @@ function distIsStale() {
   const skip = new Set(['node_modules', 'dist', 'target', '.git', '.setup-tmp']);
   let newest = 0;
 
+  // 图片也算「源码」：`public/` 下的静态资源（壁纸、图标）是 Vite 原样搬进
+  // dist 的，它们变了就说明 dist 必须重建。只认 .ts/.css 的话，往
+  // public/wallpapers/ 加一批新图会判定成"没有改动"、直接复用旧 dist ——
+  // 于是新图永远进不了安装包，而打包脚本和门禁看起来都是成功的。
+  const TRACKED = /\.(ts|tsx|css|html|json|jpg|jpeg|png|gif|svg|webp|ico|woff2?)$/;
+
   const walk = (dir) => {
     for (const name of fs.readdirSync(dir)) {
       if (skip.has(name) || name.startsWith('.')) continue;
       const p = path.join(dir, name);
       const st = fs.statSync(p);
       if (st.isDirectory()) walk(p);
-      else if (/\.(ts|tsx|css|html|json)$/.test(name)) newest = Math.max(newest, st.mtimeMs);
+      else if (TRACKED.test(name)) newest = Math.max(newest, st.mtimeMs);
     }
   };
-  for (const d of ['src', 'tools']) {
+  // `public` 必须在列表里：壁纸就是放这儿的，漏了它就漏了整个静态资源目录。
+  for (const d of ['src', 'tools', 'public']) {
     const p = path.join(ROOT, d);
     if (fs.existsSync(p)) walk(p);
   }

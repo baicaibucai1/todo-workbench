@@ -1,8 +1,24 @@
 {
   "source": "Bing 每日壁纸（HPImageArchive）",
-  "fetchedAt": "2026-09-19T08:53:13.138Z",
+  "fetchedAt": "2026-09-21T09:54:49.821Z",
   "resolution": "1920x1080",
   "items": [
+    {
+      "file": "20260920.jpg",
+      "date": "20260920",
+      "mkt": "zh-CN",
+      "title": "皮毛与海洋之间的生命",
+      "copyright": "正在梳理皮毛的海獭，蒙特雷湾，加利福尼亚州，美国 (© Suzi Eszterhas/Minden Pictures)",
+      "url": "https://www.bing.com/th?id=OHR.GroomingOtter_ZH-CN6969472572_1920x1080.jpg"
+    },
+    {
+      "file": "20260919.jpg",
+      "date": "20260919",
+      "mkt": "zh-CN",
+      "title": "终获巴黎青睐的铁塔",
+      "copyright": "日落时分的埃菲尔铁塔，巴黎，法国 (© Alexander Spatari/Getty Images)",
+      "url": "https://www.bing.com/th?id=OHR.ParisSunset_ZH-CN6050686638_1920x1080.jpg"
+    },
     {
       "file": "20260918.jpg",
       "date": "20260918",
@@ -50,6 +66,62 @@
       "title": "坚韧在此扎根",
       "copyright": "地肤田，中国 (© lingqi xie/Getty Images)",
       "url": "https://www.bing.com/th?id=OHR.KochiaChina_ZH-CN4719995421_1920x1080.jpg"
+    },
+    {
+      "file": "20260912.jpg",
+      "date": "20260912",
+      "mkt": "zh-CN",
+      "title": "高处的珊瑚礁",
+      "copyright": "米苏里纳群峰，多洛米蒂山脉，威尼托大区，意大利 (© Vithun Khamsong/Getty Images)",
+      "url": "https://www.bing.com/th?id=OHR.MisurinaPeak_ZH-CN3877105161_1920x1080.jpg"
+    },
+    {
+      "file": "20260911.jpg",
+      "date": "20260911",
+      "mkt": "zh-CN",
+      "title": "海浪与海岸的高手",
+      "copyright": "墨西哥近海围猎沙丁鱼饵球的加州海狮，太平洋 (© Henley Spiers/Nature Picture Library)",
+      "url": "https://www.bing.com/th?id=OHR.SardineBait_ZH-CN3256234033_1920x1080.jpg"
+    },
+    {
+      "file": "20260910.jpg",
+      "date": "20260910",
+      "mkt": "zh-CN",
+      "title": "地中海风情尽显",
+      "copyright": "滨海自由城，法国里维埃拉，法国 (© StockByM/Getty Images)",
+      "url": "https://www.bing.com/th?id=OHR.FrenchRivieraVillage_ZH-CN2888811422_1920x1080.jpg"
+    },
+    {
+      "file": "20260909.jpg",
+      "date": "20260909",
+      "mkt": "zh-CN",
+      "title": "俯瞰大地拼图",
+      "copyright": "奥尔韦拉航拍图，安达卢西亚，西班牙 (© Marco Bottigelli/Getty Images)",
+      "url": "https://www.bing.com/th?id=OHR.Olvera_ZH-CN2727093856_1920x1080.jpg"
+    },
+    {
+      "file": "20260908.jpg",
+      "date": "20260908",
+      "mkt": "zh-CN",
+      "title": "印度西海岸的生活",
+      "copyright": "安科拉附近的加比特凯尼海滩，卡纳塔克邦，印度 (© Amith Nag Photography/Getty Images)",
+      "url": "https://www.bing.com/th?id=OHR.GabitKeni_ZH-CN2314122948_1920x1080.jpg"
+    },
+    {
+      "file": "20260907.jpg",
+      "date": "20260907",
+      "mkt": "zh-CN",
+      "title": "金色田野",
+      "copyright": "东米恩南唐斯国家公园谷物田中的山毛榉树，汉普郡，英格兰 (© Guy Edwardes/Minden Pictures)",
+      "url": "https://www.bing.com/th?id=OHR.BeechEngland_ZH-CN1807343872_1920x1080.jpg"
+    },
+    {
+      "file": "20260906.jpg",
+      "date": "20260906",
+      "mkt": "zh-CN",
+      "title": "历史沿运河流淌之地",
+      "copyright": "老市政厅，班贝格，德国 (© SCStock/Getty Images)",
+      "url": "https://www.bing.com/th?id=OHR.BambergTownhall_ZH-CN1407954732_1920x1080.jpg"
     }
   ]
 }
