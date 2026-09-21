@@ -197,6 +197,19 @@ if (!fs.existsSync(SRC)) {
         // Tauri 把整个 dist 嵌进 exe；资源键是明文存的，图片本体是压缩的，
         // 所以只能验"键在不在" —— 但这就足够证明文件被收进去了
         const buf = fs.readFileSync(exe);
+        // 一个资源键都没有 = 这个 exe 根本没嵌 dist，通常不是"壁纸丢了"，
+        // 而是某次被打断的构建留下的半成品（或绕开 build-desktop.mjs
+        // 直接跑了 cargo / tauri build）。把成因写进失败信息里，
+        // 免得下次照着"壁纸"去查一个跟壁纸无关的问题。
+        if (
+          buf.indexOf(Buffer.from("wallpapers/", "utf8")) === -1 &&
+          buf.indexOf(Buffer.from("tools/", "utf8")) === -1
+        ) {
+          info(
+            "提示",
+            "exe 里一个随包资源键都没有 —— 多半是中断的构建留下的产物，完整打包一次再看",
+          );
+        }
         const absent = items.filter(
           (it) => buf.indexOf(Buffer.from(`wallpapers/${it.file}`, "utf8")) === -1,
         );
@@ -208,6 +221,42 @@ if (!fs.existsSync(SRC)) {
       }
     }
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* 4. 打包脚本必须把 public/ 算进「源码变新」                            */
+/* ------------------------------------------------------------------ */
+/**
+ * 这一节盯的是**打包脚本自身的判据**，不碰图片。
+ *
+ * 踩过一次：`build-desktop.mjs` 的 `distIsStale()` 只遍历 `src` 和 `tools`，
+ * 而且只看 `.ts/.css/.html/.json`。往 `public/wallpapers/` 加一批新图后，
+ * 它判定"源码没变"→ **复用旧 dist** → 新壁纸进不了安装包，
+ * 而打包流程和上面 1~3 节看起来都是正常往下走的，只有第 2/3 节会红。
+ *
+ * 也就是说：前面三节能抓到症状，但抓不到病因。病因得单独钉住，
+ * 否则有人改回 `['src', 'tools']` 时，只会在"下次加壁纸"时才暴露。
+ */
+{
+  const script = path.join(ROOT, "scripts", "build-desktop.mjs");
+  const src = fs.existsSync(script) ? fs.readFileSync(script, "utf8") : "";
+
+  // 只看 distIsStale 这个函数体，别被文件里别处的 'public' 字样骗过去
+  const start = src.indexOf("function distIsStale(");
+  const body = start >= 0 ? src.slice(start, start + 1600) : "";
+
+  check("打包脚本可读", !!src);
+  check("能定位到 distIsStale 函数", start >= 0);
+  check(
+    "distIsStale 会把 public/ 算进源码目录",
+    /['"]public['"]/.test(body),
+    "漏了 public/ 就等于漏掉整个静态资源目录",
+  );
+  check(
+    "distIsStale 会看图片扩展名",
+    /jpg|jpeg|png|svg|webp/.test(body),
+    "只认 .ts/.css 的话，新加的壁纸不会被判定为改动",
+  );
 }
 
 console.log(`\n结果：${passed} 通过 / ${failed} 失败`);
