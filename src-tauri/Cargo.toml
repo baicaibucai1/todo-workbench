@@ -22,6 +22,12 @@ tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# 事务要真原子，就得自己占住一条连接（原因见 src/db_tx.rs 顶部）。
+# 版本与 feature **刻意与 tauri-plugin-sql 对齐**：它启的是 "sqlx/sqlite" +
+# "sqlx/runtime-tokio"，且没有关掉默认 feature。这样求并集后 feature 集合
+# 与之前完全一致，不会因为 feature 不同而整条重编。
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
+
 # 附件仓库要的几样东西。**全部是刻意与 tauri-plugin-updater 对齐的写法**，
 # 因为 updater 已经把这些 crate 拉进依赖树并编译过了：
 #   reqwest / rustls(features= ["ring"]) / infer / percent-encoding —— 都是它带的。

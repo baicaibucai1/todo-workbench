@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use tauri::Manager;
 
 mod attachments;
+mod db_tx;
 
 /// 把打包进安装包的内置工具同步到用户数据目录。
 ///
@@ -154,6 +155,9 @@ pub fn run() {
 
     builder
         .invoke_handler(tauri::generate_handler![
+            // 真原子事务：插件的 execute 每次现取现还一条连接，
+            // 用它拼 BEGIN/COMMIT 会跨连接，必须由这条命令接管。
+            db_tx::db_transaction,
             attachments::attachment_dir,
             attachments::attachment_import,
             attachments::attachment_put,

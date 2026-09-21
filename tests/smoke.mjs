@@ -1811,6 +1811,92 @@ section("25. 工具的启用、状态保持与单文件导入");
 
 
 
+/* ------------------------------------------------------------------ */
+/* 事务走 Rust 命令 —— 静态配对守卫                                     */
+/* ------------------------------------------------------------------ */
+/**
+ * 这一节不跑数据库，而是**盯住源码里必须成对存在的四处**。
+ *
+ * 为什么不用运行时断言：jsdom 里跑的是 MemoryDb，`SqliteDb` 的代码路径
+ * 根本不会被执行；而真正的故障只发生在打包后的 exe 里（SQLite IPC），
+ * 那儿既没有测试框架也没有 CDP —— 想等它坏了再发现，代价是用户先踩到。
+ *
+ * 所以要防的是**有人把修复改回去**：一旦有人在 JS 侧重新拼 BEGIN/COMMIT，
+ * 或者删掉 lib.rs 里那行注册，编译照样过、浏览器里照样绿，只有 exe 会丢数据。
+ * 这正是本项目最常犯的那类错误（改一处漏另一处），用静态配对把它钉死。
+ */
+{
+  section("事务走 Rust 命令（静态配对守卫）");
+
+  const projRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const readIfExists = (rel) => {
+    try {
+      return fs.readFileSync(path.join(projRoot, rel), "utf8");
+    } catch {
+      return null;
+    }
+  };
+
+  const dbSrc = readIfExists("src/lib/db.ts");
+  const libRs = readIfExists("src-tauri/src/lib.rs");
+  const txRs = readIfExists("src-tauri/src/db_tx.rs");
+  const storeSrc = readIfExists("src/store.ts");
+
+  check("前端数据库层可读", dbSrc !== null);
+  check("Rust 事务命令文件在", txRs !== null);
+  check("Rust 入口可读", libRs !== null);
+
+  /* --- ① 前端不许再自己拼 BEGIN/COMMIT --- */
+  // `execute("BEGIN")` 是修复前的写法：四次 IPC 会落到四条不同的连接上，
+  // 结果既删了旧行又没提交新行。留着它就是留着那个 bug。
+  const hasBareBegin = !!dbSrc && /\.execute\(\s*["'`]BEGIN/i.test(dbSrc);
+  check("前端不再自己发 BEGIN", !hasBareBegin, hasBareBegin ? '发现 execute("BEGIN")' : "");
+  check("前端事务改走 db_transaction 命令", !!dbSrc && dbSrc.includes('invoke("db_transaction"'));
+  check(
+    "事务按连接串取池子（与 load 用的键同源）",
+    !!dbSrc && dbSrc.includes("db: this.url"),
+    "两边键不一致时 Rust 侧会报「数据库未加载」",
+  );
+
+  /* --- ② Rust 侧必须注册、且确实独占一条连接 --- */
+  check("Rust 入口注册了这条命令", !!libRs && libRs.includes("db_tx::db_transaction"));
+  check("Rust 入口声明了模块", !!libRs && /mod\s+db_tx\s*;/.test(libRs));
+  check(
+    "事务期间独占同一条连接",
+    !!txRs && txRs.includes("pool.acquire()"),
+    "退回 pool.execute 就等于退回修复前",
+  );
+  check("失败会整体回滚", !!txRs && txRs.includes("ROLLBACK"));
+
+  /* --- ③ 界面不能等落库完成才更新（松手就弹回的另一半成因） --- */
+  // 旧写法 `await repo.setSettings(patch)` 抛错时 `set` 根本不执行，
+  // 界面永久停在旧宽度上。现在必须先写内存、失败再回滚。
+  // 只看 saveSettings 函数体，并且**先剔掉注释行**再比先后。
+  // 不剔不行：函数上方那段解释「为什么必须先写内存」的注释里本身就写着
+  // `await repo.setSettings(patch)`，直接搜会先撞到它 —— 判据永远在骗人。
+  const bodyStart = storeSrc ? storeSrc.indexOf("saveSettings: async (patch) => {") : -1;
+  const body = bodyStart >= 0 ? storeSrc.slice(bodyStart, bodyStart + 3000) : "";
+  // 去掉整行注释与块注释的续行（本函数体内没有含 // 的字符串，够用）
+  const code = body
+    .split("\n")
+    .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join("\n");
+  const iSetMem = code.indexOf("set({ settings: next })");
+  const iWrite = code.indexOf("await repo.setSettings(patch)");
+  const iRollback = code.indexOf("set({ settings: before })");
+  check(
+    "saveSettings 先更新内存再落库",
+    bodyStart >= 0 && iSetMem >= 0 && iWrite > iSetMem,
+    `set(内存)@${iSetMem} 落库@${iWrite}`,
+  );
+  check(
+    "回退写在落库之后（catch 分支里）",
+    iRollback > iWrite && iWrite >= 0,
+    `落库@${iWrite} 回退@${iRollback}`,
+  );
+  check("落库失败会回滚界面状态", !!storeSrc && storeSrc.includes("set({ settings: before })"));
+}
+
 console.log(`\n${"=".repeat(52)}`);
 console.log(`通过 ${passed} 项，失败 ${failed} 项`);
 if (failures.length) {
