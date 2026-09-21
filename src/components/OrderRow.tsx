@@ -13,11 +13,16 @@ import {
 import type { WorkOrder } from "../types";
 import { today, addDays } from "../lib/repo";
 import { dueState, dueText, humanDuration, dueAtText } from "../lib/due";
+import { rowSurfaceClass } from "../lib/rowStyle";
 import { useStore } from "../store";
 
 interface Props {
   order: WorkOrder;
   first?: boolean;
+  /** 分组里的最后一行，用于兜住容器底部的圆角（见 lib/rowStyle） */
+  last?: boolean;
+  /** 上一行是被选中的 —— 这行就别再画分隔线了 */
+  prevActive?: boolean;
   /** 该行是否正被右侧详情面板查看 */
   active?: boolean;
   /** 是否显示计划日期标记 */
@@ -48,6 +53,8 @@ function shortDate(dateStr: string): string {
 export default function OrderRow({
   order,
   first,
+  last,
+  prevActive,
   active,
   showDate,
   onOpen,
@@ -93,15 +100,16 @@ export default function OrderRow({
     <div
       data-order-id={order.id}
       data-order-kind={order.kind}
+      data-active={active ? "true" : undefined}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest("button")) return;
         onOpen();
       }}
-      className={`group relative flex cursor-pointer items-start gap-3 px-3.5 py-2.5 transition-colors ${
-        active ? "bg-chip" : "hover:bg-hover"
-      } ${first ? "" : "border-t border-line"}`}
+      // 选中态与待办行同源（lib/rowStyle）：整行抬起，不画左侧色条
+      className={`group relative flex cursor-pointer items-start gap-3 px-3.5 py-2.5 transition-[background-color,box-shadow,transform] duration-150 ${rowSurfaceClass(
+        { active, first, last, prevActive },
+      )}`}
     >
-      {active && <span className="absolute inset-y-0 left-0 w-[3px]" style={{ background: color }} />}
 
       {/* 过程态标记：圆角方块 + 当前阶段色，和待办的圆形勾选圈形成对照 */}
       <button

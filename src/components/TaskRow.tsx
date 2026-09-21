@@ -12,11 +12,16 @@ import {
 } from "lucide-react";
 import type { Step, Task } from "../types";
 import { today, addDays } from "../lib/repo";
+import { rowSurfaceClass } from "../lib/rowStyle";
 
 interface Props {
   task: Task;
   accent: string;
   first?: boolean;
+  /** 分组里的最后一行，用于兜住容器底部的圆角（见 lib/rowStyle） */
+  last?: boolean;
+  /** 上一行是被选中的 —— 这行就别再画分隔线了 */
+  prevActive?: boolean;
   /** 是否显示计划日期标记 */
   showDate?: boolean;
   /** 该行是否正被右侧详情面板查看 */
@@ -45,6 +50,8 @@ export default function TaskRow({
   task,
   accent,
   first,
+  last,
+  prevActive,
   showDate,
   active,
   onToggleDone,
@@ -81,23 +88,20 @@ export default function TaskRow({
   return (
     <div
       data-task-id={task.id}
+      // 选中态写进 dataset：它是"浮起来"，光靠底色分辨不出来，
+      // 自动化（和以后的视觉回归）需要有个确定的读法
+      data-active={active ? "true" : undefined}
       // 行内所有控件都是 button：点到它们时交给控件自己处理，别顺带打开详情
       onClick={(e) => {
         if (editing) return;
         if ((e.target as HTMLElement).closest("button")) return;
         onOpen();
       }}
-      className={`group relative flex cursor-pointer items-start gap-3 px-3.5 py-2.5 transition-colors ${
-        active ? "bg-chip" : "hover:bg-hover"
-      } ${first ? "" : "border-t border-line"}`}
+      // 选中态是"整行抬起"（见 lib/rowStyle），transition 要连着阴影和位移一起
+      className={`group relative flex cursor-pointer items-start gap-3 px-3.5 py-2.5 transition-[background-color,box-shadow,transform] duration-150 ${rowSurfaceClass(
+        { active, first, last, prevActive },
+      )}`}
     >
-      {/* 选中态的左侧色条，与 To Do 一致 */}
-      {active && (
-        <span
-          className="absolute inset-y-0 left-0 w-[3px]"
-          style={{ background: accent }}
-        />
-      )}
       {/* 完成勾选圈 */}
       <button
         onClick={onToggleDone}

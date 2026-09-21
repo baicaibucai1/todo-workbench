@@ -235,13 +235,24 @@ export default function TaskList() {
   // 搜索是跨列表的，此时标题跟随结果而非当前视图，避免用户误解
   const headerTitle = searching ? `搜索：${search.trim()}` : title;
 
-  const renderRow = (row: Row, i: number, showDate: boolean) =>
+  /**
+   * 选中判定写在这里：**高亮的行**和**右侧详情**必须指同一条记录。
+   * 顺带用于算 prevActive —— 选中行浮起来之后，它下面那根分隔线要收掉。
+   */
+  const rowIsActive = (row: Row) =>
+    row.kind === "task"
+      ? activeTaskId === row.task.id
+      : activeOrderId === row.order.id;
+
+  const renderRow = (row: Row, i: number, items: Row[], showDate: boolean) =>
     row.kind === "task" ? (
       <TaskRow
         key={row.task.id}
         task={row.task}
         accent={accent}
         first={i === 0}
+        last={i === items.length - 1}
+        prevActive={i > 0 && rowIsActive(items[i - 1])}
         showDate={showDate}
         active={activeTaskId === row.task.id}
         onToggleDone={() => void toggleDone(row.task)}
@@ -257,6 +268,8 @@ export default function TaskList() {
         key={row.order.id}
         order={row.order}
         first={i === 0}
+        last={i === items.length - 1}
+        prevActive={i > 0 && rowIsActive(items[i - 1])}
         showDate={showDate}
         active={activeOrderId === row.order.id}
         onOpen={() => openOrder(row.order.id)}
@@ -352,11 +365,15 @@ export default function TaskList() {
                   </span>
                 </div>
               )}
-              <div className="overflow-hidden rounded-lg bg-card shadow-[0_1px_3px_rgba(0,0,0,0.12)]">
+              {/* 分组容器。**刻意不写 overflow-hidden**：选中行要"浮起来"，
+                  它的投影必须能溢出到容器外面 —— 裁掉就成了半张卡。
+                  代价是圆角改由行自己兜住（lib/rowStyle 的 first / last）。 */}
+              <div className="rounded-lg bg-surface shadow-[0_1px_3px_rgba(0,0,0,0.12)]">
                 {section.items.map((row, i) =>
                   renderRow(
                     row,
                     i,
+                    section.items,
                     view === "all" ||
                       view === "list" ||
                       view === "planned" ||
@@ -407,9 +424,10 @@ export default function TaskList() {
               <span>已完成</span>
               <span className="text-white/60">{grouped.done.length}</span>
             </button>
+            {/* 已完成区同样不放 overflow-hidden，理由见上面那个分组容器 */}
             {showDone && (
-              <div className="mt-1.5 overflow-hidden rounded-lg bg-card">
-                {grouped.done.map((row, i) => renderRow(row, i, true))}
+              <div className="mt-1.5 rounded-lg bg-surface">
+                {grouped.done.map((row, i) => renderRow(row, i, grouped.done, true))}
               </div>
             )}
           </div>

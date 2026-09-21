@@ -29,6 +29,15 @@
   --color-danger: #c0392b;
   --color-danger-soft: #fcebeb;
 
+  /*
+   * 列表选中行「浮起来」的投影与描边。
+   *
+   * 选中态不再画左侧色条 —— 那根竖条是直角的，压在 rounded 的分组容器上会被圆角削掉一截，
+   * 越看越脏。换成整行抬起：自己的圆角 + 投影 + 1px 描边，盖在相邻行之上。
+   * 深色的中性投影几乎看不见，所以两道rail分开存档，跟颜色令牌一个道理。
+   */
+  --shadow-row-active: 0 2px 10px rgba(0, 0, 0, 0.16);
+
   /* 动效令牌：写在 @theme 里才能生成 animate-* 工具类 */
   --animate-panel-in: panel-in 240ms cubic-bezier(0.16, 1, 0.3, 1);
   --animate-fade-up: fade-up 220ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -131,6 +140,7 @@ html[data-theme="dark"] {
   --color-chip: rgba(255, 255, 255, 0.09);
   --color-danger: #f0917f;
   --color-danger-soft: #452421;
+  --shadow-row-active: 0 3px 14px rgba(0, 0, 0, 0.5);
 }
 
 /*

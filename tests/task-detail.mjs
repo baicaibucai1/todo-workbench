@@ -61,12 +61,15 @@ const detailMode = async () => await detail().getAttribute("data-detail-mode");
 /**
  * 列表第一行是否处于选中态。
  *
- * 用高亮而不是比对标题来断言，是因为要跨两种渲染器（待办标题在 textarea 里、
+ * 用 data-active 而不是比对标题来断言，是因为要跨两种渲染器（待办标题在 textarea 里、
  * 工单不是），高亮是唯一一处两边写法相同的信号。而"高亮的行 = 详情里那条"
  * 正是这一步要守的不变式。
+ *
+ * 读 dataset 而不是 class：选中态现在是"整行浮起来"（圆角 + 投影 + 抬 1px），
+ * 那是一串样式类名，改动视觉时不该连带改测试；data-active 是它的**语义**。
  */
 const firstRowSelected = async () =>
-  (((await allRows().first().getAttribute("class")) || "").includes("bg-chip"));
+  (await allRows().first().getAttribute("data-active")) === "true";
 
 /**
  * 点某一行的标题区打开详情（避开行内的按钮）。
@@ -123,9 +126,17 @@ check("详情标题与所点任务一致", detailTitle.trim() === firstTitle.tri
 const taskId = await firstTask.getAttribute("data-task-id");
 const rowOf = (id) => page.locator(`[data-task-id="${id}"]`);
 
-const rowClass = (await rowOf(taskId).getAttribute("class")) || "";
-// 选中态底色已令牌化为 bg-chip（深浅主题各自取值）
-check("被选中的行有高亮态", rowClass.includes("bg-chip"), rowClass.slice(-60));
+const rowActive = (await rowOf(taskId).getAttribute("data-active")) === "true";
+// 选中态现在是"整行浮起"（lib/rowStyle），语义写在 data-active 上
+check("被选中的行有高亮态", rowActive, await rowOf(taskId).getAttribute("class"));
+// 浮起的边界要真的立起来：自己的圆角不能缺（缺了就是被外层容器把直角蹭出圆角之外的那条脏边）
+const lift = await rowOf(taskId).evaluate((el) => {
+  const s = getComputedStyle(el);
+  return { radius: parseFloat(s.borderTopLeftRadius), shadow: s.boxShadow, z: s.zIndex };
+});
+check("选中行是真浮起：有圆角", lift.radius >= 6, `radius=${lift.radius}`);
+check("选中行是真浮起：有投影", lift.shadow !== "none", lift.shadow);
+check("选中行是真浮起：盖在相邻行上", lift.z === "10", `z=${lift.z}`);
 check("详情默认宽度 360（可拖宽，见 orders-view 套件）", (await detailWidth()) === 360);
 
 console.log("\n3. 在详情里切换「我的一天」");
