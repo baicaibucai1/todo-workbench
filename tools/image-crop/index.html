@@ -3571,13 +3571,43 @@ function compositeFull(srcFull, iw, ih, R) {
    再把 ORT 内部取 .wasm 的那次请求劫持到内存字节上。
    ai/ 目录约 50MB；整目录缺失也不影响使用，只是退回纯 JS 算法。
 
+   同一份工具还有第二个宿主：待办工作台把它当插件嵌，走的是 Tauri 的
+   asset 协议。那条路径下**相对路径会解析到站点根**（见下面 AI_DIR 的
+   长注释），所以 ai/ 必须拼成绝对 URL —— 两个宿主必须同时成立。
+
    为什么「裁一块再喂」而不是整图丢进去：MI-GAN 的生成器固定按 512×512
    算（实测无论喂 240×180 还是 800×600，耗时都是 2 秒左右，可见管线内部
    统一缩到 512）。一张 3000px 的照片整张进去、洞只有 200px 的话，模型
    看到的洞只剩 30 来个像素，细节全丢。所以这里按洞的包围盒裁一块带上下文
    的窗口，让洞在 512 的输入里占 ~38%，出来再贴回原位置。
    ============================================================ */
-const AI_DIR      = 'ai/';
+/* ⚠️ ai/ 必须拼成**绝对 URL**，绝不能写成 'ai/' 这样的相对路径。
+   桌面端工具是经 Tauri 的 asset 协议加载的，而 Tauri 把整条 Windows 路径
+   encodeURIComponent 成**一个**路径段（tauri/scripts/core.js 的 convertFileSrc）：
+
+     http://asset.localhost/C%3A%5C...%5Ctools%5Cimage-crop%5Cindex.html
+                          ^^^ 整条 URL 里只有开头这一个 '/'，反斜杠都是 %5C
+
+   按 URL 规范，相对引用是相对「最后一个 '/' 之前的部分」解析的，
+   所以这里 'ai/ort.js' 会被解析成 http://asset.localhost/ai/ort.js —— 站点根，
+   必然取不到。工具不白屏、只静默退回本地算法，于是这个故障在安装包里
+   活了很久都没人发现（界面上只有一句"缺少 ai/ort.js"）。
+
+   dev server（/tools/image-crop/index.html）和 file:// 下 URL 都有真实的
+   目录层级，所以**这个坑只在装出来的应用里出现**，浏览器里怎么测都是绿的。
+
+   修法：从 location.href 里按「真分隔符或其编码形式」切出所在目录。 */
+const AI_DIR = (() => {
+  const u = location.href.split(/[?#]/)[0];
+  // %5C = '\'、%2F = '/'；encodeURIComponent 输出的十六进制是大写，
+  // 小写形式一并认了，换个宿主（或有人手工编码过）也不会漏切。
+  let end = -1;
+  for (const sep of ['/', '%5C', '%5c', '%2F', '%2f']) {
+    const k = u.lastIndexOf(sep);
+    if (k >= 0) end = Math.max(end, k + sep.length);
+  }
+  return end >= 0 ? u.slice(0, end) + 'ai/' : 'ai/';
+})();
 const AI_FEED     = 512;    // 送进网络的窗口长边（= 生成器的原生尺寸）
 const AI_CROP_MIN = 256;    // 窗口长边下限：洞很小时也得留够上下文
 const AI_CTX_K    = 2.6;    // 窗口 = 洞的包围盒 × 2.6 → 洞约占输入的 38%
