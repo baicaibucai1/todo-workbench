@@ -112,9 +112,9 @@ info("iframe 内文档标题", frameTitle);
 check("iframe 内是自己的文档（尺码表生成器）",
   !!frameTitle && frameTitle.includes("尺码表生成器"), String(frameTitle));
 
-const frameState = () =>
-  page.evaluate(() => {
-    const f = document.querySelector("iframe");
+const frameState = (id = "iframe") =>
+  page.evaluate((sel) => {
+    const f = document.querySelector(sel);
     const d = f && f.contentDocument;
     if (!d) return null;
     const q = (s) => d.querySelector(s);
@@ -125,13 +125,15 @@ const frameState = () =>
       fonts: d.querySelectorAll("#fontBar > *").length,
       swatches: d.querySelectorAll("#colorGrid > *").length,
       previewLen: (q("#previewCanvas")?.innerHTML || "").length,
+      // 选中的主题名 —— "切走再切回来样式还在不在"最直接的证据
+      theme: q("#themeBar .active")?.dataset.theme ?? "",
       emptyShown: (() => {
         const el = q("#previewEmptyState");
         return !!el && d.defaultView.getComputedStyle(el).display !== "none";
       })(),
       bg: d.defaultView.getComputedStyle(d.body).backgroundColor,
     };
-  });
+  }, id);
 
 let st = await frameState();
 info("iframe 初始状态", st);
@@ -255,12 +257,238 @@ check("关掉开关后不再自动留档", g4.length === g3.length, `${g3.length
 await frame.locator("#chkAutoGallery").check();
 await page.waitForTimeout(700);
 
-console.log("\n6. 返回待办，工具状态不残留");
-await page.locator("button").filter({ hasText: "返回待办" }).first().click();
-await page.waitForTimeout(600);
-check("已回到待办视图", (await page.locator("iframe").count()) === 0);
+console.log("\n6. 返回待办：只是隐藏，不卸载");
+/**
+ * 往工具文档里钉一个探针。
+ *
+ * 为什么不能用「载入的数据还在不在」当判据：工具自己会把表格数据、
+ * 主题写进 localStorage（LAST_KEY / PRESETS_KEY），重新加载也会恢复 ——
+ * 那样即使工具区真的被卸载重建，断言照样绿，等于没测。**这是踩过的坑**。
+ *
+ * 所以用一个只活在"当前这一次加载"里的东西：JS 上下文里的变量 + DOM 上的
+ * data 属性。任何形式的重新加载都会让它消失，而 localStorage 恢复做不到。
+ * 有了它，「保持住了」和「重置掉了」才是一对真正的对照。
+ */
+const stamp = (id, value) =>
+  page.evaluate(
+    ({ id, value }) => {
+      const f = document.querySelector(`iframe[data-tool-frame="${id}"]`);
+      const w = f && f.contentWindow;
+      if (!w || !w.document.body) return false;
+      w.__keepAliveProbe = value;
+      w.document.body.dataset.probe = value;
+      return true;
+    },
+    { id, value },
+  );
 
-console.log("\n7. 直达链接 ?tool=<id>");
+const probe = (id) =>
+  page.evaluate((id) => {
+    const f = document.querySelector(`iframe[data-tool-frame="${id}"]`);
+    const w = f && f.contentWindow;
+    if (!w || !w.document) return null;
+    return {
+      js: w.__keepAliveProbe ?? null,
+      dom: w.document.body?.dataset.probe ?? null,
+    };
+  }, id);
+
+check("探针已钉进尺码表工具", await stamp("size-chart", "probe-a"));
+const beforeLeave = await frameState('iframe[data-tool-frame="size-chart"]');
+info("离开前的工具状态", {
+  rows: beforeLeave.rows,
+  theme: beforeLeave.theme,
+  previewLen: beforeLeave.previewLen,
+});
+
+await page.locator('button[data-act="leave-tools"]').first().click();
+await page.waitForTimeout(700);
+
+check("已回到待办视图", await page.locator("h1").first().isVisible());
+check(
+  "工具 iframe 还在 DOM 里（没被卸载）",
+  (await page.locator('iframe[data-tool-frame="size-chart"]').count()) === 1,
+);
+check(
+  "工具区整体隐藏了",
+  (await page.locator("[data-tools-area]").getAttribute("data-tools-visible")) === "0",
+);
+check(
+  "隐藏的 iframe 不可见",
+  (await page.locator('iframe[data-tool-frame="size-chart"]').isVisible()) === false,
+);
+check(
+  "工具层标记为非活跃",
+  (await page.locator('[data-tool-layer="size-chart"]').getAttribute("data-tool-active")) === "0",
+);
+check(
+  "离开待办后探针仍在（说明文档没被重建）",
+  JSON.stringify(await probe("size-chart")) === JSON.stringify({ js: "probe-a", dom: "probe-a" }),
+  JSON.stringify(await probe("size-chart")),
+);
+
+// 从侧边栏切回来
+await page.locator("aside [data-nav='tool:size-chart']").click();
+await page.waitForTimeout(900);
+const back = await frameState('iframe[data-tool-frame="size-chart"]');
+check(
+  "切回来后探针还在（状态是保住的，不是被重建后恢复的）",
+  JSON.stringify(await probe("size-chart")) === JSON.stringify({ js: "probe-a", dom: "probe-a" }),
+  JSON.stringify(await probe("size-chart")),
+);
+check("切回来后选中的主题没变", back.theme === beforeLeave.theme, `${beforeLeave.theme} → ${back.theme}`);
+check("切回来后表格行数没变", back.rows === beforeLeave.rows, `${beforeLeave.rows} → ${back.rows}`);
+check(
+  "切回来后预览内容一模一样",
+  back.previewLen === beforeLeave.previewLen,
+  `${beforeLeave.previewLen} → ${back.previewLen}`,
+);
+
+console.log("\n6b. 多个工具同时活着：标签条切换与关闭");
+await page.locator("aside [data-nav='tool:ai-gen']").click();
+await page.waitForTimeout(2600);
+check("同时挂载了两个工具", (await page.locator("iframe[data-tool-frame]").count()) === 2);
+check("标签条上出现了两个标签", (await page.locator("[data-tool-tab]").count()) === 2);
+check(
+  "当前活跃标签是 ai-gen",
+  (await page.locator("[data-tool-tab='ai-gen']").getAttribute("data-tab-active")) === "1",
+);
+check(
+  "尺码表工具被隐藏但没卸载（探针仍在）",
+  (await probe("size-chart"))?.js === "probe-a",
+  JSON.stringify(await probe("size-chart")),
+);
+
+// 点标签切回去 —— 这条是「切换之后切换回来应该保持原样」的核心路径
+await page.locator("[data-tool-tab='size-chart'] button").first().click();
+await page.waitForTimeout(700);
+check(
+  "点标签切回后仍然活跃",
+  (await page.locator("[data-tool-tab='size-chart']").getAttribute("data-tab-active")) === "1",
+);
+const back2 = await frameState('iframe[data-tool-frame="size-chart"]');
+check(
+  "来回切换两次后探针依然在",
+  (await probe("size-chart"))?.js === "probe-a",
+  JSON.stringify(await probe("size-chart")),
+);
+check("来回切换后主题依然没变", back2.theme === beforeLeave.theme, String(back2.theme));
+
+// 关掉 ai-gen：应当真的释放
+await page.locator("[data-tool-tab-close='ai-gen']").click();
+await page.waitForTimeout(800);
+check(
+  "关掉之后它的 iframe 真的没了",
+  (await page.locator('iframe[data-tool-frame="ai-gen"]').count()) === 0,
+);
+check(
+  "另一个工具不受影响",
+  (await page.locator('iframe[data-tool-frame="size-chart"]').count()) === 1,
+);
+check("标签条只剩一个", (await page.locator("[data-tool-tab]").count()) === 1);
+
+console.log("\n6c. 「重置」才该丢掉状态");
+await page.locator('button[data-act="reload-tool"]').click();
+await page.waitForTimeout(2600);
+const afterReset = await probe("size-chart");
+check(
+  "重置后探针消失 —— 文档确实被重建了",
+  afterReset?.js == null && afterReset?.dom == null,
+  JSON.stringify(afterReset),
+);
+// 这里**只断言探针**，不断言"表格清空了"。原因：工具自己会把表格数据与主题
+// 写进 localStorage 并在启动时自动恢复（loadFromLocal），所以重建之后
+// 内容看起来仍然是满的 —— 那是工具的行为，不是宿主没重置。
+// 拿它当断言就会得到一个"功能没坏但测试红了"的假失败。
+await stamp("size-chart", "probe-b");
+check(
+  "重置后工具照常可用（新探针钉得上）",
+  (await probe("size-chart"))?.js === "probe-b",
+  JSON.stringify(await probe("size-chart")),
+);
+
+console.log("\n7. 设置 → 工具：工具是可配置的");
+await page.locator("aside [data-nav='settings']").click();
+await page.waitForTimeout(600);
+await page.locator('button[data-section="tools"]').click();
+await page.waitForTimeout(500);
+
+check("设置里列出了全部工具", (await page.locator("[data-tool-row]").count()) === 3, String(await page.locator("[data-tool-row]").count()));
+check("每个工具一行（图片裁剪）", (await page.locator("[data-tool-row='image-crop']").count()) === 1);
+check(
+  "标了来源：内置",
+  ((await page.locator("[data-tool-row='image-crop']").textContent()) || "").includes("内置"),
+);
+check(
+  "「保持工具状态」默认是开的",
+  (await page.locator('[data-switch="tool-keep-state"]').getAttribute("aria-checked")) === "true",
+);
+// 浏览器演示模式没有可写文件系统 —— 这两个按钮必须置灰并说明原因，
+// 而不是让人点下去之后什么也没发生
+check("导入按钮置灰", await page.locator('[data-act="import-tool"]').isDisabled());
+check("并且写清了为什么", (await page.locator("text=浏览器演示模式只能试用内置工具").count()) > 0);
+check("卸载按钮也置灰", await page.locator("[data-tool-uninstall='ai-gen']").isDisabled());
+
+console.log("\n7b. 停用一个工具：立刻从侧边栏消失，但设置页还留着它");
+await page.locator('[data-switch="tool-enable-ai-gen"]').click();
+await page.waitForTimeout(600);
+check("侧边栏里的「AI 生成」不见了", (await page.locator("aside [data-nav='tool:ai-gen']").count()) === 0);
+check("设置页仍然列着它（否则没法再启用回来）", (await page.locator("[data-tool-row='ai-gen']").count()) === 1);
+check(
+  "开关变成关",
+  (await page.locator('[data-switch="tool-enable-ai-gen"]').getAttribute("aria-checked")) === "false",
+);
+await page.locator('button[data-act="close-settings"]').click();
+await page.waitForTimeout(500);
+check("关掉设置后侧边栏依然没有它", (await page.locator("aside [data-nav='tool:ai-gen']").count()) === 0);
+
+await page.locator("aside [data-nav='settings']").click();
+await page.waitForTimeout(400);
+await page.locator('button[data-section="tools"]').click();
+await page.waitForTimeout(400);
+await page.locator('[data-switch="tool-enable-ai-gen"]').click();
+await page.waitForTimeout(600);
+check("重新启用后它立刻回到侧边栏", (await page.locator("aside [data-nav='tool:ai-gen']").count()) === 1);
+
+console.log("\n7c. 关掉「保持工具状态」：切走就真的卸载");
+await page.locator("aside [data-nav='tool:size-chart']").click();
+await page.waitForTimeout(1000);
+check("尺码表在前台", (await page.locator('iframe[data-tool-frame="size-chart"]').count()) === 1);
+
+await page.locator("aside [data-nav='settings']").click();
+await page.waitForTimeout(500);
+await page.locator('button[data-section="tools"]').click();
+await page.waitForTimeout(400);
+await page.locator('[data-switch="tool-keep-state"]').click();
+await page.waitForTimeout(600);
+check(
+  "开关已关",
+  (await page.locator('[data-switch="tool-keep-state"]').getAttribute("aria-checked")) === "false",
+);
+
+await page.locator('button[data-act="close-settings"]').click();
+await page.waitForTimeout(600);
+check("关掉设置后回到工具上", (await page.locator('iframe[data-tool-frame="size-chart"]').count()) === 1);
+await page.locator('button[data-act="leave-tools"]').click();
+await page.waitForTimeout(700);
+check("回待办后 iframe 真的被卸载了", (await page.locator("[data-tool-frame]").count()) === 0);
+check("工具区整体不渲染", (await page.locator("[data-tools-area]").count()) === 0);
+
+// 复原开关：留在"关"上会让下一轮跑到这里时默认态变成关
+await page.locator("aside [data-nav='settings']").click();
+await page.waitForTimeout(400);
+await page.locator('button[data-section="tools"]').click();
+await page.waitForTimeout(400);
+await page.locator('[data-switch="tool-keep-state"]').click();
+await page.waitForTimeout(500);
+check(
+  "开关恢复为开",
+  (await page.locator('[data-switch="tool-keep-state"]').getAttribute("aria-checked")) === "true",
+);
+await page.locator('button[data-act="close-settings"]').click();
+await page.waitForTimeout(500);
+
+console.log("\n8. 直达链接 ?tool=<id>");
 {
   const deep = new URL(BASE);
   deep.searchParams.set("tool", TOOL_ID);
@@ -285,7 +513,7 @@ console.log("\n7. 直达链接 ?tool=<id>");
   await p2.close();
 }
 
-console.log("\n8. 收尾");
+console.log("\n9. 收尾");
 check("全程无控制台错误", errors.length === 0, errors.slice(0, 5).join(" | "));
 
 const outDir = "C:/AI_Production/Tools/.workbuddy/tools/out";

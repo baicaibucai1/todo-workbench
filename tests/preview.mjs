@@ -62,6 +62,18 @@ const SCREENS = [
   { nav: "tool:size-chart", file: "12-tool-size-chart.png", kind: "tool", id: "size-chart", name: "尺码表生成器" },
   { nav: "tool:ai-gen", file: "13-tool-ai-gen.png", kind: "tool", id: "ai-gen", name: "AI 生成" },
   { nav: "settings", file: "20-settings.png", kind: "modal", title: "设置" },
+  // 设置里的第二个分屏：工具管理。`tab` 指定打开哪一个分区，
+  // `must` 钉住"确实切过去了"—— 只看 h1 的话，分区没切成功也会截出
+  // 一张「个人资料」的图，而文件名写着工具，是那种看不出错的错。
+  {
+    nav: "settings",
+    file: "21-settings-tools.png",
+    kind: "modal",
+    tab: "tools",
+    title: "设置",
+    must: "[data-tool-row]",
+    label: "设置 · 工具",
+  },
 ];
 
 /**
@@ -116,6 +128,9 @@ await page.waitForTimeout(900);
 
 /** 这一屏「确实切过去了」吗？返回 null 表示没问题，否则返回原因 */
 async function verify(s) {
+  if (s.must && (await page.locator(s.must).count()) === 0) {
+    return `没找到 [${s.must}]（这一屏没真的切过去）`;
+  }
   if (s.kind === "view" || s.kind === "modal") {
     const h1 = page.locator("h1").first();
     if ((await h1.count()) === 0) return "页面上没有 h1";
@@ -187,13 +202,24 @@ for (const s of SCREENS) {
   // 工具是 iframe，冷启动要跑一遍它自己的初始化，给足时间
   await page.waitForTimeout(s.kind === "tool" ? 2000 : 600);
 
+  // 设置里还要再点一次分区
+  if (s.tab) {
+    const tabBtn = page.locator(`button[data-section="${s.tab}"]`).first();
+    if ((await tabBtn.count()) === 0) {
+      problems.push(`${s.file} — 设置里找不到分区按钮 data-section="${s.tab}"`);
+    } else {
+      await tabBtn.click();
+      await page.waitForTimeout(500);
+    }
+  }
+
   const bad = await verify(s);
   if (bad) problems.push(`${s.file} — ${bad}`);
 
   const file = path.join(OUT, s.file);
   await page.screenshot({ path: file });
   const size = (fs.statSync(file).size / 1024).toFixed(1);
-  const label = s.kind === "tool" ? s.name : s.title;
+  const label = s.label ?? (s.kind === "tool" ? s.name : s.title);
   console.log(
     `  ${bad ? "WARN" : "OK  "}  ${s.file.padEnd(30)} ${size.padStart(7)} KB   ${label}${bad ? `   ← ${bad}` : ""}`,
   );

@@ -58,7 +58,8 @@ const SMART_ITEMS: Array<{
 export default function Sidebar() {
   const {
     lists,
-    tools,
+    // 侧边栏只列**启用中**的工具；被停用的那些在设置 → 工具里还能看到与恢复
+    enabledTools,
     view,
     activeListId,
     activeToolId,
@@ -232,11 +233,11 @@ export default function Sidebar() {
             工具
           </span>
           <span className="rounded bg-chip px-1.5 py-px text-[10px] text-fg-dim">
-            {tools.length}
+            {enabledTools.length}
           </span>
         </div>
 
-        {tools.map((tool) => {
+        {enabledTools.map((tool) => {
           const Icon = ICONS[tool.icon ?? "package"] ?? Package;
           return (
             <NavRow
@@ -250,6 +251,18 @@ export default function Sidebar() {
             />
           );
         })}
+
+        {/* 工具全被停用/卸载时给一句可操作的话，而不是留一片空白 ——
+            空白会让人以为工具功能坏了，而它其实在设置里等着被启用 */}
+        {enabledTools.length === 0 && (
+          <button
+            onClick={() => openSettings(true)}
+            data-nav="tools-empty"
+            className="block w-full rounded-md px-2.5 py-1.5 text-left text-[12px] leading-relaxed text-fg-dim hover:bg-hover"
+          >
+            没有启用的工具，去「设置 → 工具」里装或启用
+          </button>
+        )}
 
         <>
           <div className="my-2 border-t border-line" />

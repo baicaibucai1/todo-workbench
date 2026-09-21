@@ -23,11 +23,13 @@ import type {
 } from "./types";
 import * as repo from "./lib/repo";
 import { dbInfo, initDb, type DbInfo } from "./lib/db";
-import { loadTools, toolLocation } from "./lib/tools";
+import { loadTools, filterEnabled, loadBundledTools, toolLocation } from "./lib/tools";
 import {
   applyTheme,
   isStartupView,
   isThemeMode,
+  parseDisabledTools,
+  parseToolKeepState,
   SETTINGS,
   withDefaults,
 } from "./lib/settings";
@@ -48,6 +50,34 @@ import {
 } from "./lib/attachments";
 
 export type ViewKey = SmartView | "list";
+
+/**
+ * 「当前该保持挂载的工具」的唯一算法。
+ *
+ * 三处会改这个集合 —— 打开工具、重新扫描注册表、改「保持工具状态」开关 ——
+ * 各写一遍必然会漂移（踩过的坑：某个入口忘了剪掉被停用的工具，
+ * 于是工具区挂着一个侧边栏里已经不存在的工具，谁也不知道它是哪来的）。
+ *
+ * 规则：
+ *   保持开 → 打开过的都留着，按打开顺序；id 追加到末尾
+ *   保持关 → 只留当前这一个（切走即卸载，就是改动之前的行为）
+ *   两种情况都要剪掉"已启用集合之外的"工具
+ */
+function aliveAfterOpen(
+  state: { settings: Record<string, string>; aliveToolIds: string[]; enabledTools: ToolManifest[] },
+  id: string | null,
+  /** 覆盖启用集合：reloadTools 里注册表刚换过，state 上还是旧的 */
+  enabledOverride?: ToolManifest[],
+): string[] {
+  const enabled = enabledOverride ?? state.enabledTools;
+  const isOn = (x: string) => enabled.some((t) => t.id === x);
+  const keepAlive = parseToolKeepState(state.settings[SETTINGS.toolKeepState]);
+  const prev = state.aliveToolIds.filter(isOn);
+
+  if (!id) return keepAlive ? prev : [];
+  if (!keepAlive) return [id];
+  return prev.includes(id) ? prev : [...prev, id];
+}
 
 /**
  * 一条时效提醒。
@@ -89,8 +119,25 @@ interface State {
 
   lists: TaskList[];
   tasks: Task[];
+  /** 注册表里的全部工具（含被停用的，设置页要列出它们） */
   tools: ToolManifest[];
+  /** 当前启用的工具 —— 侧边栏与工具区只看这一份 */
+  enabledTools: ToolManifest[];
+  /** 安装包里有哪些工具 —— 用来列出"已卸载、可重新安装"的内置工具 */
+  bundledTools: ToolManifest[];
   toolsPath: string;
+  /**
+   * 本次会话打开过、且仍保持挂载的工具（按打开顺序）。
+   *
+   * 只在「保持工具状态」打开时会出现多个：切走的工具不卸载，只是隐藏。
+   * 关掉那个开关就退化成"只有当前这一个"。
+   */
+  aliveToolIds: string[];
+  /**
+   * 每个工具的重载次数。工具头部的「重置」按一下就 +1，
+   * 工具区把它当 iframe 的 key —— key 变了 iframe 重建，工具回到初始状态。
+   */
+  toolReloads: Record<string, number>;
 
   /** 工单：流程模板、过程态、当前视图的工单、今日计划、当前工单的流转记录 */
   flows: WorkFlow[];
@@ -197,6 +244,14 @@ interface State {
   openSettings: (open: boolean) => void;
   setView: (view: ViewKey, listId?: string) => Promise<void>;
   openTool: (id: string | null) => void;
+  /** 关掉某个工具：从挂载集合里移除（真释放 iframe），必要时把焦点交给前一个 */
+  closeTool: (id: string) => void;
+  /** 关掉全部工具并退回待办 */
+  closeAllTools: () => void;
+  /** 让某个工具重新加载（清掉它当前的状态） */
+  reloadTool: (id: string) => void;
+  /** 重新扫描工具目录（安装 / 卸载之后调用） */
+  reloadTools: () => Promise<void>;
   /** 打开/关闭右侧任务详情面板 */
   openTask: (id: string | null) => void;
   /** 打开右侧工单详情面板 */
@@ -297,7 +352,11 @@ export const useStore = create<State>((set, get) => ({
   lists: [],
   tasks: [],
   tools: [],
+  enabledTools: [],
+  bundledTools: [],
   toolsPath: "",
+  aliveToolIds: [],
+  toolReloads: {},
 
   flows: [],
   stages: [],
@@ -340,13 +399,20 @@ export const useStore = create<State>((set, get) => ({
     // 否则它找不到可用的过程态。
     await repo.seedWorkOrderFlowsIfEmpty();
     await repo.seedDemoWorkOrdersIfEmpty();
-    const [tools, rawSettings] = await Promise.all([loadTools(), repo.getAllSettings()]);
+    const [tools, bundledTools, rawSettings] = await Promise.all([
+      loadTools(),
+      loadBundledTools(),
+      repo.getAllSettings(),
+    ]);
     const settings = withDefaults(rawSettings);
     const theme = settings[SETTINGS.theme];
+    const enabledTools = filterEnabled(tools, parseDisabledTools(settings[SETTINGS.toolsDisabled]));
 
     set({
       dbInfo: dbInfo(),
       tools,
+      enabledTools,
+      bundledTools,
       toolsPath: toolLocation(),
       settings,
       // 配置决定初始形态：侧边栏是否展开、进来先看哪个视图
@@ -360,9 +426,10 @@ export const useStore = create<State>((set, get) => ({
     // 支持 ?tool=<id> 直达某个工具。
     // 没有路由的桌面应用里，这一条让"把某个工具甩给人看"变成可分享的链接，
     // 自动化验证也省去了一步点击。
+    // 只认启用中的工具：停用过的工具被直达链接拉起来，等于停用没生效。
     const wantTool = new URLSearchParams(window.location.search).get("tool");
-    if (wantTool && tools.some((t) => t.id === wantTool)) {
-      set({ activeToolId: wantTool });
+    if (wantTool && enabledTools.some((t) => t.id === wantTool)) {
+      set({ activeToolId: wantTool, aliveToolIds: [wantTool] });
     }
 
     await get().refresh();
@@ -430,6 +497,8 @@ export const useStore = create<State>((set, get) => ({
       view,
       activeListId: view === "list" ? (listId ?? null) : null,
       activeToolId: null,
+      // 离开工具不等于关掉它：保持状态开着时它继续挂在后台（见 aliveToolIds）
+      aliveToolIds: aliveAfterOpen(get(), null),
       // 切视图时清掉当前选中：详情属于"某一条记录"，视图变了它大概率不在新列表里。
       // 清掉并重置"用户关过"的标记，好让下面的 refresh 自动补选新视图的第一条。
       activeTaskId: null,
@@ -440,7 +509,47 @@ export const useStore = create<State>((set, get) => ({
     await get().refresh();
   },
 
-  openTool: (id) => set({ activeToolId: id, settingsOpen: false }),
+  openTool: (id) =>
+    set({
+      activeToolId: id,
+      settingsOpen: false,
+      aliveToolIds: aliveAfterOpen(get(), id),
+    }),
+
+  closeTool: (id) => {
+    const { aliveToolIds, activeToolId } = get();
+    const rest = aliveToolIds.filter((x) => x !== id);
+    // 关掉的正是当前这个：把焦点交给挂载集合里的最后一个（也就是刚看过的那个），
+    // 而不是一律退回待办 —— 用户连开几个工具的意图是"在它们之间来回看"
+    set({
+      aliveToolIds: rest,
+      activeToolId: activeToolId === id ? (rest[rest.length - 1] ?? null) : activeToolId,
+    });
+  },
+
+  closeAllTools: () => set({ aliveToolIds: [], activeToolId: null }),
+
+  reloadTool: (id) =>
+    set((s) => ({ toolReloads: { ...s.toolReloads, [id]: (s.toolReloads[id] ?? 0) + 1 } })),
+
+  reloadTools: async () => {
+    const [tools, bundledTools] = await Promise.all([loadTools(), loadBundledTools()]);
+    const { settings, activeToolId } = get();
+    const enabledTools = filterEnabled(tools, parseDisabledTools(settings[SETTINGS.toolsDisabled]));
+
+    // 统一在这里收口三件事：被停用/被卸载的工具不能继续保持挂载，
+    // 也不能继续占着 activeToolId（否则工具区一片空白、待办也不显示）。
+    const alive = aliveAfterOpen(get(), activeToolId, enabledTools);
+    set({
+      tools,
+      enabledTools,
+      bundledTools,
+      toolsPath: toolLocation(),
+      aliveToolIds: alive,
+      activeToolId:
+        activeToolId && enabledTools.some((t) => t.id === activeToolId) ? activeToolId : null,
+    });
+  },
 
   // 任务与工单的选中互斥：两个都非空会让右侧不知道该渲染哪个
   openTask: (id) =>
@@ -461,6 +570,7 @@ export const useStore = create<State>((set, get) => ({
         view: "all",
         activeListId: null,
         activeToolId: null,
+        aliveToolIds: aliveAfterOpen(get(), null),
         detailClosedByUser: false,
         settingsOpen: false,
       });
@@ -522,6 +632,25 @@ export const useStore = create<State>((set, get) => ({
     // 侧边栏默认展开这项要立刻生效，否则用户还得手动试一下才知道有没有保存
     if (SETTINGS.sidebarOpen in patch) {
       set({ sidebarOpen: patch[SETTINGS.sidebarOpen] !== "0" });
+    }
+
+    // 工具相关设置同样要立刻生效：停用一个工具后它必须马上从侧边栏消失，
+    // 关掉「保持工具状态」后已经在后台挂着的工具也要立刻释放，
+    // 而不是等下次启动才生效 —— 那样用户会以为开关没保存上。
+    if (SETTINGS.toolsDisabled in patch || SETTINGS.toolKeepState in patch) {
+      const s = get();
+      const enabledTools = filterEnabled(
+        s.tools,
+        parseDisabledTools(s.settings[SETTINGS.toolsDisabled]),
+      );
+      // 当前正看着的工具被停用了 → 连选中一起清掉，否则工具区空白、待办也不显示
+      const activeToolId =
+        s.activeToolId && enabledTools.some((t) => t.id === s.activeToolId) ? s.activeToolId : null;
+      set({
+        enabledTools,
+        activeToolId,
+        aliveToolIds: aliveAfterOpen({ ...s, enabledTools }, activeToolId, enabledTools),
+      });
     }
   },
 

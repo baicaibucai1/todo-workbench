@@ -43,6 +43,23 @@ export const SETTINGS = {
    * 写死一个值必然有一半人觉得它没用。
    */
   urgentMinutes: "urgent.thresholdMinutes",
+  /**
+   * 工具切走再切回来时，是否保持它原来的状态。
+   *
+   * 开启时工具的 iframe 常驻挂载，切走只是隐藏 —— 用户在里面调的样式、
+   * 载入的数据、翻到第几页都还在。关掉则每次切回来都是"刚打开"的样子。
+   * 默认开，因为**重置是破坏性的、保持不是**：一次误操作丢掉半小时的编辑，
+   * 比多占几十兆内存难受得多；而想回到初始态的人随时可以按工具头部的「重置」。
+   */
+  toolKeepState: "tools.keepState",
+  /**
+   * 被停用的工具 id（逗号分隔）。
+   *
+   * 与「卸载」分开：停用只是不在侧边栏出现、不加载，文件还在；
+   * 卸载是连文件一起删（见 lib/toolStore.ts）。两者都记在这里，
+   * 因为它们的生效方式一样 —— 都是"过滤注册表"。
+   */
+  toolsDisabled: "tools.disabled",
 } as const;
 
 /** 头像可选色，与列表色板同源，避免两套颜色语言 */
@@ -114,6 +131,8 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.reminderSystem]: "0",
   [SETTINGS.reminderSnooze]: "10",
   [SETTINGS.urgentMinutes]: String(URGENT_MINUTES.default),
+  [SETTINGS.toolKeepState]: "1",
+  [SETTINGS.toolsDisabled]: "",
 };
 
 /**
@@ -154,6 +173,51 @@ export function parseUrgentMinutes(raw: string | undefined): number {
 /** 读取配置并补上默认值，调用方不必处理 undefined */
 export function withDefaults(raw: Record<string, string>): Record<string, string> {
   return { ...DEFAULT_SETTINGS, ...raw };
+}
+
+/* ------------------------------------------------------------------ */
+/* 工具的停用清单与状态保持                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 工具 id 的合法字符集，与 tools.ts 的 manifest 校验、toolTable() 的表名前缀
+ * 保持一致。停用清单是从设置里读出来的**字符串**，可能被手改过，
+ * 所以不合法的一律丢掉 —— 而不是把脏值传下去。
+ */
+const TOOL_ID_RE = /^[a-z][a-z0-9-]{1,31}$/;
+
+/** 解析停用清单（逗号分隔）。空白项、重复项、非法 id 全部过滤掉。 */
+export function parseDisabledTools(raw: string | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const part of (raw ?? "").split(",")) {
+    const id = part.trim();
+    if (TOOL_ID_RE.test(id)) out.add(id);
+  }
+  return out;
+}
+
+/** 序列化停用清单：排序去重，让同一个集合永远写出同一串，便于比对与手改。 */
+export function formatDisabledTools(ids: Iterable<string>): string {
+  const clean = [...new Set(ids)].filter((id) => TOOL_ID_RE.test(id)).sort();
+  return clean.join(",");
+}
+
+/** 在停用清单上增删一个工具，返回新的清单串 */
+export function toggleDisabledTool(current: string | undefined, id: string, disabled: boolean): string {
+  const set = parseDisabledTools(current);
+  if (disabled) set.add(id);
+  else set.delete(id);
+  return formatDisabledTools(set);
+}
+
+/**
+ * 是否保持工具状态。
+ *
+ * 只有显式写了 "0" 才算关 —— 缺键、空串、别的值都按默认（保持）处理。
+ * 方向不能反：写错一个键就把用户的工具状态丢掉，代价不对等。
+ */
+export function parseToolKeepState(raw: string | undefined): boolean {
+  return raw !== "0";
 }
 
 export function isThemeMode(v: string | undefined): v is ThemeMode {

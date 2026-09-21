@@ -1681,7 +1681,135 @@ section("24. 图库");
   att.__setAttachmentStore(null);
 }
 
-/* ---------- 汇总 ---------- */
+/* ---------- 25. 工具的启用/停用、状态保持与单文件导入 ---------- */
+
+section("25. 工具的启用、状态保持与单文件导入");
+
+{
+  const st = await import("../src/lib/settings.ts");
+  const tstore = await import("../src/lib/toolStore.ts");
+
+  /* --- 停用清单是一条字符串，必须挡得住脏输入 ---
+     它躺在 core_settings 里，用户能手改；而 id 会参与表名拼接，
+     所以非法值要在入口处丢掉，而不是带着往下走。 */
+  check("默认不停用任何工具", st.DEFAULT_SETTINGS[st.SETTINGS.toolsDisabled] === "");
+  check(
+    "解析逗号分隔的停用清单",
+    [...st.parseDisabledTools("size-chart,ai-gen")].join(",") === "size-chart,ai-gen",
+  );
+  check(
+    "空白与重复项被吃掉",
+    [...st.parseDisabledTools(" size-chart , , size-chart ")].join(",") === "size-chart",
+  );
+  check(
+    "非法 id 被丢掉（大写 / 下划线 / 路径穿越）",
+    st.parseDisabledTools("Bad,has_underscore,../etc,ok-tool").size === 1,
+    [...st.parseDisabledTools("Bad,has_underscore,../etc,ok-tool")].join(","),
+  );
+  check(
+    "序列化排序去重，同一集合永远同一串",
+    st.formatDisabledTools(["b-tool", "a-tool", "b-tool"]) === "a-tool,b-tool",
+    st.formatDisabledTools(["b-tool", "a-tool", "b-tool"]),
+  );
+  check(
+    "停用再启用能回到空串",
+    st.toggleDisabledTool(st.toggleDisabledTool("", "image-crop", true), "image-crop", false) === "",
+  );
+
+  /* --- 保持工具状态：默认开；只有显式 "0" 才算关 ---
+     方向不能反：把"读不懂"当成"关"，用户切一趟回来就丢一次状态。 */
+  check("保持状态默认开", st.DEFAULT_SETTINGS[st.SETTINGS.toolKeepState] === "1");
+  check("缺键按保持处理", st.parseToolKeepState(undefined) === true);
+  check("读不懂的值也按保持处理", st.parseToolKeepState("yes") === true);
+  check("显式 0 才是关", st.parseToolKeepState("0") === false);
+
+  /* --- 过滤与选中：App 与工具区共用同一个判断 --- */
+  const fake = [
+    { id: "image-crop", name: "图片裁剪", version: "2.0.0", entry: "index.html", dbVersion: 1, source: "bundled" },
+    { id: "my-tool", name: "我的工具", version: "1.0.0", entry: "index.html", dbVersion: 1, source: "user" },
+  ];
+  const tl = await import("../src/lib/tools.ts");
+  check(
+    "停用的工具不进侧边栏",
+    tl.filterEnabled(fake, new Set(["image-crop"])).map((t) => t.id).join(",") === "my-tool",
+  );
+  check(
+    "但停用的工具仍然查得到（设置页要列出它才能启用回来）",
+    tl.pickActiveTool(fake, "image-crop")?.id === "image-crop",
+  );
+  check(
+    "已卸载的工具选不出来（activeToolId 指向它也只当没有）",
+    tl.pickActiveTool(fake, "ghost-tool") === null,
+  );
+  check("null 就是没有工具", tl.pickActiveTool(fake, null) === null);
+
+  /* --- id 建议：中文名推不出 ASCII，也要给出合法值 --- */
+  check(
+    "带空格大写也转得对",
+    tstore.suggestToolId("Size Chart.html") === "size-chart",
+    tstore.suggestToolId("Size Chart.html"),
+  );
+  check(
+    "中文文件名退回占位 id（合法、不重复）",
+    /^tool-[0-9a-z]+$/.test(tstore.suggestToolId("尺码助手.html")),
+    tstore.suggestToolId("尺码助手.html"),
+  );
+  check(
+    "以数字开头的名字补字母前缀",
+    /^t/.test(tstore.suggestToolId("3d-viewer.html")),
+    tstore.suggestToolId("3d-viewer.html"),
+  );
+  check(
+    "撞名时自动加序号",
+    tstore.suggestToolId("size chart.html", ["size-chart"]) === "size-chart-2",
+    tstore.suggestToolId("size chart.html", ["size-chart"]),
+  );
+  // 建议值必须**真的能过宿主校验** —— 否则用户一路点下去，最后卡在安装那一步
+  check(
+    "建议出来的 id 都能通过 manifest 校验",
+    ["Size Chart.html", "尺码助手.html", "3d.html", "a.html", "x.y.z.html"].every(
+      (f) => tl.validateManifest(tstore.buildManifest({ id: tstore.suggestToolId(f), name: "x" })) !== null,
+    ),
+    ["Size Chart.html", "尺码助手.html", "3d.html", "a.html", "x.y.z.html"]
+      .map((f) => `${f}→${tstore.suggestToolId(f)}`)
+      .join(" "),
+  );
+
+  /* --- id 校验的报错要能指导人改 --- */
+  check("合法 id 通过", tstore.checkToolId("my-tool", []) === null);
+  check("空 id 报错", typeof tstore.checkToolId("", []) === "string");
+  check("大写被拒", typeof tstore.checkToolId("MyTool", []) === "string");
+  check(
+    "撞名被拒，且说清是占用",
+    (tstore.checkToolId("ai-gen", ["ai-gen"]) ?? "").includes("占用"),
+    tstore.checkToolId("ai-gen", ["ai-gen"]),
+  );
+
+  /* --- 导入产出的 manifest 必须能过宿主校验（否则装了也扫不出来） --- */
+  const made = tstore.buildManifest({
+    id: "my-tool",
+    name: " 我的工具 ",
+    description: "   ",
+    icon: "list",
+  });
+  check("名称与 id 去空白", made.name === "我的工具" && made.id === "my-tool");
+  check("只填了空白的描述当作没有描述", made.description === undefined);
+  check("导入的工具来源标记为 user（决定卸载按钮的后果文案）", made.source === "user");
+  check("默认入口是 index.html", made.entry === "index.html");
+  check("生成出来的 manifest 通过宿主校验", tl.validateManifest(made) !== null);
+
+  /* --- 浏览器模式不写假按钮：安装功能明确不可用 --- */
+  check("浏览器模式不能安装工具", tstore.canInstallTools() === false);
+  let installErr = "";
+  try {
+    await tstore.installFromHtml({ html: "<html></html>", id: "x-tool", name: "x" });
+  } catch (e) {
+    installErr = e instanceof Error ? e.message : String(e);
+  }
+  check("浏览器模式调安装会明确报错，而不是静默失败", installErr.includes("桌面版"), installErr);
+}
+
+
 
 console.log(`\n${"=".repeat(52)}`);
 console.log(`通过 ${passed} 项，失败 ${failed} 项`);

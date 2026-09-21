@@ -150,6 +150,13 @@ async function scanToolsDir(dir: string): Promise<ToolManifest[]> {
  * 但那一级从来没实现过。后果是：安装包把工具老老实实装进了安装目录，
  * 应用却从不往那儿看，于是**桌面版所有工具都打不开**（浏览器 demo 走 Vite 静态服务，
  * 一直正常，把这个问题掩盖了很久）。
+ *
+ * 注意 `user` 的含义：**不是"在用户目录里的"**，而是"不在安装包里的"。
+ * Rust 侧启动时会把内置工具复制到用户数据区（见 src-tauri/src/lib.rs 的
+ * sync_builtin_tools），所以桌面端每个内置工具都同时存在于两处 ——
+ * 若按目录位置分类，内置工具的 source 会全变成 user，卸载按钮就会出现，
+ * 而用户点下去删掉的其实是内置工具的本地副本，升级时又会被装回来。
+ * 判定依据只能是**安装包里有没有这个 id**。
  */
 async function scanTauriTools(): Promise<{ bundled: ToolManifest[]; user: ToolManifest[] }> {
   const bundled: ToolManifest[] = [];
@@ -166,14 +173,20 @@ async function scanTauriTools(): Promise<{ bundled: ToolManifest[]; user: ToolMa
     // 取不到资源目录就当作没有内置工具，由 BUILTIN_TOOLS 兜底
   }
 
+  const bundledIds = new Set(bundled.map((t) => t.id));
   try {
     const { appDataDir, join } = await import("@tauri-apps/api/path");
     const dir = await join(await appDataDir(), "tools");
-    user.push(...(await scanToolsDir(dir)));
+    // 用户数据区里那些**不在安装包中**的，才是用户自己的工具
+    user.push(...(await scanToolsDir(dir)).filter((t) => !bundledIds.has(t.id)));
     if (user.length) registryLocation = dir;
   } catch {
     // appData 取不到就算了，不影响内置工具
   }
+
+  // 来源戳在这里盖：凡出现在安装包资源里的都算 bundled
+  for (const t of bundled) t.source = "bundled";
+  for (const t of user) t.source = "user";
 
   return { bundled, user };
 }
@@ -186,7 +199,7 @@ export async function loadTools(): Promise<ToolManifest[]> {
   const merged = new Map<string, ToolManifest>();
 
   // 1. 硬编码清单兜底（浏览器模式唯一来源；桌面端扫描失败时也有得用）
-  for (const t of BUILTIN_TOOLS) merged.set(t.id, t);
+  for (const t of BUILTIN_TOOLS) merged.set(t.id, { ...t, source: "bundled" });
 
   // 2. 安装包内的工具（真实文件，以磁盘为准）
   const { bundled, user } = await scanTauriTools();
@@ -203,8 +216,47 @@ export function listTools(): ToolManifest[] {
   return registry;
 }
 
+/**
+ * 安装包里有哪些工具 —— 不管它们有没有被装到用户数据区。
+ *
+ * 存在的理由只有一个：内置工具被卸载之后就从注册表消失了，设置页也就
+ * 再也列不出它，用户没有入口把它装回来。所以"可重装清单"必须另取一份。
+ * 浏览器模式下没有安装包，退化成内置清单（那份就是这里的"安装包"）。
+ */
+export async function loadBundledTools(): Promise<ToolManifest[]> {
+  if (!isTauri()) return BUILTIN_TOOLS.map((t) => ({ ...t, source: "bundled" as const }));
+  const { bundled } = await scanTauriTools();
+  // 资源目录都扫不到时，至少保住硬编码清单，别让设置页显示"没有可安装的工具"
+  return bundled.length > 0 ? bundled : BUILTIN_TOOLS.map((t) => ({ ...t, source: "bundled" as const }));
+}
+
 export function getTool(id: string): ToolManifest | undefined {
   return registry.find((t) => t.id === id);
+}
+
+/**
+ * 过滤出当前启用的工具。
+ *
+ * 被停用的工具**仍然留在注册表里**（设置页要列出它们、要能重新启用），
+ * 只是不进侧边栏、不参与工具区的挂载。
+ */
+export function filterEnabled(tools: ToolManifest[], disabled: Set<string>): ToolManifest[] {
+  return tools.filter((t) => !disabled.has(t.id));
+}
+
+/**
+ * 取"当前真正该显示的那个工具"。
+ *
+ * 单独抽出来是因为 App 与工具区都要做同一个判断：`activeToolId` 指向的
+ * 工具可能已经被停用或卸载了，那时两边必须同时认为"没有工具在显示"——
+ * 各写一遍 `tools.find(...)` 迟早会漂移成一边显示空白、一边显示待办。
+ */
+export function pickActiveTool(
+  tools: ToolManifest[],
+  activeToolId: string | null,
+): ToolManifest | null {
+  if (!activeToolId) return null;
+  return tools.find((t) => t.id === activeToolId) ?? null;
 }
 
 export function toolLocation(): string {

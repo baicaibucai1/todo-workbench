@@ -2,12 +2,13 @@ import { useEffect } from "react";
 import Sidebar from "./components/Sidebar";
 import TaskList from "./components/TaskList";
 import TaskDetail from "./components/TaskDetail";
-import ToolHost from "./components/ToolHost";
+import ToolArea from "./components/ToolArea";
 import Settings from "./components/Settings";
 import GalleryView from "./components/GalleryView";
 import ReminderToast from "./components/ReminderToast";
 import FlowEditor from "./components/FlowEditor";
 import { useStore } from "./store";
+import { pickActiveTool } from "./lib/tools";
 import { applyTheme, SETTINGS, watchSystemTheme } from "./lib/settings";
 import { Database, Package } from "lucide-react";
 
@@ -16,6 +17,7 @@ export default function App() {
     ready,
     init,
     activeToolId,
+    enabledTools,
     settingsOpen,
     settings,
     sidebarOpen,
@@ -53,6 +55,15 @@ export default function App() {
     };
   }, [ready, checkReminders]);
 
+  /**
+   * 当前是否真的显示着工具。
+   *
+   * 用的是 pickActiveTool：activeToolId 可能指向一个已经被停用/卸载的工具，
+   * 那时"有 id"不等于"有工具可显示"。工具区内部用同一个函数判断，
+   * 两边不会漂移（各写一遍 find 迟早变成一边显示空白、一边显示待办）。
+   */
+  const toolVisible = !!pickActiveTool(enabledTools, activeToolId) && !settingsOpen;
+
   if (!ready) {
     return (
       <div className="grid h-full place-items-center bg-surface text-[13px] text-fg-dim">
@@ -89,15 +100,22 @@ export default function App() {
 
       <div className="flex min-h-0 flex-1">
         <Sidebar />
-        {settingsOpen ? (
-          <Settings />
-        ) : activeToolId ? (
-          <ToolHost />
-        ) : view === "gallery" ? (
-          <GalleryView />
-        ) : (
-          <TaskList />
-        )}
+        {/*
+          工具区与主内容区是**并存**的两层，不是二选一。
+          工具区常驻挂载（切走只隐藏），所以它必须能独立于待办/图库/设置存在。
+          可见性只有一处判断，两边的表达式必须互补 —— 否则会出现
+          "工具区和待办同时显示"或"两个都不显示"这种一眼可见的空白。
+        */}
+        <ToolArea visible={toolVisible} />
+        <div className={toolVisible ? "hidden" : "flex min-h-0 min-w-0 flex-1"}>
+          {settingsOpen ? (
+            <Settings />
+          ) : view === "gallery" ? (
+            <GalleryView />
+          ) : (
+            <TaskList />
+          )}
+        </div>
         {/* 详情面板常驻渲染，靠宽度收放做滑入/滑出；开不展开由它自己判断 */}
         <TaskDetail />
       </div>

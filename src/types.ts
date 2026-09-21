@@ -388,6 +388,14 @@ export interface GalleryItem {
   dup?: boolean;
 }
 
+/** 工具的来源：决定它能不能被"卸载" */
+export type ToolSource =
+  /** 随安装包分发（或浏览器 demo 的内置清单）。可以停用，可以卸载用户区副本，
+   *  之后还能从安装包重新装回来 */
+  | "bundled"
+  /** 用户自己导进来 / 丢进用户数据区的。卸载就是真删，删了只能重新导入 */
+  | "user";
+
 /** 工具清单项（manifest.json 解析结果） */
 export interface ToolManifest {
   id: string;
@@ -401,4 +409,10 @@ export interface ToolManifest {
   /** 工具私有表的 schema 版本，用于独立迁移 */
   dbVersion: number;
   author?: string;
+  /**
+   * 来源。**不是 manifest 里的字段**，由扫描器按"它是不是安装包里的"盖戳 ——
+   * 和 gallery 的 origin 一样，来源必须由宿主判定，工具自报不算：
+   * 一个工具若能把 source 写成 "bundled"，卸载按钮就会消失。
+   */
+  source?: ToolSource;
 }

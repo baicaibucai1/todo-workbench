@@ -29,9 +29,16 @@ mod attachments;
 ///   本地读不到 manifest   → 保持不动（不敢确认是什么，宁可不动）
 /// 这个判据只在**内置工具**上生效；用户自己丢进 <appData>/tools 的工具
 /// 不在安装包里，根本走不到这个函数。
+///
+/// 第三件事：**尊重用户的卸载**。设置页卸载一个内置工具时会往
+/// <appData>/tools/.uninstalled 写一笔（一行一个 id），这里要跳过它们 ——
+/// 否则用户第二天打开应用会发现卸载掉的工具又回来了，
+/// 而界面上完全看不出是"启动时被同步回来的"。
 fn sync_builtin_tools(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let user_tools = app.path().app_data_dir()?.join("tools");
     fs::create_dir_all(&user_tools)?;
+
+    let uninstalled = read_uninstalled(&user_tools);
 
     // 定位安装包内置工具目录。
     //
@@ -61,6 +68,9 @@ fn sync_builtin_tools(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::
         if !entry.file_type()?.is_dir() {
             continue;
         }
+        if uninstalled.contains(&entry.file_name().to_string_lossy().to_string()) {
+            continue;
+        }
         let src = entry.path();
         let target = user_tools.join(entry.file_name());
         let upgrade = match (tool_version(&src), tool_version(&target)) {
@@ -71,6 +81,25 @@ fn sync_builtin_tools(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::
     }
 
     Ok(())
+}
+
+/// 读「用户主动卸载过的内置工具」清单。
+///
+/// 文件不存在、读不出来、内容里有空行或非法字符，一律按"没有卸载记录"处理 ——
+/// 这个文件只做加法（跳过同步），读坏了最多是把工具同步回来，
+/// 不能让应用起不来。
+fn read_uninstalled(user_tools: &Path) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let Ok(text) = fs::read_to_string(user_tools.join(".uninstalled")) else {
+        return out;
+    };
+    for line in text.lines() {
+        let id = line.trim();
+        if !id.is_empty() {
+            out.insert(id.to_string());
+        }
+    }
+    out
 }
 
 /// 读工具目录 manifest.json 里的 version，解析成可比较的三段数字。

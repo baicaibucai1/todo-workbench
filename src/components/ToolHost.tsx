@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ArrowLeft,
-  Package,
   FolderOpen,
   RefreshCw,
   Info,
@@ -10,12 +8,13 @@ import {
 } from "lucide-react";
 import { useStore } from "../store";
 import { resolveToolUrl, toolTable, lastToolCandidates } from "../lib/tools";
-import { dbInfo, isTauri } from "../lib/db";
+import { dbInfo } from "../lib/db";
 import { fetchToolDemoData } from "../lib/toolDemo";
 import { createToolBridge, type ToolBridge } from "../lib/toolBridge";
+import type { ToolManifest } from "../types";
 
 /**
- * 工具容器。
+ * 单个工具的承载层。
  *
  * 桌面端：把工具的 index.html 通过 iframe 嵌进来。
  * 用 iframe 而不是直接 import，是为了让工具与宿主强隔离 ——
@@ -25,10 +24,19 @@ import { createToolBridge, type ToolBridge } from "../lib/toolBridge";
  *
  * 浏览器 demo：工具目录由 dev server 直接静态服务，同样能真实嵌入；
  * 只有入口解析失败时才退化成契约说明页。
+ *
+ * ------------------------------------------------------------------
+ * 为什么是"帧"而不是"容器"
+ * ------------------------------------------------------------------
+ * 一个工具一个组件实例，头部与标签条在 ToolArea 里统一渲染 ——
+ * 因为「保持工具状态」意味着同时有多个工具活着，而每个 iframe 都必须
+ * **一直待在 DOM 的同一个位置上**：iframe 在 DOM 里挪一下（哪怕只是换了个
+ * 兄弟顺序）浏览器就会重新加载它，状态照样丢。所以这里只负责"把自己这一层
+ * 画好、显示或隐藏"，顺序由 ToolArea 用稳定的 key 列表保证。
  */
-export default function ToolHost() {
-  const { activeToolId, tools, openTool } = useStore();
-  const tool = tools.find((t) => t.id === activeToolId);
+export default function ToolFrame({ tool, active }: { tool: ToolManifest; active: boolean }) {
+  /** 「重置」按钮点一次 +1；当 iframe 的 key 用，变一次就重挂载一次 */
+  const reload = useStore((s) => s.toolReloads[tool.id] ?? 0);
 
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,11 +46,19 @@ export default function ToolHost() {
 
   useEffect(() => {
     let alive = true;
-    if (!tool) return;
-    setLoading(true);
+    // 刻意**不**在这里 setLoading(true)。
+    //
+    // loading 只代表"第一次还没解析出入口"。如果重新解析时又把它置回 true，
+    // 渲染就会从 iframe 分支切到"正在加载"分支 —— 那一瞬间 iframe 被卸载、
+    // 紧接着重新挂载，工具的状态又没了。而重新解析是会发生的事：
+    // reloadTools()（装了/卸了任意一个工具）会重建 manifest 对象，
+    // 这个 effect 因此重跑。结果是"装了个新工具，手上正开着的那个被重置了"，
+    // 而且看起来毫无理由。
     void resolveToolUrl(tool).then((u) => {
       if (alive) {
         setUrl(u);
+        // lastToolCandidates() 是模块级共享状态，多个工具同时解析时有极小概率串台；
+        // 它只在"解析失败"的兜底视图里显示，不参与任何判断，不值得为它加一套配对机制。
         setTried(u ? [] : lastToolCandidates());
         setLoading(false);
       }
@@ -50,7 +66,7 @@ export default function ToolHost() {
     return () => {
       alive = false;
     };
-  }, [tool]);
+  }, [tool, reload]);
 
   /**
    * 工具 ↔ 宿主 的数据通道。
@@ -62,7 +78,7 @@ export default function ToolHost() {
   const bridgeRef = useRef<ToolBridge | null>(null);
 
   useEffect(() => {
-    if (!tool || !url) return;
+    if (!url) return;
     const bridge = createToolBridge(tool.id, () => frameRef.current);
     bridgeRef.current = bridge;
     bridge.attach();
@@ -79,57 +95,41 @@ export default function ToolHost() {
       observer.disconnect();
       bridgeRef.current = null;
     };
-  }, [tool, url]);
-
-  if (!tool) return null;
+  }, [tool.id, url, reload]);
 
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col bg-surface">
-      {/* 工具头部工具栏 */}
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-card px-4">
-        <button
-          onClick={() => openTool(null)}
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-fg-3 hover:bg-hover"
-        >
-          <ArrowLeft size={15} />
-          返回待办
-        </button>
-        <div className="h-5 w-px bg-chip" />
-        <div className="flex min-w-0 items-center gap-2">
-          <Package size={15} className="shrink-0 text-[#378add]" />
-          <span className="truncate text-[14px] font-medium">{tool.name}</span>
-          <span className="shrink-0 rounded bg-chip px-1.5 py-px text-[10.5px] text-fg-dim">
-            v{tool.version}
-          </span>
+    <div
+      data-tool-layer={tool.id}
+      data-tool-active={active ? "1" : "0"}
+      // 非当前工具**只隐藏、不卸载** —— 这就是「保持工具状态」的全部实现。
+      // display:none 的 iframe 文档仍然活着，里面的变量、DOM、滚动位置都还在。
+      className={active ? "absolute inset-0" : "hidden"}
+    >
+      {/* 分支顺序是有意的：**只要解析出过入口，就永远渲染 iframe**。
+          先判 loading 的话，重新解析会让 iframe 被"正在加载"顶掉再挂回来，
+          工具状态白丢一次（原因见上面 effect 里的注释）。 */}
+      {url ? (
+        <iframe
+          // key 换掉 = iframe 重建 = 工具回到初始状态。头部的「重置」按钮就是干这个的。
+          // （「保持工具状态」关掉时不需要它：那个模式下切走即卸载，本来就是重建的）
+          key={`${url}#${reload}`}
+          ref={frameRef}
+          src={url}
+          title={tool.name}
+          data-tool-frame={tool.id}
+          className="size-full border-0"
+          // 工具加载完成时主动下发一次运行上下文（工具 id / 驱动 / schema 版本 / 主题）。
+          // 只靠主题变化触发是不够的：第一次进来时工具根本收不到任何上下文。
+          onLoad={() => bridgeRef.current?.pushContext()}
+          sandbox="allow-scripts allow-same-origin allow-downloads allow-modals allow-forms allow-popups"
+        />
+      ) : loading ? (
+        <div className="grid h-full place-items-center text-[13px] text-fg-dim">
+          正在加载工具…
         </div>
-        <div className="flex-1" />
-        <span className="text-[11.5px] text-fg-dim">
-          {isTauri() ? "已加载本地工具" : "浏览器模式 · 工具直载"}
-        </span>
-      </header>
-
-      {/* 工具内容 */}
-      <div className="min-h-0 flex-1">
-        {loading ? (
-          <div className="grid h-full place-items-center text-[13px] text-fg-dim">
-            正在加载工具…
-          </div>
-        ) : url ? (
-          <iframe
-            ref={frameRef}
-            src={url}
-            title={tool.name}
-            data-tool-frame={tool.id}
-            className="size-full border-0"
-            // 工具加载完成时主动下发一次运行上下文（工具 id / 驱动 / schema 版本 / 主题）。
-            // 只靠主题变化触发是不够的：第一次进来时工具根本收不到任何上下文。
-            onLoad={() => bridgeRef.current?.pushContext()}
-            sandbox="allow-scripts allow-same-origin allow-downloads allow-modals allow-forms allow-popups"
-          />
-        ) : (
-          <ToolContractDemo toolName={tool.name} toolId={tool.id} candidates={tried} />
-        )}
-      </div>
+      ) : (
+        <ToolContractDemo toolName={tool.name} toolId={tool.id} candidates={tried} />
+      )}
     </div>
   );
 }
@@ -177,6 +177,7 @@ function ToolContractDemo({
               tools/{toolId}/
             </code>
             且 manifest 里的 entry 指向真实文件。
+            在<b>设置 → 工具</b>里可以重新安装这个工具。
             {/* 桌面端把「找过哪些位置」直接摆出来。
                 上一版这里只显示这句通用提示，而真正的故障是「代码去 %APPDATA% 找，
                 工具却装在安装目录」，界面上完全看不出，只能靠翻源码猜。 */}
@@ -198,13 +199,38 @@ function ToolContractDemo({
         <h2 className="mt-6 text-[15px] font-medium">工具接入契约</h2>
         <p className="mt-1 text-[13px] leading-relaxed text-fg-3">
           新增一个工具只需要往工具目录丢一个文件夹，不需要改宿主代码，也不需要重新发版。
+          单文件工具可以直接在<b>设置 → 工具 → 导入 HTML 单文件</b>里装进来。
         </p>
 
         <pre className="mt-3 overflow-x-auto rounded-lg bg-[#2c2c2a] px-4 py-3 font-mono text-[12px] leading-[1.7] text-[#e8e6e0]">
 {`tools/${toolId}/
   manifest.json    清单：id / 名称 / 图标 / 入口 / dbVersion
-  index.html       工具界面，完全自治的单页应用`}
+  index.html       工具界面，完全自治的单页应用
+  <其他附属资源>   脚本 / 图片 / 模型，随目录一起走`}
         </pre>
+
+        {/* 这一条是踩过的坑，写在这里是因为它是**下一个写工具的人唯一会看到的地方**。
+            桌面端走 asset 协议，Tauri 把整条路径编码成一个路径段，
+            相对引用会被解析到站点根 —— 只在装出来的应用里复现，dev 下完全正常。 */}
+        <div className="mt-3 rounded-lg border border-[#f0d9a8] bg-[#fdf6e7] px-4 py-3 text-[13px] leading-relaxed text-[#7a5406]">
+          ⚠️ 工具引用自己的附属资源时，<b>必须拼成绝对 URL</b>。
+          桌面端工具经 asset 协议加载，而 Tauri 会把整条路径编码成
+          <code className="mx-1 rounded bg-chip px-1.5 py-px font-mono text-[11.5px]">
+            http://asset.localhost/C%3A%5C…%5Cindex.html
+          </code>
+          —— 整条 URL 里只有开头一个 <code>/</code>，所以
+          <code className="mx-1 rounded bg-chip px-1.5 py-px font-mono text-[11.5px]">
+            src="ai/ort.js"
+          </code>
+          这类相对路径会被解析到<b>站点根</b>，而不是工具目录。
+          这个坑只在装出来的应用里出现，dev server 下永远正常。
+          写法参考 <code>tools/{toolId}/index.html</code> 里从
+          <code className="mx-1 rounded bg-chip px-1.5 py-px font-mono text-[11.5px]">
+            location.href
+          </code>
+          推出目录的那段。单文件导入的工具请把 CSS/JS 内联，
+          相对引用不会被一起带进来。
+        </div>
 
         <h3 className="mt-5 text-[14px] font-medium">manifest.json</h3>
         <pre className="mt-2 overflow-x-auto rounded-lg bg-[#2c2c2a] px-4 py-3 font-mono text-[12px] leading-[1.7] text-[#e8e6e0]">

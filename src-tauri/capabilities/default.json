@@ -17,6 +17,8 @@
     "fs:allow-exists",
     "fs:allow-copy-file",
     "fs:allow-mkdir",
+    "fs:allow-write-text-file",
+    "fs:allow-remove",
     {
       "identifier": "fs:scope",
       "allow": [
