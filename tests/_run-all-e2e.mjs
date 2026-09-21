@@ -12,6 +12,7 @@ const SUITES = [
   ["daily-settings.mjs", []],
   ["background.mjs", []],
   ["tool-browser.mjs", []],
+  ["image-crop-ai.mjs", []],
   ["placeholder-tools.mjs", []],
   ["ai-gen.mjs", []],
   ["gallery.mjs", ["--fresh"]],

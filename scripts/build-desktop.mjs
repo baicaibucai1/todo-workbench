@@ -208,6 +208,30 @@ async function main() {
     );
   }
 
+  // ---- 工具副本与附属资源 ----
+  //
+  // 必须跑在**前端构建之前**：vite 会把整个 tools/ 目录原样复制进 dist，
+  // 漏了这一步，dist 与安装包里就都是"缺 AI 模型"的工具版本。
+  // （2026-09-21 的 bug 就是这样出去的：image-crop 的 ai/ 从来没被搬运过。）
+  //
+  // 这里用**非 --check 模式**，也就是直接同步，而不是挡住打包：
+  //   · 源文件不在（别人 clone 了公开仓库）时 sync-tools 只 [跳过]，退出码仍是 0 —— 那是合法状态，
+  //     工具会退回本地算法，不该拦住打包；
+  //   · 只有真问题（工具入口缺失、内联 onclick 与 window 导出对不上）才返回 1。
+  const tools = await runStreamed(
+    '同步工具副本与附属资源',
+    process.execPath,
+    [path.join(__dirname, 'sync-tools.mjs')],
+    env,
+  );
+  logs.push(tools.captured);
+  if (tools.code !== 0) {
+    fail(
+      '工具副本同步失败。',
+      '工具入口缺失，或内联 onclick 与 window 导出对不上。跑 node scripts/sync-tools.mjs 看详情。',
+    );
+  }
+
   // ---- 前端产物 ----
   if (!SKIP_FRONTEND) {
     const distIndex = path.join(ROOT, 'dist', 'index.html');

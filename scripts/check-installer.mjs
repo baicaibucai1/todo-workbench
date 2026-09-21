@@ -179,6 +179,57 @@ if (diskTools.length === 0) {
   if (missing === 0) info('结论', '全部工具都会被装进安装目录');
 }
 
+/*
+ * 工具的**附属目录**（tools/<id>/<sub>/）是否也进包。
+ *
+ * 为什么单列一条：上面那个循环只看 index.html 与 manifest.json，**完全盖不到子目录**。
+ * 2026-09-21 就是这么漏掉的 —— image-crop 的 ai/（ONNX Runtime + MI-GAN 模型）
+ * 从来没进过安装包，工具里的 AI 补全一直在跑降级路径，而源目录双击打开却是好的。
+ * 两边看起来都正常，只是行为差一档，属于最难查的那类问题。
+ *
+ * 判据：磁盘上**存在**的附属目录，其每个文件都必须在安装清单里。
+ * 磁盘上不存在就跳过 —— 那是 sync-tools 没能从源目录搬来的情况（别人 clone 仓库），
+ * 工具会自己退回本地算法，不是打包错误。
+ */
+console.log('');
+console.log('--- 1b. 工具的附属目录是否进包 ---');
+
+let subDirs = 0;
+let subBad = 0;
+for (const tool of diskTools) {
+  const toolDir = path.join(toolsDir, tool);
+  const subs = fs
+    .readdirSync(toolDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .sort();
+
+  for (const sub of subs) {
+    const files = [];
+    (function walk(p, prefix) {
+      for (const e of fs.readdirSync(p, { withFileTypes: true })) {
+        const full = path.join(p, e.name);
+        const rel = prefix ? `${prefix}/${e.name}` : e.name;
+        if (e.isDirectory()) walk(full, rel);
+        else files.push(rel);
+      }
+    })(path.join(toolDir, sub), "");
+
+    subDirs++;
+    const miss = files
+      .filter((f) => !targetSet.has(`_up_/tools/${tool}/${sub}/${f}`.toLowerCase()))
+      .sort();
+    if (miss.length) subBad++;
+    check(
+      `${tool}/${sub}（${files.length} 个文件）`,
+      miss.length === 0,
+      miss.length ? `安装清单里缺：${miss.slice(0, 3).join(', ')}${miss.length > 3 ? ` 等 ${miss.length} 个` : ''}` : '',
+    );
+  }
+}
+if (subDirs === 0) info('结论', '没有附属目录（跳过）');
+else if (subBad === 0) info('结论', `${subDirs} 个附属目录都会进安装目录`);
+
 // 反向：安装清单里有、磁盘上已没有的工具（改了名或删了工具却没重新打包）
 for (const f of installFiles) {
   const m = f.target.match(/^_up_\/tools\/([^/]+)\//i);
