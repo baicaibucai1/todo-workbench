@@ -9,6 +9,8 @@
  * 这样「先跑 demo 验证产品形态」和「打包成桌面应用」用的是同一份业务代码。
  */
 
+import { invoke } from "@tauri-apps/api/core";
+
 import { migrations, CURRENT_SCHEMA_VERSION } from "./migrations";
 
 export type Param = string | number | null;
@@ -602,20 +604,32 @@ function splitStatements(sql: string): string[] {
 /* 实现二：真实 SQLite（Tauri 桌面环境）                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 数据库连接串。
+ *
+ * Rust 侧 `db_instances` 是**以这个字符串为键**缓存连接池的
+ * （见 tauri-plugin-sql 的 `load` 命令），事务命令要按同一个键去取池子，
+ * 所以这里必须只有一处定义、原样传回去。
+ */
+const DB_URL = "sqlite:todo-workbench.db";
+
 class SqliteDb implements Db {
   private conn: {
     select: (sql: string, params?: unknown[]) => Promise<unknown>;
     execute: (sql: string, params?: unknown[]) => Promise<unknown>;
   };
+  /** 连接串，事务命令用它从 Rust 侧取回同一个连接池 */
+  private url: string;
 
-  constructor(conn: SqliteDb["conn"]) {
+  constructor(conn: SqliteDb["conn"], url: string) {
     this.conn = conn;
+    this.url = url;
   }
 
   static async open(): Promise<SqliteDb> {
     const mod = await import("@tauri-apps/plugin-sql");
-    const conn = await mod.default.load("sqlite:todo-workbench.db");
-    return new SqliteDb(conn as unknown as SqliteDb["conn"]);
+    const conn = await mod.default.load(DB_URL);
+    return new SqliteDb(conn as unknown as SqliteDb["conn"], DB_URL);
   }
 
   async select<T>(sql: string, params?: Param[]): Promise<T[]> {
@@ -626,18 +640,18 @@ class SqliteDb implements Db {
     await this.conn.execute(sql, params ?? []);
   }
 
+  /**
+   * 事务必须交给 Rust 侧的命令执行 —— 这里**不能**自己发 BEGIN/COMMIT。
+   *
+   * 插件的 `execute` 实现是 `pool.execute(query)`，语义为「从连接池现取一条
+   * 连接、执行完就还」，而 sqlx 池的空闲连接是 FIFO 轮转的。把
+   * `BEGIN / DELETE / INSERT / COMMIT` 发成四次独立 IPC，它们会落在四条
+   * 不同的连接上，净效果是「DELETE 被 autocommit 提交、INSERT 卡在一条
+   * 没人提交的事务里、COMMIT 报 cannot commit」，即**数据既没写进去又被删了**。
+   * 具体推导见 src-tauri/src/db_tx.rs 顶部。
+   */
   async transaction(statements: Array<{ sql: string; params?: Param[] }>): Promise<void> {
-    // tauri-plugin-sql 没有暴露显式事务 API，用 BEGIN/COMMIT 包裹
-    await this.conn.execute("BEGIN", []);
-    try {
-      for (const { sql, params } of statements) {
-        await this.conn.execute(sql, params ?? []);
-      }
-      await this.conn.execute("COMMIT", []);
-    } catch (err) {
-      await this.conn.execute("ROLLBACK", []);
-      throw err;
-    }
+    await invoke("db_transaction", { db: this.url, statements });
   }
 
   async migrate(): Promise<void> {

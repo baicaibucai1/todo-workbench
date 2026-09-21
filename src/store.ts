@@ -623,34 +623,70 @@ export const useStore = create<State>((set, get) => ({
   },
 
   saveSettings: async (patch) => {
-    await repo.setSettings(patch);
-    set((s) => ({ settings: { ...s.settings, ...patch } }));
+    const before = get().settings;
+    const next = { ...before, ...patch };
 
-    const theme = patch[SETTINGS.theme];
-    if (theme && isThemeMode(theme)) applyTheme(theme);
+    /**
+     * 把配置里会牵动别的切片的那几项同步过去。
+     *
+     * 抽成闭包是为了**能重放一遍**：落库失败回退时要用旧值把它们推回去。
+     * 判断条件一律看 `patch`（这次到底改了哪几项），取值看传进来的 `values`。
+     */
+    const applyEffects = (values: Record<string, string>) => {
+      const theme = values[SETTINGS.theme];
+      if (SETTINGS.theme in patch && theme && isThemeMode(theme)) applyTheme(theme);
 
-    // 侧边栏默认展开这项要立刻生效，否则用户还得手动试一下才知道有没有保存
-    if (SETTINGS.sidebarOpen in patch) {
-      set({ sidebarOpen: patch[SETTINGS.sidebarOpen] !== "0" });
-    }
+      // 侧边栏默认展开这项要立刻生效，否则用户还得手动试一下才知道有没有保存
+      if (SETTINGS.sidebarOpen in patch) {
+        set({ sidebarOpen: values[SETTINGS.sidebarOpen] !== "0" });
+      }
 
-    // 工具相关设置同样要立刻生效：停用一个工具后它必须马上从侧边栏消失，
-    // 关掉「保持工具状态」后已经在后台挂着的工具也要立刻释放，
-    // 而不是等下次启动才生效 —— 那样用户会以为开关没保存上。
-    if (SETTINGS.toolsDisabled in patch || SETTINGS.toolKeepState in patch) {
-      const s = get();
-      const enabledTools = filterEnabled(
-        s.tools,
-        parseDisabledTools(s.settings[SETTINGS.toolsDisabled]),
-      );
-      // 当前正看着的工具被停用了 → 连选中一起清掉，否则工具区空白、待办也不显示
-      const activeToolId =
-        s.activeToolId && enabledTools.some((t) => t.id === s.activeToolId) ? s.activeToolId : null;
-      set({
-        enabledTools,
-        activeToolId,
-        aliveToolIds: aliveAfterOpen({ ...s, enabledTools }, activeToolId, enabledTools),
-      });
+      // 工具相关设置同样要立刻生效：停用一个工具后它必须马上从侧边栏消失，
+      // 关掉「保持工具状态」后已经在后台挂着的工具也要立刻释放，
+      // 而不是等下次启动才生效 —— 那样用户会以为开关没保存上。
+      if (SETTINGS.toolsDisabled in patch || SETTINGS.toolKeepState in patch) {
+        const s = get();
+        const enabledTools = filterEnabled(
+          s.tools,
+          parseDisabledTools(values[SETTINGS.toolsDisabled]),
+        );
+        // 当前正看着的工具被停用了 → 连选中一起清掉，否则工具区空白、待办也不显示
+        const activeToolId =
+          s.activeToolId && enabledTools.some((t) => t.id === s.activeToolId)
+            ? s.activeToolId
+            : null;
+        set({
+          enabledTools,
+          activeToolId,
+          aliveToolIds: aliveAfterOpen({ ...s, enabledTools }, activeToolId, enabledTools),
+        });
+      }
+    };
+
+    // **先写内存，再落库。** 顺序反了会同时踩两个坑：
+    //
+    //   ① 旧写法是 `await repo.setSettings(patch)` 之后才 set。拖面板宽度是
+    //      「松手才落库」，而松手时 useDragWidth 会立刻丢掉本地接管值、
+    //      回落到 `storedWidth`；此时 store 还没更新，于是先弹回旧宽度，
+    //      等 IPC 回来再跳回新宽度。web 预览里 MemoryDb 是同步的，看不到；
+    //      exe 里是 SQLite IPC，这段窗口足够长到肉眼可见。
+    //   ② 更糟的是落库一旦抛错，`set` 根本不会执行，界面**永久**停在旧值上。
+    //      而 exe 里正好有个「抛错但不报红」的静默失败（事务跨连接，见
+    //      src-tauri/src/db_tx.rs），于是表现为「拖完弹回、重启也不记得」。
+    //
+    // 现在同步写内存：调用方在同一个事件里发的 `setDragWidth(null)` 会和这里
+    // 合批，只渲染一次、直接就是新宽度，中间不闪。
+    set({ settings: next });
+    applyEffects(next);
+
+    try {
+      await repo.setSettings(patch);
+    } catch (err) {
+      // 落库失败必须回退：界面显示一个并不存在的配置，下次启动又变回去，
+      // 比当场报错难查得多。
+      set({ settings: before });
+      applyEffects(before);
+      throw err;
     }
   },
 
