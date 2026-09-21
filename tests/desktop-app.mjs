@@ -100,7 +100,16 @@ const diskTools = fs
   .filter((d) => fs.statSync(path.join(resDir, d)).isDirectory())
   .sort();
 info("其中的工具", diskTools.join(", "));
-check("资源目录里有 3 个工具", diskTools.length === 3, `${diskTools.length} 个`);
+// 期望值从源码目录里数出来，而不是写死一个数字 —— 加一个内置工具要改的地方越少，
+// 忘了改的概率就越低（之前 scratchpad 加进来时这条就漏过一次）。
+const srcToolCount = fs
+  .readdirSync(path.join(ROOT, "tools"))
+  .filter((d) => fs.statSync(path.join(ROOT, "tools", d)).isDirectory()).length;
+check(
+  `资源目录里的工具数与源码一致（${srcToolCount} 个）`,
+  diskTools.length === srcToolCount,
+  `${diskTools.length} 个`,
+);
 // 「特殊单号记录」曾经是第 4 个工具，现在改成了原生视图（不再有工具目录）。
 // 这里顺手钉住"它没有再被塞回工具目录"，否则 check-installer 的门禁会跟着对不上
 check(
