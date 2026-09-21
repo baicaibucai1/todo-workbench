@@ -10,6 +10,32 @@
 
 ---
 
+## 界面速览
+
+> 截图均为内置演示数据（浏览器演示库自动生成），非真实业务数据。
+
+| 我的一天 | 全部 · 常驻详情面板 |
+| --- | --- |
+| ![我的一天](docs/screenshots/my-day.png) | ![全部](docs/screenshots/all-tasks.png) |
+
+| 工单 | 工单详情 · 过程态流转留痕 |
+| --- | --- |
+| ![工单](docs/screenshots/orders.png) | ![工单详情](docs/screenshots/order-detail.png) |
+
+| 特殊单号 | 图库 |
+| --- | --- |
+| ![特殊单号](docs/screenshots/special-orders.png) | ![图库](docs/screenshots/gallery.png) |
+
+| 工具：尺码表生成器 | 工具：AI 生成（阿里云百炼） |
+| --- | --- |
+| ![尺码表](docs/screenshots/tool-size-chart.png) | ![AI 生成](docs/screenshots/tool-ai-gen.png) |
+
+| 侧边栏紧急区（剩余时间不足自动聚合） | 左右面板宽度可拖拽 |
+| --- | --- |
+| ![紧急区](docs/screenshots/urgent.png) | ![面板拖宽](docs/screenshots/resizable-panels.png) |
+
+---
+
 ## 技术选型（已定稿）
 
 | 层 | 选型 | 说明 |
