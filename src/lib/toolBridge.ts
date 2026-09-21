@@ -47,10 +47,50 @@
  *
  * 设计取向：工具是外部输入，一律按不可信数据处理。多写三十行划清边界，
  * 好过以后为了"先跑起来"补一个任意 SQL 的口子。
+ *
+ * ------------------------------------------------------------------
+ * row.* —— 工具的私有数据表
+ * ------------------------------------------------------------------
+ * 工具要在 manifest 里**声明**自己用哪些表（see lib/toolSchema.ts），
+ * 宿主按声明建好，然后这里提供结构化 CRUD：
+ *
+ *   row.count / row.select / row.insert / row.update / row.delete / schema.info
+ *
+ * 刻意**不是** SQL 通道，而是"表名 + 行对象 + 等值筛选"：
+ *
+ *   1. 表名与列名一律取宿主侧那份**已校验的声明**，工具传进来的是索引；
+ *      没声明过的表或列在这里就报错，根本走不到 SQL 里。
+ *   2. 没有 JOIN、没有子查询、没有表达式 —— 工具拿不到 `core_tasks`，
+ *      即使它在 Core 里塞个奇怪的值也无路可走。
+ *   3. 值**按列类型强校验**（integer 列传字符串直接拒）。这条不是为了防攻击，
+ *      是为了让两个驱动行为一致：SQLite 有类型亲和性会默默转，
+ *      浏览器 demo 的内存库不会 —— 不校验就会出现"网页里好使、装上就错位"。
+ *
+ * 主键对每个 CRUD 都很关键：update / delete 只能按主键定位一行。
+ * 这也是为什么声明表时**必须有且只能有一个主键列**。
+ *
+ * ------------------------------------------------------------------
+ * tools.* —— 工具之间的联动
+ * ------------------------------------------------------------------
+ * 工具各在一个 iframe 里，彼此看不见对方，所以联动只能由宿主中转：
+ *
+ *   tools.list  看看这台机器上还有哪些工具（拿不到入口地址，只能拿到元信息）
+ *   tools.open  拉起某个工具并把一份数据交给它（对方没在跑就先挂上）
+ *   tools.send  给**已经在运行**的工具发一条消息（收不到会明确报错）
+ *
+ * 为什么不做通用事件总线：工具 A 发一件事、工具 B 订阅它，听着很松耦合，
+ * 但 B 没在运行时这次发送是**静默丢失**的 —— 用户点"发给 XX"，什么都没发生。
+ * 显式调用会先把对方拉起来，失败也能报出"它没装/被停用了"。
+ *
+ * 安全边界：转交的数据只在本机 postMessage 通道里流动，**不经过数据库**，
+ * 工具依然拿不到别的表。tools.open 也不能让工具未经用户操作就互相拉起
+ * （见 store.openToolWithIntent —— 它走的是和用户点侧边栏同一条路径）。
  */
 
-import { db, dbInfo, isTauri } from "./db";
-import { toolTable } from "./tools";
+import { db, dbInfo, isTauri, type Param } from "./db";
+import { toolPrefix, toolTable } from "./tools";
+import type { ValidatedTable } from "./toolSchema";
+import { postToTool, registerToolPoster, unregisterToolPoster } from "./toolLink";
 import {
   addToGallery,
   fetchGallery,
@@ -74,6 +114,17 @@ export type ToolOp =
   | "kv.set"
   | "kv.all"
   | "kv.del"
+  /** 私有数据表：结构化 CRUD。见文件头「row.* —— 工具的私有数据表」 */
+  | "row.count"
+  | "row.select"
+  | "row.insert"
+  | "row.update"
+  | "row.delete"
+  | "schema.info"
+  /** 工具联动。见文件头「tools.* —— 工具之间的联动」 */
+  | "tools.list"
+  | "tools.open"
+  | "tools.send"
   | "gallery.list"
   | "gallery.get"
   | "gallery.put";
@@ -120,10 +171,24 @@ interface ToolRequest {
     table?: string;
     key?: string;
     value?: unknown;
-    /** gallery.get / gallery.put */
-    id?: string;
-    kind?: string;
+    /* row.* —— 结构化 CRUD 的参数 */
+    /** 等值筛选：{ status: "done" }，值为 null 表示 IS NULL */
+    where?: Record<string, unknown>;
+    /** 插入/更新的一行；update 里叫 patch，只写要改的列 */
+    row?: Record<string, unknown>;
+    patch?: Record<string, unknown>;
+    /** 主键值，update / delete 用它定位一行 */
+    id?: unknown;
+    /** 排序列名（必须是表里声明过的），只支持单列 */
+    orderBy?: string;
+    orderDir?: "asc" | "desc";
     limit?: number;
+    offset?: number;
+    /** tools.open / tools.send */
+    tool?: string;
+    event?: string;
+    data?: unknown;
+    kind?: string;
     search?: string;
     dataUrl?: string;
     /** gallery.put 的另一条入口：给网址，由宿主下载（见 handler 里的说明） */
@@ -140,6 +205,29 @@ interface ToolRequest {
      */
     dedupe?: boolean;
   };
+}
+
+/** row.select 一次最多返回多少行 */
+const ROW_SELECT_MAX = 200;
+/** row.select 一次默认返回多少行 */
+const ROW_SELECT_DEFAULT = 50;
+/**
+ * 单个字段值的大小上限（含插入/更新的值）。
+ * 理由与 kv 那条一致：demo 库是整库快照存 localStorage，塞大字符串会把整个库撑爆。
+ */
+const ROW_VALUE_MAX = 512 * 1024;
+
+/** tools.list 回报的一项 —— 只给元信息，**不给入口地址** */
+export interface ToolLinkMeta {
+  id: string;
+  name: string;
+  icon?: string;
+  version: string;
+  description?: string;
+  /** 此刻有没有 iframe 挂着（决定 tools.send 能不能投到） */
+  running: boolean;
+  /** 是不是当前正在看的那个 */
+  active: boolean;
 }
 
 export interface ToolContext {
@@ -160,6 +248,15 @@ export interface ToolContext {
    * 工具据此把相关入口置灰并说明原因。
    */
   gallery: true;
+  /**
+   * 宿主是否提供数据表通道（row.* / schema.info）。
+   *
+   * 老版本的宿主没有这条通道。工具若想在那种宿主上降级（退回 kv 存储），
+   * 靠的就是这两个布尔值 —— 否则只能先调一次、看会不会报错。
+   */
+  data: true;
+  /** 宿主是否提供工具联动（tools.*） */
+  link: true;
 }
 
 export interface ToolBridge {
@@ -169,22 +266,147 @@ export interface ToolBridge {
   detach: () => void;
   /** 主动把运行上下文推给工具（加载完成、主题切换时） */
   pushContext: () => void;
+  /** 给本工具发一条事件消息（别的工具经宿主转过来） */
+  postEvent: (event: string, data: unknown) => void;
+  /** 把"被别的工具拉起"这件事连同数据一起推过去 */
+  postIntent: (data: unknown, from: string | null) => void;
 }
 
-export function currentTheme(): "light" | "dark" {
+/**
+ * 按工具的声明取出一张表。
+ *
+ * **只认宿主侧那份已校验的声明** —— 工具给的名字在这里只是个索引键。
+ * 它没有声明过的表走不通，也就碰不到 `core_settings` 或别的工具的表：
+ * 那也不 possible 通过它进到 SQL 里。
+ */
+function lookupTable(tables: ValidatedTable[], bare: unknown): ValidatedTable {
+  if (typeof bare !== "string" || !bare) {
+    throw new Error("缺少 table 参数（填 manifest 里声明过的裸表名，如 \"records\"）");
+  }
+  const hit = tables.find((t) => t.name === bare);
+  if (!hit) {
+    const names = tables.map((t) => t.name);
+    throw new Error(
+      names.length === 0
+        ? "这个工具没有声明任何数据表（manifest 里缺 schema），row.* 用不了"
+        : `没有声明过「${bare}」这张表。可用的是：${names.join("、")}`,
+    );
+  }
+  return hit;
+}
+
+/** 列是否存在。列名校验与外面那层 utf-8 检查同源，见 toolSchema.NAME_RE */
+function lookupColumn(t: ValidatedTable, col: string) {
+  const hit = t.columns.find((c) => c.name === col);
+  if (!hit) throw new Error(`表「${t.name}」里没有「${col}」这一列`);
+  return hit;
+}
+
+/**
+ * 校验一个值是否符合列类型，并转成能进参数化的形态。
+ *
+ * 严格是因为**两个驱动的类型处理不一样**：SQLite 有类型亲和性，往 integer 列
+ * 写字符串会转成数字；浏览器的内存库原样存着字符串。不校验的结果是
+ * 「网页预览里是对的，装成 exe 之后排序和比较全错」 —— 这类错位极难发现，
+ * 所以宁可在这里明确拒绝。
+ */
+function coerceValue(t: ValidatedTable, col: string, raw: unknown): Param {
+  const def = lookupColumn(t, col);
+  if (raw === null) return null;
+
+  switch (def.type) {
+    case "integer":
+      if (typeof raw !== "number" || !Number.isInteger(raw)) {
+        throw new Error(`列「${col}」是 integer，收到的是 ${describeType(raw)}`);
+      }
+      return raw;
+    case "real":
+      if (typeof raw !== "number" || !Number.isFinite(raw)) {
+        throw new Error(`列「${col}」是 real，收到的是 ${describeType(raw)}`);
+      }
+      return raw;
+    case "text":
+    default:
+      if (typeof raw !== "string") {
+        throw new Error(`列「${col}」是 text，收到的是 ${describeType(raw)}`);
+      }
+      if (raw.length > ROW_VALUE_MAX) {
+        throw new Error(`列「${col}」的值超过 ${Math.round(ROW_VALUE_MAX / 1024)} KB 上限`);
+      }
+      return raw;
+  }
+}
+
+function describeType(v: unknown): string {
+  if (v === null) return "null";
+  if (Array.isArray(v)) return "数组";
+  return typeof v;
+}
+
+/**
+ * 校验一个对象里全是这张表声明过的列，返回列值对。
+ *
+ * **多余列一律拒绝**（不是忽略）：工具传错列名时，"悄悄丢掉"会让
+ * 「我写了但没存进去」变成一个没有报错、没有线索的现象。明确报错，
+ * 工具作者一眼就知道自己写错了什么。
+ */
+function readRow(
+  t: ValidatedTable,
+  raw: unknown,
+  label: string,
+): Array<[string, Param]> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`${label} 必须是一个对象（列名 -> 值）`);
+  }
+  const out: Array<[string, Param]> = [];
+  for (const [col, v] of Object.entries(raw as Record<string, unknown>)) {
+    out.push([col, coerceValue(t, col, v)]);
+  }
+  if (out.length === 0) throw new Error(`${label} 是空的，至少给一列`);
+  return out;
+}
+
+/** 等值筛选条件 -> SQL 片段。null 值转 IS NULL，其余转 `= ?` */
+function buildWhere(
+  t: ValidatedTable,
+  where: unknown,
+): { clause: string; params: Param[] } {
+  if (where === undefined || where === null) return { clause: "", params: [] };
+  const pairs = readRow(t, where, "where");
+  const parts: string[] = [];
+  const params: Param[] = [];
+  for (const [col, v] of pairs) {
+    lookupColumn(t, col);
+    if (v === null) parts.push(`${col} IS NULL`);
+    else {
+      parts.push(`${col} = ?`);
+      params.push(v);
+    }
+  }
+  return {
+    clause: parts.length ? ` WHERE ${parts.join(" AND ")}` : "",
+    params,
+  };
+}
+
+function currentTheme(): "light" | "dark" {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 }
 
-/** 组装工具运行上下文 —— 工具据此显示"我连到哪儿了" */export function buildContext(toolId: string): ToolContext {
+/** 组装工具运行上下文 —— 工具据此显示"我连到哪儿了" */
+export function buildContext(toolId: string): ToolContext {
   const info = dbInfo();
   return {
     toolId,
-    tablePrefix: `tool_${toolId.replace(/-/g, "_")}_`,
+    // 走 toolPrefix 而不是再拼一遍 —— 前缀规则只有一处定义，见 lib/tools.ts
+    tablePrefix: toolPrefix(toolId),
     driver: info.driver,
     schemaVersion: info.schemaVersion,
     theme: currentTheme(),
     runtime: isTauri() ? "desktop" : "browser",
     gallery: true,
+    data: true,
+    link: true,
   };
 }
 
@@ -310,18 +532,55 @@ async function toToolItem(item: GalleryItem): Promise<ToolGalleryItem> {
 /**
  * 创建到某个工具 iframe 的桥。
  *
- * @param toolId  当前工具的 id（表名前缀的来源）
- * @param getFrame 返回当前 iframe 元素；返回 null 时丢弃消息
+ * @param toolId      当前工具的 id（表名前缀与联动身份的来源）
+ * @param getFrame    返回当前 iframe 元素；返回 null 时丢弃消息
+ * @param getTables   宿主侧已校验过的表声明（见 toolSchema.buildValidatedTables）。
+ *                    没声明任何表的工具拿到空数组 —— 那时 row.* 一律报
+ *                    "这个工具没有声明任何表"，而不是去猜列名。
+ * @param openTool    拉起另一个工具并把一份数据交给它
  */
 export function createToolBridge(
   toolId: string,
   getFrame: () => HTMLIFrameElement | null,
+  opts: {
+    getTables: () => ValidatedTable[];
+    openTool?: (id: string, payload: unknown) => Promise<void>;
+    /** 当前机器上的其他工具（tools.list 用）。由组件从 store 组装后传进来 */
+    peers?: () => ToolLinkMeta[];
+  },
 ): ToolBridge {
+  /**
+   * 工具 iframe 的真实 origin。
+   *
+   * ⚠️ **不能填 `window.location.origin`**。桌面端工具是经 asset 协议加载的
+   * （`http://asset.localhost/C%3A%5C…%5Cindex.html`），而宿主页面在
+   * `http://tauri.localhost` —— 两者不同源。postMessage 的 targetOrigin 不匹配时
+   * 浏览器把整条消息**静默丢弃**：不报错、不告警，宿主以为发了、工具以为没人理。
+   * 表现是所有桥操作全部超时（工具 KV 写不进、图库存不进），而同样的代码在
+   * dev 下（工具与宿主同源）全绿 —— 所以只能靠这里写对，测不出来。
+   *
+   * 取值顺序：收到工具消息后按 `e.origin` 收紧（最准）> 首帧用 `"*"`。
+   *
+   * 首帧为什么不用 iframe.src 推导：src 写的地址**不等于**最终加载的地址。
+   * 一旦中间有重定向（或将来工具改成先落地页再跳转），按 src 推出的 origin 是错的，
+   * 而错的值不会产生任何报错 —— 消息照样被静默丢掉，宿主还以为自己发成功了。
+   * 更糟的是这会变成死结：context 没到 → 工具不发请求 → 宿主永远学不到真实 origin。
+   *
+   * `"*"` 在这里是安全的：postMessage 的目标是**明确指定的那个 contentWindow**，
+   * 不是广播，`*` 只是不限制该窗口此刻的 origin。能收到消息的只有工具这个 iframe。
+   */
+  let toolOrigin: string | null = null;
+
   const post = (msg: unknown) => {
     const frame = getFrame();
-    // 只发给已就绪的 iframe；目标 origin 用同源，工具由宿主同源服务
-    frame?.contentWindow?.postMessage(msg, window.location.origin);
+    if (!frame?.contentWindow) return;
+    frame.contentWindow.postMessage(msg, toolOrigin ?? "*");
   };
+
+  // 注册到联动通道：别的工具要找这个工具时，宿主从这里拿到它的投递函数。
+  // 注销必须可靠（见 return 里的 detach），否则会留下一个指向死 iframe 的函数：
+  // 调它不报错，但对方永远收不到 —— 正是"发了没反应"最难查的那种。
+  registerToolPoster(toolId, post);
 
   const reply = (id: string | undefined, ok: boolean, data: unknown) => {
     if (ok) post({ source: HOST_SOURCE, type: "tool:response", id, ok: true, data });
@@ -332,6 +591,9 @@ export function createToolBridge(
     const frame = getFrame();
     // 只认当前 iframe 发来的消息：同页面其他 iframe 不能冒充这个工具
     if (!frame || e.source !== frame.contentWindow) return;
+
+    // 校验通过后才认这个 origin，之后的回复用它作 targetOrigin（见 post 的说明）
+    if (e.origin && e.origin !== "null") toolOrigin = e.origin;
 
     const req = e.data as ToolRequest | undefined;
     if (!req || req.source !== TOOL_SOURCE || req.type !== "tool:request") return;
@@ -413,6 +675,188 @@ export function createToolBridge(
         const key = readKey(payload?.key);
         await db().execute(`DELETE FROM core_tool_kv WHERE tool_id = ? AND key = ?`, [toolId, key]);
         return reply(id, true, { key, ok: true });
+      }
+
+      /* ---------------------- 私有数据表（结构化 CRUD） ----------------------
+       * 表、列一律来自 opts.getTables() —— 宿主侧那份已校验的声明。
+       * 构造出来 SQL 里的标识符永远出自债权人的口袋，工具只能提供值。 */
+
+      if (op === "schema.info") {
+        const tables = opts.getTables();
+        return reply(id, true, {
+          tables: tables.map((t) => ({
+            name: t.name,
+            fullName: t.fullName,
+            pk: t.pkColumn,
+            columns: t.columns.map((c) => ({
+              name: c.name,
+              type: c.type,
+              pk: c.pk === true,
+              notNull: c.notNull === true,
+            })),
+          })),
+        });
+      }
+
+      if (op === "row.count") {
+        const t = lookupTable(opts.getTables(), payload?.table);
+        const { clause, params } = buildWhere(t, payload?.where);
+        const rows = await db().select<{ n: number }>(
+          `SELECT COUNT(*) AS n FROM ${t.fullName}${clause}`,
+          params,
+        );
+        return reply(id, true, { table: t.name, count: Number(rows[0]?.n ?? 0) });
+      }
+
+      if (op === "row.select") {
+        const t = lookupTable(opts.getTables(), payload?.table);
+        const { clause, params } = buildWhere(t, payload?.where);
+
+        // 排序列必须是本表的列，方向只能是 asc/desc 字面量 —— 两处都不是传值托管的，
+        // 所以 ORDER BY 里不可能出现表达式或注入出来的额外语句
+        let orderClause = "";
+        if (typeof payload?.orderBy === "string" && payload.orderBy) {
+          lookupColumn(t, payload.orderBy);
+          const dir = payload.orderDir === "desc" ? "DESC" : "ASC";
+          orderClause = ` ORDER BY ${payload.orderBy} ${dir}`;
+        }
+
+        const wanted = Math.floor(Number(payload?.limit) || ROW_SELECT_DEFAULT);
+        const limit = Math.min(ROW_SELECT_MAX, Math.max(1, wanted));
+        const offset = Math.max(0, Math.floor(Number(payload?.offset) || 0));
+
+        const limitClause = ` LIMIT ${limit} OFFSET ${offset}`;
+        const rows = await db().select<Record<string, unknown>>(
+          `SELECT * FROM ${t.fullName}${clause}${orderClause}${limitClause}`,
+          params,
+        );
+        // total 是"不限分页时一共多少行"，工具要用它翻页就得再算一次 ——
+        // 不随这次查询白送的话，工具只能靠"这次返回的行数 < limit"猜到头，
+        // 而最后正好一页齐全时会误判还有下一页。
+        const counted = await db().select<{ n: number }>(
+          `SELECT COUNT(*) AS n FROM ${t.fullName}${clause}`,
+          params,
+        );
+        return reply(id, true, {
+          table: t.name,
+          rows,
+          total: Number(counted[0]?.n ?? 0),
+          limit,
+          offset,
+        });
+      }
+
+      if (op === "row.insert") {
+        const t = lookupTable(opts.getTables(), payload?.table);
+        const pairs = readRow(t, payload?.row, "row");
+
+        // 主键必须给：宿主不肯替工具生成 id，因为生成规则一旦定下来，
+        // 工具作者就少了一个"我自己能保证幂等"的手段（重复导入时要靠自己的业务键）
+        const pkValue = pairs.find(([c]) => c === t.pkColumn)?.[1];
+        if (pkValue === undefined || pkValue === null) {
+          throw new Error(`插入必须给出主键列「${t.pkColumn}」的值`);
+        }
+
+        const cols = pairs.map(([c]) => c);
+        await db().execute(
+          `INSERT INTO ${t.fullName} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`,
+          pairs.map(([, v]) => v),
+        );
+        // 回写回去的那一行：工具拿到的是宿主实际存的东西（而不是自己猜的去持久化结果）
+        const written = await db().select<Record<string, unknown>>(
+          `SELECT * FROM ${t.fullName} WHERE ${t.pkColumn} = ?`,
+          [pkValue],
+        );
+        return reply(id, true, { table: t.name, id: pkValue, row: written[0] ?? null });
+      }
+
+      if (op === "row.update") {
+        const t = lookupTable(opts.getTables(), payload?.table);
+        const pkValue = coerceValue(t, t.pkColumn, payload?.id);
+        if (pkValue === null) throw new Error(`缺少主键值 id（列「${t.pkColumn}」）`);
+
+        const pairs = readRow(t, payload?.patch, "patch");
+        const cols = pairs.map(([c]) => c);
+        await db().execute(
+          `UPDATE ${t.fullName} SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE ${t.pkColumn} = ?`,
+          [...pairs.map(([, v]) => v), pkValue],
+        );
+        const written = await db().select<Record<string, unknown>>(
+          `SELECT * FROM ${t.fullName} WHERE ${t.pkColumn} = ?`,
+          [pkValue],
+        );
+        return reply(id, true, { table: t.name, id: pkValue, row: written[0] ?? null });
+      }
+
+      if (op === "row.delete") {
+        const t = lookupTable(opts.getTables(), payload?.table);
+        const pkValue = coerceValue(t, t.pkColumn, payload?.id);
+        if (pkValue === null) throw new Error(`缺少主键值 id（列「${t.pkColumn}」）`);
+
+        await db().execute(
+          `DELETE FROM ${t.fullName} WHERE ${t.pkColumn} = ?`,
+          [pkValue],
+        );
+        return reply(id, true, { table: t.name, id: pkValue, deleted: true });
+      }
+
+      /* ------------------------------ 工具联动 ------------------------------
+       * 见文件头「tools.* —— 工具之间的联动」。三条一句话概括：
+       * list 看元信息、open 拉起并转交数据、send 只给已经在跑的工具。 */
+
+      if (op === "tools.list") {
+        const list = opts.peers ? opts.peers() : [];
+        return reply(id, true, { tools: list });
+      }
+
+      if (op === "tools.open") {
+        const target = payload?.tool;
+        if (typeof target !== "string" || !target) {
+          return reply(id, false, "缺少 tool 参数（要拉起的工具 id）");
+        }
+        if (target === toolId) {
+          return reply(id, false, "不能拉起自己 —— 要刷新界面请让用户点工具头部的「重置」");
+        }
+        if (!opts.openTool) {
+          return reply(id, false, "这个宿主没有提供工具联动");
+        }
+        try {
+          await opts.openTool(target, payload?.data ?? null);
+        } catch (err) {
+          // openTool 抛出的都是"这个工具没装 / 被停用了"这类用户可以处理的原因，
+          // 直接把话传回去，别换成含糊的"拉起失败"
+          return reply(id, false, err instanceof Error ? err.message : String(err));
+        }
+        return reply(id, true, { tool: target, opened: true });
+      }
+
+      if (op === "tools.send") {
+        const target = payload?.tool;
+        if (typeof target !== "string" || !target) {
+          return reply(id, false, "缺少 tool 参数");
+        }
+        if (target === toolId) return reply(id, false, "不能给自己发消息");
+        const event = payload?.event;
+        if (typeof event !== "string" || !event) {
+          return reply(id, false, "缺少 event 参数（对方监听的事件名）");
+        }
+        // 只投已经在运行的工具。不替对方拉起来的原因写在文件头：
+        // 静默失败是最难查的一类，"对方没在跑"必须是一个明确的错误。
+        const delivered = postToTool(target, {
+          source: HOST_SOURCE,
+          type: "tool:event",
+          event,
+          data: payload?.data ?? null,
+          from: toolId,
+        });
+        if (!delivered) {
+          return reply(
+            id,
+            false,
+            `「${target}」此刻没有在运行，消息没送到。请先用 tools.open 把它拉起来`,
+          );
+        }
+        return reply(id, true, { tool: target, delivered: true });
       }
 
       /* ---------------- 图库 ----------------
@@ -507,7 +951,14 @@ export function createToolBridge(
 
   return {
     attach: () => window.addEventListener("message", onMessage),
-    detach: () => window.removeEventListener("message", onMessage),
+    detach: () => {
+      window.removeEventListener("message", onMessage);
+      unregisterToolPoster(toolId, post);
+    },
     pushContext: () => post({ source: HOST_SOURCE, type: "tool:context", data: buildContext(toolId) }),
+    postEvent: (event: string, data: unknown) =>
+      post({ source: HOST_SOURCE, type: "tool:event", event, data }),
+    postIntent: (data: unknown, from: string | null) =>
+      post({ source: HOST_SOURCE, type: "tool:intent", data, from }),
   };
 }

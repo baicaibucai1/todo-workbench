@@ -174,6 +174,18 @@ export interface WorkOrder {
   kind: WorkOrderKind;
   /** 单号，可为空（用户不一定要编号）。特殊单号这里放的就是**快递单号** */
   no: string;
+  /**
+   * 快递商代号（见 lib/couriers.ts 的 Courier.code）。
+   *
+   * **空串表示"没指定，按单号自动识别"** —— 不是"未知快递商"。
+   * 两者差别很实际：识别规则以后会补会修，把猜测结果冻进库里，
+   * 老数据就永远停在旧规则上；留空则每次都按当前规则重算。
+   *
+   * 只在用户手动指定过时才有值：自动识别只能靠单号形状猜，
+   * 而形状撞车是常态（12 位纯数字顺丰/中通/圆通都可能），
+   * 猜错了人改一次就该按他说的算 —— 见 courierCodeOf。
+   */
+  courier: string;
   title: string;
   flowId: string;
   /** 当前过程态 */
@@ -396,6 +408,44 @@ export type ToolSource =
   /** 用户自己导进来 / 丢进用户数据区的。卸载就是真删，删了只能重新导入 */
   | "user";
 
+/** 工具表的一列。类型只有三种 —— 够用，也让宿主有办法校验工具传来的值 */
+export interface ToolColumn {
+  name: string;
+  type: "text" | "integer" | "real";
+  /** 主键。有且只能有一列（复合主键在结构化 CRUD 下没有落脚点） */
+  pk?: boolean;
+  notNull?: boolean;
+  /** 默认值。写进 DDL 前会按类型转义，不存在拼接注入的可能 */
+  default?: string | number | null;
+}
+
+/** 工具表的一个索引 */
+export interface ToolIndexDef {
+  columns: string[];
+  unique?: boolean;
+}
+
+/** 工具私有表的声明 */
+export interface ToolTableDef {
+  /** 裸表名（不带前缀）。宿主会拼成 tool_<id>_<name> */
+  name: string;
+  columns: ToolColumn[];
+  indexes?: ToolIndexDef[];
+}
+
+/**
+ * 工具的数据表声明。写在 manifest 里，由**宿主**执行 —— 工具自己发不出 DDL。
+ *
+ * 为什么是声明式而不是让工具传 CREATE TABLE：
+ *   1. 宿主能把列名、类型、主键都校验一遍再拼 SQL（值永远是参数化的 `?`）；
+ *   2. 设置页的「数据库」分区要列出每个工具有哪些表，数据必须可读；
+ *   3. 宿主只用 schema 里**声明过的**列做 CRUD，工具传别的列名一律拒绝 ——
+ *      这是第二道防线，拼 SQL 即使写错了也越不过这张表以外的地方。
+ */
+export interface ToolSchema {
+  tables: ToolTableDef[];
+}
+
 /** 工具清单项（manifest.json 解析结果） */
 export interface ToolManifest {
   id: string;
@@ -406,9 +456,21 @@ export interface ToolManifest {
   icon?: string;
   /** 入口 HTML，相对工具目录 */
   entry: string;
-  /** 工具私有表的 schema 版本，用于独立迁移 */
+  /**
+   * 工具私有表的 schema 版本，用于独立迁移。
+   *
+   * **只有下面同时声明了 `schema` 它才有意义**：没表的工具恒为 1，
+   * 宿主不会为它执行任何 DDL。改了表结构请把这个数字 +1，
+   * 宿主据此重建新表（旧列不会自动迁移，见 toolSchema.ts）。
+   */
   dbVersion: number;
   author?: string;
+  /**
+   * 私有数据表声明。**外部输入，一律按不可信数据处理**：
+   * 名字、类型、默认值都要过 toolSchema.ts 的白名单才能进 SQL。
+   * 没写就是"这个工具不需要自己的表"，宿主不会为它建任何东西。
+   */
+  schema?: ToolSchema;
   /**
    * 来源。**不是 manifest 里的字段**，由扫描器按"它是不是安装包里的"盖戳 ——
    * 和 gallery 的 origin 一样，来源必须由宿主判定，工具自报不算：

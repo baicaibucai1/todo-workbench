@@ -1,0 +1,25 @@
+{
+  "id": "scratchpad",
+  "name": "随手记",
+  "version": "1.0.0",
+  "description": "跑在工作台数据库里的便签本：增删改查自己的一张表，并能把内容交给别的工具。它也是「工具怎么用自己的数据表」的样板",
+  "icon": "notebook-pen",
+  "entry": "index.html",
+  "dbVersion": 1,
+  "author": "内置工具",
+  "schema": {
+    "tables": [
+      {
+        "name": "notes",
+        "columns": [
+          { "name": "id", "type": "text", "pk": true },
+          { "name": "title", "type": "text" },
+          { "name": "body", "type": "text" },
+          { "name": "tag", "type": "text" },
+          { "name": "created_at", "type": "text" }
+        ],
+        "indexes": [{ "columns": ["created_at"] }]
+      }
+    ]
+  }
+}

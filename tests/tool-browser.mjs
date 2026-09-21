@@ -413,7 +413,10 @@ await page.waitForTimeout(600);
 await page.locator('button[data-section="tools"]').click();
 await page.waitForTimeout(500);
 
-check("设置里列出了全部工具", (await page.locator("[data-tool-row]").count()) === 3, String(await page.locator("[data-tool-row]").count()));
+// 4 = image-crop / size-chart / ai-gen / scratchpad。
+// 再加内置工具时这里要跟着改 —— 写死数字是为了让"多出一个陌生工具"能被立刻发现，
+// 而不是悄无声息地出现在用户的侧边栏里。
+check("设置里列出了全部工具", (await page.locator("[data-tool-row]").count()) === 4, String(await page.locator("[data-tool-row]").count()));
 check("每个工具一行（图片裁剪）", (await page.locator("[data-tool-row='image-crop']").count()) === 1);
 check(
   "标了来源：内置",

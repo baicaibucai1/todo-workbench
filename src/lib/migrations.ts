@@ -412,6 +412,47 @@ export const migrations: Migration[] = [
         ON core_gallery_items(origin, deleted);
     `,
   },
+  {
+    // 工具私有表的**版本台账**。
+    //
+    // 为什么要有它：工具 schema 的执行时机是"工具被挂载时"，而挂载每次
+    // 启动都可能发生。没有台账就得每回都跑一遍 CREATE TABLE IF NOT EXISTS
+    // （能跑，但没法知道"这次到底建过没有"），更关键的是**没法识别版本变化**
+    // —— 工具作者把一列从一个表挪到另一个表时，旧表会被 IF NOT EXISTS
+    // 原样留下，永远删不掉。
+    //
+    // 记在 core_ 而不是工具表里，是因为**这张台账属于宿主**：
+    // 它描述的是"宿主为这个工具做过什么"，不是工具自己的业务数据。
+    // 卸载工具时它会跟着被清掉（掉仍保留工具表，下次重装按 version 判断要不要重建）。
+    version: 10,
+    name: "add_tool_schema_ledger",
+    sql: `
+      CREATE TABLE IF NOT EXISTS core_tool_schema (
+        tool_id    TEXT PRIMARY KEY,
+        version    INTEGER NOT NULL DEFAULT 0,
+        applied_at TEXT NOT NULL
+      );
+    `,
+  },
+  {
+    // 工单记住"这张单是哪个快递商的"。
+    //
+    // 存快递商是为了认不出来时**人能指定一次就永久生效**：
+    // 单号规则只能靠形状猜，而形状撞车是常态（12 位纯数字可能是顺丰、
+    // 中通、圆通中的任何一家）。自动识别给的是"最可能"，用户手改一次
+    // 之后就该按他说的算 —— 每次重开都弹回猜测值，等于不认人的修正。
+    //
+    // 空串表示"没指定，按单号自动识别"，而不是"未知快递商"：
+    // 识别规则以后会补会修，把当年的猜测冻进库里，老数据就永远停在旧规则上了。
+    //
+    // 普通工单也有这一列（它不是 special 专属）：工单是同一张表，
+    // 为 special 单开一张表意味着整套工单子系统要来第二遍。
+    version: 11,
+    name: "add_wo_courier",
+    sql: `
+      ALTER TABLE core_work_orders ADD COLUMN courier TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];
 
 /** 当前代码期望的 schema 版本 */

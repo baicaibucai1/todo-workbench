@@ -18,6 +18,7 @@
  */
 
 import { isTauri } from "./db";
+import { validateToolSchema } from "./toolSchema";
 import type { ToolManifest } from "../types";
 
 /* ------------------------------------------------------------------ */
@@ -60,6 +61,35 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     entry: "index.html",
     dbVersion: 1,
     author: "内置",
+  },
+  {
+    // 它是「一个网页工具怎么用宿主的数据表」的样板：manifest 里声明 schema，
+    // 用结构化 CRUD 读写自己的 tool_scratchpad_notes，并能把一条内容交给别的工具。
+    // 存在它，是为了让这套机制**有一个端到端跑起来的实例** —— 否则它只是文档。
+    id: "scratchpad",
+    name: "随手记",
+    version: "1.0.0",
+    description:
+      "跑在工作台数据库里的便签本：增删改查自己的一张表，还能把内容交给别的工具。这也是「工具怎么用自己的数据表」的样板",
+    icon: "notebook-pen",
+    entry: "index.html",
+    dbVersion: 1,
+    author: "内置",
+    schema: {
+      tables: [
+        {
+          name: "notes",
+          columns: [
+            { name: "id", type: "text", pk: true },
+            { name: "title", type: "text" },
+            { name: "body", type: "text" },
+            { name: "tag", type: "text" },
+            { name: "created_at", type: "text" },
+          ],
+          indexes: [{ columns: ["created_at"] }],
+        },
+      ],
+    },
   },
   {
     // 已接入 Agnes AI（生图 / 生视频 / 对话，OpenAI 风格接口）。
@@ -112,6 +142,13 @@ export function validateManifest(raw: unknown): ToolManifest | null {
     entry,
     dbVersion: Number.isInteger(m.dbVersion) ? (m.dbVersion as number) : 1,
     author: typeof m.author === "string" ? m.author : undefined,
+    // schema 单独走一套校验（见 toolSchema.validateToolSchema）：它会被拼进 DDL，
+    // 要求比普通字段严得多。**校验不通过就整个丢掉**，而不是留一半 ——
+    // 工具因此只是"没有私有表"，row.* 会明确报出来，不会变成半残的可写状态。
+    ...(() => {
+      const schema = validateToolSchema(id, m.schema);
+      return schema ? { schema } : {};
+    })(),
   };
 }
 
@@ -347,15 +384,26 @@ export async function resolveToolUrl(tool: ToolManifest): Promise<string | null>
 }
 
 /**
+ * 工具私有表的**前缀**，如 `tool_image_crop_`。
+ *
+ * 单独抽成一个函数，是因为"前缀怎么拼"这件事有四个地方要知道
+ * （建表、清理、数据库分区枚举、推给工具的上下文），而它们各写一遍
+ * 迟早会漂移成两套规则 —— 那正是本项目最常犯的那类错。
+ */
+export function toolPrefix(toolId: string): string {
+  if (!/^[a-z][a-z0-9-]{1,31}$/.test(toolId)) {
+    throw new Error(`非法的工具 id: ${toolId}`);
+  }
+  return `tool_${toolId.replace(/-/g, "_")}_`;
+}
+
+/**
  * 生成工具私有表名。
  * 强制加前缀，让工具表在同一个库里天然分区，卸载工具时便于清理。
  */
 export function toolTable(toolId: string, table: string): string {
-  if (!/^[a-z][a-z0-9-]{1,31}$/.test(toolId)) {
-    throw new Error(`非法的工具 id: ${toolId}`);
-  }
   if (!/^[a-z][a-z0-9_]{0,47}$/.test(table)) {
     throw new Error(`非法的表名: ${table}`);
   }
-  return `tool_${toolId.replace(/-/g, "_")}_${table}`;
+  return toolPrefix(toolId) + table;
 }

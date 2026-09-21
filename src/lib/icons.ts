@@ -23,6 +23,7 @@ import {
   Sparkles,
   Video,
   Hash,
+  NotebookPen,
   type LucideIcon,
 } from "lucide-react";
 
@@ -45,6 +46,8 @@ export const ICONS: Record<string, LucideIcon> = {
   sparkles: Sparkles,
   video: Video,
   hash: Hash,
+  // 记笔记类工具（随包自带的「随手记」用）
+  "notebook-pen": NotebookPen,
 };
 
 export function resolveIcon(name?: string): LucideIcon {
