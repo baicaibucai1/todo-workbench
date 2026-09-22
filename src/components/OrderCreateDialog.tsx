@@ -12,6 +12,7 @@ import {
 import { useStore } from "../store";
 import { addDays, today, nextOrderNo } from "../lib/repo";
 import { DUE_PRESETS, dueAtText, fromLocalInputValue, toLocalInputValue } from "../lib/due";
+import { COURIERS, courierName, detectCourier } from "../lib/couriers";
 import type { WorkOrderKind } from "../types";
 
 /**
@@ -45,7 +46,7 @@ export default function OrderCreateDialog({
   onClose: () => void;
   onCreated?: () => void;
 }) {
-  const { flows, stages, createOrder, openFlowEditor } = useStore();
+  const { flows, stages, allWoFields, orders, createOrder, openFlowEditor, openOrder } = useStore();
 
   const [kind, setKind] = useState<WorkOrderKind>(initialKind);
   const [title, setTitle] = useState(initialTitle);
@@ -74,8 +75,21 @@ export default function OrderCreateDialog({
   ]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 用户**手动指定**的快递商。空串 = 跟着识别结果走。
+   *
+   * 只存"手动指定"的那一半：自动识别是每次算的，把猜测结果存进库里，
+   * 以后规则修好了老数据也还是错的。
+   */
+  const [courierCode, setCourierCode] = useState("");
 
   const isSpecial = kind === "special";
+
+  /** 当前单号认出来是谁家的（不落库，只用来显示与兜底） */
+  const guess = useMemo(
+    () => (isSpecial ? detectCourier(no) : null),
+    [isSpecial, no],
+  );
 
   const flowStages = useMemo(
     () =>
@@ -84,6 +98,39 @@ export default function OrderCreateDialog({
         .sort((a, b) => a.sortOrder - b.sortOrder),
     [stages, flowId],
   );
+
+  /**
+   * 相关信息的字段名候选：从**已经绑过的**那些里长出来，按用过的次数降序。
+   *
+   * 不做成一份"字段字典"让人先去别处维护：他登记时随手起的那些名字就是字典，
+   * 再维护一份只会多出一处会和实际数据漂移的东西。
+   */
+  const labelOptions = useMemo(() => {
+    const count = new Map<string, number>();
+    for (const f of allWoFields) {
+      const label = f.label.trim();
+      if (label) count.set(label, (count.get(label) ?? 0) + 1);
+    }
+    return [...count.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 24)
+      .map(([label]) => label);
+  }, [allWoFields]);
+
+  /**
+   * 同一个快递单号是不是已经登记过。
+   *
+   * 只**提醒**不拦：同一张单隔两周又出问题、需要再记一张是完全正常的，
+   * 硬拦下来反而逼着人去改单号。但"我到底登记过没有"是翻记录时最常问的一句，
+   * 顺手答掉能省一次搜索。
+   */
+  const duplicate = useMemo(() => {
+    const n = no.trim().toLowerCase();
+    if (!isSpecial || !n) return null;
+    return (
+      orders.find((o) => o.kind === "special" && o.no.trim().toLowerCase() === n) ?? null
+    );
+  }, [no, isSpecial, orders]);
 
   // 流程是异步加载的，第一次渲染时可能还没有。等它到了再定默认，
   // 而不是在 useState 初始值里赌一把 —— 那样首次打开会停在空选项上。
@@ -184,6 +231,8 @@ export default function OrderCreateDialog({
         stageDueAt: isSpecial ? stageDueAt : null,
         important,
         note: note.trim(),
+        // 只存用户手动指定的那次；留空表示"以后按单号自动识别"
+        courier: courierCode || undefined,
         // 建单时就一起绑上。分两步（先建单、再回详情里一条条加）
         // 在连着登记好几张单的时候格外烦
         fields: isSpecial ? fields : undefined,
@@ -280,6 +329,73 @@ export default function OrderCreateDialog({
                 className="w-full rounded-lg border border-line bg-card px-2.5 py-2 font-mono text-[13.5px] text-fg outline-none placeholder:font-sans placeholder:text-fg-dim focus:border-[#d85a30]"
               />
             </Field>
+          )}
+
+          {/* 快递商：自动识别 + 认错了能改一次。
+              识别结果**不落库**（只在库里记"手动指定过谁"），
+              所以规则以后修好了，这批老数据也会跟着变对 */}
+          {isSpecial && (
+            <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+              <span
+                data-oc-courier-guess={guess?.code ?? ""}
+                className="shrink-0 text-[11.5px] text-fg-dim"
+              >
+                {!no.trim()
+                  ? "粘贴单号后自动识别快递商"
+                  : guess
+                    ? `${guess.certain ? "识别为" : "可能是"} ${courierName(guess.code)}${
+                        !guess.certain && guess.candidates.length > 1
+                          ? `（也可能是 ${guess.candidates
+                              .slice(1, 3)
+                              .map((c) => courierName(c))
+                              .join(" / ")}）`
+                          : ""
+                      }`
+                    : "没认出是哪家，可手动指定"}
+              </span>
+              <select
+                value={courierCode}
+                onChange={(e) => setCourierCode(e.target.value)}
+                data-oc-courier=""
+                title="认错了就在这里改一次，改完按你说的算"
+                className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-0.5 text-[11.5px] text-fg-2 outline-none"
+              >
+                <option value="">
+                  {guess ? `跟随识别（${courierName(guess.code)}）` : "跟随识别"}
+                </option>
+                {COURIERS.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* 重复登记提醒：不拦，但给一条直接去那张单的路 */}
+          {isSpecial && duplicate && (
+            <div
+              data-oc-dup=""
+              className="mt-1 flex items-center gap-1.5 rounded-md bg-[#fdf6e7] px-2 py-1 text-[11.5px] text-[#7a5406]"
+            >
+              <AlertTriangle size={12} className="shrink-0" />
+              <span className="min-w-0 flex-1 truncate">
+                这个单号已经登记过（
+                {stages.find((s) => s.id === duplicate.stageId)?.name ?? "未知步骤"}
+                {duplicate.closed ? " · 已完结" : ""}）
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  openOrder(duplicate.id);
+                }}
+                data-oc-dup-open=""
+                className="shrink-0 rounded px-1.5 py-0.5 hover:bg-[#f5e6c8]"
+              >
+                打开那条
+              </button>
+            </div>
           )}
 
           {/* 标题 */}
@@ -428,6 +544,8 @@ export default function OrderCreateDialog({
                       value={f.label}
                       data-oc-field-label={i}
                       onChange={(e) => setFieldAt(i, { label: e.target.value })}
+                      // 下拉里是以前用过的字段名："补发单号""客户"这类词每次重打一遍很烦
+                      list="sp-field-labels"
                       placeholder={i === 0 ? "如 补发单号" : "字段名"}
                       className="w-[104px] shrink-0 rounded px-1 py-0.5 text-[12.5px] text-fg-2 outline-none placeholder:text-fg-dim focus:bg-panel"
                     />
@@ -449,6 +567,11 @@ export default function OrderCreateDialog({
                   </div>
                 ))}
               </div>
+              <datalist id="sp-field-labels" data-oc-field-options="">
+                {labelOptions.map((l) => (
+                  <option key={l} value={l} />
+                ))}
+              </datalist>
               <button
                 type="button"
                 onClick={addField}

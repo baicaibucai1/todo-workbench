@@ -1,5 +1,4 @@
 import type { Task, WorkOrder } from "../types";
-import { addDays, today } from "./repo";
 import { dueState } from "./due";
 
 /**
@@ -70,45 +69,6 @@ export function groupRows(
     ...doneTasks.map((task) => ({ kind: "task" as const, task })),
     ...closedOrders.map((order) => ({ kind: "order" as const, order })),
   ];
-
-  if (view === "planned") {
-    // 「计划内」按日期分组，工单按开始日（没有就看交付日）落桶
-    const buckets = new Map<string, Row[]>();
-    const push = (key: string, row: Row) => {
-      if (!buckets.has(key)) buckets.set(key, []);
-      buckets.get(key)!.push(row);
-    };
-    for (const t of activeTasks) push(t.dueDate ?? "未安排", { kind: "task", task: t });
-    for (const o of openOrders) {
-      push(o.startDate ?? o.dueDate ?? "未安排", { kind: "order", order: o });
-    }
-
-    const todayStr = today();
-    const tomorrow = addDays(todayStr, 1);
-    const sorted = [...buckets.entries()].sort(([a], [b]) => {
-      if (a === "未安排") return 1;
-      if (b === "未安排") return -1;
-      return a.localeCompare(b);
-    });
-    return {
-      sections: sorted.map(([key, items]) => ({
-        key,
-        label:
-          key === "未安排"
-            ? "未安排"
-            : key === todayStr
-              ? "今天"
-              : key === tomorrow
-                ? "明天"
-                : key < todayStr
-                  ? `已过期 · ${key}`
-                  : key,
-        overdue: key !== "未安排" && key < todayStr,
-        items,
-      })),
-      done,
-    };
-  }
 
   // 「我的一天」里分成几类而不是一锅：
   //   特殊单号 —— 今天在跟的、等不起的。单独一组、按时效排（逾期最前），

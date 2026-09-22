@@ -159,7 +159,7 @@ export async function deleteList(id: string): Promise<void> {
 
 export interface TaskQuery {
   /**
-   * myday / important / planned / all / orders / special / list / gallery
+   * myday / important / all / orders / special / list / gallery
    *
    * 其中 `orders` / `special` / `gallery` **都必然返回空数组** ——
    * 它们不是"待办的某种筛选"（前两个是工单的视图，gallery 是独立模块）。
@@ -167,7 +167,7 @@ export interface TaskQuery {
    * 它不分视图地调这个函数。类型上允许、运行时挡掉，比在每个调用点
    * 各判一次要可靠：**switch 落空 = 不加任何条件 = 把整库待办捞回来**。
    */
-  view: "myday" | "important" | "planned" | "all" | "orders" | "special" | "list" | "gallery";
+  view: "myday" | "important" | "all" | "orders" | "special" | "list" | "gallery";
   listId?: string;
   /** 是否包含已完成 */
   includeDone?: boolean;
@@ -204,9 +204,6 @@ export async function fetchTasks(q: TaskQuery): Promise<Task[]> {
       return [];
     case "important":
       where.push("important = 1");
-      break;
-    case "planned":
-      where.push("due_date IS NOT NULL");
       break;
     case "list":
       where.push("list_id = ?");
@@ -503,6 +500,7 @@ type RawStep = {
   title: string;
   done: number;
   sort_order: number;
+  due_at?: string | null;
 };
 
 /**
@@ -523,6 +521,9 @@ export async function fetchAllSteps(): Promise<Record<string, Step[]>> {
       title: r.title,
       done: !!r.done,
       sortOrder: r.sort_order,
+      // 浏览器内存库跑不了 ALTER（语句被忽略），这一列会是 undefined ——
+      // 统一成 null，免得"有的地方是 undefined、有的是 null"两种空混着用
+      dueAt: r.due_at ?? null,
     });
   }
   return out;
@@ -530,7 +531,7 @@ export async function fetchAllSteps(): Promise<Record<string, Step[]>> {
 
 export async function createStep(taskId: string, title: string): Promise<Step> {
   const t = title.trim();
-  if (!t) throw new Error("步骤内容不能为空");
+  if (!t) throw new Error("子任务内容不能为空");
 
   const existing = (await fetchAllSteps())[taskId] ?? [];
   const last = existing[existing.length - 1];
@@ -540,6 +541,7 @@ export async function createStep(taskId: string, title: string): Promise<Step> {
     title: t,
     done: false,
     sortOrder: last ? last.sortOrder + 1 : 0,
+    dueAt: null,
   };
   await db().execute(
     `INSERT INTO core_steps (id, task_id, title, done, sort_order) VALUES (?, ?, ?, 0, ?)`,
@@ -558,6 +560,12 @@ export async function updateStep(id: string, patch: Partial<Step>): Promise<void
   if (typeof patch.title === "string") {
     sets.push("title = ?");
     params.push(patch.title);
+  }
+  // 到期时刻允许**显式清空**（传 null）：设了又不用了，得能撤掉，
+  // 否则它会在紧急区里一直挂着 —— 一个永远撤不掉的提醒比没有提醒更烦人
+  if (patch.dueAt !== undefined) {
+    sets.push("due_at = ?");
+    params.push(patch.dueAt);
   }
   if (!sets.length) return;
   params.push(id);
@@ -966,6 +974,8 @@ type RawOrder = {
   /** v8 之前的老行没有这一列（内存库是 schemaless），按 normal 兜底 */
   kind?: string;
   no: string;
+  /** v11 之前的老行没有这一列，按"没指定（自动识别）"兜底 */
+  courier?: string;
   title: string;
   flow_id: string;
   stage_id: string;
@@ -989,6 +999,7 @@ const toOrder = (r: RawOrder): WorkOrder => ({
   // 而不是让它变成 undefined 一路漏到界面上
   kind: r.kind === "special" ? "special" : "normal",
   no: r.no,
+  courier: r.courier ?? "",
   title: r.title,
   flowId: r.flow_id,
   stageId: r.stage_id,
@@ -1018,7 +1029,7 @@ export interface OrderQuery {
    * 再让它按日期混进我的一天，等于绕开了这条规则（新建工单默认开始日期就是
    * 今天，那样每张新单都会自动出现在那儿）。
    */
-  view: "myday" | "today" | "important" | "planned" | "all" | "orders" | "special" | "list" | "gallery";
+  view: "myday" | "today" | "important" | "all" | "orders" | "special" | "list" | "gallery";
   /** 是否包含已完结的工单 */
   includeDone?: boolean;
   search?: string;
@@ -1030,7 +1041,6 @@ export interface OrderQuery {
  * 时间语义（这是「工单也会根据时间出现在待办中」的落点）：
  * - myday   : 工单不参与，永远返回空（工单有专属视图，不能混进我的一天）
  * - today   : 今天开始或今天要交的（今日计划候选池用）
- * - planned : 有开始或交付日期的
  * - orders  : 全部工单（含特殊单号 —— 它也是工单）
  * - special : 只看特殊单号（kind = 'special'）
  * - list    : 工单不属于清单，永远返回空 —— 在某个清单里塞进工单会让人以为它能被归类
@@ -1063,9 +1073,6 @@ export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
       break;
     case "important":
       where.push("important = 1");
-      break;
-    case "planned":
-      where.push("(start_date IS NOT NULL OR due_date IS NOT NULL)");
       break;
     case "orders":
       // 专属入口就看全部工单（进行中 / 已完结由 groupRows 再分两组）。
@@ -1163,6 +1170,11 @@ export interface NewWorkOrderInput {
   /** 工单种类，默认普通工单。special = 特殊单号（带处理时效） */
   kind?: WorkOrderKind;
   /**
+   * 快递商代号（见 lib/couriers.ts）。留空 = 以后按单号自动识别。
+   * 只在登记时**用户手动指定**过才传值，自动识别的结果不落库。
+   */
+  courier?: string;
+  /**
    * 起始这一步的处理时效截止时刻（ISO）。
    *
    * 传绝对时刻而不是"给多久"：换算（从 2 小时 / 明天 10 点算成时刻）是界面的
@@ -1229,6 +1241,9 @@ export async function createWorkOrder(input: NewWorkOrderInput): Promise<WorkOrd
     id: uid(),
     kind,
     no: (input.no ?? "").trim() || (await nextOrderNo()),
+    // 登记时可以显式指定快递商（识别错了就改一次），不指定就留空 ——
+    // 空串是"以后按单号自动识别"，不把当时的猜测结果冻进库里
+    courier: (input.courier ?? "").trim(),
     title: input.title,
     flowId: input.flowId,
     stageId,
@@ -1251,13 +1266,14 @@ export async function createWorkOrder(input: NewWorkOrderInput): Promise<WorkOrd
 
   await db().execute(
     `INSERT INTO core_work_orders
-       (id, kind, no, title, flow_id, stage_id, note, important, my_day, start_date, due_date,
+       (id, kind, no, courier, title, flow_id, stage_id, note, important, my_day, start_date, due_date,
         stage_due_at, stage_due_notified_at, completed_at, sort_order, deleted, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, ?, 0, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, ?, 0, ?, ?)`,
     [
       order.id,
       order.kind,
       order.no,
+      order.courier,
       order.title,
       order.flowId,
       order.stageId,
@@ -1307,6 +1323,9 @@ export async function createWorkOrder(input: NewWorkOrderInput): Promise<WorkOrd
 
 const ORDER_COLUMNS: Record<string, string> = {
   no: "no",
+  // 快递商允许改：它就是给人"认错了就改一次"用的，
+  // 而单号改了之后原来指定的那家也未必还对（改单号见 NoEditor）。
+  courier: "courier",
   title: "title",
   flowId: "flow_id",
   stageId: "stage_id",
@@ -1350,6 +1369,27 @@ export async function updateWorkOrder(id: string, patch: Partial<WorkOrder>): Pr
   params.push(now());
   params.push(id);
   await db().execute(`UPDATE core_work_orders SET ${sets.join(", ")} WHERE id = ?`, params);
+}
+
+/**
+ * 批量改「标记类」字段（目前是「重要」）。
+ *
+ * 为什么不在上层把 updateWorkOrder 循环一遍：上层那个动作（store.patchOrder）
+ * 每改一张就整体刷新一次取数，勾 20 张就是 20 轮全表重取，界面会明显卡一下。
+ * 这里只写库、**不刷新**，由调用方改完统一刷新一次。
+ *
+ * 不用 `UPDATE ... WHERE id IN (...)`：浏览器端的内存库（MemoryDb）只认
+ * 简单的 `列 = ?` 条件，`IN` 会静默匹配不到任何行（见 db.ts 的说明），
+ * 那样在 demo 里点"批量标记重要"会毫无反应、且不报错。
+ *
+ * 只收"标记类"字段是有意的：时效、过程态这些**带语义**的字段各有各的
+ * 连带动作（清提醒档位、写流转日志），混进批量通道里迟早会漏一处。
+ */
+export async function bulkPatchWorkOrders(
+  ids: string[],
+  patch: { important?: boolean },
+): Promise<void> {
+  for (const id of ids) await updateWorkOrder(id, patch);
 }
 
 /**
@@ -2271,8 +2311,17 @@ export async function importBackup(payload: BackupPayload): Promise<{
     for (const s of list ?? []) {
       stepCount++;
       statements.push({
-        sql: `INSERT INTO core_steps (id, task_id, title, done, sort_order) VALUES (?, ?, ?, ?, ?)`,
-        params: [s.id, taskId, s.title ?? "", s.done ? 1 : 0, s.sortOrder ?? 0],
+        // 到期时刻也要跟着备份走：它是"这条子任务什么时候到期"的唯一记载，
+        // 少了它，恢复出来的子任务会集体失去紧急提醒
+        sql: `INSERT INTO core_steps (id, task_id, title, done, sort_order, due_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        params: [
+          s.id,
+          taskId,
+          s.title ?? "",
+          s.done ? 1 : 0,
+          s.sortOrder ?? 0,
+          s.dueAt ?? null,
+        ],
       });
     }
   }
@@ -2332,16 +2381,18 @@ export async function importBackup(payload: BackupPayload): Promise<{
   for (const w of payload.workOrders ?? []) {
     statements.push({
       sql: `INSERT INTO core_work_orders
-              (id, kind, no, title, flow_id, stage_id, note, important, my_day, start_date, due_date,
-               stage_due_at, stage_due_notified_at, completed_at, sort_order, deleted,
+              (id, kind, no, courier, title, flow_id, stage_id, note, important, my_day, start_date,
+               due_date, stage_due_at, stage_due_notified_at, completed_at, sort_order, deleted,
                created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params: [
         w.id,
         // v8 之前的备份里没有 kind / 时效，缺失就是普通工单、没有时效。
         // 当"特殊单"补出来是错的 —— 那会凭空给老单子加上处理时限。
         w.kind === "special" ? "special" : "normal",
         w.no ?? "",
+        // v11 之前的备份没有快递商，缺失就是"没指定"（按单号自动识别）
+        w.courier ?? "",
         w.title ?? "",
         w.flowId,
         w.stageId,

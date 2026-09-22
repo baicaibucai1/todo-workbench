@@ -51,7 +51,11 @@ function info(label, v) {
 }
 
 const browser = await chromium.launch({ executablePath: EDGE });
-const context = await browser.newContext({ viewport: { width: 1240, height: 860 } });
+// acceptDownloads：导出 CSV 要接住 download 事件去核对文件内容
+const context = await browser.newContext({
+  viewport: { width: 1240, height: 860 },
+  acceptDownloads: true,
+});
 // 复制按钮要真读剪贴板来验证，所以得先拿到权限
 await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE });
 const page = await context.newPage();
@@ -141,7 +145,9 @@ check("头部有「编辑流程」", (await page.locator("[data-sp-edit-flows]")
 /* ---- 4. 建单弹窗：快递单号与时效都是硬要求 ---- */
 
 console.log("\n4. 登记弹窗");
-const TRACK = `SF${Date.now().toString().slice(-10)}`;
+// SF + 13 位数字：这是顺丰真实单号的形状（SF 后面 12~15 位），
+// 识别规则要认得出它，所以测试单号也得长成真的
+const TRACK = `SF${Date.now().toString().slice(-13)}`;
 await page.locator("[data-sp-register]").click();
 await page.waitForTimeout(600);
 
@@ -538,6 +544,386 @@ if ((await urgentRow.count()) === 1) {
       (await page.locator('[data-order-due-level="overdue"]').count()) === 0);
   }
 }
+
+/* ---- 12. 视图设置：自定义列 / 复制格式 / 紧凑行高 ---- */
+
+console.log("\n12. 视图设置（自定义列 / 复制格式 / 行高）");
+await page.locator('aside [data-nav="special"]').first().click();
+await page.waitForTimeout(900);
+// 前面把这张单的时效改成了过去时刻，提醒卡片可能正浮着挡住点击
+for (let i = 0; i < 15 && (await page.locator("[data-order-due-card]").count()) > 0; i++) {
+  await page.locator('[data-act="order-due-dismiss"]').first().click();
+  await page.waitForTimeout(250);
+}
+if ((await page.locator("[data-sp-clear]").count()) > 0) {
+  await page.locator("[data-sp-clear]").first().click();
+  await page.waitForTimeout(300);
+}
+
+check("有「视图设置」入口", (await page.locator("[data-sp-view-settings]").count()) === 1);
+await page.locator("[data-sp-view-settings]").click();
+await page.waitForTimeout(350);
+check("点开视图设置面板", (await page.locator("[data-sp-view-panel]").count()) === 1);
+const colCandidates = await page.locator("[data-sp-col]").count();
+check("自定义列的候选来自真实用过的字段名", colCandidates > 0, `${colCandidates} 个候选`);
+check("候选里有登记过的「客户」", (await page.locator('[data-sp-col="客户"]').count()) === 1);
+
+// 挂一列上去：核对"这单是谁的"时不用再点开详情
+if ((await page.locator('[data-sp-col="客户"]').count()) === 1) {
+  await page.locator('[data-sp-col="客户"] input').check();
+  await page.waitForTimeout(700);
+  const cell = page
+    .locator("[data-order-id]")
+    .filter({ hasText: TRACK })
+    .first()
+    .locator('[data-sp-cell="客户"]');
+  check("勾上后表上真的多出一列", (await cell.count()) === 1);
+  const cellText = (await cell.count()) ? (await cell.innerText()).trim() : "";
+  check("这一列里就是这条单绑的值", cellText === "张三", `实际「${cellText}」`);
+}
+
+// 复制格式：改成「只要值」，复制出来就不该再带字段名
+await page.locator("[data-sp-copy-template]").selectOption("value");
+await page.waitForTimeout(400);
+const preview = (await page.locator("[data-sp-copy-preview]").innerText()).trim();
+check("面板里预览了新格式", preview.length > 0 && !preview.includes("："), preview);
+
+// 紧凑行高
+await page.locator("[data-sp-density]").click();
+await page.waitForTimeout(400);
+check("紧凑行高能打开", (await page.locator('[data-sp-density-on="1"]').count()) === 1);
+
+// 点面板外面收起
+await page.locator("h1").first().click();
+await page.waitForTimeout(350);
+check("点面板外面能收起", (await page.locator("[data-sp-view-panel]").count()) === 0);
+
+const trackRow2 = page.locator("[data-order-id]").filter({ hasText: TRACK }).first();
+await trackRow2.locator("[data-sp-field-copy]").click();
+await page.waitForTimeout(500);
+const clipFmt = await page.evaluate(() => navigator.clipboard.readText().catch(() => ""));
+info("按模板复制", clipFmt.replace(/\n/g, " | "));
+check("复制格式改了之后复制出来跟着变", clipFmt.includes("张三") && !clipFmt.includes("客户："),
+  clipFmt.replace(/\n/g, " | "));
+
+// 改回默认格式，然后刷新验证这些偏好是**存下来的**
+await page.locator("[data-sp-view-settings]").click();
+await page.waitForTimeout(300);
+await page.locator("[data-sp-copy-template]").selectOption("label-cn");
+await page.waitForTimeout(400);
+await page.reload({ waitUntil: "networkidle" });
+await page.locator("aside").first().waitFor({ timeout: 20000 });
+await page.locator('aside [data-nav="special"]').first().click();
+await page.waitForTimeout(1200);
+check("刷新后自定义列还在（存的是设置，不是组件 state）",
+  (await page.locator('[data-sp-cell="客户"]').count()) > 0);
+await page.locator("[data-sp-view-settings]").click();
+await page.waitForTimeout(350);
+check("刷新后行高密度还在", (await page.locator('[data-sp-density-on="1"]').count()) === 1);
+check("刷新后复制格式还是默认那档",
+  (await page.locator("[data-sp-copy-template]").inputValue()) === "label-cn");
+await page.locator("h1").first().click();
+await page.waitForTimeout(300);
+
+/* ---- 13. 批量操作与导出 ---- */
+
+console.log("\n13. 批量操作与导出");
+check("每行都有勾选框", (await page.locator("[data-sp-select]").count()) > 0);
+await page.locator("[data-sp-select-all]").check();
+await page.waitForTimeout(450);
+const barCount = await page.locator("[data-sp-batch]").getAttribute("data-sp-batch-count");
+check("全选后浮出批量操作条", !!barCount && Number(barCount) > 0, String(barCount));
+
+await page.locator("[data-sp-batch-copy]").click();
+await page.waitForTimeout(600);
+const clipBatch = await page.evaluate(() => navigator.clipboard.readText().catch(() => ""));
+info("批量复制", clipBatch.replace(/\n/g, " | ").slice(0, 120));
+check("批量复制里带上了每张单的单号（否则分不清谁是谁）",
+  clipBatch.includes("#") && clipBatch.includes(TRACK));
+
+// 导出：勾着的时候导勾中的
+const [dl] = await Promise.all([
+  page.waitForEvent("download", { timeout: 15000 }).catch(() => null),
+  page.locator("[data-sp-export-all]").click(),
+]);
+check("导出真的下了个文件", !!dl);
+if (dl) {
+  const fname = dl.suggestedFilename();
+  check("文件名是中文的 CSV", fname.includes("特殊单号") && fname.endsWith(".csv"), fname);
+  const p = await dl.path().catch(() => null);
+  if (p) {
+    const csv = fs.readFileSync(p, "utf8");
+    info("CSV 前两行", csv.split(/\r?\n/).slice(0, 2).join(" || ").slice(0, 160));
+    check("CSV 带 BOM（Excel 打开不乱码）", csv.charCodeAt(0) === 0xfeff);
+    check("CSV 表头里有快递单号与自定义列",
+      csv.includes("快递单号") && csv.includes("客户"), csv.slice(0, 120));
+    check("CSV 里有这条记录", csv.includes(TRACK));
+  }
+}
+await page.locator("[data-sp-batch-clear]").click();
+await page.waitForTimeout(400);
+check("取消选择后批量条收起", (await page.locator("[data-sp-batch]").count()) === 0);
+
+// 只勾一条推进：过程态真的往前走
+const stageBefore = (await trackRow2.locator("[data-order-stage]").innerText()).trim();
+await trackRow2.locator("[data-sp-select]").check();
+await page.waitForTimeout(350);
+check("勾上后这一行有选中态",
+  (await trackRow2.getAttribute("data-sp-checked")) === "1");
+await page.locator("[data-sp-batch-advance]").click();
+await page.waitForTimeout(1600);
+const stageAfter = (
+  await page.locator("[data-order-id]").filter({ hasText: TRACK }).first()
+    .locator("[data-order-stage]").innerText()
+).trim();
+info("批量推进", `${stageBefore} → ${stageAfter}`);
+check("批量推进真的推进了过程态", stageAfter !== stageBefore, `${stageBefore} vs ${stageAfter}`);
+
+// 批量标记重要
+await page.locator("[data-sp-batch-important]").click();
+await page.waitForTimeout(1200);
+check("批量标记重要生效",
+  (await page.locator("[data-order-id]").filter({ hasText: TRACK }).first()
+    .getAttribute("data-order-important")) === "1");
+await page.locator("[data-sp-batch-clear]").click();
+await page.waitForTimeout(400);
+
+/* ---- 14. 行内续时 ---- */
+
+console.log("\n14. 行内续时");
+const dueAtBefore = await page
+  .locator("[data-order-id]").filter({ hasText: TRACK }).first()
+  .locator("[data-order-due]").getAttribute("data-order-due-at");
+const extendBtn = page
+  .locator("[data-order-id]").filter({ hasText: TRACK }).first()
+  .locator("[data-order-extend]");
+check("行上有续时按钮", (await extendBtn.count()) === 1);
+const extendMin = Number(await extendBtn.getAttribute("data-order-extend-minutes"));
+check("续时时长取的是当前步骤的默认时效", extendMin > 0, `${extendMin} 分钟`);
+await extendBtn.click();
+let dueAtAfter = dueAtBefore;
+for (let i = 0; i < 25; i++) {
+  dueAtAfter = await page
+    .locator("[data-order-id]").filter({ hasText: TRACK }).first()
+    .locator("[data-order-due]").getAttribute("data-order-due-at");
+  if (dueAtAfter && dueAtAfter !== dueAtBefore) break;
+  await page.waitForTimeout(300);
+}
+info("续时前后", `${dueAtBefore} → ${dueAtAfter}`);
+check("续时把时效往后推了一截",
+  !!dueAtAfter && dueAtAfter !== dueAtBefore && new Date(dueAtAfter) > new Date(dueAtBefore),
+  `${dueAtBefore} vs ${dueAtAfter}`);
+
+// 复制单号：查件、发给快递公司都要它，不该为了拿一个号去开详情
+await trackRow2.locator("[data-order-copy-no]").click();
+await page.waitForTimeout(450);
+const clipNo = await page.evaluate(() => navigator.clipboard.readText().catch(() => ""));
+check("行上能一键复制快递单号", clipNo === TRACK, `实际「${clipNo}」`);
+
+/* ---- 15. 更多筛选：重要 / 登记时间 ---- */
+
+console.log("\n15. 重要与登记时间筛选");
+await page.locator("[data-sp-important]").click();
+await page.waitForTimeout(500);
+check("「只看重要」里能筛出刚标记的那条",
+  (await page.locator("[data-order-id]").filter({ hasText: TRACK }).count()) === 1);
+check("勾选状态下按钮自己有标记",
+  (await page.locator("[data-sp-important]").innerText()).includes("重要"));
+await page.locator("[data-sp-important]").click();
+await page.waitForTimeout(400);
+
+await page.locator("[data-sp-range]").selectOption("today");
+await page.waitForTimeout(500);
+check("「今天登记」里有今天建的单",
+  (await page.locator("[data-order-id]").filter({ hasText: TRACK }).count()) === 1);
+await page.locator("[data-sp-range]").selectOption("all");
+await page.waitForTimeout(400);
+
+/* ---- 16. 登记：字段名补全与重复单号 ---- */
+
+console.log("\n16. 登记时的字段名补全与重复单号提醒");
+await page.locator("[data-sp-register]").click();
+await page.waitForTimeout(600);
+const optCount = await page.locator("[data-oc-field-options] option").count();
+check("登记弹窗里有字段名候选", optCount > 0, `${optCount} 个`);
+const optVals = await page
+  .locator("[data-oc-field-options] option")
+  .evaluateAll((els) => els.map((e) => e.value));
+info("字段名候选", optVals.slice(0, 6).join(", "));
+check("候选里是以前真用过的字段名",
+  optVals.includes("补发单号") || optVals.includes("客户"), optVals.join(","));
+check("字段名输入框挂上了候选",
+  (await page.locator("[data-oc-field-label]").first().getAttribute("list")) === "sp-field-labels");
+
+// 重复单号：填一个已经登记过的
+await page.locator("[data-oc-no]").fill(TRACK);
+await page.waitForTimeout(500);
+check("填了已登记过的单号会提醒", (await page.locator("[data-oc-dup]").count()) === 1);
+const dupText = (await page.locator("[data-oc-dup]").innerText().catch(() => "")).replace(/\s+/g, " ");
+info("重复提醒", dupText);
+check("提醒里说了那条单现在在哪个步骤", /登记过/.test(dupText), dupText);
+check("重复只是提醒，不拦着登记（同一单号二次问题是正常的）",
+  (await page.locator("[data-oc-submit]").count()) === 1);
+
+await page.locator("[data-oc-dup-open]").click();
+await page.waitForTimeout(900);
+check("「打开那条」把弹窗关掉", (await page.locator("[data-order-create]").count()) === 0);
+const detailNo2 = await page.locator("[data-order-no-input]").inputValue().catch(() => "");
+check("打开的正是已经登记的那条", detailNo2 === TRACK, `实际「${detailNo2}」`);
+await shot("33-special-columns");
+
+/* ---- 17. 快递商识别与查询路径 ---- */
+
+console.log("\n17. 快递商识别与查询路径");
+const trackRow3 = page.locator("[data-order-id]").filter({ hasText: TRACK }).first();
+
+// 详情里：没手动指定过 = 空串（跟随识别），认错了可以改一次
+check("详情里有快递商下拉", (await page.locator("[data-od-courier]").count()) === 1);
+check("没指定过就是空的（不把识别结果冻进库）",
+  (await page.locator("[data-od-courier]").inputValue()) === "",
+  await page.locator("[data-od-courier]").inputValue());
+await page.locator("[data-od-courier]").selectOption("yt");
+await page.waitForTimeout(1200);
+check("指定的快递商落库了", (await page.locator("[data-od-courier]").inputValue()) === "yt");
+
+await page.locator('aside [data-nav="special"]').first().click();
+await page.waitForTimeout(1000);
+const courierBadge = trackRow3.locator("[data-order-courier]");
+check("行上有快递商徽标", (await courierBadge.count()) === 1);
+check("徽标上是改过的那家（手改优先级高于识别）",
+  (await courierBadge.getAttribute("data-order-courier")) === "yt",
+  String(await courierBadge.getAttribute("data-order-courier")));
+check("徽标上写着快递商的短名", (await courierBadge.innerText()).includes("圆通"), await courierBadge.innerText());
+
+// 查件：真的打开一个带单号的查询页（默认渠道 = 快递100）
+const [popup] = await Promise.all([
+  page.waitForEvent("popup", { timeout: 12000 }).catch(() => null),
+  trackRow3.locator("[data-order-track]").click(),
+]);
+check("点徽标会打开查询页", !!popup);
+if (popup) {
+  const u = popup.url();
+  info("查询链接", u);
+  check("查询页带上了这个单号", u.includes(TRACK), u.slice(0, 120));
+  check("默认走快递100", u.includes("kuaidi100.com"), u.slice(0, 80));
+  // 快递100 会把 chaxun?com=xxx 302 到 /all/<简称>.shtml，
+  // 所以它跳到 yt.shtml 本身就证明 com 传对了 —— 两种形态都算数
+  check("带的是改过的那家的通道（圆通）",
+    u.includes("com=yuantong") || u.includes("/yt.shtml"), u.slice(0, 120));
+  await popup.close().catch(() => {});
+}
+
+/**
+ * 渠道对不对，**以复制出来的链接为准**，不看浏览器最后停在哪个页面：
+ * 这些站点都会各自跳转（快递100 跳 /all/*.shtml，菜鸟跳淘宝系域名），
+ * 断言最终 URL 等于在测外网今天是不是通的，跟我们的代码没关系。
+ */
+const copyLinks = async () => {
+  await page.locator("[data-sp-select-all]").check();
+  await page.waitForTimeout(450);
+  await page.locator("[data-sp-batch-track]").click();
+  await page.waitForTimeout(700);
+  const text = await page.evaluate(() => navigator.clipboard.readText().catch(() => ""));
+  await page.locator("[data-sp-batch-clear]").click();
+  await page.waitForTimeout(350);
+  return text;
+};
+const setChannel = async (v) => {
+  await page.locator("[data-sp-view-settings]").click();
+  await page.waitForTimeout(400);
+  await page.locator("[data-sp-track-channel]").selectOption(v);
+  await page.waitForTimeout(900);
+  await page.locator("h1").first().click();
+  await page.waitForTimeout(300);
+};
+
+await page.locator("[data-sp-view-settings]").click();
+await page.waitForTimeout(400);
+check("视图设置里能选查件渠道", (await page.locator("[data-sp-track-channel]").count()) === 1);
+await page.locator("h1").first().click();
+await page.waitForTimeout(300);
+
+const links100 = await copyLinks();
+info("快递100 链接", links100.split("\n")[0]);
+check("批量复制出来的是带单号的查询链接",
+  links100.includes("http") && links100.includes(TRACK), links100.slice(0, 100));
+check("默认渠道拼的是快递100", links100.includes("kuaidi100.com"));
+check("链接里带的是改过的那家（圆通=com=yuantong）",
+  links100.includes("com=yuantong"), links100.slice(0, 120));
+
+await setChannel("cainiao");
+const linksCn = await copyLinks();
+info("菜鸟链接", linksCn.split("\n")[0]);
+check("换成菜鸟后拼出来的链接跟着换",
+  linksCn.includes("cainiao.com") && linksCn.includes(TRACK), linksCn.slice(0, 120));
+
+// 官网渠道：圆通没有可直接带单号的官网查询页 → 退回快递100，而且要说清楚
+await setChannel("official");
+const linksOfficial = await copyLinks();
+info("官网渠道链接", linksOfficial.split("\n")[0]);
+check("没有官网查询页的自动退回快递100（不硬拼一个 404 出来）",
+  linksOfficial.includes("kuaidi100.com"), linksOfficial.slice(0, 120));
+const [popup3] = await Promise.all([
+  page.waitForEvent("popup", { timeout: 12000 }).catch(() => null),
+  trackRow3.locator("[data-order-track]").click(),
+]);
+if (popup3) await popup3.close().catch(() => {});
+const fbToast = await page.locator("[data-sp-toast]").innerText().catch(() => "");
+info("回退提示", fbToast);
+check("退回时明确说了用的是哪个渠道（不静默换地方）",
+  fbToast.includes("已用"), fbToast || "(没有提示)");
+
+await setChannel("kuaidi100");
+
+// 按快递商筛选：这批单上有两家以上才出现这个下拉
+if ((await page.locator("[data-sp-courier]").count()) === 1) {
+  await page.locator("[data-sp-courier]").selectOption("yt");
+  await page.waitForTimeout(600);
+  const rowsYt = await page.locator("[data-order-id]").count();
+  check("按快递商筛选只剩下那一家", rowsYt === 1, `实际 ${rowsYt} 行`);
+  await page.locator("[data-sp-courier]").selectOption("");
+  await page.waitForTimeout(500);
+} else {
+  check("按快递商筛选只剩下那一家", false, "快递商下拉没出现（数据里只有一家）");
+}
+// copyLinks 收尾时已经取消过选择；这里只在批量条还在时才点（点了不存在的按钮会一直等）
+if ((await page.locator("[data-sp-batch]").count()) > 0) {
+  await page.locator("[data-sp-batch-clear]").click();
+  await page.waitForTimeout(400);
+}
+
+// 登记时：填单号就认出来，认错了能当场改
+await page.locator("[data-sp-register]").click();
+await page.waitForTimeout(600);
+await page.locator("[data-oc-no]").fill(TRACK);
+await page.waitForTimeout(600);
+const guessAttr = await page.locator("[data-oc-courier-guess]").getAttribute("data-oc-courier-guess");
+info("识别结果", guessAttr);
+check("登记时填单号就认出快递商", guessAttr === "sf", String(guessAttr));
+const guessTxt = (await page.locator("[data-oc-courier-guess]").innerText()).replace(/\s+/g, " ");
+check("识别结果说人话", guessTxt.includes("顺丰"), guessTxt);
+check("登记弹窗里也能改快递商", (await page.locator("[data-oc-courier]").count()) === 1);
+await page.locator("[data-oc-courier]").selectOption("zt");
+await page.waitForTimeout(300);
+check("改了就按改的算，不再显示识别结果",
+  (await page.locator("[data-oc-courier]").inputValue()) === "zt");
+await page.locator("[data-oc-cancel]").click();
+await page.waitForTimeout(400);
+await shot("34-special-courier");
+
+// 渠道偏好要跨刷新留着（故意留一个非默认值，否则"没变"证明不了什么）
+await setChannel("cainiao");
+await page.reload({ waitUntil: "networkidle" });
+await page.locator("aside").first().waitFor({ timeout: 20000 });
+await page.locator('aside [data-nav="special"]').first().click();
+await page.waitForTimeout(1200);
+await page.locator("[data-sp-view-settings]").click();
+await page.waitForTimeout(400);
+check("刷新后查件渠道还是上次选的",
+  (await page.locator("[data-sp-track-channel]").inputValue()) === "cainiao",
+  await page.locator("[data-sp-track-channel]").inputValue());
+await page.locator("[data-sp-track-channel]").selectOption("kuaidi100");
+await page.waitForTimeout(800);
 
 await browser.close();
 

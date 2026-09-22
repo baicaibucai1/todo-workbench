@@ -270,6 +270,8 @@ interface State {
   toggleStep: (step: Step) => Promise<void>;
   renameStep: (id: string, title: string) => Promise<void>;
   removeStep: (id: string) => Promise<void>;
+  /** 给子任务设到期时刻；传 null 表示撤掉 */
+  setStepDue: (id: string, dueAt: string | null) => Promise<void>;
 
   checkReminders: () => Promise<void>;
   dismissReminder: (taskId: string) => Promise<void>;
@@ -816,10 +818,9 @@ export const useStore = create<State>((set, get) => ({
       await repo.createTask({
         listId,
         title: t,
-        // 在「重要」「计划」视图下新建，直接带上该视图的属性更符合直觉
+        // 在「重要」视图下新建，直接带上重要标记更符合直觉
         important: view === "important",
         myDay: view === "myday",
-        dueDate: view === "planned" ? repo.today() : null,
         repeat,
       });
     }
@@ -867,6 +868,14 @@ export const useStore = create<State>((set, get) => ({
 
   removeStep: async (id) => {
     await repo.deleteStep(id);
+    await get().refresh();
+  },
+
+  // 走 refresh 而不是只改本地状态：refresh 末尾会顺带重拉紧急区候选池，
+  // 子任务的到期时刻是紧急区的输入之一，不重拉的话"刚设了 30 分钟后
+  // 紧急区里没有它"会被当成没设上
+  setStepDue: async (id, dueAt) => {
+    await repo.updateStep(id, { dueAt });
     await get().refresh();
   },
 

@@ -27,7 +27,7 @@ import type { ToolManifest } from "../types";
 const CORE_TABLE_LABELS: Record<string, string> = {
   core_tasks: "待办任务",
   core_lists: "清单",
-  core_steps: "任务步骤",
+  core_steps: "任务子任务",
   core_task_links: "任务关联",
   core_settings: "偏好设置",
   core_work_orders: "工单",

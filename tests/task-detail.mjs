@@ -202,6 +202,84 @@ const SHOT = `${SHOT_DIR}/workbench-task-detail.png`;
 await page.screenshot({ path: SHOT });
 info("截图", SHOT);
 
+console.log("\n6b. 日期与提醒挨在一张卡片里");
+const cards = await page.evaluate(() => {
+  const due = document.querySelector('[data-detail-part="due"]');
+  const rem = document.querySelector('[data-detail-part="reminder"]');
+  if (!due || !rem) return "missing";
+  const sameCard = due.parentElement === rem.parentElement;
+  // nextElementSibling 而非"同父"：挨在一起要的是紧邻，不是同在一块大区域里
+  return sameCard && due.nextElementSibling === rem ? "adjacent" : "separated";
+});
+check("截止日期与提醒在同一张卡片上下相邻", cards === "adjacent", cards);
+check("「日期与提醒」是单独一个分区",
+  (await detail().locator('[data-detail-section="schedule"]').count()) === 1);
+check("详情一共就六块分区", (await page.locator("[data-detail-section]").count()) === 6,
+  String(await page.locator("[data-detail-section]").count()));
+
+console.log("\n6c. 设置里调整详情分区顺序");
+const orderRows = () => page.locator("[data-detail-order-row]");
+const readOrder = () =>
+  orderRows().evaluateAll((els) => els.map((e) => e.getAttribute("data-detail-order-row")));
+const readPanelOrder = () =>
+  page
+    .locator("[data-detail-section]")
+    .evaluateAll((els) => els.map((e) => e.getAttribute("data-detail-section")));
+
+await page.locator('aside [data-nav="settings"]').click();
+await page.locator("[data-settings]").waitFor({ timeout: 15000 });
+await page.locator('[data-section="behavior"]').click();
+await page.locator("[data-detail-order]").waitFor({ timeout: 15000 });
+
+const order0 = await readOrder();
+info("默认顺序", order0.join(" > "));
+check("六块分区都列得出来", order0.length === 6, order0.join(","));
+check("默认以子任务开头", order0[0] === "subtasks", order0[0]);
+
+// 把「备注」一路顶到第一位
+const upBtn = () => page.locator('[data-detail-order-row="note"] [data-act="detail-up"]');
+for (let i = 0; i < 8; i++) {
+  if (await upBtn().isDisabled()) break;
+  await upBtn().click();
+  await page.waitForTimeout(200);
+}
+const order1 = await readOrder();
+info("调整后顺序", order1.join(" > "));
+check("备注被顶到了第一位", order1[0] === "note", order1.join(","));
+check("其余分区的相对顺序没被打乱",
+  order1.slice(1).join(",") === "subtasks,schedule,repeat,list,links",
+  order1.join(","));
+
+await page.locator('button[data-act="close-settings"]').click();
+await page.waitForTimeout(500);
+await rows().first().locator("div.truncate").first().click();
+await page.waitForTimeout(400);
+const panel1 = await readPanelOrder();
+info("面板实际顺序", panel1.join(" > "));
+check("详情里的分区顺序立刻跟着变", panel1[0] === "note", panel1.join(","));
+await page.screenshot({ path: `${SHOT_DIR}/15-detail-order.png` });
+
+// 顺序是偏好，必须跨刷新 —— 否则每次打开应用都要重排一遍
+await page.reload({ waitUntil: "load" });
+await page.waitForSelector("aside", { timeout: 20000 });
+await page.waitForTimeout(700);
+await page.locator('aside [data-nav="all"]').click();
+await page.waitForTimeout(500);
+await rows().first().locator("div.truncate").first().click();
+await page.waitForTimeout(400);
+const panel2 = await readPanelOrder();
+check("刷新后顺序仍然保留", panel2[0] === "note", panel2.join(","));
+
+// 复原：不还原的话，下一个进来的套件会看到备注排在第一位
+await page.locator('aside [data-nav="settings"]').click();
+await page.locator("[data-settings]").waitFor({ timeout: 15000 });
+await page.locator('[data-section="behavior"]').click();
+await page.locator('[data-act="detail-order-reset"]').click();
+await page.waitForTimeout(400);
+check("「恢复默认」把顺序复原", (await readOrder())[0] === "subtasks", (await readOrder()).join(","));
+await page.locator('button[data-act="close-settings"]').click();
+await page.waitForTimeout(400);
+
 console.log("\n7. 关闭与切换视图");
 // 「关闭」现在的语义是"清掉选中"，不是"把面板藏起来"：
 // 面板常驻，关掉的只是内容（换成空态），宽度仍然是 360。

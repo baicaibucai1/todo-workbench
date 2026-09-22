@@ -53,7 +53,6 @@ const FILTER = argv.find((a) => !a.startsWith("--")) ?? "";
 const SCREENS = [
   { nav: "myday", file: "01-myday.png", kind: "view", title: "我的一天" },
   { nav: "important", file: "02-important.png", kind: "view", title: "重要" },
-  { nav: "planned", file: "03-planned.png", kind: "view", title: "计划内" },
   { nav: "all", file: "04-all.png", kind: "view", title: "全部" },
   { nav: "orders", file: "05-orders.png", kind: "view", title: "工单" },
   { nav: "special", file: "06-special.png", kind: "view", title: "特殊单号" },

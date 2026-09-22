@@ -14,7 +14,7 @@ import {
   ClipboardList,
   Timer,
 } from "lucide-react";
-import { useStore, type ViewKey } from "../store";
+import { useStore } from "../store";
 import TaskRow from "./TaskRow";
 import OrderRow from "./OrderRow";
 import OrderCreateDialog from "./OrderCreateDialog";
@@ -43,18 +43,12 @@ const VIEW_META: Record<
     accent: "#ba7517",
     bg: "linear-gradient(135deg, #a8681a 0%, #d99b3f 50%, #e8b56a 100%)",
   },
-  planned: {
-    icon: CalendarDays,
-    accent: "#378add",
-    bg: "linear-gradient(135deg, #2a6cb0 0%, #5b9bd8 50%, #8fbfe3 100%)",
-  },
   all: {
     icon: Circle,
     accent: "#534ab7",
     bg: "linear-gradient(135deg, #443c9a 0%, #7a72cc 50%, #a79fe0 100%)",
   },
-  // 工单沿用界面里一贯的蓝色（创建栏、行内标记都是 #378add），
-  // 渐变比「计划内」更深一档，免得两个蓝色视图在侧边栏里分不清
+  // 工单沿用界面里一贯的蓝色（创建栏、行内标记都是 #378add）
   orders: {
     icon: ClipboardList,
     accent: "#378add",
@@ -83,12 +77,10 @@ const VIEW_META: Record<
 type Row = RowsRow;
 
 /** 头部副标题的日期格式，与 To Do 一致：9月17日,星期四 */
-function formatHeaderDate(view: ViewKey): string {
+function formatHeaderDate(): string {
   const d = new Date();
   const week = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
-  const base = `${d.getMonth() + 1}月${d.getDate()}日,${week[d.getDay()]}`;
-  if (view === "planned") return `今天 · ${base}`;
-  return base;
+  return `${d.getMonth() + 1}月${d.getDate()}日,${week[d.getDay()]}`;
 }
 
 export default function TaskList() {
@@ -184,7 +176,6 @@ export default function TaskList() {
       {
         myday: "我的一天",
         important: "重要",
-        planned: "计划内",
         all: "全部",
         orders: "工单",
         special: "特殊单号",
@@ -319,7 +310,7 @@ export default function TaskList() {
             </h1>
           </div>
           <p className="mt-0.5 ml-[32px] text-[13px] text-white/80">
-            {formatHeaderDate(view)}
+            {formatHeaderDate()}
           </p>
         </div>
 
@@ -376,7 +367,6 @@ export default function TaskList() {
                     section.items,
                     view === "all" ||
                       view === "list" ||
-                      view === "planned" ||
                       view === "orders" ||
                       view === "special",
                   ),

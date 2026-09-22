@@ -52,6 +52,27 @@
     --accent: #4a6cf7; --accent-fg: #fff;
     --violet: #7c5cff; --ok: #1d9e75; --warn: #b0730f; --danger: #d1443c;
     --radius: 9px;
+
+    /* ---- 2026-09-21 视觉改版新增：把原本散在各处的裸 rgba 收成令牌。
+       理由和宿主 styles.css 的 @theme 一样 —— 同一个语义色出现在八个
+       选择器里、每个都手写一遍 rgba，改一次要 grep 八处，还必漏。
+       dark 下这些值必须整体换掉（深色底上的 14% 绿会糊成一团），
+       所以不是"能省则省"的问题，是"必须成对存在"的问题。       ---- */
+    --radius-sm: 6px; --radius-lg: 13px;
+    --accent-soft: rgba(74,108,247,.13);   /* accent 的浅底：选中态、focus 环 */
+    --accent-ring: rgba(74,108,247,.17);
+    --ok-soft: rgba(29,158,117,.14);
+    --warn-soft: rgba(176,115,15,.11);
+    --danger-soft: rgba(209,68,60,.1);
+    --on-accent-soft: rgba(74,108,247,.16); /* 深色底上的 accent 底 */
+    /* 阴影分三档：1 静态卡片、2 悬浮/抬起、3 弹层。
+       原先每处手写 0 18px 50px rgba(0,0,0,.28)，两套主题共用同一个值 ——
+       深色底上 28% 黑几乎看不见，弹层的"浮起"感就丢了。 */
+    --shadow-1: 0 1px 2px rgba(16,18,24,.05), 0 1px 3px rgba(16,18,24,.04);
+    --shadow-2: 0 5px 16px rgba(16,18,24,.11);
+    --shadow-3: 0 18px 50px rgba(16,18,24,.3);
+    --scrim: rgba(16,18,24,.42);
+    --scrim-strong: rgba(12,13,16,.86);
   }
   html[data-theme="dark"] {
     --app: #171715; --surface: #1f1f1d; --card: #262523; --panel: #1b1b19;
@@ -60,9 +81,31 @@
     --chip: rgba(255,255,255,.08); --hover: rgba(255,255,255,.06);
     --accent: #6d86ff; --accent-fg: #0f0f0e;
     --violet: #9b86ff; --ok: #2fb98c; --warn: #d69a2a; --danger: #e2665e;
+    --accent-soft: rgba(109,134,255,.2);
+    --accent-ring: rgba(109,134,255,.3);
+    --ok-soft: rgba(47,185,140,.18);
+    --warn-soft: rgba(214,154,42,.16);
+    --danger-soft: rgba(226,102,94,.16);
+    --on-accent-soft: rgba(109,134,255,.22);
+    /* 深色下阴影要加重，否则卡片和背景糊在一起；弹层再加一道浅描边补轮廓 */
+    --shadow-1: 0 1px 2px rgba(0,0,0,.3);
+    --shadow-2: 0 6px 18px rgba(0,0,0,.4);
+    --shadow-3: 0 20px 56px rgba(0,0,0,.62);
+    --scrim: rgba(0,0,0,.6);
+    --scrim-strong: rgba(0,0,0,.9);
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
+
+  /* ⚠️ 这一条是**修 bug**，不是样式偏好。
+     本文件里 .btn / .inline / .gmask / .chip 等一大堆类都显式写了
+     display，作者样式的优先级**高于**浏览器内置的 `[hidden]{display:none}`，
+     于是 `<button class="btn" hidden>` 的 hidden 完全失效。
+     已踩过三次：.gmask（遮罩常驻吃掉所有点击）、.check、.stb-check，
+     这次是「取消 / 停止轮询 / 停止」三个按钮在没生成时也一直显示。
+     用 !important 换掉"以后每加一个 class 都要记得补一条 [hidden]"。
+     代价：不能靠 hidden + 自定义 display 做动画 —— 本文件没有这种用法。 */
+  [hidden] { display: none !important; }
   body {
     margin: 0; background: var(--app); color: var(--fg);
     font: 13px/1.55 "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
@@ -74,61 +117,90 @@
   button:disabled { cursor: not-allowed; }
   code, kbd, .mono { font-family: "Cascadia Mono", Consolas, "Courier New", monospace; }
 
+  /* 滚动条：默认那条浅灰白在深色主题下白得刺眼，而且比内容还抢眼。
+     压细 + 用 chip 色 + 透明边框做出"悬浮在内容上"的效果。 */
+  * { scrollbar-width: thin; scrollbar-color: var(--chip) transparent; }
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--chip); border-radius: 999px;
+    border: 3px solid transparent; background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--line); background-clip: content-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  ::selection { background: var(--accent-soft); }
+
   /* ===================== 页签行 =====================
      顶栏（返回 / 工具名 / 版本）由宿主提供，工具内不再画一遍 ——
      之前两行各有一个「AI 生成 v0.3.0」和一个「配置」按钮，是整个界面
      最像半成品的来源。这里只保留工具真正独有的一排：页签 + 连接状态 + 服务。 */
   .tabs {
-    display: flex; align-items: center; gap: 2px; padding: 0 12px;
+    display: flex; align-items: center; gap: 2px; padding: 0 14px;
     background: var(--card); border-bottom: 1px solid var(--line); flex: none;
+    min-height: 44px;
   }
   .tabs .spacer { flex: 1; }
-  .tabs .dot { margin-left: 6px; }
-  .tabs select { width: auto; min-width: 128px; padding: 4px 8px; font-size: 12px; }
-  .tabs .btn { padding: 4px 10px; }
+  .tabs .dot { margin-left: 8px; }
+  .tabs select { width: auto; min-width: 132px; padding: 5px 9px; font-size: 12px; }
+  .tabs .btn { padding: 5px 11px; }
+  /* 右侧「连接状态 · 服务 · 配置」是一组设置类控件，和左边的页签不是一回事。
+     加一条竖分隔线，省掉用户去猜"这一坨是干嘛的"。 */
+  .tabs .tl-div {
+    width: 1px; height: 20px; background: var(--line); margin: 0 10px; flex: none;
+  }
   .spacer { flex: 1; }
   .tag {
-    font-size: 10.5px; padding: 1px 7px; border-radius: 999px;
+    font-size: 10.5px; padding: 1.5px 7px; border-radius: 999px;
     background: var(--chip); color: var(--fg-3); font-weight: 500; white-space: nowrap;
   }
-  .tag.ok { background: rgba(29,158,117,.14); color: var(--ok); }
-  .tag.warn { background: rgba(176,115,15,.16); color: var(--warn); }
-  .tag.err { background: rgba(209,68,60,.14); color: var(--danger); }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); }
+  .tag.err { background: var(--danger-soft); color: var(--danger); }
   .dot { width: 7px; height: 7px; border-radius: 999px; background: var(--dim); flex: none; }
   .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.err { background: var(--danger); }
 
   .btn {
     display: inline-flex; align-items: center; gap: 6px;
-    padding: 5px 11px; border-radius: 7px; font-size: 12.5px;
+    padding: 6px 12px; border-radius: var(--radius-sm); font-size: 12.5px;
     border: 1px solid var(--line); background: var(--card); color: var(--fg-2);
-    transition: background .13s, border-color .13s, opacity .13s;
+    transition: background .13s, border-color .13s, opacity .13s, box-shadow .13s;
   }
   .btn:hover:not(:disabled) { background: var(--hover); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 500; }
+  .btn.primary {
+    background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+    font-weight: 500; box-shadow: 0 1px 2px var(--accent-ring);
+  }
   .btn.primary:hover:not(:disabled) { filter: brightness(1.07); }
   .btn:disabled { opacity: .45; }
-  .btn.sm { padding: 3px 8px; font-size: 12px; border-radius: 6px; }
+  .btn.sm { padding: 4px 9px; font-size: 12px; border-radius: var(--radius-sm); }
   .btn.ghost { border-color: transparent; background: transparent; }
   .btn.ghost:hover:not(:disabled) { background: var(--hover); }
-  .btn.danger { color: var(--danger); }
+  .btn.danger { color: var(--danger); border-color: var(--line); }
+  .btn.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
+  /* 取消类动作：和主按钮同宽堆叠时不能看着比主按钮还重。
+     它现在是真·会隐藏的（见上面 [hidden] 那条修 bug 的注释）。 */
+  .btn.stop { color: var(--fg-3); }
 
   /* ===================== 页签 ===================== */
-  .tabs {
-    display: flex; gap: 2px; padding: 0 12px;
-    background: var(--card); border-bottom: 1px solid var(--line); flex: none;
-  }
   .tab {
-    position: relative; padding: 9px 13px; border: 0; background: transparent;
+    position: relative; display: inline-flex; align-items: center; gap: 6px;
+    padding: 0 14px; height: 44px; border: 0; background: transparent;
     color: var(--fg-3); font-size: 13px; border-radius: 0;
+    transition: color .13s;
   }
+  .tab .ic { opacity: .72; flex: none; }
   .tab:hover:not(:disabled) { color: var(--fg); }
   .tab[aria-selected="true"] { color: var(--fg); font-weight: 600; }
+  .tab[aria-selected="true"] .ic { opacity: 1; color: var(--accent); }
   .tab[aria-selected="true"]::after {
-    content: ''; position: absolute; left: 9px; right: 9px; bottom: -1px; height: 2px;
+    content: ''; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px;
     background: var(--accent); border-radius: 2px 2px 0 0;
   }
   .tab:disabled { opacity: .38; }
-  .tab .sub { font-size: 10.5px; color: var(--dim); font-weight: 400; margin-left: 5px; }
+  /* 「此服务不支持」这类原因写在页签上（用户在点它之前就该知道），
+     但不能比页签名本身还抢眼 —— 压到 10px 且不换行，让整排页签保持一行。 */
+  .tab .sub { font-size: 10.5px; color: var(--dim); font-weight: 400; margin-left: 4px; white-space: nowrap; }
+  .tab[aria-selected="true"] .sub { color: var(--fg-3); }
 
   /* ===================== 提示条 ===================== */
   .notice {
@@ -137,22 +209,25 @@
     background: var(--panel); border: 1px solid var(--line); color: var(--fg-2);
     font-size: 12.5px; flex: none;
   }
-  .notice.warn { background: rgba(176,115,15,.09); border-color: rgba(176,115,15,.3); }
-  .notice.err { background: rgba(209,68,60,.08); border-color: rgba(209,68,60,.28); }
+  .notice.warn { background: var(--warn-soft); border-color: var(--warn); }
+  .notice.err { background: var(--danger-soft); border-color: var(--danger); }
   .notice b { color: var(--fg); }
   .notice .x { margin-left: auto; background: none; border: 0; color: var(--dim); padding: 0 2px; }
 
-  /* ===================== 主体两栏 ===================== */
+  /* ===================== 主体两栏 =====================
+     左「参数」右「产出」是这个工具的主干。两栏之间的分界靠底色 + 边框
+     双重表达：左栏是 card（要填写，视线停留）、右栏是 app 底（看结果，
+     卡片自己浮起来）。原先两边同为浅色，边界全靠一条 1px 线。 */
   .body { flex: 1; min-height: 0; display: flex; }
   .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
   .pane[hidden] { display: none; }
   .cols { flex: 1; min-height: 0; display: flex; }
   .col-form {
-    width: 330px; flex: none; overflow-y: auto;
+    width: 340px; flex: none; overflow-y: auto;
     background: var(--card); border-right: 1px solid var(--line);
-    padding: 14px 14px 24px;
+    padding: 15px 16px 26px;
   }
-  .col-out { flex: 1; min-width: 0; overflow-y: auto; padding: 14px 16px 24px; }
+  .col-out { flex: 1; min-width: 0; overflow-y: auto; padding: 15px 18px 26px; }
   @media (max-width: 900px) {
     .cols { flex-direction: column; }
     .col-form { width: auto; border-right: 0; border-bottom: 1px solid var(--line); max-height: 46%; }
@@ -160,106 +235,192 @@
   }
 
   /* ===================== 表单 ===================== */
-  .field { margin-bottom: 12px; }
+  .field { margin-bottom: 13px; }
+  /* flex 而不是 block：模型字段的 label 行右侧要挂"当前模型中文名"。
+     纯文本的 label 走 flex 与走 block 没有区别，所以整体换掉是安全的。 */
   .field > label {
-    display: block; font-size: 11.5px; color: var(--fg-3);
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--fg-3);
     margin-bottom: 5px; font-weight: 500;
   }
-  .field .hint { font-size: 11.5px; color: var(--dim); margin: 5px 0 0; }
-  input[type=text], input[type=password], input[type=number], input[type=url], select, textarea {
-    width: 100%; min-width: 0; padding: 6px 9px; border-radius: 7px;
+  .field .hint { font-size: 11.5px; color: var(--dim); margin: 5px 0 0; line-height: 1.5; }
+  /* ⚠️ `input:not([type])` 这一路不能省：`<input>` 不写 type 时浏览器按 text
+     处理，但属性选择器 `input[type=text]` **匹配不到它**。模型框当初就是这么写的
+     —— 于是它一直没拿到边框/底色/内边距，用浏览器默认外观混在本工具的表单里，
+     宽度也停在 size=20 的 172px，看着就像"没做完的输入框"。 */
+  input[type=text], input[type=password], input[type=number], input[type=url],
+  input:not([type]), select, textarea {
+    width: 100%; min-width: 0; padding: 7px 10px; border-radius: var(--radius-sm);
     border: 1px solid var(--line); background: var(--surface); color: var(--fg);
-    outline: none; transition: border-color .13s, box-shadow .13s;
+    outline: none; transition: border-color .13s, box-shadow .13s, background .13s;
   }
+  input:hover:not(:disabled), select:hover:not(:disabled), textarea:hover:not(:disabled) { border-color: var(--line); }
   input:focus, select:focus, textarea:focus {
-    border-color: var(--accent); box-shadow: 0 0 0 3px rgba(74,108,247,.14);
+    border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring);
   }
   input:disabled, select:disabled, textarea:disabled { opacity: .55; }
-  textarea { resize: vertical; min-height: 84px; line-height: 1.5; }
+  /* 提示词是这个工具里唯一"每次都要写"的输入，84px 只够看三行 ——
+     写到后半句就得滚，边写边忘上一句写了什么。 */
+  textarea { resize: vertical; min-height: 104px; line-height: 1.55; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
   .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 9px; }
   .inline { display: flex; align-items: center; gap: 7px; }
-  .inline input[type=checkbox] { width: auto; }
+  .inline input[type=checkbox] { width: auto; flex: none; }
   .swatch-label { font-size: 12px; color: var(--fg-2); }
-  .sep { height: 1px; background: var(--line-2); margin: 14px 0; }
+  .sep { height: 1px; background: var(--line-2); margin: 15px 0; }
+  /* 区块标题加一道左侧竖条：左栏有 5 个区块（描述/参数/参考图/动作…），
+     全靠 11px 灰字区分层级太弱，滚动时容易看串行。 */
   .sect-title {
     font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-    color: var(--dim); font-weight: 600; margin: 0 0 9px;
+    color: var(--dim); font-weight: 600; margin: 0 0 10px;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .sect-title::before {
+    content: ''; width: 3px; height: 11px; border-radius: 2px;
+    background: var(--accent); opacity: .55; flex: none;
   }
   .chips { display: flex; flex-wrap: wrap; gap: 5px; }
   .chip {
-    padding: 3px 9px; border-radius: 999px; font-size: 11.5px;
+    padding: 4px 10px; border-radius: 999px; font-size: 11.5px;
     border: 1px solid var(--line); background: var(--surface); color: var(--fg-3);
+    transition: background .13s, color .13s, border-color .13s;
   }
-  .chip:hover { background: var(--hover); }
-  .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .chip:hover { background: var(--hover); color: var(--fg-2); }
+  .chip[aria-selected="true"], .chip[aria-pressed="true"] {
+    background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+  }
+
+  /* 单价条：价格是这个工具里**唯一会真花钱**的数字，原先是 11.5px 的
+     dim 灰字，跟"描述上限 2100 字"混排成一行 —— 扫码一样的视觉权重。
+     现在给它独立底色和左侧色条，让它在一屏里第一个被看见。 */
+  #imgPrice {
+    background: var(--panel); border-left: 3px solid var(--accent);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    padding: 7px 10px; color: var(--fg-2); font-size: 11.5px;
+  }
 
   /* 参考图 */
-  .refs { display: flex; flex-wrap: wrap; gap: 6px; }
+  .refs { display: flex; flex-wrap: wrap; gap: 7px; }
   .ref {
-    position: relative; width: 54px; height: 54px; border-radius: 7px;
+    position: relative; width: 58px; height: 58px; border-radius: var(--radius-sm);
     border: 1px solid var(--line); overflow: hidden; background: var(--panel);
   }
   .ref img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .ref .del {
-    position: absolute; top: 1px; right: 1px; width: 15px; height: 15px;
-    border-radius: 999px; border: 0; background: rgba(0,0,0,.6); color: #fff;
-    font-size: 11px; line-height: 1; display: grid; place-items: center;
+    position: absolute; top: 1px; right: 1px; width: 16px; height: 16px;
+    border-radius: 999px; border: 0; background: rgba(0,0,0,.62); color: #fff;
+    font-size: 11px; line-height: 1; display: grid; place-items: center; opacity: 0;
+    transition: opacity .13s;
   }
+  .ref:hover .del { opacity: 1; }
   .ref-add {
-    width: 54px; height: 54px; border-radius: 7px; border: 1px dashed var(--line);
-    background: var(--surface); color: var(--dim); font-size: 17px;
+    width: 58px; height: 58px; border-radius: var(--radius-sm); border: 1px dashed var(--line);
+    background: var(--surface); color: var(--dim); font-size: 18px;
     display: grid; place-items: center;
   }
-  .ref-add:hover { background: var(--hover); color: var(--fg-2); }
+  .ref-add:hover { background: var(--hover); color: var(--fg-2); border-color: var(--accent); }
+
+  /* 左栏底部的主操作区。
+     主按钮是这一栏的终点 —— 用户填完所有参数就是为了按它，
+     所以它要比栏内任何东西都高、都亮；配合下方的预估花费成为一个整体。 */
+  .gen-main {
+    width: 100%; justify-content: center;
+    padding: 10px 14px; font-size: 13.5px; font-weight: 600;
+    border-radius: var(--radius); box-shadow: var(--shadow-1);
+  }
+  .gen-main:not(:disabled):hover { box-shadow: var(--shadow-2); }
+  .gen-sub { width: 100%; justify-content: center; margin-top: 7px; }
+  .gen-cost { text-align: center; margin-top: 9px; }
 
   /* ===================== 结果区 ===================== */
   .out-head {
-    display: flex; align-items: center; gap: 8px; margin-bottom: 11px;
+    display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
     font-size: 12px; color: var(--fg-3);
   }
   .out-head .spacer { flex: 1; }
   .empty {
-    border: 1px dashed var(--line); border-radius: var(--radius);
-    padding: 34px 18px; text-align: center; color: var(--dim); font-size: 12.5px;
-    background: var(--panel);
+    border: 1px dashed var(--line); border-radius: var(--radius-lg);
+    padding: 44px 22px; text-align: center; color: var(--dim); font-size: 12.5px;
+    background: var(--panel); line-height: 1.6;
   }
-  .empty .big { font-size: 22px; display: block; margin-bottom: 7px; opacity: .65; }
+  .empty .big {
+    font-size: 19px; display: grid; place-items: center; margin: 0 auto 11px;
+    width: 46px; height: 46px; border-radius: 999px;
+    background: var(--card); border: 1px solid var(--line); color: var(--accent);
+  }
+  /* 空态原来是"一个圆点 + 一句话"，说了等于没说。
+     拆成「标题（下一步做什么）+ 副标题（为什么）」，用户扫一眼就知道该干嘛。 */
+  .empty .et { display: block; color: var(--fg-2); font-weight: 600; font-size: 13.5px; margin-bottom: 6px; }
+  .empty .es { display: block; color: var(--dim); font-size: 12px; line-height: 1.7; max-width: 400px; margin: 0 auto; }
+  .empty .big i { font-style: normal; }
+  /* 空态里的快捷引导：把「不知道写什么」变成「点一下就有一份能改的草稿」。
+     对话页尤其需要 —— 一个空输入框配一句「说点什么」，等于没引导。 */
+  .empty .quick { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 16px; }
+  .qchip {
+    padding: 5px 11px; border-radius: 999px; font-size: 12px; line-height: 1.45;
+    border: 1px solid var(--line); background: var(--card); color: var(--fg-2);
+    text-align: left; transition: border-color .13s, background .13s, color .13s;
+  }
+  .qchip:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .qchip:disabled { opacity: .5; }
+  /* 对话页空态：整块居中，并摘掉虚线框 ——
+     一个占满整屏的虚线框是全页最像「没做完」的元素，而这里左边没有表单需要提示，
+     不需要用边框暗示"这是个待填的容器"。 */
+  .empty.fill { margin: auto; border: 0; background: transparent; padding: 24px 22px; max-width: 560px; }
+  /* 结果区左上角的状态标签："尚未生成 / 本次 4 张 / 4 个任务" */
+  .out-label { font-size: 11.5px; color: var(--fg-3); font-weight: 500; }
   /* 瀑布流而不是等高网格：生成的图有方有长（1:1 / 16:9 / 9:16），
      之前的做法是每格强制 1:1 再 contain，竖图上下、横图左右的空白
      比图还大，四张图摆出来像没加载完。columns 让每张图按真实比例排。 */
-  .grid-img { columns: 4 210px; column-gap: 12px; }
-  .grid-img .shot { break-inside: avoid; margin-bottom: 12px; }
+  .grid-img { columns: 4 220px; column-gap: 14px; }
+  .grid-img .shot { break-inside: avoid; margin-bottom: 14px; }
   .shot {
     border: 1px solid var(--line); border-radius: var(--radius);
     background: var(--card); overflow: hidden; display: flex; flex-direction: column;
+    box-shadow: var(--shadow-1);
+    transition: box-shadow .16s, transform .16s, border-color .16s;
   }
+  /* 出图区一屏可能摆十几张，全部静态时找不到"鼠标在这张上"。
+     hover 抬起 1px + 阴影加深，代价低但可选性立刻可见。 */
+  .shot:hover { box-shadow: var(--shadow-2); transform: translateY(-1px); border-color: var(--line); }
   .shot .im {
     position: relative; background: var(--panel);
     display: grid; place-items: center; overflow: hidden; min-height: 46px;
   }
   .shot .im img { width: 100%; height: auto; display: block; cursor: zoom-in; }
-  .shot .im .busy { color: var(--dim); font-size: 12px; padding: 34px 0; }
-  .shot .meta { padding: 6px 9px 0; font-size: 11.5px; color: var(--dim);
+  /* 生成中的占位：以前只有一行居中的小灰字，四张卡里三张在转圈、
+     整个右栏看着像没加载出来。现在给一块有流光的骨架。
+     高度不再写死 —— 由 .im 上的 aspect-ratio 按这一档的输出比例撑开
+     （见 renderImageResults / sizeAspect），出图那一刻列不会重排。 */
+  .shot .im .busy {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 11px; width: 100%; height: 100%; min-height: 110px;
+    color: var(--dim); font-size: 12px;
+    background: linear-gradient(100deg, var(--panel) 32%, var(--hover) 50%, var(--panel) 68%);
+    background-size: 300% 100%;
+    animation: shimmer 1.7s linear infinite;
+  }
+  @keyframes shimmer { to { background-position: -300% 0; } }
+  .shot .meta { padding: 7px 10px 0; font-size: 11.5px; color: var(--dim);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .shot .acts { display: flex; gap: 4px; padding: 6px 7px 8px; align-items: center; }
+  .shot .acts { display: flex; gap: 4px; padding: 7px 8px 8px; align-items: center; }
   /* 图标操作钮：一行最多摆得下六个动作，文字按钮必然挤成两行 */
   .ibtn {
-    width: 27px; height: 27px; flex: none; border-radius: 6px;
+    width: 30px; height: 30px; flex: none; border-radius: var(--radius-sm);
     display: grid; place-items: center;
     border: 1px solid var(--line); background: var(--surface); color: var(--fg-3);
-    transition: background .13s, color .13s;
+    transition: background .13s, color .13s, border-color .13s;
   }
   .ibtn:hover:not(:disabled) { background: var(--hover); color: var(--fg); }
   .ibtn:disabled { opacity: .45; }
-  .ibtn.saved { color: var(--ok); border-color: rgba(29,158,117,.35); }
+  .ibtn.saved { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
   .ibtn.reuse {
-    width: auto; padding: 0 9px; gap: 5px; display: inline-flex; align-items: center;
+    width: auto; padding: 0 11px; height: 30px; gap: 5px; display: inline-flex; align-items: center;
     font-size: 12px; font-weight: 500;
-    background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+    background: var(--on-accent-soft); border-color: transparent; color: var(--accent);
     margin-right: auto;
   }
-  .ibtn.reuse:hover:not(:disabled) { filter: brightness(1.07); background: var(--accent); color: var(--accent-fg); }
+  .ibtn.reuse:hover:not(:disabled) { background: var(--accent); color: var(--accent-fg); }
   .prog {
     height: 3px; background: var(--chip); border-radius: 999px; overflow: hidden;
   }
@@ -268,49 +429,74 @@
   /* 视频任务卡 */
   .vcard {
     border: 1px solid var(--line); border-radius: var(--radius);
-    background: var(--card); padding: 12px 14px; margin-bottom: 11px;
+    background: var(--card); padding: 13px 15px; margin-bottom: 12px;
+    box-shadow: var(--shadow-1);
   }
-  .vcard h4 { margin: 0 0 8px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-  .vcard video { width: 100%; max-height: 420px; border-radius: 7px; background: #000; display: block; margin-top: 9px; }
+  .vcard h4 {
+    margin: 0 0 10px; padding-bottom: 9px; border-bottom: 1px solid var(--line-2);
+    font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  }
+  .vcard video { width: 100%; max-height: 420px; border-radius: var(--radius-sm); background: #000; display: block; margin-top: 10px; }
   .kv { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 12px; }
   .kv .k { color: var(--dim); flex: none; }
   .kv .v { color: var(--fg-2); text-align: right; word-break: break-all; }
 
   /* 对话 */
   .chat-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .msgs { flex: 1; overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
-  .msg { display: flex; gap: 9px; max-width: 760px; }
+  .msgs { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { display: flex; gap: 10px; max-width: 780px; }
   .msg .who {
-    width: 24px; height: 24px; border-radius: 7px; flex: none; display: grid; place-items: center;
+    width: 26px; height: 26px; border-radius: var(--radius-sm); flex: none;
+    display: grid; place-items: center;
     font-size: 11px; font-weight: 600; background: var(--chip); color: var(--fg-3);
   }
-  .msg.user .who { background: rgba(74,108,247,.16); color: var(--accent); }
-  .msg .txt { white-space: pre-wrap; word-break: break-word; padding-top: 2px; }
-  .msg.err .txt { color: var(--danger); }
+  .msg.user .who { background: var(--on-accent-soft); color: var(--accent); }
+  .msg .txt { white-space: pre-wrap; word-break: break-word; padding-top: 3px; line-height: 1.65; }
+  /* AI 的回复常常是成段的提示词/文案，贴在灰底上和页面背景没有分界，
+     一屏多条就分不清哪段是谁说的。给它一块卡片底。 */
+  .msg.ai .txt {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 9px 12px;
+  }
+  .msg.err .txt { color: var(--danger); background: var(--danger-soft); border-color: var(--danger); }
   .composer {
     flex: none; border-top: 1px solid var(--line); background: var(--card);
-    padding: 10px 14px 12px;
+    padding: 11px 16px 13px;
   }
+  /* ⚠️ textarea 必须 flex:1 + 按钮必须 flex:none。
+     只写 width:100% 的话 textarea 在 flex 行里吃掉全部宽度，
+     两个按钮被压成窄条 —— 「发送」两个字会竖排成上下两行。
+     （2026-09-21 改版前就是这样，截图里一眼可见。） */
   .composer .box { display: flex; gap: 8px; align-items: flex-end; }
-  .composer textarea { min-height: 40px; max-height: 168px; }
-  .composer .opts { display: flex; align-items: center; gap: 12px; margin-top: 8px; font-size: 11.5px; color: var(--dim); }
-  .composer .opts input[type=text] { width: 170px; padding: 3px 7px; font-size: 12px; }
+  .composer .box textarea { flex: 1 1 auto; min-width: 0; }
+  .composer .box .btn { flex: none; }
+  .composer textarea { min-height: 42px; max-height: 168px; }
+  .composer .opts { display: flex; align-items: center; gap: 10px; margin-top: 9px; font-size: 11.5px; color: var(--dim); }
+  .composer .opts input[type=text] { width: 170px; padding: 4px 8px; font-size: 12px; }
+  .composer .opts .inline { gap: 6px; }
+  /* 「模型」输入框跟着可用宽度走：窄窗口下固定 190px 会把这一行挤到换行 */
+  .composer .opts input#chatModel { width: clamp(120px, 20vw, 210px); }
 
   /* ===================== 历史 ===================== */
-  .hist { margin-top: 22px; }
+  .hist { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--line-2); }
   .hist h3 {
     font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-    color: var(--dim); margin: 0 0 9px; font-weight: 600;
+    color: var(--dim); margin: 0 0 10px; font-weight: 600;
     display: flex; align-items: center; gap: 8px;
+  }
+  .hist h3::before {
+    content: ''; width: 3px; height: 11px; border-radius: 2px;
+    background: var(--dim); opacity: .6; flex: none;
   }
   .hist-list { display: flex; flex-direction: column; gap: 1px; }
   .hrow {
-    display: flex; align-items: center; gap: 9px; padding: 6px 8px;
-    border-radius: 6px; font-size: 12px; color: var(--fg-3);
+    display: flex; align-items: center; gap: 10px; padding: 7px 9px;
+    border-radius: var(--radius-sm); font-size: 12px; color: var(--fg-3);
+    transition: background .13s;
   }
   .hrow:hover { background: var(--hover); }
   .hrow .thumb {
-    width: 30px; height: 30px; border-radius: 5px; flex: none; object-fit: cover;
+    width: 32px; height: 32px; border-radius: var(--radius-sm); flex: none; object-fit: cover;
     background: var(--panel); border: 1px solid var(--line-2);
   }
   .hrow .p { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg-2); }
@@ -319,63 +505,79 @@
   /* ===================== 配置弹层 ===================== */
   .modal {
     position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
-    background: rgba(16,18,24,.44); padding: 22px;
+    background: var(--scrim); padding: 22px;
   }
   .modal[hidden] { display: none; }
   .sheet {
-    width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto;
+    width: 100%; max-width: 600px; max-height: 88vh; overflow-y: auto;
     background: var(--card); border: 1px solid var(--line);
-    border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,.28);
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-3);
   }
   .sheet header {
-    display: flex; align-items: center; gap: 9px; padding: 14px 18px;
-    border-bottom: 1px solid var(--line); position: sticky; top: 0;
-    background: var(--card); border-radius: 12px 12px 0 0;
+    display: flex; align-items: center; gap: 9px; padding: 15px 20px;
+    border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2;
+    background: var(--card); border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
-  .sheet header h2 { margin: 0; font-size: 14.5px; font-weight: 600; }
-  .sheet .inner { padding: 16px 18px 6px; }
+  .sheet header h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .sheet .inner { padding: 18px 20px 8px; }
+  /* footer 也吸底：这个弹层内容本来就长（服务商 + 接入参数 +
+     默认模型 + 产出去向 + 密钥说明 + 连接测试），「保存」被滚到屏幕外
+     是必然的，而它是这个弹层唯一的出口。 */
   .sheet footer {
-    display: flex; align-items: center; gap: 8px; padding: 12px 18px 15px;
-    border-top: 1px solid var(--line);
+    display: flex; align-items: center; gap: 8px; padding: 13px 20px 16px;
+    border-top: 1px solid var(--line); position: sticky; bottom: 0; z-index: 2;
+    background: var(--card); border-radius: 0 0 var(--radius-lg) var(--radius-lg);
   }
   .sheet footer .spacer { flex: 1; }
   .warnbox {
-    background: rgba(176,115,15,.1); border: 1px solid rgba(176,115,15,.3);
-    border-radius: 8px; padding: 9px 11px; font-size: 12px; color: var(--fg-2); line-height: 1.5;
+    background: var(--warn-soft); border: 1px solid var(--warn);
+    border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12px;
+    color: var(--fg-2); line-height: 1.6;
   }
+  /* 服务商卡片：三张卡各自「标题 / 描述 / 三枚能力徽章」纵向堆叠，
+     占掉弹层第一屏还多 —— 而这三张卡的信息量其实只有两行。
+     改成两列网格（能力徽章挪到右侧一格），卡片高度砍掉约三分之一。 */
   .prov-card {
-    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--surface); padding: 10px 12px; margin-bottom: 8px;
+    display: grid; grid-template-columns: 1fr auto; align-items: center;
+    column-gap: 12px; row-gap: 2px; cursor: pointer;
+    transition: border-color .13s, box-shadow .13s, background .13s;
   }
-  .prov-card[data-on="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(74,108,247,.13); }
-  .prov-card .t { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
-  .prov-card .d { color: var(--dim); font-size: 11.5px; margin-top: 3px; }
-  .cap-badges { display: flex; gap: 4px; margin-top: 7px; flex-wrap: wrap; }
+  .prov-card:hover { border-color: var(--dim); }
+  .prov-card[data-on="true"] {
+    border-color: var(--accent); background: var(--card);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+  .prov-card .t { grid-column: 1; display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
+  .prov-card .d { grid-column: 1; color: var(--dim); font-size: 11.5px; line-height: 1.5; }
+  .prov-card .cap-badges { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: 150px; }
   .cap-badges .b {
     font-size: 10.5px; padding: 1px 6px; border-radius: 999px;
-    background: var(--chip); color: var(--fg-3);
+    background: var(--chip); color: var(--fg-3); white-space: nowrap;
   }
-  .cap-badges .b.no { opacity: .45; text-decoration: line-through; }
+  .cap-badges .b.no { opacity: .4; text-decoration: line-through; }
 
   /* ---------- 大图预览 ---------- */
   .lb {
-    position: fixed; inset: 0; z-index: 70; background: rgba(12,13,16,.86);
+    position: fixed; inset: 0; z-index: 70; background: var(--scrim-strong);
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     padding: 30px 56px 74px;
   }
   .lb[hidden] { display: none; }
   .lb img {
-    max-width: 100%; max-height: 100%; border-radius: 6px;
+    max-width: 100%; max-height: 100%; border-radius: var(--radius-sm);
     box-shadow: 0 12px 48px rgba(0,0,0,.5); user-select: none;
   }
   .lb .lb-x {
-    position: absolute; top: 12px; right: 14px; width: 32px; height: 32px;
-    border-radius: 8px; border: 0; background: rgba(255,255,255,.1); color: #fff;
+    position: absolute; top: 12px; right: 14px; width: 34px; height: 34px;
+    border-radius: var(--radius-sm); border: 0; background: rgba(255,255,255,.1); color: #fff;
     font-size: 17px; display: grid; place-items: center;
   }
   .lb .lb-x:hover { background: rgba(255,255,255,.2); }
   .lb .lb-nav {
     position: absolute; top: 50%; transform: translateY(-50%);
-    width: 38px; height: 56px; border: 0; border-radius: 9px;
+    width: 40px; height: 60px; border: 0; border-radius: var(--radius);
     background: rgba(255,255,255,.1); color: #fff; font-size: 22px;
     display: grid; place-items: center;
   }
@@ -387,80 +589,211 @@
     position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
     display: flex; align-items: center; gap: 6px; max-width: calc(100% - 40px);
     background: rgba(22,23,26,.92); border: 1px solid rgba(255,255,255,.12);
-    border-radius: 10px; padding: 7px 10px;
+    border-radius: var(--radius); padding: 7px 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.45);
   }
   .lb .lb-bar .ibtn { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.14); color: #e8e8e6; }
   .lb .lb-bar .ibtn:hover:not(:disabled) { background: rgba(255,255,255,.18); color: #fff; }
-  .lb .lb-bar .ibtn.saved { color: #4fd6a8; }
+  .lb .lb-bar .ibtn.saved { color: #4fd6a8; border-color: rgba(79,214,168,.4); background: rgba(79,214,168,.14); }
   .lb .lb-bar .ibtn.reuse { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .lb .lb-bar .ibtn.reuse:hover:not(:disabled) { background: var(--accent); color: var(--accent-fg); filter: brightness(1.08); }
   .lb .lb-meta {
     font-size: 11.5px; color: rgba(255,255,255,.55); max-width: 320px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-right: 4px;
   }
   .lb .lb-count { font-size: 11.5px; color: rgba(255,255,255,.55); flex: none; }
 
+  /* ===================== 模型选择器 =====================
+     原先「模型」是一个裸输入框 + 浏览器内置 datalist：候选列表由浏览器绘制，
+     CSS 完全够不着 —— 深色主题下它依旧是一张白底黑字的原生列表，而且每行
+     只能显示 `wan2.6-t2i` 这样的 ID，选型等于先背下型号名。单价虽然写在
+     下面的提示条里，却和"描述上限"混成一行灰字，选的时候根本对不上号。
+     现在做成 .mp 组合框：框里显示 ID（可手填），框下的定稿信息由 label 右侧
+     的中文名承担，点 ▾ 展开的是一张带名称/描述/单价/能力标签的清单。 */
+  .mp { position: relative; display: flex; align-items: center; min-width: 0; }
+  .mp > input { padding-right: 30px; }
+  /* 带 list= 的输入框，Chrome 会在框内画一个原生下拉指示器。
+     我们已经有自己的 ▾ 了，两个箭头并排会让"点哪个"变成一个要猜的问题。 */
+  .mp > input::-webkit-calendar-picker-indicator { display: none; }
+  .mp-btn {
+    position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
+    width: 24px; height: 24px; display: grid; place-items: center;
+    border: 0; border-radius: var(--radius-sm); background: transparent;
+    color: var(--dim); transition: background .13s, color .13s;
+  }
+  .mp-btn:hover { background: var(--hover); color: var(--fg); }
+  .mp-btn svg { transition: transform .16s; }
+  .mp-btn[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+  .mp-btn[aria-expanded="true"] svg { transform: rotate(180deg); }
+
+  /* label 行右侧的"当前模型"：中文名 + 徽标。放这里是借用 label 行本来就
+     空着的右半边，不再多占一行 —— 左栏本来就长，多一行就是多一屏。 */
+  .mp-now {
+    margin-left: auto; display: flex; align-items: center; gap: 5px;
+    min-width: 0; font-weight: 500; color: var(--fg-2);
+  }
+  .mp-now .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mp-now .bd {
+    flex: none; font-size: 9.5px; line-height: 1.5; padding: 0 6px;
+    border-radius: 999px; background: var(--accent-soft); color: var(--accent);
+    font-weight: 600; letter-spacing: .02em;
+  }
+  .mp-now .unk { color: var(--warn); font-weight: 500; }
+
+  /* 浮层面板。fixed 定位而不是 absolute：左栏 .col-form 是 overflow-y:auto，
+     absolute 的面板会被它裁掉一半（下拉一长就只剩一条缝）。 */
+  .mp-pop {
+    position: fixed; z-index: 65; display: flex; flex-direction: column;
+    max-height: 350px; overflow: hidden;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow-3);
+  }
+  .mp-pop[hidden] { display: none; }
+  .mp-ph {
+    display: flex; align-items: center; gap: 8px; padding: 7px 11px;
+    border-bottom: 1px solid var(--line-2); background: var(--surface);
+    font-size: 10.5px; color: var(--dim);
+  }
+  .mp-ph .spacer { flex: 1; }
+  .mp-ph b { color: var(--fg-3); font-weight: 600; }
+  .mp-list { overflow-y: auto; padding: 5px; }
+  .mp-sect {
+    padding: 7px 9px 3px; font-size: 9.5px; font-weight: 700;
+    letter-spacing: .07em; text-transform: uppercase; color: var(--dim);
+  }
+  .mp-sect:first-child { padding-top: 3px; }
+  .mp-item {
+    display: grid; grid-template-columns: 15px 1fr auto; align-items: start;
+    gap: 7px; width: 100%; padding: 7px 8px; text-align: left;
+    border: 1px solid transparent; border-radius: var(--radius-sm);
+    background: transparent; transition: background .1s, border-color .1s;
+  }
+  .mp-item.active { background: var(--hover); }
+  .mp-item[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent-soft); }
+  .mp-tick { color: var(--accent); font-size: 11px; line-height: 1.6; opacity: 0; }
+  .mp-item[aria-selected="true"] .mp-tick { opacity: 1; }
+  .mp-main { min-width: 0; }
+  .mp-name {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    font-size: 12.5px; color: var(--fg); line-height: 1.45;
+  }
+  .mp-name .bd {
+    flex: none; font-size: 9.5px; padding: 0 6px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent); font-weight: 600;
+  }
+  /* ID 用等宽小字。手填时要照着抄，混在中文名里看不清
+     `2.5` 和 `2.6` 这种只差一位的型号。 */
+  /* ⚠️ 这两个必须 display:block。它们是 span，默认 inline ——
+     会和前一行黏成"wan2.6-t2i当前主力档，2K 内尺寸自由"，ID 和描述
+     糊成一句读不懂的话。 */
+  .mp-id {
+    display: block; font-size: 10.5px; color: var(--dim); margin-top: 2px;
+    word-break: break-all; line-height: 1.45;
+  }
+  .mp-id b { color: var(--accent); background: var(--accent-soft); border-radius: 2px; font-weight: 600; }
+  .mp-note { display: block; font-size: 11px; color: var(--fg-3); margin-top: 3px; line-height: 1.5; }
+  .mp-note b { color: var(--fg-2); font-weight: 600; }
+  .mp-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+  .mp-tag {
+    font-size: 9.5px; padding: 1px 6px; border-radius: 4px;
+    background: var(--chip); color: var(--fg-3); white-space: nowrap;
+  }
+  .mp-price { font-size: 11.5px; font-weight: 700; color: var(--fg); white-space: nowrap; padding-top: 1px; }
+  .mp-price i { font-style: normal; font-size: 9.5px; font-weight: 400; color: var(--dim); }
+  .mp-price.ref { font-weight: 500; color: var(--dim); }
+  .mp-none { padding: 18px 14px; text-align: center; color: var(--dim); font-size: 11.5px; line-height: 1.7; }
+  .mp-none b { color: var(--fg-3); }
+  .mp-foot {
+    padding: 6px 11px; border-top: 1px solid var(--line-2); background: var(--surface);
+    font-size: 10px; color: var(--dim); display: flex; align-items: center; gap: 8px;
+  }
+  .mp-foot .spacer { flex: 1; }
+  /* 窄容器（配置弹窗里三列并排的"默认模型"）里不能再挂中文名，会挤成省略号 */
+  .row3 .mp-now { display: none; }
+
   /* toast */
   .toast-wrap { position: fixed; right: 14px; bottom: 14px; z-index: 80; display: flex; flex-direction: column; gap: 7px; }
   .toast {
-    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-    padding: 9px 12px; font-size: 12.5px; color: var(--fg-2);
-    box-shadow: 0 8px 24px rgba(0,0,0,.16); max-width: 340px;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 10px 13px; font-size: 12.5px; color: var(--fg-2);
+    box-shadow: var(--shadow-2); max-width: 340px;
   }
-  .toast.err { border-color: rgba(209,68,60,.4); color: var(--danger); }
-  .toast.ok { border-color: rgba(29,158,117,.4); }
+  .toast.err { border-color: var(--danger); color: var(--danger); }
+  .toast.ok { border-color: var(--ok); }
 
   .spin { display: inline-block; width: 12px; height: 12px; border-radius: 999px;
     border: 2px solid var(--chip); border-top-color: var(--accent); animation: sp .7s linear infinite; }
   @keyframes sp { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 2s; } .prog > i { transition: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .spin { animation-duration: 2s; }
+    .prog > i { transition: none; }
+    .shot .im .busy { animation: none; }
+    .shot:hover { transform: none; }
+  }
 
   /* ---------- 图库选择器 ---------- */
-  .gmask { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.55);
+  .gmask { position: fixed; inset: 0; z-index: 60; background: var(--scrim);
     display: flex; align-items: center; justify-content: center; padding: 24px; }
   /* ⚠️ 这条不能省：.gmask 自己写了 display:flex，作者样式会盖掉浏览器默认的
      [hidden]{display:none} —— 少了它，那个「hidden」的遮罩会一直铺在整页最上层
-     （fixed + z-index 60），把下面所有按钮的点击全吃掉。 */
+     （fixed + z-index 60），把下面所有按钮的点击全吃掉。
+     2026-09-21 起顶部已有一条全局 `[hidden]{display:none !important}` 兜底，
+     这条留着是为了让"这里为什么需要它"这件事有据可查。 */
   .gmask[hidden] { display: none; }
-  .gpanel { width: min(760px, 100%); max-height: 100%; display: flex; flex-direction: column;
-    background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
-    box-shadow: 0 18px 48px rgba(0,0,0,.28); }
+  .gpanel { width: min(780px, 100%); max-height: 100%; display: flex; flex-direction: column;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden;
+    box-shadow: var(--shadow-3); }
   .gpanel > header { display: flex; align-items: center; gap: 8px;
-    padding: 10px 14px; border-bottom: 1px solid var(--line); }
-  .gbar { display: flex; align-items: center; gap: 6px; padding: 8px 14px;
+    padding: 12px 15px; border-bottom: 1px solid var(--line); }
+  .gbar { display: flex; align-items: center; gap: 6px; padding: 9px 15px;
     border-bottom: 1px solid var(--line-2); background: var(--surface); }
-  .gbody { flex: 1; min-height: 180px; overflow-y: auto; padding: 12px 14px;
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
-  .gitem { position: relative; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 8px;
-    overflow: hidden; background: var(--panel); padding: 0; cursor: pointer; }
+  .gbody { flex: 1; min-height: 180px; overflow-y: auto; padding: 13px 15px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 9px; }
+  .gitem { position: relative; aspect-ratio: 1; border: 1px solid var(--line); border-radius: var(--radius-sm);
+    overflow: hidden; background: var(--panel); padding: 0; cursor: pointer;
+    transition: transform .13s, box-shadow .13s; }
+  .gitem:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
   .gitem img { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* 已选中的格子：描边 + 角标。只靠缩略图本身看不出选没选，
      而这里是可以多选的（wan2.6-image 最多 3 张），所以需要明确反馈 */
   .gitem[aria-selected="true"] { outline: 2px solid var(--accent); outline-offset: -2px; }
   .gitem[aria-selected="true"]::after { content: "✓"; position: absolute; top: 4px; right: 4px;
-    width: 16px; height: 16px; border-radius: 50%; background: var(--accent); color: var(--accent-fg);
-    font-size: 11px; line-height: 16px; text-align: center; }
-  .gitem .nm { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 5px;
+    width: 17px; height: 17px; border-radius: 50%; background: var(--accent); color: var(--accent-fg);
+    font-size: 11px; line-height: 17px; text-align: center; }
+  .gitem .nm { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 6px;
     font-size: 10px; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,.72));
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .gitem .none { display: grid; place-items: center; height: 100%; color: var(--dim); font-size: 11px; }
   .gpanel > footer { display: flex; align-items: center; gap: 8px;
-    padding: 9px 14px; border-top: 1px solid var(--line); }
+    padding: 10px 15px; border-top: 1px solid var(--line); }
 </style>
 </head>
 <body>
 
 <nav class="tabs" id="tabs">
-  <button class="tab" data-tab="image" aria-selected="true">生图<span class="sub" id="subImage">—</span></button>
-  <button class="tab" data-tab="video" aria-selected="false">生视频<span class="sub" id="subVideo">—</span></button>
-  <button class="tab" data-tab="chat"  aria-selected="false">对话<span class="sub" id="subChat">—</span></button>
+  <button class="tab" data-tab="image" aria-selected="true">
+    <svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+    生图<span class="sub" id="subImage">—</span>
+  </button>
+  <button class="tab" data-tab="video" aria-selected="false">
+    <svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m10 9 5 3-5 3z"/></svg>
+    生视频<span class="sub" id="subVideo">—</span>
+  </button>
+  <button class="tab" data-tab="chat"  aria-selected="false">
+    <svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    对话<span class="sub" id="subChat">—</span>
+  </button>
 
-  <!-- 右端：工具真正独有的东西。品牌名 / 版本 / 返回按钮宿主顶栏已有，不再重复 -->
+  <!-- 右端：工具真正独有的东西。品牌名 / 版本 / 返回按钮宿主顶栏已有，不再重复。
+       一条竖线把「切换视图」和「设置」分开 —— 这两类控件原先挤在一起，
+       第一眼分不出哪个是页签、哪个是设置。 -->
   <span class="spacer"></span>
+  <span class="tl-div"></span>
   <span class="dot" id="hostDot" title="宿主连接状态"></span>
   <span class="tag" id="hostTag">连接中…</span>
-  <label class="mono" style="font-size:11px;color:var(--dim);margin-left:8px">服务</label>
+  <label class="mono" style="font-size:11px;color:var(--dim);margin-left:10px">服务</label>
   <select id="provSel"></select>
-  <button class="btn" id="btnCfg" title="配置接口与密钥">
+  <button class="btn" id="btnCfg" title="配置接口与密钥" style="margin-left:6px">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-2.87 1.2V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 2.6 15H2.5a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6h.09A1.7 1.7 0 0 0 11 2.5V2.5a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v.09a1.7 1.7 0 0 0 1.2 1.91H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z" transform="scale(.86) translate(2 2)"/></svg>
     配置
   </button>
@@ -487,9 +820,14 @@
         <div class="sep"></div>
         <p class="sect-title">参数</p>
         <div class="field">
-          <label>模型</label>
-          <input list="modelsImage" id="imgModel" placeholder="模型 ID">
-          <datalist id="modelsImage"></datalist>
+          <label>模型<span class="mp-now" id="mpNowImage" hidden></span></label>
+          <div class="mp" data-mp="image">
+            <input list="modelsImage" id="imgModel" placeholder="模型 ID" autocomplete="off" spellcheck="false">
+            <datalist id="modelsImage"></datalist>
+            <button type="button" class="mp-btn" data-mp="image" title="展开模型列表（含单价与能力）">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </div>
           <!-- 单价与描述上限随模型变，所以放在模型下面而不是别处：
                用户改模型时眼睛就在这一行，价格提示跟得越近越不可能被忽略 -->
           <p class="hint" id="imgPrice"></p>
@@ -515,9 +853,12 @@
         </div>
 
         <div class="sep"></div>
-        <button class="btn primary" id="btnGenImg" style="width:100%;justify-content:center">开始生成</button>
-        <button class="btn" id="btnStopImg" style="width:100%;justify-content:center;margin-top:7px" hidden>取消</button>
-        <p class="hint" id="imgCostHint" style="text-align:center"></p>
+        <button class="btn primary gen-main" id="btnGenImg">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
+          开始生成
+        </button>
+        <button class="btn stop gen-sub" id="btnStopImg" hidden>取消</button>
+        <p class="hint gen-cost" id="imgCostHint"></p>
       </div>
 
       <div class="col-out">
@@ -526,7 +867,7 @@
           <span class="spacer"></span>
           <button class="btn sm ghost" id="btnClearImg">清空结果</button>
         </div>
-        <div id="imgResults"><div class="empty"><span class="big">◇</span>配好接口与密钥后，这里出图</div></div>
+        <div id="imgResults"><div class="empty"><span class="big">◇</span><span class="et">还没有图</span><span class="es">在左边写好描述，点「开始生成」。</span></div></div>
         <div id="imgHist"></div>
       </div>
     </div>
@@ -544,9 +885,14 @@
         <div class="sep"></div>
         <p class="sect-title">参数</p>
         <div class="field">
-          <label>模型</label>
-          <input list="modelsVideo" id="vidModel" placeholder="模型 ID">
-          <datalist id="modelsVideo"></datalist>
+          <label>模型<span class="mp-now" id="mpNowVideo" hidden></span></label>
+          <div class="mp" data-mp="video">
+            <input list="modelsVideo" id="vidModel" placeholder="模型 ID" autocomplete="off" spellcheck="false">
+            <datalist id="modelsVideo"></datalist>
+            <button type="button" class="mp-btn" data-mp="video" title="展开模型列表">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </div>
         </div>
         <div class="field">
           <label>生成模式</label>
@@ -587,8 +933,11 @@
         </div>
 
         <div class="sep"></div>
-        <button class="btn primary" id="btnGenVid" style="width:100%;justify-content:center">提交生成</button>
-        <button class="btn" id="btnStopVid" style="width:100%;justify-content:center;margin-top:7px" hidden>停止轮询</button>
+        <button class="btn primary gen-main" id="btnGenVid">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          提交生成
+        </button>
+        <button class="btn stop gen-sub" id="btnStopVid" hidden>停止轮询</button>
       </div>
 
       <div class="col-out">
@@ -597,7 +946,7 @@
           <span class="spacer"></span>
           <button class="btn sm ghost" id="btnClearVid">清空结果</button>
         </div>
-        <div id="vidResults"><div class="empty"><span class="big">◇</span>提交后在这里等待出片</div></div>
+        <div id="vidResults"><div class="empty"><span class="big">◇</span><span class="et">还没有任务</span><span class="es">写镜头语言 + 主体动作 + 环境 + 光线，点「提交生成」。</span></div></div>
         <div id="vidHist"></div>
       </div>
     </div>
@@ -607,17 +956,22 @@
   <section class="pane" data-pane="chat" hidden>
     <div class="chat-wrap">
       <div class="msgs" id="msgs">
-        <div class="empty"><span class="big">◇</span>用同一个服务商做对话，方便写提示词、翻译、生成批量文案</div>
+        <div class="empty fill"><span class="big">◇</span><span class="et">用同一个服务商做对话</span><span class="es">写提示词、翻译、把一段需求拆成几条描述。</span></div>
       </div>
       <div class="composer">
         <div class="box">
           <textarea id="chatInput" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
           <button class="btn primary" id="btnSend">发送</button>
-          <button class="btn" id="btnStopChat" hidden>停止</button>
+          <button class="btn stop" id="btnStopChat" hidden>停止</button>
         </div>
         <div class="opts">
           <div class="inline"><input type="checkbox" id="chatStream" checked><label for="chatStream" class="swatch-label">流式输出</label></div>
-          <div class="inline"><span>模型</span><input list="modelsChat" id="chatModel" style="width:190px"></div>
+          <div class="inline"><span>模型</span><span class="mp" data-mp="chat" style="width:190px">
+            <input list="modelsChat" id="chatModel" autocomplete="off" spellcheck="false" style="width:190px" placeholder="模型 ID">
+            <button type="button" class="mp-btn" data-mp="chat" title="展开模型列表">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </span></div>
           <datalist id="modelsChat"></datalist>
           <div class="inline"><span>系统提示</span><input type="text" id="chatSystem" placeholder="可空"></div>
           <span class="spacer" style="flex:1"></span>
@@ -659,9 +1013,30 @@
       <div class="sep"></div>
       <p class="sect-title">默认模型</p>
       <div class="row3">
-        <div class="field"><label>生图</label><input id="cfgModelImage" class="mono" list="modelsImage"></div>
-        <div class="field"><label>生视频</label><input id="cfgModelVideo" class="mono" list="modelsVideo"></div>
-        <div class="field"><label>对话</label><input id="cfgModelChat" class="mono" list="modelsChat"></div>
+        <div class="field"><label>生图</label>
+          <div class="mp" data-mp="cfgImage">
+            <input id="cfgModelImage" class="mono" list="modelsImage" autocomplete="off" spellcheck="false" placeholder="模型 ID">
+            <button type="button" class="mp-btn" data-mp="cfgImage" title="从列表挑">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="field"><label>生视频</label>
+          <div class="mp" data-mp="cfgVideo">
+            <input id="cfgModelVideo" class="mono" list="modelsVideo" autocomplete="off" spellcheck="false" placeholder="模型 ID">
+            <button type="button" class="mp-btn" data-mp="cfgVideo" title="从列表挑">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="field"><label>对话</label>
+          <div class="mp" data-mp="cfgChat">
+            <input id="cfgModelChat" class="mono" list="modelsChat" autocomplete="off" spellcheck="false" placeholder="模型 ID">
+            <button type="button" class="mp-btn" data-mp="cfgChat" title="从列表挑">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div class="sep"></div>
@@ -697,6 +1072,20 @@
 </div>
 
 <div class="toast-wrap" id="toasts"></div>
+
+<!-- 模型选择器的共享浮层。六个模型入口（生图/生视频/对话 + 配置里三个）
+     共用这一个面板，靠 MP.target 决定渲染哪一家的档位表 ——
+     每个入口各挂一份的话，六份 DOM 里五份是空的，样式改一次要同步六处。 -->
+<div class="mp-pop" id="mpPop" hidden role="listbox" aria-label="模型列表">
+  <div class="mp-ph"><b id="mpHead">—</b><span id="mpProv"></span><span class="spacer"></span><span id="mpCount"></span></div>
+  <div class="mp-list" id="mpList"></div>
+  <div class="mp-foot">
+    <span>↑↓ 选择 · Enter 确认 · Esc 关闭</span>
+    <span class="spacer"></span>
+    <span>价格以各家控制台账单为准</span>
+  </div>
+</div>
+
 <input type="file" id="filePick" accept="image/*" multiple hidden>
 
 <!-- 大图预览：以前「打开」是新开浏览器标签，看完要切回来，出图一多就是一排标签页。
@@ -778,6 +1167,17 @@ var Host = (function () {
   var seq = 0, pending = Object.create(null), connected = false, ctx = null;
 
   /**
+   * 宿主窗口的 origin。握手（tool:context）之后才知道，之前只能发 "*"。
+   *
+   * ⚠️ 不能一直用 `window.location.origin`：桌面端工具经 asset 协议加载
+   * （`http://asset.localhost/…`），宿主在 `http://tauri.localhost`，两者不同源。
+   * 拿自己的 origin 当 targetOrigin，浏览器会把消息**静默丢掉** —— 不抛错、
+   * 不告警，表现为工具这边的每个请求都超时在"宿主无响应"，而宿主那边
+   * 压根没收到过。dev 下工具与宿主同源，所以这类问题只在装出来的应用里出现。
+   */
+  var hostOrigin = null;
+
+  /**
    * 发一条请求给宿主。
    *
    * timeoutMs 可覆盖：默认 8 秒是给 kv 那种小操作的，
@@ -793,7 +1193,7 @@ var Host = (function () {
       try {
         parent.postMessage(
           { source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} },
-          window.location.origin
+          hostOrigin || "*"
         );
       } catch (e) { delete pending[id]; reject(e); return; }
       setTimeout(function () {
@@ -805,6 +1205,10 @@ var Host = (function () {
   window.addEventListener("message", function (e) {
     var d = e.data;
     if (!d || d.source !== HOST_SOURCE) return;
+    // 只把**父窗口**发来的那条认作宿主 origin：页面上别的 iframe 也能 postMessage
+    // 给这里。注意这里**不 return** —— 消息是否处理只看 source 字段（协议标记），
+    // 硬拦 e.source 会把"消息到了却没人理"做成最难查的那种失败。
+    if (e.source === parent && e.origin && e.origin !== "null") hostOrigin = e.origin;
     if (d.type === "tool:context") {
       connected = true; ctx = d.data;
       var th = d.data && d.data.theme;
@@ -1511,6 +1915,133 @@ var PROVIDERS = [
   },
 
   {
+    /*
+     * MiniMax 视频（H3），走的是**百炼同形状的中转网关**。
+     *
+     * 这一条和 Agnes 的关键差别：它是「提交只回 task_id、再轮询取片」的
+     * 异步任务式，而不是 Agnes 那种「回 video_id、带着 id 去站点根查」。
+     * 所以视频描述符比 Agnes 多了两个键，它们**同时**也是流程的分叉依据
+     * —— 有 pollPathFor 就走「task_id 轮询」，没有就走 Agnes 的老路径：
+     *   headers      —— 提交与轮询都要带 X-DashScope-Async: enable，
+     *                   少了它服务端按同步处理，返回体里根本没有 task_id
+     *   pollPathFor  —— 轮询地址按 task_id 拼（/api/v1/tasks/{id}），
+     *                   不再是 origin + 固定路径 + ?video_id=... 查询串
+     *
+     * ⚠️ 档位是**照接口参考给的那一组**写的（768P / 16:9 / 5 秒）。
+     * 中转方是否放开 1080P 与 10 秒没写在文档里，所以这两个选项也列了出来，
+     * 但服务端不认时会直接报错 —— 报错信息会原样显示在任务卡上，届时删掉即可。
+     */
+    id: "minimax",
+    name: "MiniMax 视频",
+    desc: "MiniMax-H3 文生视频，DashScope 兼容异步接口",
+    docs: "",
+    defaultBase: "https://maas.qianwenaiapi.com",
+    basePresets: [
+      { label: "默认站点", value: "https://maas.qianwenaiapi.com" },
+    ],
+    auth: function (key) { return { Authorization: "Bearer " + key }; },
+
+    /*
+     * 连接测试要打的探活路径。
+     *
+     * 默认那一条是 OpenAI 兼容网关的 /models，但这个中转站上它是 404
+     * —— 不声明 probe 的话「测试连接」会报一个假的"连不上"，而 Key 其实是好的。
+     * 实测有效的探活地址是 /api/v1/models（返回 200 + output.total 模型总数）。
+     * 它是 GET、不产生任何费用，是这里能找到的最省的鉴权探针。
+     */
+    probe: {
+      path: "/api/v1/models",
+      // 返回体形状跟 OpenAI 的 /models 不同：列表在 output.models，总数在 output.total
+      read: function (status, j) {
+        if (status !== 200) return { ok: false, msg: "" };
+        var out = (j && j.output) || {};
+        var n = out.total || (out.models && out.models.length) || 0;
+        return { ok: true, msg: n ? "，模型库 " + n + " 个" : "" };
+      },
+    },
+
+    // 只声明视频：这一家是单一用途的视频接口，硬凑对话 / 生图只会做出
+    // 点了必失败的按钮。页签会自动把那两页置灰（带"此服务不支持"）。
+    chat: null,
+    image: null,
+
+    video: {
+      createPath: "/api/v1/services/aigc/video-generation/video-synthesis",
+      /** 提交和轮询都要带这一个头 —— 它才是"我要异步任务"的开关 */
+      headers: { "X-DashScope-Async": "enable" },
+      pollPathFor: function (taskId) {
+        return "/api/v1/tasks/" + encodeURIComponent(taskId);
+      },
+      models: [
+        { id: "MiniMax/MiniMax-H3", label: "MiniMax H3 · 文生视频",
+          family: "minimax", mode: "async", promptLimit: 2000,
+          note: "文生视频，不支持首帧/尾帧与参考图" },
+      ],
+      modes: [
+        { id: "text", label: "text · 纯文本" },
+      ],
+      sizesFor: function () {
+        // 接口参考里给的是 768P；1080P 视中转方是否放开
+        return ["768P", "1080P"];
+      },
+      ratios: ["16:9", "9:16", "1:1", "4:3", "3:4"],
+      defaultRatio: "16:9",
+      durations: ["5", "10"],
+      defaultDuration: "5",
+      maxRefImages: 0,
+      // 出片比出图慢得多：万相一类通常 1–6 分钟，给 20 分钟兜底
+      timeoutMs: 20 * 60 * 1000,
+      // 任务式接口没必要 1.6 秒一次地催，5 秒足够又不至于撞限流
+      intervalMs: 5000,
+      build: function (o) {
+        return {
+          model: o.model,
+          input: { prompt: o.prompt },
+          parameters: {
+            resolution: o.size || "768P",
+            ratio: o.ratio || "16:9",
+            duration: Number(o.seconds) || 5,
+            // 默认不打水印：要水印的人远比不要的少
+            watermark: false,
+          },
+        };
+      },
+      pickTask: function (j) {
+        var out = (j && j.output) || {};
+        return {
+          // 这家只给 task_id，没有 video_id —— 任务句柄就是它
+          taskId: out.task_id || (j && j.task_id) || "",
+          videoId: "",
+          status: "queued",
+          progress: 0,
+        };
+      },
+      pickPoll: function (j) {
+        var out = (j && j.output) || {};
+        var raw = out.task_status || (j && j.status) || "UNKNOWN";
+        var status = "in_progress";
+        if (raw === "SUCCEEDED" || raw === "SUCCESS") status = "completed";
+        else if (raw === "FAILED" || raw === "CANCELED" || raw === "UNKNOWN") status = "failed";
+
+        var err = "";
+        if (status === "failed") {
+          // UNKNOWN 在这里是"任务不存在"（比如 task_id 过期），继续问没意义
+          err = raw === "UNKNOWN"
+            ? "任务不存在或已过期（task_id 有效期 24 小时）"
+            : (out.message || (j && (j.message || j.code)) || "生成失败");
+        }
+        return {
+          status: status,
+          progress: status === "completed" ? 100 : 0,
+          // 成片地址在 output.video_url
+          url: out.video_url || "",
+          error: err,
+        };
+      },
+    },
+  },
+
+  {
     // 这一条是「拓展性」的活证明：一个通用 OpenAI 兼容网关。
     // 它没有视频能力（video: null），所以生视频页签会自动置灰 ——
     // 界面行为由数据决定，不是写死的。
@@ -1668,6 +2199,15 @@ var S = {
    */
   imgCancel: null,
   /**
+   * 生视频与对话的取消信号。
+   *
+   * 和 imgCancel 同性质，所以**必须一起声明**：只靠运行时赋值虽然也能用
+   * （JS 不禁止给对象加新键），但任何"读 S 的键"的地方都看不到它们 ——
+   * 调试时打一遍 S 会以为没有取消机制，实际上在跑。三个取消信号待遇一致。
+   */
+  videoCancel: null,
+  chatCancel: null,
+  /**
    * 产出是否自动在图库留一份。默认开 —— 这是"关掉就找不回来"的反面：
    * 生成结果本来只活在一次会话里（万相的地址 24 小时失效），
    * 让用户记得每次去点保存，等于没保存。
@@ -1679,6 +2219,21 @@ var KV_CONFIG = "config";
 var KV_HISTORY = "history";
 var KV_AUTO_GALLERY = "autoGallery";
 var HISTORY_MAX = 60;
+
+/**
+ * 历史条目的状态 → 中文标签。
+ *
+ * 原来是一串内联三元，多出「已停止」这一档之后就必须收成表：
+ * 漏掉的状态会原样把英文/内部词打到界面上（stopped 直接显示 "stopped"）。
+ */
+var HISTORY_LABEL = {
+  queued: "排队中",
+  running: "进行中",
+  in_progress: "进行中",
+  completed: "完成",
+  failed: "失败",
+  stopped: "已停止",   // 停止轮询 / 超时 —— 任务没失败，只是不再盯着了
+};
 
 function cfgReady() { return !!(trimBase(S.baseUrl) && S.apiKey); }
 
@@ -1758,6 +2313,12 @@ function syncModelInputs() {
   if (!el("chatModel").value && p.chat && p.chat.models[0]) el("chatModel").value = p.chat.models[0].id;
   refreshVideoFields();
   refreshImageFields();
+  syncMpNow();
+  // 面板开着的时候切服务商：档位表整个换了一家，不重画的话面板会停在
+  // 上一家的清单上（顶部还写着新服务商的名字），点了就是往新家发旧模型 ID。
+  // 顺带把 typed 清掉 —— 此刻框里的值是 sanitize/syncModelInputs 刚写进去的
+  // 完整 ID，不是用户在搜，当成搜索词会把 21 档滤成它自己那一行。
+  if (MP && MP.open) { MP.typed = false; renderMp(); }
 }
 
 /**
@@ -1835,6 +2396,7 @@ function refreshImageFields() {
   el("imgCostHint").textContent = imageCostHint(model);
 
   document.body.dataset.tierPrice = info && typeof info.price === "number" ? String(info.price) : "";
+  syncMpNow();
 }
 
 function refreshVideoFields() {
@@ -1852,7 +2414,310 @@ function refreshVideoFields() {
   el("vidRefHint").textContent = "最多 " + p.video.maxRefImages + " 张，必须是生成服务能公开访问的 URL。";
   var sizes = p.video.sizesFor(el("vidModel").value);
   fillSelect(el("vidSize"), sizes, el("vidSize").value);
+  syncMpNow();
 }
+
+/* ==================================================================
+ * 3.6 模型选择器
+ *
+ * 为什么不用原生 <select> 或 datalist：这两者的候选列表由浏览器绘制，
+ * 作者样式完全够不着 —— 深色主题下列表依旧是白底黑字，而且每行只能放
+ * 一个字符串，于是"选项"退化成 `wan2.6-t2i` 这样的 ID。
+ * 选型的实际依据是：中文名认不认识、贵不贵、能不能带参考图、一次最多几张。
+ * 这四样都得和选项排在同一行里比较，才谈得上"选"。
+ *
+ * 所以做成组合框：输入框本身仍是**真正的那份数据**（可手填任意 ID，
+ * 一些服务支持的自定义模型名就靠它），候选面板只是它的可视化拼音。
+ * 六个模型入口（生图/生视频/对话 + 配置弹窗里三个）共用同一个面板。
+ * ================================================================== */
+var MP_BOX = {
+  image: "imgModel", video: "vidModel", chat: "chatModel",
+  cfgImage: "cfgModelImage", cfgVideo: "cfgModelVideo", cfgChat: "cfgModelChat",
+};
+/** 入口 → provider 的能力键。配置弹窗里的三个和主界面上的三页是一一对应的 */
+var MP_CAP = {
+  image: "image", video: "video", chat: "chat",
+  cfgImage: "image", cfgVideo: "video", cfgChat: "chat",
+};
+var MP_TITLE = {
+  image: "生图", video: "生视频", chat: "对话",
+  cfgImage: "默认生图", cfgVideo: "默认生视频", cfgChat: "默认对话",
+};
+/** 档位表按家族分组显示。阿里云有 21 档，平铺一列滚到第三屏就找不到北了 */
+var MP_FAMILY = { wan: "万相 Wan", qwen: "千问图像 Qwen", zimage: "Z-Image" };
+
+var MP = { open: false, target: "", rows: [], idx: -1, anchor: null, typed: false };
+
+function mpInput(t) { return el(MP_BOX[t]); }
+function mpNow(t) { return t === "image" ? el("mpNowImage") : t === "video" ? el("mpNowVideo") : null; }
+
+/**
+ * 把一个模型描述符压成面板里要显示的那几行。
+ *
+ * 各家的描述符长得不一样：阿里云是 id + 中文 label + note + 价格 + 一串能力位，
+ * Agnes 只有 id + label，而它的说明写在 label 的括号里
+ * （"agnes-3.0-flash（Agent / 编程）"）。这里把两种都归一化 ——
+ * 界面上不该出现"这家有描述、那家没有"的空白行。
+ */
+function mpMeta(m) {
+  var raw = String(m.label || m.id || "");
+  var note = String(m.note || "");
+  var paren = raw.match(/^([^（(]+)[（(](.+?)[）)]\s*$/);
+  var name = paren ? paren[1].trim() : raw.trim();
+  if (paren && !note) note = paren[2].trim();
+  // "万相 2.6 文生图 · 主力" —— 点号后面那截是推荐度，单独拎出来当徽标，
+  // 混在名字里会让"万相 2.6 文生图"和"万相 2.6 文生图 · 主力"看着像两个模型
+  var badge = "";
+  var seg = name.split("·");
+  if (seg.length > 1) { name = seg[0].trim(); badge = seg.slice(1).join("·").trim(); }
+
+  var tags = [];
+  if (m.mode === "async") tags.push("异步任务");
+  else if (m.mode === "sync") tags.push("同步出图");
+  if (m.requireRef) tags.push("必须带参考图");
+  else if (typeof m.maxRef === "number" && m.maxRef > 0) tags.push("可带 " + m.maxRef + " 张参考图");
+  else if (m.maxRef === 0) tags.push("纯文生图");
+  if (m.maxN > 1) tags.push("最多 " + m.maxN + " 张");
+  else if (m.maxN === 1) tags.push("一次 1 张");
+  if (m.promptLimit) tags.push("描述 " + m.promptLimit + " 字");
+
+  return {
+    id: m.id, name: name || m.id, badge: badge, note: note, tags: tags,
+    price: typeof m.price === "number" ? m.price : null,
+    isRef: m.priceSource === "secondary", family: m.family || "",
+  };
+}
+
+/** 把搜索命中的那一段标出来。转义后再插标记，别把用户输入当 HTML。 */
+function mpMark(text, q) {
+  var s = String(text);
+  var i = q ? s.toLowerCase().indexOf(q) : -1;
+  if (i < 0) return esc(s);
+  return esc(s.slice(0, i)) + "<b>" + esc(s.slice(i, i + q.length)) + "</b>" + esc(s.slice(i + q.length));
+}
+
+function renderMp() {
+  var p = provider(S.providerId);
+  var cap = MP_CAP[MP.target];
+  var all = (p[cap] && p[cap].models) || [];
+  var input = mpInput(MP.target);
+  var cur = input.value.trim();
+  // 框里的值**只在用户真的动过它之后**才算搜索词。否则刚点开面板时，
+  // 框里正好是当前模型的 ID，21 档会被过滤成孤零零的那一行 ——
+  // 用户想换一档，看到的却是自己已经选的那个。
+  var q = MP.typed ? cur.toLowerCase() : "";
+
+  // 过滤按 ID / 中文名 / 描述三路。中文名这一路是必须的 ——
+  // 用户记得住"万相"，记不住 wan2.6-t2i。
+  var items = all.map(mpMeta).filter(function (m) {
+    return !q || m.id.toLowerCase().indexOf(q) >= 0 ||
+      m.name.toLowerCase().indexOf(q) >= 0 || m.note.toLowerCase().indexOf(q) >= 0;
+  });
+
+  el("mpHead").textContent = MP_TITLE[MP.target] || "模型";
+  el("mpProv").textContent = "· " + p.name;
+  el("mpCount").textContent = q ? items.length + " / " + all.length + " 档" : all.length + " 档";
+
+  if (!items.length) {
+    el("mpList").innerHTML = '<div class="mp-none">' +
+      (all.length
+        ? "没有匹配的模型。<br>试试只输型号里的几个字母。"
+        : "这家服务不提供档位表，要手填模型 ID。<br>直接在上面输入框里写就行 —— 面板只是方便挑，不是必选。") +
+      "</div>";
+    MP.rows = []; MP.idx = -1;
+    return;
+  }
+
+  var html = [], fam = null, k = 0, sel = -1;
+  items.forEach(function (m) {
+    if (m.family && m.family !== fam) {
+      fam = m.family;
+      html.push('<div class="mp-sect">' + esc(MP_FAMILY[fam] || fam) + "</div>");
+    }
+    var on = m.id === cur;
+    if (on) sel = k;
+    html.push(
+      '<button type="button" class="mp-item" data-idx="' + k + '" data-id="' + esc(m.id) + '"' +
+        (on ? ' aria-selected="true"' : "") + ">" +
+        '<span class="mp-tick">✓</span>' +
+        '<span class="mp-main">' +
+          '<span class="mp-name">' + esc(m.name) +
+            (m.badge ? '<span class="bd">' + esc(m.badge) + "</span>" : "") + "</span>" +
+          (m.id !== m.name ? '<span class="mp-id mono">' + mpMark(m.id, q) + "</span>" : "") +
+          (m.note ? '<span class="mp-note">' + mpMark(m.note, q) + "</span>" : "") +
+          (m.tags.length
+            ? '<span class="mp-tags">' + m.tags.map(function (t) {
+                return '<span class="mp-tag">' + esc(t) + "</span>";
+              }).join("") + "</span>"
+            : "") +
+        "</span>" +
+        '<span class="mp-price' + (m.isRef ? " ref" : "") + '">' +
+          (m.price == null ? "" : "¥" + m.price.toFixed(2) + "<i>/张</i>") +
+        "</span>" +
+      "</button>");
+    k++;
+  });
+  el("mpList").innerHTML = html.join("");
+
+  MP.rows = [].slice.call(el("mpList").querySelectorAll(".mp-item"));
+  MP.idx = sel >= 0 ? sel : 0;
+  paintMpActive();
+  // 当前档未必在第一屏（阿里云 21 档），打开时要能一眼看到"我在哪一档"
+  if (MP.rows[MP.idx]) MP.rows[MP.idx].scrollIntoView({ block: "nearest" });
+}
+
+function paintMpActive() {
+  MP.rows.forEach(function (r, i) { r.classList.toggle("active", i === MP.idx); });
+}
+
+/**
+ * 面板定位。
+ *
+ * 面板比输入框宽（要放得下描述），所以不能简单地左对齐 —— 聊天页那个框
+ * 只有 190px 宽且贴着右边，左对齐会直接溢出视口。改成右对齐到输入框右缘，
+ * 再夹进视口内；下方放不下就翻到上面。
+ */
+function placeMp() {
+  var pop = el("mpPop");
+  var r = MP.anchor.getBoundingClientRect();
+  var w = Math.min(Math.max(r.width, 340), window.innerWidth - 20);
+  pop.style.width = w + "px";
+  pop.style.left = Math.max(10, Math.min(r.right - w, window.innerWidth - w - 10)) + "px";
+  var h = pop.offsetHeight;
+  var below = window.innerHeight - r.bottom - 8;
+  var above = r.top - 8;
+  pop.style.top = (below >= Math.min(h, 240) || below >= above)
+    ? (r.bottom + 5) + "px"
+    : Math.max(8, r.top - 5 - h) + "px";
+}
+
+function openMp(target, anchor) {
+  var input = mpInput(target);
+  if (!input) return;
+  // 同一个入口再点一次 = 收起。像下拉框那样可切换，用户不必先点空白处
+  if (MP.open && MP.target === target) { closeMp(); return; }
+  closeMp();
+  MP.open = true; MP.target = target; MP.anchor = anchor || input;
+  MP.typed = false;
+  el("mpPop").hidden = false;
+  document.body.dataset.mpOpen = "true";
+  $$(".mp-btn").forEach(function (b) {
+    b.setAttribute("aria-expanded", String(b.dataset.mp === target));
+  });
+  renderMp();
+  placeMp();
+}
+
+function closeMp() {
+  if (!MP.open) return;
+  MP.open = false; MP.target = ""; MP.rows = []; MP.idx = -1; MP.typed = false;
+  el("mpPop").hidden = true;
+  document.body.dataset.mpOpen = "false";
+  $$(".mp-btn").forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+}
+
+function pickMp(id) {
+  var target = MP.target;
+  var input = mpInput(target);
+  closeMp();
+  input.value = id;
+  // 手输和点选必须走**同一条**路径：refreshImageFields 会跟着换尺寸档、
+  // 参考图上限、张数上限和单价。绕开它的话，从面板选的模型会带着上一个
+  // 模型的参数去提交（比如给 z-image 发 n=4，直接被服务端拒）。
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  input.focus();
+}
+
+/** label 行右侧的"当前是哪个模型"。档位表里查不到就直说，不装作认识。 */
+function syncMpNow() {
+  var p = provider(S.providerId);
+  [["image", "mpNowImage"], ["video", "mpNowVideo"]].forEach(function (pair) {
+    var node = el(pair[1]);
+    if (!node) return;
+    var v = el(MP_BOX[pair[0]]).value.trim();
+    // 面板开着且用户正在打字 = 这是搜索词，不是"用户设的模型"。
+    // 不拦的话会一边在下面列候选、一边在 label 上红字警告"自定义 ID"，
+    // 用户会以为打错字了。
+    if (MP && MP.open && MP.typed && MP.target === pair[0]) { node.hidden = true; return; }
+    var list = (p[pair[0]] && p[pair[0]].models) || [];
+    var hit = null;
+    for (var i = 0; i < list.length; i++) if (list[i].id === v) { hit = list[i]; break; }
+    if (!hit) {
+      node.hidden = !v;
+      node.innerHTML = v ? '<span class="unk">自定义 ID</span>' : "";
+      return;
+    }
+    var meta = mpMeta(hit);
+    node.hidden = false;
+    node.innerHTML = '<span class="n">' + esc(meta.name) + "</span>" +
+      (meta.badge ? '<span class="bd">' + esc(meta.badge) + "</span>" : "");
+  });
+}
+
+/** 输入框上的键盘操作。面板开着时它就是这个列表的键盘代理 */
+function mpKey(e, t, input) {
+  if (e.key === "ArrowDown" && (!MP.open || MP.target !== t)) {
+    openMp(t, input); e.preventDefault(); return;
+  }
+  if (!MP.open || MP.target !== t) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    var step = e.key === "ArrowDown" ? 1 : -1;
+    MP.idx = Math.max(0, Math.min(MP.rows.length - 1, MP.idx + step));
+    paintMpActive();
+    if (MP.rows[MP.idx]) MP.rows[MP.idx].scrollIntoView({ block: "nearest" });
+    e.preventDefault(); return;
+  }
+  if (e.key === "Enter") {
+    if (MP.rows[MP.idx]) { pickMp(MP.rows[MP.idx].dataset.id); e.preventDefault(); }
+    return;
+  }
+  // Esc / Tab 要 stopPropagation：document 上那个全局 Esc 是关配置弹窗的，
+  // 让它也收到的话，按一次 Esc 会把面板和弹窗一起关掉
+  if (e.key === "Escape") { closeMp(); e.preventDefault(); e.stopPropagation(); return; }
+  if (e.key === "Tab") closeMp();
+}
+
+Object.keys(MP_BOX).forEach(function (t) {
+  var input = el(MP_BOX[t]);
+  if (!input) return;
+  input.addEventListener("click", function () { openMp(t, input); });
+  // 输入即过滤：框里打 "wan" 就只剩万相。所以进面板不必再放一个搜索框
+  input.addEventListener("input", function () {
+    MP.typed = true;
+    if (MP.open && MP.target === t) { renderMp(); placeMp(); }
+  });
+  input.addEventListener("keydown", function (e) { mpKey(e, t, input); });
+});
+
+// 点 ▾ 不该把焦点从输入框抢走（用户可能正打到一半）
+document.addEventListener("mousedown", function (e) {
+  if (e.target.closest(".mp-btn")) e.preventDefault();
+});
+
+document.addEventListener("click", function (e) {
+  if (e.target.closest(".mp-btn")) {
+    var b = e.target.closest(".mp-btn");
+    openMp(b.dataset.mp, b);
+    return;
+  }
+  if (e.target.closest(".mp-pop")) {
+    var item = e.target.closest(".mp-item");
+    if (item) pickMp(item.dataset.id);
+    return;
+  }
+  // 输入框自己的区域：它有自己的 click 处理，别在这里又给关了
+  if (e.target.closest(".mp")) return;
+  closeMp();
+});
+
+window.addEventListener("resize", function () { if (MP.open) placeMp(); });
+// 捕获阶段监听所有滚动容器（左栏、配置弹窗都会滚）。但面板自己滚动列表时
+// 不能关 —— 那等于用户一滚候选就没了
+document.addEventListener("scroll", function (e) {
+  if (MP.open && !(e.target.closest && e.target.closest(".mp-pop"))) closeMp();
+}, true);
+
 
 /* ==================================================================
  * 4. 请求
@@ -1950,11 +2815,83 @@ var ICONS = {
   check: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
 };
 
+/* ------------------------------------------------------------------
+ * 空态
+ *
+ * 原来是三处各写一句「◇ + 半句话」：占一整屏，却没说"下一步点哪里"。
+ * 统一走这里：标题（做什么）+ 副标题（在哪做/为什么）+ 可选快捷引导。
+ *
+ * 快捷引导只在"用户不知道写什么"的地方才有意义（对话、视频），
+ * 生图页左侧已经有「商品主图 / 生活场景 / 海报」三个模板，
+ * 再放一遍就是同一件事说两遍 —— 所以那边只给标题和副标题。
+ * ------------------------------------------------------------------ */
+var QUICK = {
+  video: ["镜头缓慢推进，主体轻微旋转，侧逆光"],
+  chat: [
+    "帮我把上面这段文案改得更口语一点",
+    "给这个产品写 3 条卖点，每条不超过 15 字",
+    "把下面这段翻译成英文，保持语气和专业术语",
+  ],
+};
+
+/**
+ * 这一档请求的输出宽高比。
+ *
+ * 用途：生成中的占位卡按它撑开。原来占位固定 190px，而 16:9 与 9:16 的
+ * 实际高度差 4 倍 —— 图一出来整列重排，看着像闪了一下。
+ *
+ * 两种档位格式都要认：万相那种是 "1280x720"（真像素），
+ * 千问那种是 "1K"（只有档位，得退回画幅 select 的 "16:9"）。
+ * 都不认就退回 1（方图），至少不会比现在更差。
+ */
+function sizeAspect(size, ratio) {
+  var m = /^\s*(\d+)\s*[*x×]\s*(\d+)\s*$/i.exec(String(size || ""));
+  if (m) { var w = Number(m[1]), h = Number(m[2]); if (w > 0 && h > 0) return w / h; }
+  var r = String(ratio || "").split(":");
+  if (r.length === 2) { var a = Number(r[0]), b = Number(r[1]); if (a > 0 && b > 0) return a / b; }
+  return 1;
+}
+
+function emptyState(o) {
+  return '<div class="empty' + (o.fill ? " fill" : "") + '">' +
+    '<span class="big">' + (o.icon || "◇") + "</span>" +
+    (o.title ? '<span class="et">' + esc(o.title) + "</span>" : "") +
+    (o.sub ? '<span class="es">' + esc(o.sub) + "</span>" : "") +
+    (o.quick && o.quick.length
+      ? '<div class="quick">' + o.quick.map(function (q) {
+          // 只填进输入框、不直接发送：用户几乎总要改两个字，直接发是在替他做决定
+          return '<button class="qchip" data-quick="' + esc(q) + '" data-quick-to="' + o.quickTo + '">' +
+            esc(q) + "</button>";
+        }).join("") + "</div>"
+      : "") +
+    "</div>";
+}
+
+/**
+ * 三个「清空」按钮在没东西可清时置灰。
+ *
+ * 原来空态下它们照样是亮的 —— 点下去没有任何反应，也没有提示，
+ * 用户只能怀疑是自己没点到。宁可置灰，至少说明"现在没东西可清"。
+ */
+function syncClearButtons() {
+  el("btnClearImg").disabled = !S.results.length;
+  el("btnClearVid").disabled = !S.videoJobs.length;
+  el("btnClearChat").disabled = !S.messages.length;
+}
+
 function renderImageResults() {
   var host = el("imgResults");
+  syncClearButtons();
   if (!S.results.length) {
-    host.innerHTML = '<div class="empty"><span class="big">◇</span>' +
-      (cfgReady() ? "填好描述后点「开始生成」" : "先在右上角「配置」里填 Base URL 与 API Key") + "</div>";
+    host.innerHTML = cfgReady()
+      ? emptyState({
+          title: "还没有图",
+          sub: "在左边写好描述，点「开始生成」。描述越具体越可控 —— 主体、场景、光线、构图、质感都能写进去。",
+        })
+      : emptyState({
+          title: "先配一下接口",
+          sub: "点右上角「配置」，填服务商的 Base URL 与 API Key。密钥只存在本机数据库里，不会随备份以外的任何途径外传。",
+        });
     el("imgOutLabel").textContent = "尚未生成";
     return;
   }
@@ -1963,7 +2900,10 @@ function renderImageResults() {
   host.innerHTML = '<div class="grid-img">' + S.results.map(function (r, i) {
     var src = r.url || ("data:image/png;base64," + r.b64);
     return '<div class="shot" data-shot="' + i + '">' +
-      '<div class="im">' + (r.status === "waiting"
+      // 占位卡按这一档的输出比例撑开，出图时列不会重排（见 sizeAspect 注释）
+      '<div class="im"' + (r.status === "waiting"
+        ? ' style="aspect-ratio:' + sizeAspect(r.size, r.ratio).toFixed(4) + '"'
+        : "") + ">" + (r.status === "waiting"
         ? '<span class="busy"><span class="spin"></span> 生成中…</span>'
         // 点图直接进大图预览（zoom-in 光标提示可点），比"打开"按钮更顺手
         : '<img src="' + esc(r.url || src) + '" alt="生成结果 ' + (i + 1) + '" loading="lazy" data-zoom="' + i + '">') + "</div>" +
@@ -2187,7 +3127,7 @@ function renderHistInto(hostId, kind) {
       var thumb = kind === "image" && h.url
         ? '<img class="thumb" src="' + esc(h.url) + '" alt="">'
         : '<div class="thumb"></div>';
-      var label = h.status === "failed" ? "失败" : h.status === "completed" ? "完成" : h.status || "完成";
+      var label = HISTORY_LABEL[h.status] || h.status || "完成";
       return '<div class="hrow" data-hist="' + esc(h.id) + '">' + thumb +
         '<span class="p" title="' + esc(h.prompt) + '">' + esc(h.prompt || "(无描述)") + "</span>" +
         '<span class="t">' + esc(h.model || "") + "</span>" +
@@ -2648,11 +3588,27 @@ async function useGalleryPicked() {
  * ================================================================== */
 function renderVideoJobs() {
   var host = el("vidResults");
+  syncClearButtons();
   if (!S.videoJobs.length) {
-    host.innerHTML = '<div class="empty"><span class="big">◇</span>' +
-      (provider(S.providerId).video
-        ? (cfgReady() ? "填好描述后点「提交生成」" : "先在右上角「配置」里填 Base URL 与 API Key")
-        : "当前服务只声明了对话/生图能力，没有视频接口") + "</div>";
+    var pv = provider(S.providerId);
+    host.innerHTML = !pv.video
+      ? emptyState({
+          icon: "◇",
+          title: "当前服务没有视频接口",
+          // 只写"不支持"是死路一条，必须给出下一步
+          sub: "「" + pv.name + "」只声明了对话 / 生图能力。点右上角「配置」换一个支持视频的服务商即可。",
+        })
+      : cfgReady()
+        ? emptyState({
+            title: "还没有任务",
+            sub: "写镜头语言 + 主体动作 + 环境 + 光线，点「提交生成」。出片比出图慢，提交后可以放着不管。",
+            quick: QUICK.video,
+            quickTo: "vidPrompt",
+          })
+        : emptyState({
+            title: "先配一下接口",
+            sub: "点右上角「配置」，填服务商的 Base URL 与 API Key。密钥只存在本机数据库里。",
+          });
     el("vidOutLabel").textContent = "尚无任务";
     return;
   }
@@ -2683,7 +3639,10 @@ function renderVideoJobs() {
         (j.size ? '<span class="tag">' + esc(j.size) + "</span>" : "") +
         (j.savedInGallery ? '<span class="tag ok">已存图库</span>' : "") +
       "</h4>" +
-      '<div class="kv"><span class="k">video_id</span><span class="v mono">' + esc(j.videoId || "—") + "</span></div>" +
+      // 任务句柄叫什么取决于服务商：Agnes 给 video_id，任务式接口只给 task_id。
+      // 写死 video_id 的话后一种卡上会一直是「—」，用户没法拿它去控制台查。
+      '<div class="kv"><span class="k">' + (j.videoId ? "video_id" : "task_id") +
+        '</span><span class="v mono">' + esc(j.videoId || j.taskId || "—") + "</span></div>" +
       '<div class="kv"><span class="k">描述</span><span class="v">' + esc(j.prompt) + "</span></div>" +
       body +
       (j.status === "completed" || j.status === "failed"
@@ -2728,14 +3687,18 @@ async function doGenerateVideo() {
     model: model, prompt: prompt, mode: mode, status: "queued", progress: 0, polls: 0,
     videoId: "", taskId: "", url: "", error: "", pollError: "",
     seconds: el("vidSeconds").value, size: el("vidSize").value,
+    pollId: "",   // 关联的历史条目 id，停止轮询时要靠它把历史结算掉
   };
   S.videoJobs.unshift(job);
   renderVideoJobs();
 
   var base = trimBase(S.baseUrl);
   try {
+    // headers 这一路是给「异步任务式」接口留的：像百炼那类要带
+    // X-DashScope-Async: enable 才回 task_id，不带就当同步处理，
+    // 返回体里根本没有任务句柄。Agnes 没声明 headers，拿到的是 {}。
     var created = await apiFetch(base + p.video.createPath, {
-      method: "POST", headers: authHeaders(p), body: JSON.stringify(body),
+      method: "POST", headers: authHeaders(p, p.video.headers || {}), body: JSON.stringify(body),
     }, 120000);
 
     var t = p.video.pickTask(created);
@@ -2745,14 +3708,18 @@ async function doGenerateVideo() {
     job.progress = t.progress;
     renderVideoJobs();
 
-    if (!job.videoId) {
-      throw new Error("创建成功但响应里没有 video_id：" + JSON.stringify(created).slice(0, 200));
+    // 任务句柄有两种：Agnes 给 video_id，任务式接口只给 task_id。
+    // 早期只认前者，于是后者会被判成"创建失败"，其实任务已经在服务端跑起来了
+    // （还在计费）。两个都没有才真的算失败。
+    if (!job.videoId && !job.taskId) {
+      throw new Error("创建成功但响应里没有 video_id / task_id：" + JSON.stringify(created).slice(0, 200));
     }
 
     var histId = addHistory({
       kind: "video", model: model, prompt: prompt, status: "queued",
-      videoId: job.videoId, params: { mode: mode, seconds: job.seconds, size: job.size },
+      videoId: job.videoId || job.taskId, params: { mode: mode, seconds: job.seconds, size: job.size },
     });
+    job.pollId = histId;
 
     await pollVideo(job, p, histId);
     renderVideoJobs();
@@ -2771,26 +3738,57 @@ async function doGenerateVideo() {
   }
 }
 
+/**
+ * 停止轮询的三个出口（手动停止 / 超时 / 用户取消）共用一个收尾。
+ *
+ * 为什么必须结算历史：视频任务一旦提交就已经在服务端跑起来并计费了。
+ * 原来停止轮询只写 job.pollError、不动历史 —— 那条历史会**永远停在
+ * 「排队中」**，用户过两天回来看还不知道当时到底成没成。生图那条路
+ * （runImageAsync）取消时是会 updateHistory 的，两边不一致。
+ *
+ * 状态记 "stopped" 而不是 "failed"：任务没失败，只是我们不再盯着它了。
+ * 文案也照实说 —— 「已手动停止」和「等超时了」对用户是两件事。
+ */
+function stopVideoPolling(reason, histId) {
+  var job = S.videoJobs.filter(function (x) { return x.pollId === histId; })[0];
+  if (job) job.pollError = reason;
+  if (histId) updateHistory(histId, { status: "stopped", error: reason });
+  renderVideoJobs();
+}
+
 /** 轮询到 completed / failed / 取消 / 超时。
  *  官方建议 1–2 秒一次；这里 1.6 秒起步，遇到 429 就把间隔翻倍（指数退避）。 */
 async function pollVideo(job, p, histId) {
-  var origin = originOf(S.baseUrl);
-  if (!origin) throw new Error("Base URL 不合法，无法推导轮询地址：" + S.baseUrl);
-
-  var qs = "?video_id=" + encodeURIComponent(job.videoId) + "&model_name=" + encodeURIComponent(job.model);
-  var url = origin + p.video.pollPath + qs;
-  var interval = 1600;
+  var url;
+  if (typeof p.video.pollPathFor === "function") {
+    // 任务式接口：轮询地址由 task_id 拼出来，与提交同一个 base
+    // （例：/api/v1/tasks/{task_id}）。没有 video_id 这回事。
+    url = trimBase(S.baseUrl) + p.video.pollPathFor(job.taskId || job.videoId);
+  } else {
+    // Agnes 那类：轮询接口在**站点根**而不是 /v1 下，且靠查询串带 video_id
+    // 与 model_name。这一支保持原样，别让新增的异步任务式把它改坏。
+    var origin = originOf(S.baseUrl);
+    if (!origin) throw new Error("Base URL 不合法，无法推导轮询地址：" + S.baseUrl);
+    var qs = "?video_id=" + encodeURIComponent(job.videoId) + "&model_name=" + encodeURIComponent(job.model);
+    url = origin + p.video.pollPath + qs;
+  }
+  var interval = p.video.intervalMs || 1600;
   var deadline = Date.now() + (p.video.timeoutMs || 900000);
   var ctl = new AbortController();
   S.videoCancel = ctl;
 
   while (Date.now() < deadline) {
-    if (ctl.signal.aborted) { job.pollError = "已手动停止"; return; }
+    if (ctl.signal.aborted) { return stopVideoPolling("已手动停止", histId); }
     await new Promise(function (r) { setTimeout(r, interval); });
-    if (ctl.signal.aborted) { job.pollError = "已手动停止"; return; }
+    if (ctl.signal.aborted) { return stopVideoPolling("已手动停止", histId); }
 
     try {
-      var res = await fetch(url, { headers: authHeaders(p, {}), signal: ctl.signal });
+      /* ⚠️ 轮询**不能**带 provider 的 headers。实测 MiniMax 中转网关：
+         提交带 X-DashScope-Async: enable 才是异步任务，轮询再带同一个头
+         会被判成"异步调用"直接 403（current user api does not support
+         asynchronous calls），成片永远取不回来。需要额外头的接口走
+         pollHeaders 显式声明，别复用提交那套。 */
+      var res = await fetch(url, { headers: authHeaders(p, p.video.pollHeaders || {}), signal: ctl.signal });
       var txt = await res.text();
       if (res.status === 429) {
         interval = Math.min(interval * 2, 12000);
@@ -2821,14 +3819,15 @@ async function pollVideo(job, p, histId) {
         return;
       }
     } catch (err) {
-      if (ctl.signal.aborted) { job.pollError = "已手动停止"; return; }
+      if (ctl.signal.aborted) { return stopVideoPolling("已手动停止", histId); }
       // 网络抖动不该让整个任务失败 —— 记下来继续轮询
       job.pollError = String(err && err.message || err);
       renderVideoJobs();
       await new Promise(function (r) { setTimeout(r, 2000); });
     }
   }
-  job.pollError = "超过最大等待时间，已停止轮询（任务可能仍在服务端跑，可稍后用 video_id 重查）";
+  job.pollError = "超过最大等待时间，已停止轮询（任务可能仍在服务端跑，可稍后用视频地址里的 ID 重查）";
+  if (histId) updateHistory(histId, { status: "stopped", error: job.pollError });
   renderVideoJobs();
 }
 
@@ -2837,8 +3836,16 @@ async function pollVideo(job, p, histId) {
  * ================================================================== */
 function renderMessages() {
   var host = el("msgs");
+  syncClearButtons();
   if (!S.messages.length) {
-    host.innerHTML = '<div class="empty"><span class="big">◇</span>用同一个服务商做对话，方便写提示词、翻译、生成批量文案</div>';
+    host.innerHTML = emptyState({
+      fill: true,
+      icon: "◇",
+      title: "用同一个服务商做对话",
+      sub: "写提示词、翻译、把一段需求拆成几条描述 —— 都在这里。下面几个是常用开头，点一下会填进输入框，可以先改再发。",
+      quick: QUICK.chat,
+      quickTo: "chatInput",
+    });
     return;
   }
   host.innerHTML = S.messages.map(function (m) {
@@ -2976,6 +3983,7 @@ function openCfg() {
 function closeCfg() {
   el("cfgModal").hidden = true;
   document.body.dataset.cfgOpen = "false";
+  closeMp();   // 别名：弹窗关掉时别把模型面板孤零零留在屏幕上
 }
 
 async function saveConfig() {
@@ -3163,16 +4171,28 @@ el("btnTest").addEventListener("click", async function () {
   if (!base) { el("testOut").textContent = "先填 Base URL"; return; }
   el("testOut").innerHTML = '<span class="spin"></span> 测试中…';
   try {
-    // 用 /models 探活：能通说明地址对、key 对、跨域也通
-    var res = await fetch(base + "/models", { headers: p.auth ? p.auth(key) : {} });
+    /* 探活路径按服务商走：默认是 OpenAI 兼容网关的 /models，但有的中转站
+       （MiniMax 这家就是）压根没有这条路径、直接 404 —— 不按家区分的话
+       会报一个假的"连不上"，把人引去查一个根本没坏的 Key。
+       probe 是可选键，没声明的服务商继续走老路径。 */
+    var pr = p.probe || null;
+    var res = await fetch(base + (pr && pr.path ? pr.path : "/models"), {
+      headers: p.auth ? p.auth(key) : {},
+    });
     var txt = await res.text();
-    if (res.ok) {
-      var j = {};
-      try { j = JSON.parse(txt); } catch (e) { /* 有的网关不返回 JSON */ }
+    var j = {};
+    try { j = JSON.parse(txt); } catch (e) { /* 有的网关不返回 JSON */ }
+
+    var r = pr && pr.read ? pr.read(res.status, j, txt) : null;
+    if (!r) {
+      // 默认按 OpenAI 形状读：能通说明地址对、key 对、跨域也通
       var n = j && j.data && j.data.length ? j.data.length : 0;
-      el("testOut").innerHTML = '<span style="color:var(--ok)">✓ 连通' + (n ? "，可用模型 " + n + " 个" : "") + "</span>";
+      r = { ok: res.ok, msg: n ? "，可用模型 " + n + " 个" : "" };
+    }
+    if (r.ok) {
+      el("testOut").innerHTML = '<span style="color:var(--ok)">✓ 连通' + esc(r.msg || "") + "</span>";
     } else {
-      el("testOut").innerHTML = '<span style="color:var(--danger)">✗ ' + esc(explainHttp(res.status, txt)) + "</span>";
+      el("testOut").innerHTML = '<span style="color:var(--danger)">✗ ' + esc(r.msg || explainHttp(res.status, txt)) + "</span>";
     }
   } catch (err) {
     el("testOut").innerHTML = '<span style="color:var(--danger)">✗ 连不上：' + esc(String(err && err.message || err)) + "</span>";
@@ -3212,17 +4232,33 @@ el("btnStopImg").addEventListener("click", function () {
 });
 el("btnClearImg").addEventListener("click", function () { S.results = []; renderImageResults(); });
 el("filePick").addEventListener("change", async function () {
-  var p = provider(S.providerId);
-  var max = p.image ? p.image.maxRef : 0;
+  /* ⚠️ 上限必须走 maxRefsFor(model)，**不能**读 p.image.maxRef。
+     「能带几张参考图」是按模型算的：阿里云里只有 wan2.6-image / qwen-image
+     那几档收图，纯文生图档一张不收，而 provider 级的 maxRef 恒为 0。
+     读后者的话阿里云下这个入口会**静默丢弃所有本地图** —— 界面上还写着
+     「已加 0 / 3」（那行字走的是 maxRefsFor，所以它是对的），而旁边的
+     「从图库选」也走正确路径 → 表现成「从图库能加、从本机加不了」。
+     实测复现过：塞图后 refCount 仍是 0，且零报错。 */
+  var model = el("imgModel").value.trim();
+  var max = maxRefsFor(model);
   var files = Array.prototype.slice.call(el("filePick").files || []);
+  var full = false;
   for (var i = 0; i < files.length; i++) {
-    if (S.refs.length >= max) { toast("最多 " + max + " 张参考图", "err"); break; }
+    if (S.refs.length >= max) { full = true; break; }
     if (!/^image\//.test(files[i].type)) continue;
     if (files[i].size > 8 * 1024 * 1024) { toast(files[i].name + " 超过 8 MB，已跳过", "err"); continue; }
     try { S.refs.push(await readFileAsDataUri(files[i])); } catch (e) { toast("读取失败：" + files[i].name, "err"); }
   }
   el("filePick").value = "";
   renderRefs();
+  /* 拦下时要说清是"这一档不收图"还是"你加太多了"。
+     原来 max=0 时文案是「最多 0 张参考图」，等于没说 ——
+     用户会以为是bug，而实际上换一档模型就能加。 */
+  if (full) {
+    toast(max === 0
+      ? "当前模型（" + (model || "未指定") + "）不支持参考图。要带图请换一档能收图的模型（如 wan2.6-image、qwen-image-3.0）"
+      : "最多 " + max + " 张参考图", "err");
+  }
 });
 el("refList").addEventListener("click", function (e) {
   if (e.target.id === "refAdd") { el("filePick").click(); return; }
@@ -3315,8 +4351,10 @@ $$("[data-tpl]").forEach(function (b) {
 el("btnGenVid").addEventListener("click", function () { void doGenerateVideo(); });
 el("btnStopVid").addEventListener("click", function () {
   if (S.videoCancel) S.videoCancel.abort();
-  toast("已停止轮询");
-  renderVideoJobs();
+  /* 说清"停止的是什么"。任务已经提交、服务端还在跑、**还在计费** ——
+     按钮上写「停止轮询」就是这个意思，toast 里再点一次免得被当成"取消任务"。
+     （任务卡与历史会由 stopVideoPolling 结算成「已停止」。） */
+  toast("已停止轮询。任务仍在服务端跑，可能照常计费", "warn");
 });
 el("btnClearVid").addEventListener("click", function () { S.videoJobs = []; renderVideoJobs(); });
 el("vidMode").addEventListener("change", refreshVideoFields);
@@ -3348,6 +4386,20 @@ el("chatInput").addEventListener("input", function () {
 
 // 历史
 document.addEventListener("click", function (e) {
+  // 空态快捷引导：填进输入框并聚焦，但不直接发送 ——
+  // 用户几乎总要改两个字，替他按下发送键是在替他做决定。
+  var q = e.target.closest("[data-quick]");
+  if (q) {
+    var box = el(q.dataset.quickTo);
+    if (box) {
+      box.value = q.dataset.quick;
+      // 手动派发 input：自动增高（对话）与 promptLen（生图）都挂在这个事件上，
+      // 直接赋值不会触发它们，输入框会停在旧高度
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      box.focus();
+    }
+    return;
+  }
   var c = e.target.closest("[data-hist-clear]");
   if (c) {
     var kind = c.dataset.histClear;

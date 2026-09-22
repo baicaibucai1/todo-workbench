@@ -9,9 +9,11 @@ import {
   Circle,
   Repeat,
   ListChecks,
+  Clock,
 } from "lucide-react";
 import type { Step, Task } from "../types";
 import { today, addDays } from "../lib/repo";
+import { formatDateTime } from "../lib/datetime";
 import { rowSurfaceClass } from "../lib/rowStyle";
 
 interface Props {
@@ -35,6 +37,9 @@ interface Props {
   /** 点击行打开右侧详情 */
   onOpen: () => void;
 }
+
+/** 展开/收起的时长，JS 那边的卸载定时必须与 CSS 的 duration 对上 */
+const EXPAND_MS = 200;
 
 /** 短日期展示：今天 / 明天 / 昨天 / M月D日 */
 function shortDate(dateStr: string): string {
@@ -66,8 +71,53 @@ export default function TaskRow({
   const [text, setText] = useState(task.title);
   const [pickerOpen, setPickerOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  // 步骤进度：行上只给个 2/5，展开的步骤在详情面板里
+  // 子任务进度：行上只给个 2/5，展开的子任务在详情面板里
   const steps = useTaskSteps(task.id);
+  const toggleStep = useStore((s) => s.toggleStep);
+
+  /** 有没有东西可展开：既没描述又没子任务的行不该多占一块 */
+  const hasExpand = task.note.trim().length > 0 || steps.length > 0;
+
+  /**
+   * 展开区的**挂载**与**开合**是分开的两件事，收起动画全靠把它们错开：
+   * - mounted 决定这块在不在 DOM 里 —— 要等收的动画放完才能卸载，
+   *   否则"收起"就是瞬间消失，用户只看到行高塌了一下。
+   * - open 决定 0fr ↔ 1fr，真正的高度过渡发生在这一维上。
+   *   用 grid 的 fr 而不是 max-height：后者得先量出内容高度，
+   *   内容里几行字换一下行，那个写死的数字就不对了。
+   */
+  const [expandMounted, setExpandMounted] = useState(false);
+  const [expandOpen, setExpandOpen] = useState(false);
+
+  useEffect(() => {
+    if (active && hasExpand) {
+      setExpandMounted(true);
+      // 隔一帧再张开：同一帧里"插进 DOM + 直接给 1fr"会被合并成瞬间出现，
+      // 浏览器没有起始值可以插值，动画等于没写
+      const raf = requestAnimationFrame(() => setExpandOpen(true));
+      return () => cancelAnimationFrame(raf);
+    }
+    setExpandOpen(false);
+    const timer = window.setTimeout(() => setExpandMounted(false), EXPAND_MS);
+    return () => window.clearTimeout(timer);
+  }, [active, hasExpand]);
+
+  /**
+   * 选中时展开里显示的**前三条**子任务。
+   *
+   * 未完成的排在前面：勾完的子任务不该占掉"最该做的三件"的名额，
+   * 否则一条 3/7 的任务展开后看到的是三个已经划掉的，还得去详情里找剩下那四个。
+   * sort 是稳定的，各自的原始顺序不会被打乱。
+   *
+   * 收起时**不跟着清空**：动画还没放完内容就先空了，会看到一块空白往回缩。
+   */
+  const [shownSteps, setShownSteps] = useState<Step[]>([]);
+  useEffect(() => {
+    if (!active) return;
+    setShownSteps([...steps].sort((a, b) => Number(a.done) - Number(b.done)).slice(0, 3));
+  }, [active, steps]);
+
+  const hiddenCount = Math.max(0, steps.length - shownSteps.length);
 
   useEffect(() => {
     setText(task.title);
@@ -195,6 +245,86 @@ export default function TaskRow({
             </span>
           )}
         </div>
+
+        {/* 选中才展开：描述 + 前三个子任务。
+            收起时这一段完全不渲染 —— 列表是"扫一眼"的地方，
+            十条任务全展开成十张小卡片，就没有列表了。
+            但要等收起动画放完再卸载，不然"收起"就是一瞬间的事。 */}
+        {expandMounted && (
+          <div
+            data-task-expand=""
+            data-expand-open={expandOpen ? "true" : undefined}
+            className="grid transition-[grid-template-rows,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
+            style={{
+              gridTemplateRows: expandOpen ? "1fr" : "0fr",
+              opacity: expandOpen ? 1 : 0,
+            }}
+          >
+            {/* 高度动画靠外层 grid 的 0fr↔1fr；内层负责裁切，
+                少了这层 overflow-hidden，收起时内容会撑在外面露出来 */}
+            <div className="min-h-0 overflow-hidden">
+              <div className="mt-1.5">
+                {task.note.trim() && (
+                  <p className="line-clamp-2 text-[12.5px] leading-relaxed text-fg-3">
+                    {task.note}
+                  </p>
+                )}
+
+                {shownSteps.length > 0 && (
+                  <div className="mt-1 space-y-0.5">
+                    {shownSteps.map((s) => (
+                      <div
+                        key={s.id}
+                        data-subtask-row={s.id}
+                        className="flex items-center gap-1.5"
+                      >
+                        {/* 就地勾选：展开出来的子任务就是为了"顺手勾掉"，
+                            还要跑去详情面板点的话，展开这一块就白做了 */}
+                        <button
+                          onClick={() => void toggleStep(s)}
+                          data-subtask-toggle=""
+                          title={s.done ? "标记未完成" : "标记完成"}
+                          className="grid size-[15px] shrink-0 place-items-center rounded-full border-[1.5px] transition-colors"
+                          style={{
+                            borderColor: s.done ? "#b4b2a9" : accent,
+                            background: s.done ? "#b4b2a9" : "transparent",
+                          }}
+                        >
+                          {s.done && (
+                            <Check size={9} strokeWidth={3} className="text-white" />
+                          )}
+                        </button>
+                        <span
+                          className={`min-w-0 truncate text-[12.5px] ${
+                            s.done ? "text-fg-dim line-through" : "text-fg-2"
+                          }`}
+                        >
+                          {s.title}
+                        </span>
+                        {/* 到期时刻跟着子任务走：设了它的那一条才是"现在就要做的" */}
+                        {s.dueAt && (
+                          <span className="flex shrink-0 items-center gap-0.5 text-[10.5px] text-fg-dim">
+                            <Clock size={9} />
+                            {formatDateTime(s.dueAt)}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+
+                    {hiddenCount > 0 && (
+                      <div
+                        data-subtask-more=""
+                        className="pl-[22px] text-[11.5px] text-fg-dim"
+                      >
+                        …… 还有 {hiddenCount} 项
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 悬停操作区 */}

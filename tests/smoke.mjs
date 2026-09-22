@@ -218,9 +218,6 @@ check("我的一天包含手动加入的任务",
 const importantTasks = await repo.fetchTasks({ view: "important" });
 check("重要视图只返回标记任务", importantTasks.every((t) => t.important));
 
-const plannedTasks = await repo.fetchTasks({ view: "planned" });
-check("计划内只返回有日期的任务", plannedTasks.every((t) => t.dueDate !== null));
-
 const listTasks = await repo.fetchTasks({ view: "list", listId: workList.id, includeDone: true });
 check("列表视图按 listId 过滤", listTasks.every((t) => t.listId === workList.id));
 
@@ -454,6 +451,16 @@ check("步骤改名生效",
 await repo.deleteStep(step2.id);
 check("删除步骤生效", ((await repo.fetchAllSteps())[hostTask.id] ?? []).length === 1);
 
+// 子任务的到期时刻：能设、能读回、也能撤掉。
+// 撤不掉的话，一个设错的提醒会在紧急区里挂到天荒地老 —— 比没有提醒更烦人
+const stepDueAt = new Date(Date.now() + 40 * 60_000).toISOString();
+await repo.updateStep(step1.id, { dueAt: stepDueAt });
+check("子任务能设到期时刻",
+  ((await repo.fetchAllSteps())[hostTask.id] ?? []).find((s) => s.id === step1.id)?.dueAt === stepDueAt);
+await repo.updateStep(step1.id, { dueAt: null });
+check("子任务的到期时刻能撤掉",
+  ((await repo.fetchAllSteps())[hostTask.id] ?? []).find((s) => s.id === step1.id)?.dueAt === null);
+
 const otherTask = await repo.createTask({ listId: workList.id, title: "被关联的任务" });
 check("建立关联", (await repo.linkTasks(hostTask.id, otherTask.id)) === true);
 check("同向重复关联被忽略", (await repo.linkTasks(hostTask.id, otherTask.id)) === false);
@@ -515,13 +522,23 @@ other.tasks = [
 other.settings = { "profile.name": "备份里的名字" };
 other.steps = {
   "bak-task-1": [
-    { id: "bak-step-1", taskId: "bak-task-1", title: "备份步骤", done: false, sortOrder: 0 },
+    {
+      id: "bak-step-1",
+      taskId: "bak-task-1",
+      title: "备份步骤",
+      done: false,
+      sortOrder: 0,
+      dueAt: "2026-09-22T10:00",
+    },
   ],
 };
 const imp = await repo.importBackup(other);
 check("导入完成", imp.lists === 1 && imp.tasks === 1, `lists=${imp.lists} tasks=${imp.tasks}`);
 check("导入的步骤写回成功",
   ((await repo.fetchAllSteps())["bak-task-1"] ?? []).some((s) => s.title === "备份步骤"));
+check("导入的子任务带着到期时刻",
+  ((await repo.fetchAllSteps())["bak-task-1"] ?? []).some((s) => s.dueAt === "2026-09-22T10:00"),
+  JSON.stringify((await repo.fetchAllSteps())["bak-task-1"] ?? []));
 
 const afterImp = await repo.fetchTasks({ view: "all", includeDone: true });
 check("导入后旧数据被清空", afterImp.length === 1 && afterImp[0].id === "bak-task-1",
@@ -673,9 +690,6 @@ const todayPool = await repo.fetchWorkOrders({ view: "today", includeDone: true 
 check("今天开始的进入 today 视图", todayPool.some((o) => o.id === todayOrder.id));
 check("未来开始的不进 today 视图", !todayPool.some((o) => o.id === futureOrder.id));
 
-const planned = await repo.fetchWorkOrders({ view: "planned", includeDone: true });
-check("有计划日期的进入计划内", planned.some((o) => o.id === futureOrder.id));
-
 const inList = await repo.fetchWorkOrders({ view: "list", includeDone: true });
 check("清单视图不返回工单（工单不属于清单）", inList.length === 0);
 
@@ -774,6 +788,51 @@ section("18. 紧急判定：什么时候算「快到点了」");
     orderDeadline(
       O("o", { stageDueAt: at(20 * MIN), dueDate: repo.addDays(repo.today(), 5) }),
     ).source === "stage");
+
+  /* 子任务：只有自己设了时刻才算紧急，而且必须说清它属于哪条待办 */
+  const S = (id, extra = {}) => ({
+    id,
+    taskId: "",
+    title: id,
+    done: false,
+    sortOrder: 0,
+    dueAt: null,
+    ...extra,
+  });
+  const runSteps = (tasks, steps, minutes = 120, nowMs = now) =>
+    collectUrgent(tasks, [], { thresholdMinutes: minutes, nowMs }, steps);
+
+  const parent = T("P-有条子任务");
+  const stepSoon = S("S-半小时后", { taskId: parent.id, dueAt: at(30 * MIN) });
+  const sub = runSteps([parent], { [parent.id]: [stepSoon] });
+  check("子任务按自己的到期时刻进紧急区",
+    sub.length === 1 && sub[0].kind === "subtask" && sub[0].id === "S-半小时后",
+    JSON.stringify(sub.map((e) => `${e.kind}:${e.id}`)));
+  check("紧急区里的子任务带着所属待办",
+    sub[0]?.parent?.id === parent.id && sub[0]?.source === "subtask",
+    JSON.stringify(sub[0]?.parent ?? {}));
+  check("没设时间的子任务不进紧急区",
+    runSteps([parent], { [parent.id]: [S("S-无时间", { taskId: parent.id })] }).length === 0);
+  check("已完成的子任务不进紧急区",
+    runSteps([parent], {
+      [parent.id]: [S("S-已完成", { taskId: parent.id, dueAt: at(5 * MIN), done: true })],
+    }).length === 0);
+  check("父任务已完成时它的子任务不进紧急区",
+    runSteps([T("P-已完成", { done: true })], {
+      "P-已完成": [S("S-孤儿", { taskId: "P-已完成", dueAt: at(5 * MIN) })],
+    }).length === 0);
+  check("父任务不在池子里时子任务不进紧急区（不认孤儿）",
+    runSteps([], { "P-不存在": [S("S", { taskId: "P-不存在", dueAt: at(5 * MIN) })] }).length === 0);
+
+  const mixWithStep = collectUrgent(
+    [parent, T("T-90分", { remindAt: at(90 * MIN) })],
+    [],
+    { thresholdMinutes: 120, nowMs: now },
+    { [parent.id]: [S("S-10分", { taskId: parent.id, dueAt: at(10 * MIN) })] },
+  );
+  check("子任务与待办混排仍按截止时刻升序",
+    mixWithStep.length === 2 && mixWithStep[0].id === "S-10分" && mixWithStep[1].id === "T-90分",
+    mixWithStep.map((e) => e.id).join(","));
 
   // 混排后的顺序：逾期最久的排最前，其余按截止时刻升序
   const mix = run(
@@ -911,13 +970,6 @@ section("19. 列表排版与「默认展开第一条」同源");
   const onlyDaily = firstVisibleRow([task("T-每日", null, { repeat: "daily" })], [], "myday");
   check("「我的一天」只剩每日任务时也能选到它",
     onlyDaily?.kind === "task" && onlyDaily.task.id === "T-每日");
-
-  // 「计划内」按日期分桶，最早的一桶排在前面
-  const planned = groupRows([task("T-后天", D(2))], [order("O-明天", D(1))], "planned");
-  check("「计划内」按日期分桶", planned.sections.length === 2);
-  check("「计划内」最早的一桶在前", planned.sections[0].key === D(1));
-  check("「计划内」也能自动选中第一条",
-    firstVisibleRow([task("T-后天", D(2))], [order("O-明天", D(1))], "planned")?.kind === "order");
 
   check("空列表时没有候选", firstVisibleRow([], [], "all") === null);
 }
@@ -2100,6 +2152,63 @@ section("26. 快递单号的快递商识别与查询路径");
   );
   check("导出的表里有快递商这一列", csv.includes("快递商") && csv.includes("顺丰速运"));
   check("导出的表里有查询链接这一列", csv.includes("查询链接") && csv.includes("https://example.com/track"));
+}
+
+/* ---------- 27. 详情面板的分区顺序 ---------- */
+
+section("27. 详情面板分区顺序的解析与重排");
+
+{
+  const ds = await import("../src/lib/detailSections.ts");
+  const st = await import("../src/lib/settings.ts");
+
+  const ALL = ds.DEFAULT_DETAIL_SECTIONS;
+
+  /* --- 脏值：一律兜住，不能让界面少一块或多一块 --- */
+  check("默认顺序就是界面从上到下的顺序",
+    JSON.stringify(ds.parseDetailSections(undefined)) === JSON.stringify(ALL),
+    ds.parseDetailSections(undefined).join(","));
+  check("手改坏了 JSON 时退回默认",
+    ds.parseDetailSections("{oops").join(",") === ALL.join(","));
+  check("认不出来的 id 丢掉",
+    !ds.parseDetailSections('["note","bogus"]').includes("bogus"));
+  check("重复项只留第一次的位置",
+    ds.parseDetailSections('["note","repeat","note"]').join(",") ===
+      `note,repeat,${ALL.filter((x) => x !== "note" && x !== "repeat").join(",")}`,
+    ds.parseDetailSections('["note","repeat","note"]').join(","));
+  check("缺了的补到末尾（新版加分区时老配置不会让它凭空消失）",
+    ds.parseDetailSections('["note"]').length === ALL.length &&
+      ds.parseDetailSections('["note"]')[ALL.length - 1] !== "note",
+    ds.parseDetailSections('["note"]').join(","));
+  check("解析结果永远不重不漏",
+    new Set(ds.parseDetailSections('["note","note","ghost"]')).size === ALL.length);
+
+  /* --- 重排 --- */
+  check("上移：换了位置且长度不变",
+    ds.moveDetailSection(ALL, "note", -1)[ALL.length - 2] === "note" &&
+      ds.moveDetailSection(ALL, "note", -1).length === ALL.length,
+    ds.moveDetailSection(ALL, "note", -1).join(","));
+  check("第一项不能再上移（返回原数组，不写入新值）",
+    ds.moveDetailSection(ALL, "subtasks", -1) === ALL);
+  check("最后一项不能再下移",
+    ds.moveDetailSection(ALL, "note", 1) === ALL);
+  check("下移只挪一格", ds.moveDetailSection(ALL, "subtasks", 1)[1] === "subtasks",
+    ds.moveDetailSection(ALL, "subtasks", 1).join(","));
+
+  check("拖到别人头上就是插到那个位置",
+    ds.placeDetailSection(ALL, "note", "subtasks")[0] === "note",
+    ds.placeDetailSection(ALL, "note", "subtasks").join(","));
+  check("往后落位是插到目标位置、其余顺延",
+    ds.placeDetailSection(ALL, "note", "repeat").join(",") ===
+      "subtasks,schedule,note,repeat,list,links",
+    ds.placeDetailSection(ALL, "note", "repeat").join(","));
+  check("拖到自己头上等于没动", ds.placeDetailSection(ALL, "note", "note") === ALL);
+
+  /* --- 落库串 --- */
+  const round = st.DEFAULT_SETTINGS[st.SETTINGS.detailSectionOrder];
+  check("默认配置能原样读回", ds.parseDetailSections(round).join(",") === ALL.join(","), round);
+  check("序列化会补上写漏的分区",
+    ds.parseDetailSections(ds.formatDetailSections(["note"])).length === ALL.length);
 }
 
 console.log(`\n${"=".repeat(52)}`);

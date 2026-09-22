@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Flame, Settings2, Timer, Circle } from "lucide-react";
+import { Flame, Settings2, Timer, Circle, ListChecks } from "lucide-react";
 import { useStore } from "../store";
 import { collectUrgent, deadlineText, type UrgentEntry } from "../lib/urgent";
 import { SETTINGS, parseUrgentMinutes } from "../lib/settings";
@@ -28,6 +28,7 @@ export default function UrgentPanel() {
   const {
     urgentTasks,
     urgentOrders,
+    stepsByTask,
     stages,
     settings,
     openUrgent,
@@ -44,13 +45,17 @@ export default function UrgentPanel() {
     return () => window.clearInterval(id);
   }, []);
 
+  // 子任务也参与紧急判定：一条待办挂着 5 个子任务，其中"三点前把图发出去"
+  // 才是真正卡点的事 —— 只按待办自己的到期日算，这一步没人提醒。
   const all = useMemo(
     () =>
-      collectUrgent(urgentTasks, urgentOrders, {
-        thresholdMinutes: minutes,
-        nowMs,
-      }),
-    [urgentTasks, urgentOrders, minutes, nowMs],
+      collectUrgent(
+        urgentTasks,
+        urgentOrders,
+        { thresholdMinutes: minutes, nowMs },
+        stepsByTask,
+      ),
+    [urgentTasks, urgentOrders, stepsByTask, minutes, nowMs],
   );
 
   const rows = all.slice(0, MAX_ROWS);
@@ -88,24 +93,35 @@ export default function UrgentPanel() {
         {all.length === 0 ? (
           <div data-urgent-empty="" className="px-2 py-3 text-[11.5px] leading-relaxed text-fg-dim">
             接下来 <span className="text-fg-3">{humanDuration(minutes * 60_000)}</span>{" "}
-            内没有要到期的待办或工单。想更早收到提醒，到设置里把这个时间调长。
+            内没有要到期的待办、子任务或工单。想更早收到提醒，到设置里把这个时间调长。
           </div>
         ) : (
           <>
-            {rows.map((e) => (
-              <UrgentRow
-                key={`${e.kind}:${e.id}`}
-                entry={e}
-                stageName={stageNameOf(e, urgentOrders, stages)}
-                stageColor={stageColorOf(e, urgentOrders, stages)}
-                active={
-                  e.kind === "task" ? activeTaskId === e.id : activeOrderId === e.id
-                }
-                // 走 openUrgent 而不是 openTask/openOrder：紧急区扫的是全库，
-                // 这条可能根本不在当前视图里（见 store.openUrgent）
-                onOpen={() => void openUrgent(e.kind, e.id)}
-              />
-            ))}
+            {rows.map((e) => {
+              // 子任务点的是**它所属的待办**：它没有自己的详情页，
+              // 而"打开父任务"正是看到全部子任务的唯一入口
+              const openId = e.kind === "subtask" ? (e.parent?.id ?? "") : e.id;
+              const openKind = e.kind === "order" ? "order" : "task";
+              return (
+                <UrgentRow
+                  key={`${e.kind}:${e.id}`}
+                  entry={e}
+                  stageName={stageNameOf(e, urgentOrders, stages)}
+                  stageColor={stageColorOf(e, urgentOrders, stages)}
+                  parentTitle={e.parent?.title}
+                  active={
+                    e.kind === "task"
+                      ? activeTaskId === e.id
+                      : e.kind === "order"
+                        ? activeOrderId === e.id
+                        : activeTaskId === e.parent?.id
+                  }
+                  // 走 openUrgent 而不是 openTask/openOrder：紧急区扫的是全库，
+                  // 这条可能根本不在当前视图里（见 store.openUrgent）
+                  onOpen={() => void openUrgent(openKind, openId)}
+                />
+              );
+            })}
             {hidden > 0 && (
               <div data-urgent-more="" className="px-2 pt-1 pb-0.5 text-[10.5px] text-fg-dim">
                 还有 {hidden} 条同样临近
@@ -152,12 +168,15 @@ function UrgentRow({
   entry,
   stageName,
   stageColor,
+  parentTitle,
   active,
   onOpen,
 }: {
   entry: UrgentEntry;
   stageName?: string;
   stageColor?: string;
+  /** 子任务所属待办的标题 */
+  parentTitle?: string;
   active: boolean;
   onOpen: () => void;
 }) {
@@ -166,7 +185,9 @@ function UrgentRow({
       ? "提醒时间"
       : entry.source === "stage"
         ? "当前步骤时效"
-        : "到期日";
+        : entry.source === "subtask"
+          ? "子任务到期时间"
+          : "到期日";
 
   return (
     <div
@@ -179,12 +200,20 @@ function UrgentRow({
         active ? "bg-chip" : "hover:bg-hover"
       }`}
     >
-      {/* 类型标记：待办是圆、工单是方（带过程态颜色），与主列表同一套视觉语言 */}
+      {/* 类型标记：待办是圆、工单是方（带过程态颜色）、子任务是清单图标，
+          与主列表同一套视觉语言 —— 不用读字就能分开 */}
       {entry.kind === "order" ? (
         <span
           className="block size-3 shrink-0 rounded-[3px] border-[1.5px]"
           style={{ borderColor: stageColor ?? "#888780" }}
         />
+      ) : entry.kind === "subtask" ? (
+        <span
+          data-urgent-kind="subtask"
+          className="grid size-3 shrink-0 place-items-center"
+        >
+          <ListChecks size={12} className="text-fg-dim" />
+        </span>
       ) : (
         <span
           data-urgent-kind="task"
@@ -204,6 +233,12 @@ function UrgentRow({
         {stageName && (
           <div className="truncate text-[10.5px]" style={{ color: stageColor }}>
             {stageName}
+          </div>
+        )}
+        {/* 子任务必须带上它属于哪条待办，否则"把图发出去"是谁的图无从判断 */}
+        {parentTitle && (
+          <div data-urgent-parent="" className="truncate text-[10.5px] text-fg-dim">
+            属于：{parentTitle}
           </div>
         )}
       </div>

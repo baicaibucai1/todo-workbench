@@ -11,14 +11,15 @@ import {
   StickyNote,
   Repeat as RepeatIcon,
   ListChecks,
-  Bell,
   Link2,
   Plus,
   MousePointerClick,
 } from "lucide-react";
 import { useStore } from "../store";
 import { addDays, today } from "../lib/repo";
+import { formatDateTime, isoToLocalInput, localInputToIso } from "../lib/datetime";
 import { DETAIL_WIDTH, SETTINGS, parseDetailWidth } from "../lib/settings";
+import { parseDetailSections, type DetailSectionId } from "../lib/detailSections";
 import { useDragWidth } from "../lib/useDragWidth";
 import type { Repeat, Step, Task, WorkOrder } from "../types";
 import OrderDetail from "./OrderDetail";
@@ -66,6 +67,7 @@ export default function TaskDetail() {
     toggleStep,
     renameStep,
     removeStep,
+    setStepDue,
     linkedTasks,
     loadLinks,
     linkTask,
@@ -112,6 +114,12 @@ export default function TaskDetail() {
   // 有工单就看工单，否则看任务。两个同时非空不会发生（openTask/openOrder 维持互斥），
   // 这里给个确定的优先级，万一将来被破坏也不会渲染出两个详情。
   const mode: "order" | "task" | "empty" = order ? "order" : task ? "task" : "empty";
+
+  // 分区顺序来自设置，用户在「行为偏好」里自己排
+  const sectionOrder = useMemo(
+    () => parseDetailSections(settings[SETTINGS.detailSectionOrder]),
+    [settings],
+  );
 
   // 备注用本地状态承接输入，防抖落库。
   // 直接把 value 绑到 task.note 的话，每次刷新都会把光标打到末尾。
@@ -186,6 +194,7 @@ export default function TaskDetail() {
             <DetailBody
               task={shownTask}
               steps={steps}
+              sectionOrder={sectionOrder}
               note={note}
               setNote={setNote}
               noteTimer={noteTimer}
@@ -203,6 +212,7 @@ export default function TaskDetail() {
               onToggleStep={(s) => void toggleStep(s)}
               onRenameStep={(id, t) => void renameStep(id, t)}
               onRemoveStep={(id) => void removeStep(id)}
+              onSetStepDue={(id, at) => void setStepDue(id, at)}
               onLink={(id) => void linkTask(shownTask.id, id)}
               onUnlink={(id) => void unlinkTask(shownTask.id, id)}
             />
@@ -239,6 +249,7 @@ function EmptyDetail() {
 function DetailBody({
   task,
   steps,
+  sectionOrder,
   note,
   setNote,
   noteTimer,
@@ -256,11 +267,14 @@ function DetailBody({
   onToggleStep,
   onRenameStep,
   onRemoveStep,
+  onSetStepDue,
   onLink,
   onUnlink,
 }: {
   task: Task;
   steps: Step[];
+  /** 各分区从上到下的显示顺序，用户在「行为偏好」里排 */
+  sectionOrder: DetailSectionId[];
   note: string;
   setNote: (v: string) => void;
   noteTimer: React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
@@ -278,6 +292,8 @@ function DetailBody({
   onToggleStep: (s: Step) => void;
   onRenameStep: (id: string, title: string) => void;
   onRemoveStep: (id: string) => void;
+  /** 给子任务设到期时刻；null 表示撤掉 */
+  onSetStepDue: (id: string, at: string | null) => void;
   onLink: (id: string) => void;
   onUnlink: (id: string) => void;
 }) {
@@ -301,6 +317,250 @@ function DetailBody({
 
   const overdue = !!task.dueDate && task.dueDate < today() && !task.done;
   const stepDone = steps.filter((s) => s.done).length;
+
+  // 各分区的内容先备好，顺序由设置决定（见 lib/detailSections.ts）。
+  // 每块的 key 用分区 id —— 换顺序时 React 才不会把上一块的状态
+  // （比如备注正在输入的内容）张冠李戴到下一块上。
+  const blocks: Record<DetailSectionId, React.ReactNode> = {
+    subtasks: (
+      <>
+        <SectionLabel icon={<ListChecks size={13} />} text="子任务" />
+        <div className="mt-1.5 overflow-hidden rounded-lg border border-line bg-card">
+          {steps.map((s) => (
+            <StepRow
+              key={s.id}
+              step={s}
+              accent={accent}
+              onToggle={() => onToggleStep(s)}
+              onRename={(v) => onRenameStep(s.id, v)}
+              onSetDue={(v) => onSetStepDue(s.id, v)}
+              onRemove={() => onRemoveStep(s.id)}
+            />
+          ))}
+          <div className="flex items-center gap-2 border-t border-line px-2.5 py-1.5">
+            <Plus size={14} className="shrink-0 text-fg-dim" />
+            <StepComposer onAdd={onAddStep} />
+          </div>
+        </div>
+        {steps.length > 0 && (
+          <div className="mt-2 flex items-center gap-2">
+            <div className="h-1 flex-1 overflow-hidden rounded-full bg-chip">
+              <div
+                className="h-full rounded-full transition-[width] duration-300 ease-out"
+                style={{
+                  width: `${(stepDone / steps.length) * 100}%`,
+                  background: accent,
+                }}
+              />
+            </div>
+            <span data-step-progress="" className="shrink-0 text-[11.5px] text-fg-dim">
+              {stepDone}/{steps.length}
+            </span>
+          </div>
+        )}
+      </>
+    ),
+
+    // 日期与提醒合成**一张**卡片：这两件事是同一个deadline的两个刻度 ——
+    // "什么时候到期"和"什么时候喊我"总是一起改的。分开放的时候，
+    // 改一次日期要在相隔几屏的两个分区之间来回跳。
+    schedule: (
+      <>
+        <SectionLabel icon={<CalendarDays size={13} />} text="日期与提醒" />
+        <div className="mt-1.5 overflow-hidden rounded-lg border border-line bg-card">
+          <div data-detail-part="due" className="p-1.5">
+            <div className="px-1 pb-1 text-[11.5px] text-fg-dim">截止日期</div>
+            <div className="flex gap-1">
+              {[
+                { label: "今天", date: today() },
+                { label: "明天", date: addDays(today(), 1) },
+              ].map((o) => (
+                <button
+                  key={o.label}
+                  onClick={() => onSetDueDate(o.date)}
+                  className={`flex-1 rounded px-2 py-1.5 text-[12.5px] transition-colors ${
+                    task.dueDate === o.date
+                      ? "bg-[#378add] text-white"
+                      : "text-fg-3 hover:bg-hover"
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))}
+              <input
+                type="date"
+                value={task.dueDate ?? ""}
+                onChange={(e) => onSetDueDate(e.target.value || null)}
+                className="w-[104px] rounded px-1.5 py-1 text-[12.5px] text-fg-3 outline-none hover:bg-hover"
+              />
+              {task.dueDate && (
+                <button
+                  onClick={() => onSetDueDate(null)}
+                  title="移除日期"
+                  className="grid w-8 place-items-center rounded text-fg-dim hover:bg-danger-soft"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            <div className="mt-1 px-1 text-[11.5px] text-fg-dim">
+              {task.dueDate ? (
+                <span className={overdue ? "text-danger" : ""}>
+                  当前：{dueLabel}
+                  {overdue && " · 已过期"}
+                </span>
+              ) : (
+                "未设置截止日期"
+              )}
+            </div>
+          </div>
+
+          <div data-detail-part="reminder" className="border-t border-line p-1.5">
+            <div className="px-1 pb-1 text-[11.5px] text-fg-dim">提醒</div>
+            <div className="flex flex-wrap gap-1">
+              {REMINDER_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  data-reminder-preset={p.label}
+                  onClick={() => onPatch({ remindAt: p.at() })}
+                  className={`rounded px-2 py-1 text-[12px] transition-colors ${
+                    sameRemind(task.remindAt, p.at())
+                      ? "bg-[#378add] text-white"
+                      : "text-fg-3 hover:bg-hover"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <input
+              type="datetime-local"
+              data-reminder-input=""
+              value={isoToLocalInput(task.remindAt)}
+              onChange={(e) => onPatch({ remindAt: localInputToIso(e.target.value) })}
+              className="mt-1.5 w-full rounded px-2 py-1 text-[12.5px] text-fg-3 outline-none hover:bg-hover"
+            />
+            <div className="mt-1 px-1 text-[11.5px] text-fg-dim">
+              {task.remindAt ? (
+                <span data-reminder-hint="">
+                  将在 {formatDateTime(task.remindAt)} 提醒
+                  {new Date(task.remindAt).getTime() < Date.now() && " · 已到点"}
+                </span>
+              ) : (
+                "未设置提醒"
+              )}
+            </div>
+          </div>
+        </div>
+      </>
+    ),
+
+    repeat: (
+      <>
+        <SectionLabel icon={<RepeatIcon size={13} />} text="重复" />
+        <div className="mt-1.5 flex gap-1 overflow-hidden rounded-lg border border-line bg-card p-1.5">
+          {REPEAT_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              data-repeat={o.value}
+              onClick={() => onSetRepeat(o.value)}
+              className={`flex-1 rounded px-2 py-1.5 text-[12.5px] transition-colors ${
+                task.repeat === o.value ? "bg-[#378add] text-white" : "text-fg-3 hover:bg-hover"
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        <div className="mt-1 px-0.5 text-[11.5px] text-fg-dim">
+          {task.repeat === "daily"
+            ? task.done
+              ? "今天已完成，明天自动恢复为未完成"
+              : "每天出现，今天勾掉明天自动恢复未完成"
+            : "只做一次"}
+        </div>
+      </>
+    ),
+
+    list: (
+      <>
+        <SectionLabel text="所属列表" />
+        <select
+          value={task.listId}
+          onChange={(e) => onPatch({ listId: e.target.value })}
+          className="mt-1.5 w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
+        >
+          {lists.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+            </option>
+          ))}
+        </select>
+      </>
+    ),
+
+    links: (
+      <>
+        <SectionLabel icon={<Link2 size={13} />} text="关联任务" />
+        <div className="mt-1.5 overflow-hidden rounded-lg border border-line bg-card">
+          {linkedTasks.length === 0 ? (
+            <div className="px-2.5 py-2 text-[12px] leading-relaxed text-fg-dim">
+              还没有关联任务。适合放"做完这个才能做那个"或"同一件事的两半"。
+            </div>
+          ) : (
+            linkedTasks.map((t) => (
+              <div
+                key={t.id}
+                data-linked={t.id}
+                className="flex animate-fade-up items-center gap-2 px-2.5 py-1.5"
+              >
+                <Link2 size={12} className="shrink-0 text-fg-dim" />
+                <button
+                  onClick={() => onOpenTask(t.id)}
+                  title="打开这条任务"
+                  className={`min-w-0 flex-1 truncate text-left text-[13px] text-fg-2 hover:underline ${
+                    t.done ? "text-fg-dim line-through" : ""
+                  }`}
+                >
+                  {t.title}
+                </button>
+                <button
+                  onClick={() => onUnlink(t.id)}
+                  title="解除关联"
+                  className="grid size-5 shrink-0 place-items-center rounded text-fg-dim hover:bg-danger-soft"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))
+          )}
+          <div className="border-t border-line p-1.5">
+            <LinkPicker
+              taskId={task.id}
+              exclude={[task.id, ...linkedTasks.map((t) => t.id)]}
+              onPick={onLink}
+            />
+          </div>
+        </div>
+      </>
+    ),
+
+    note: (
+      <>
+        <SectionLabel icon={<StickyNote size={13} />} text="备注" />
+        <textarea
+          data-note-input=""
+          value={note}
+          onChange={(e) => {
+            setNote(e.target.value);
+            commitNote(e.target.value);
+          }}
+          placeholder="添加备注"
+          className="mt-1.5 min-h-[110px] w-full resize-none rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim focus:border-[#378add]"
+        />
+      </>
+    ),
+  };
 
   return (
     <>
@@ -357,235 +617,12 @@ function DetailBody({
           />
         </div>
 
-        {/* 步骤（子任务） */}
-        <div className="mt-4 px-4">
-          <SectionLabel icon={<ListChecks size={13} />} text="步骤" />
-          <div className="mt-1.5 overflow-hidden rounded-lg border border-line bg-card">
-            {steps.map((s) => (
-              <StepRow
-                key={s.id}
-                step={s}
-                accent={accent}
-                onToggle={() => onToggleStep(s)}
-                onRename={(v) => onRenameStep(s.id, v)}
-                onRemove={() => onRemoveStep(s.id)}
-              />
-            ))}
-            <div className="flex items-center gap-2 border-t border-line px-2.5 py-1.5">
-              <Plus size={14} className="shrink-0 text-fg-dim" />
-              <StepComposer onAdd={onAddStep} />
-            </div>
+        {/* 分区顺序由设置决定 —— 见 lib/detailSections.ts */}
+        {sectionOrder.map((id) => (
+          <div key={id} data-detail-section={id} className="mt-4 px-4">
+            {blocks[id]}
           </div>
-          {steps.length > 0 && (
-            <div className="mt-2 flex items-center gap-2">
-              <div className="h-1 flex-1 overflow-hidden rounded-full bg-chip">
-                <div
-                  className="h-full rounded-full transition-[width] duration-300 ease-out"
-                  style={{
-                    width: `${(stepDone / steps.length) * 100}%`,
-                    background: accent,
-                  }}
-                />
-              </div>
-              <span data-step-progress="" className="shrink-0 text-[11.5px] text-fg-dim">
-                {stepDone}/{steps.length}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* 提醒 */}
-        <div className="mt-4 px-4">
-          <SectionLabel icon={<Bell size={13} />} text="提醒" />
-          <div className="mt-1.5 overflow-hidden rounded-lg border border-line bg-card p-1.5">
-            <div className="flex flex-wrap gap-1">
-              {REMINDER_PRESETS.map((p) => (
-                <button
-                  key={p.label}
-                  data-reminder-preset={p.label}
-                  onClick={() => onPatch({ remindAt: p.at() })}
-                  className={`rounded px-2 py-1 text-[12px] transition-colors ${
-                    sameRemind(task.remindAt, p.at())
-                      ? "bg-[#378add] text-white"
-                      : "text-fg-3 hover:bg-hover"
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            <input
-              type="datetime-local"
-              data-reminder-input=""
-              value={isoToLocalInput(task.remindAt)}
-              onChange={(e) => onPatch({ remindAt: localInputToIso(e.target.value) })}
-              className="mt-1.5 w-full rounded px-2 py-1 text-[12.5px] text-fg-3 outline-none hover:bg-hover"
-            />
-            <div className="mt-1 px-1 text-[11.5px] text-fg-dim">
-              {task.remindAt ? (
-                <span data-reminder-hint="">
-                  将在 {formatRemindAt(task.remindAt)} 提醒
-                  {new Date(task.remindAt).getTime() < Date.now() && " · 已到点"}
-                </span>
-              ) : (
-                "未设置提醒"
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* 重复规则：决定这条任务是"做完就没"还是"每天都来" */}
-        <div className="mt-4 px-4">
-          <SectionLabel icon={<RepeatIcon size={13} />} text="重复" />
-          <div className="mt-1.5 flex gap-1 overflow-hidden rounded-lg border border-line bg-card p-1.5">
-            {REPEAT_OPTIONS.map((o) => (
-              <button
-                key={o.value}
-                data-repeat={o.value}
-                onClick={() => onSetRepeat(o.value)}
-                className={`flex-1 rounded px-2 py-1.5 text-[12.5px] transition-colors ${
-                  task.repeat === o.value
-                    ? "bg-[#378add] text-white"
-                    : "text-fg-3 hover:bg-hover"
-                }`}
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-          <div className="mt-1 px-0.5 text-[11.5px] text-fg-dim">
-            {task.repeat === "daily"
-              ? task.done
-                ? "今天已完成，明天自动恢复为未完成"
-                : "每天出现，今天勾掉明天自动恢复未完成"
-              : "只做一次"}
-          </div>
-        </div>
-
-        {/* 截止日期 */}
-        <div className="mt-4 px-4">
-          <SectionLabel icon={<CalendarDays size={13} />} text="截止日期" />
-          <div className="mt-1.5 overflow-hidden rounded-lg border border-line bg-card">
-            <div className="flex gap-1 p-1.5">
-              {[
-                { label: "今天", date: today() },
-                { label: "明天", date: addDays(today(), 1) },
-              ].map((o) => (
-                <button
-                  key={o.label}
-                  onClick={() => onSetDueDate(o.date)}
-                  className={`flex-1 rounded px-2 py-1.5 text-[12.5px] transition-colors ${
-                    task.dueDate === o.date
-                      ? "bg-[#378add] text-white"
-                      : "text-fg-3 hover:bg-hover"
-                  }`}
-                >
-                  {o.label}
-                </button>
-              ))}
-              <input
-                type="date"
-                value={task.dueDate ?? ""}
-                onChange={(e) => onSetDueDate(e.target.value || null)}
-                className="w-[104px] rounded px-1.5 py-1 text-[12.5px] text-fg-3 outline-none hover:bg-hover"
-              />
-              {task.dueDate && (
-                <button
-                  onClick={() => onSetDueDate(null)}
-                  title="移除日期"
-                  className="grid w-8 place-items-center rounded text-fg-dim hover:bg-danger-soft"
-                >
-                  <X size={13} />
-                </button>
-              )}
-            </div>
-            <div className="border-t border-line px-3 py-1.5 text-[11.5px] text-fg-dim">
-              {task.dueDate ? (
-                <span className={overdue ? "text-danger" : ""}>
-                  当前：{dueLabel}
-                  {overdue && " · 已过期"}
-                </span>
-              ) : (
-                "未设置截止日期"
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* 所属列表 */}
-        <div className="mt-4 px-4">
-          <SectionLabel text="所属列表" />
-          <select
-            value={task.listId}
-            onChange={(e) => onPatch({ listId: e.target.value })}
-            className="mt-1.5 w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
-          >
-            {lists.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* 关联任务 */}
-        <div className="mt-4 px-4">
-          <SectionLabel icon={<Link2 size={13} />} text="关联任务" />
-          <div className="mt-1.5 overflow-hidden rounded-lg border border-line bg-card">
-            {linkedTasks.length === 0 ? (
-              <div className="px-2.5 py-2 text-[12px] leading-relaxed text-fg-dim">
-                还没有关联任务。适合放"做完这个才能做那个"或"同一件事的两半"。
-              </div>
-            ) : (
-              linkedTasks.map((t) => (
-                <div
-                  key={t.id}
-                  data-linked={t.id}
-                  className="flex animate-fade-up items-center gap-2 px-2.5 py-1.5"
-                >
-                  <Link2 size={12} className="shrink-0 text-fg-dim" />
-                  <button
-                    onClick={() => onOpenTask(t.id)}
-                    title="打开这条任务"
-                    className={`min-w-0 flex-1 truncate text-left text-[13px] text-fg-2 hover:underline ${
-                      t.done ? "text-fg-dim line-through" : ""
-                    }`}
-                  >
-                    {t.title}
-                  </button>
-                  <button
-                    onClick={() => onUnlink(t.id)}
-                    title="解除关联"
-                    className="grid size-5 shrink-0 place-items-center rounded text-fg-dim hover:bg-danger-soft"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))
-            )}
-            <div className="border-t border-line p-1.5">
-              <LinkPicker
-                taskId={task.id}
-                exclude={[task.id, ...linkedTasks.map((t) => t.id)]}
-                onPick={onLink}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* 备注 */}
-        <div className="mt-4 px-4">
-          <SectionLabel icon={<StickyNote size={13} />} text="备注" />
-          <textarea
-            value={note}
-            onChange={(e) => {
-              setNote(e.target.value);
-              commitNote(e.target.value);
-            }}
-            placeholder="添加备注"
-            className="mt-1.5 min-h-[110px] w-full resize-none rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim focus:border-[#378add]"
-          />
-        </div>
+        ))}
       </div>
 
       {/* 底部：时间信息与删除 */}
@@ -614,12 +651,15 @@ function StepRow({
   accent,
   onToggle,
   onRename,
+  onSetDue,
   onRemove,
 }: {
   step: Step;
   accent: string;
   onToggle: () => void;
   onRename: (v: string) => void;
+  /** 设到期时刻；传 null 是撤掉 */
+  onSetDue: (v: string | null) => void;
   onRemove: () => void;
 }) {
   const [text, setText] = useState(step.title);
@@ -660,13 +700,144 @@ function StepRow({
           step.done ? "text-fg-dim line-through" : "text-fg-2"
         }`}
       />
+      <StepDuePicker value={step.dueAt} onChange={onSetDue} />
       <button
         onClick={onRemove}
-        title="删除步骤"
+        title="删除子任务"
         className="grid size-5 shrink-0 place-items-center rounded text-fg-dim opacity-0 transition-opacity group-hover:opacity-100 hover:bg-danger-soft"
       >
         <X size={12} />
       </button>
+    </div>
+  );
+}
+
+/* ---------------------------- 子任务的到期时刻 ---------------------------- */
+
+/**
+ * 快捷档位同样是"相对现在"的，渲染那一刻才算 —— 存常量的话
+ * 面板开着放十分钟，点下去设的是十分钟前的那个点。
+ */
+const STEP_DUE_PRESETS: Array<{ label: string; at: () => string }> = [
+  { label: "1 小时后", at: () => new Date(Date.now() + 60 * 60_000).toISOString() },
+  {
+    label: "今天 18:00",
+    at: () => {
+      const d = new Date();
+      d.setHours(18, 0, 0, 0);
+      // 已经过了 18 点还叫"今天 18:00"就是骗人 —— 顺延到明天，
+      // 但标签不改：标签说的是意图，具体落在哪天看胶囊上的日期。
+      if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+      return d.toISOString();
+    },
+  },
+  {
+    label: "明天 09:00",
+    at: () => {
+      const d = new Date();
+      d.setDate(d.getDate() + 1);
+      d.setHours(9, 0, 0, 0);
+      return d.toISOString();
+    },
+  },
+];
+
+/**
+ * 子任务的到期时刻。
+ *
+ * 设了就显示成一颗胶囊（「今天 14:30」），没设时只在悬停时露出时钟图标 ——
+ * 子任务行本来就窄，每行常年挂一排图标会把一页清单挤成一排色块。
+ *
+ * 之所以让它自带时刻（而不是只勾"做完没做完"）：真正卡人的往往不是整件任务，
+ * 是其中「三点前要把图发出去」那一步。没有时刻，那一步在时间上是隐形的。
+ */
+function StepDuePicker({
+  value,
+  onChange,
+}: {
+  value: string | null;
+  onChange: (v: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  // 点别处就收起来。不能省：详情里可以同时给好几条子任务设时间，
+  // 没有这条就得再点一次小按钮才能收，用户只会觉得"点了没反应"。
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  return (
+    <div ref={boxRef} className="relative shrink-0">
+      {value ? (
+        <button
+          data-step-due-button=""
+          onClick={() => setOpen(!open)}
+          title="修改到期时间"
+          className="flex items-center gap-0.5 rounded-full bg-chip px-1.5 py-0.5 text-[10.5px] text-fg-dim hover:bg-hover"
+        >
+          <Clock size={9} />
+          {formatDateTime(value)}
+        </button>
+      ) : (
+        <button
+          data-step-due-button=""
+          onClick={() => setOpen(!open)}
+          title="设置到期时间"
+          className="grid size-5 place-items-center rounded text-fg-dim opacity-0 transition-opacity group-hover:opacity-100 hover:bg-hover"
+        >
+          <Clock size={12} />
+        </button>
+      )}
+
+      {open && (
+        <div
+          data-step-due-pop=""
+          className="absolute right-0 top-full z-20 mt-1 w-[190px] rounded-lg border border-line bg-card p-1.5 shadow-[0_4px_14px_rgba(0,0,0,0.16)]"
+        >
+          <div className="flex flex-col gap-0.5">
+            {STEP_DUE_PRESETS.map((p) => (
+              <button
+                key={p.label}
+                data-step-due-preset={p.label}
+                onClick={() => {
+                  onChange(p.at());
+                  setOpen(false);
+                }}
+                className="rounded px-2 py-1 text-left text-[12px] text-fg-3 hover:bg-hover"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <input
+            type="datetime-local"
+            data-step-due-input=""
+            value={isoToLocalInput(value)}
+            onChange={(e) => onChange(localInputToIso(e.target.value))}
+            className="mt-1 w-full rounded px-1.5 py-1 text-[12px] text-fg-3 outline-none hover:bg-hover"
+          />
+          {/* 能撤掉比能设置更关键：设错一个时间点会在紧急区里挂到天荒地老，
+              比压根没设过更烦人 */}
+          {value && (
+            <button
+              data-step-due-clear=""
+              onClick={() => {
+                onChange(null);
+                setOpen(false);
+              }}
+              className="mt-1 w-full rounded px-2 py-1 text-[12px] text-danger hover:bg-danger-soft"
+            >
+              取消到期时间
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -684,7 +855,7 @@ function StepComposer({ onAdd }: { onAdd: (title: string) => void }) {
           setV("");
         }
       }}
-      placeholder="添加步骤"
+      placeholder="添加子任务"
       className="min-w-0 flex-1 border-0 bg-transparent px-1 py-0.5 text-[13px] outline-none placeholder:text-fg-dim"
     />
   );
@@ -877,28 +1048,8 @@ function sameRemind(a: string | null, b: string | null): boolean {
   return isoToLocalInput(a) === isoToLocalInput(b);
 }
 
-function isoToLocalInput(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
-function localInputToIso(v: string): string | null {
-  if (!v) return null;
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString();
-}
-
-function formatRemindAt(iso: string): string {
-  const d = new Date(iso);
-  const p = (n: number) => String(n).padStart(2, "0");
-  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
-  return isoToLocalInput(iso).slice(0, 10) === today()
-    ? `今天 ${hm}`
-    : `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
-}
+// isoToLocalInput / localInputToIso / formatDateTime 三件套搬去了 lib/datetime.ts ——
+// 提醒、子任务到期、列表展开里的胶囊说的是同一种人话，各写一份改文案要翻三个文件。
 
 /** 时间展示：今天只给时刻，更早补上日期 */
 function formatWhen(iso: string): string {

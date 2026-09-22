@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Sun,
   Star,
-  CalendarDays,
   Inbox,
   Plus,
   Search,
@@ -41,7 +40,6 @@ const SMART_ITEMS: Array<{
 }> = [
   { key: "myday", label: "我的一天", icon: Sun },
   { key: "important", label: "重要", icon: Star },
-  { key: "planned", label: "计划内", icon: CalendarDays },
   { key: "all", label: "全部", icon: Inbox },
   // 工单的专属入口。工单平时也混在「全部」里，但想"只看手上的单子"就有地方去了
   { key: "orders", label: "工单", icon: ClipboardList },
@@ -50,9 +48,9 @@ const SMART_ITEMS: Array<{
   // 单独给个入口，是因为它们的价值就在"等不起"：在几十张工单里
   // 翻哪一张快超时，是件很难受的事。
   { key: "special", label: "特殊单号", icon: Timer },
-  // 图库：与上面几项**不同类** —— 前几项都是"待办的某种筛选"，
-  // 它是独立素材库。放在这一组里而不是工具区，理由见 types.SmartView。
-  { key: "gallery", label: "图库", icon: Images },
+  // 图库**不**在这一组：前几项都是"待办的某种筛选"，它是独立素材库。
+  // 2026-09-22 起挪到底部、挨着「设置」—— 上层是"看哪些任务"，
+  // 下层是"这个程序里还有什么地方可去"，图库属于后者。
 ];
 
 export default function Sidebar() {
@@ -368,8 +366,23 @@ export default function Sidebar() {
       {/* 底部：紧急区 —— 快到点的待办与工单自动出现在这里，阈值在设置里调 */}
       <UrgentPanel />
 
-      {/* 底部：设置入口 */}
-      <div className="border-t border-line px-2 py-2">
+      {/*
+        底部两块：图库 + 设置。
+        它们都不是"待办的某种筛选"，所以不和上面的视图组混排 ——
+        上半栏回答"看哪些任务"，下半栏回答"这个程序里还有什么地方可去"。
+      */}
+      <div className="border-t border-line px-2 pt-2">
+        <NavRow
+          navKey="gallery"
+          icon={<Images size={16} />}
+          label="图库"
+          active={view === "gallery" && !activeToolId}
+          count={badge("gallery")}
+          accent="#d4537e"
+          onClick={() => void setView("gallery")}
+        />
+      </div>
+      <div className="px-2 pt-1 pb-2">
         <button
           onClick={() => openSettings(true)}
           data-nav="settings"

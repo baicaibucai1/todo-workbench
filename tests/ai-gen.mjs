@@ -501,6 +501,41 @@ info("切到带参考图的档", refOk);
 check("带 image 的档放开「从图库选」", refOk.disabled === false, String(refOk.disabled));
 check("参考图上限是 3", refOk.max === 3, String(refOk.max));
 
+/* ---- 从本机加参考图：这条**曾经断过**，而且是静默的 ----
+   原来这个入口读的是 provider 级的 p.image.maxRef（阿里云恒为 0），
+   而不是按模型算的 maxRefsFor(model)（这一档是 3）。于是阿里云下本地图
+   会被静默丢弃：界面上写着「已加 0 / 3」，「＋」也在，塞图进去却什么都没发生，
+   零报错。旁边的「从图库选」走的是正确路径 —— 表现成「图库能加、本机加不了」。
+   全套 172 项当时没抓住它，因为「从本机加」只在 Agnes 下测过（那边 maxRef=4，
+   两条路径答案恰好相同）。所以这里必须在**另一家服务商**下再验一遍。 */
+await f.locator("#filePick").setInputFiles({ name: "ali-1.png", mimeType: "image/png", buffer: PNG_ALI });
+await page.waitForTimeout(1200);
+const localAdd = await f.evaluate(() => ({
+  count: document.body.dataset.refCount,
+  thumbs: document.querySelectorAll("#refList .ref").length,
+}));
+info("阿里云下从本机加一张", localAdd);
+check("从本机加参考图在阿里云下也生效（曾经的静默丢弃）", localAdd.count === "1", `count=${localAdd.count}`);
+check("缩略图渲染出来了", localAdd.thumbs === 1, `thumbs=${localAdd.thumbs}`);
+
+// 超上限时要说清原因，而不是给一句「最多 0 张」
+await f.locator("#imgModel").fill("z-image-turbo");
+await f.locator("#imgModel").dispatchEvent("input");
+await page.waitForTimeout(700);
+await f.locator("#filePick").setInputFiles({ name: "no.png", mimeType: "image/png", buffer: PNG });
+await page.waitForTimeout(1000);
+const noRef = await f.evaluate(() => ({
+  count: document.body.dataset.refCount,
+  toast: [...document.querySelectorAll(".toast")].map((t) => t.textContent).join(" | "),
+}));
+info("不收图的档位塞图", noRef);
+check("不收图的档位仍然拦下本地图", noRef.count === "0", `count=${noRef.count}`);
+check("提示说清是「这一档不支持参考图」", /不支持参考图/.test(noRef.toast), noRef.toast);
+
+await f.locator("#imgModel").fill("wan2.6-t2i");
+await f.locator("#imgModel").dispatchEvent("input");
+await page.waitForTimeout(500);
+
 /* ---- 真的跑一次异步生图 ---- */
 await f.locator("#imgModel").fill("wan2.6-t2i");
 await f.locator("#imgModel").dispatchEvent("input");
@@ -919,6 +954,182 @@ check("出片历史里只记一条（同一任务不重复）", vidOut.hist === 
 await shot("19-ai-video");
 
 /* ================================================================== */
+console.log("\n5b. MiniMax 视频：异步任务式（提交只回 task_id，轮询 /api/v1/tasks/{id}）");
+
+await f.selectOption("#provSel", "minimax");
+await page.waitForTimeout(600);
+
+const mmUI = await f.evaluate(() => ({
+  active: document.body.dataset.activeTab,
+  tabs: [...document.querySelectorAll("#tabs .tab")].map((t) => ({
+    k: t.dataset.tab, disabled: t.disabled,
+    sub: t.querySelector(".sub") ? t.querySelector(".sub").textContent : "",
+  })),
+  model: document.getElementById("vidModel").value.trim(),
+  sizes: [...document.querySelectorAll("#vidSize option")].map((o) => o.value),
+  ratio: document.getElementById("vidRatio").value,
+  seconds: document.getElementById("vidSeconds").value,
+  modes: [...document.querySelectorAll("#vidMode option")].map((o) => o.value),
+}));
+info("MiniMax 页面状态", mmUI);
+check(
+  "只声明视频的服务商：生图 / 对话页签置灰并注明原因",
+  mmUI.tabs.filter((t) => t.disabled).map((t) => t.k).sort().join(",") === "chat,image" &&
+    mmUI.tabs.every((t) => !t.disabled || t.sub.includes("不支持")),
+  JSON.stringify(mmUI.tabs),
+);
+check("当前页签自动落到视频", mmUI.active === "video", mmUI.active);
+check("模型框自动填入 MiniMax/MiniMax-H3", mmUI.model === "MiniMax/MiniMax-H3", mmUI.model);
+check("分辨率档位是 768P / 1080P", mmUI.sizes.join(",") === "768P,1080P", mmUI.sizes.join(","));
+check("画幅保留 16:9", mmUI.ratio === "16:9", mmUI.ratio);
+check("时长保留 5 秒", mmUI.seconds === "5", mmUI.seconds);
+// 这家只做纯文生视频：给它首尾帧/参考图的入口等于给一个点了必失败的按钮
+check("只有 text 一种模式", mmUI.modes.join(",") === "text", mmUI.modes.join(","));
+
+// 上一节 Agnes 的任务卡还留在列表里，先清掉再提交 ——
+// 否则等下数「1 张卡」会数到上一家的，断言就在骗自己
+await f.locator("#btnClearVid").click();
+await page.waitForTimeout(300);
+check("清空后列表是空的",
+  (await f.evaluate(() => document.querySelectorAll("#vidResults .vcard").length)) === 0);
+
+let mmPoll = 0;
+let mmCreateHeaders = null;
+let mmPollHeaders = null;
+await page.route("**/api/v1/services/aigc/video-generation/video-synthesis", async (route) => {
+  captured.minimaxCreate = JSON.parse(route.request().postData() || "{}");
+  mmCreateHeaders = route.request().headers();
+  await route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ output: { task_id: "mm-task-01", task_status: "PENDING" }, request_id: "r-1" }),
+  });
+});
+await page.route("**/api/v1/tasks/*", async (route) => {
+  mmPoll++;
+  captured.minimaxPoll = route.request().url();
+  mmPollHeaders = route.request().headers();
+  const done = mmPoll >= 2;
+  await route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      output: {
+        task_id: "mm-task-01",
+        task_status: done ? "SUCCEEDED" : "RUNNING",
+        video_url: done ? "http://localhost:1420/mock/mm.mp4" : "",
+      },
+      usage: done ? { duration: 5 } : null,
+    }),
+  });
+});
+await page.route("**/mock/mm.mp4", (route) =>
+  route.fulfill({ status: 200, contentType: "video/mp4", body: PNG }),
+);
+
+await f.locator("#vidPrompt").fill("女舰长独自站在巨大观景窗前，最后一支舰队正在跃迁离去");
+await f.locator("#btnGenVid").click();
+await page.waitForTimeout(13000);
+
+info("MiniMax 建任务请求体", captured.minimaxCreate);
+info("MiniMax 轮询地址", captured.minimaxPoll || "(无)");
+const mCreate = captured.minimaxCreate || {};
+check("建任务请求已发出", !!captured.minimaxCreate, String(captured.minimaxCreate).slice(0, 80));
+check(
+  "带 X-DashScope-Async: enable（不带就没有 task_id）",
+  !!mmCreateHeaders && mmCreateHeaders["x-dashscope-async"] === "enable",
+  mmCreateHeaders ? mmCreateHeaders["x-dashscope-async"] : "(未抓到请求头)",
+);
+check("model 是 MiniMax/MiniMax-H3", mCreate.model === "MiniMax/MiniMax-H3", String(mCreate.model));
+check(
+  "prompt 在 input.prompt 下面（不在顶层）",
+  !!(mCreate.input && mCreate.input.prompt),
+  JSON.stringify(mCreate.input || {}),
+);
+check(
+  "parameters 用的是 resolution / ratio / duration（数字）",
+  mCreate.parameters && mCreate.parameters.resolution === "768P" &&
+    mCreate.parameters.ratio === "16:9" && mCreate.parameters.duration === 5,
+  JSON.stringify(mCreate.parameters || {}),
+);
+check(
+  "轮询打的是 /api/v1/tasks/{task_id}，不是 video_id 查询串",
+  /\/api\/v1\/tasks\/mm-task-01$/.test(captured.minimaxPoll || ""),
+  captured.minimaxPoll || "(无)",
+);
+check("轮询至少发生 2 次（先 RUNNING 后 SUCCEEDED）", mmPoll >= 2, `mmPoll=${mmPoll}`);
+/* ⚠️ 提交要带异步头，轮询**绝不能**带 —— 实测带上会被判成异步调用直接 403
+   （current user api does not support asynchronous calls），成片永远取不回来。
+   这两个方向相反，只验一边等于没验。 */
+check("提交带 X-DashScope-Async: enable",
+  mmCreateHeaders && mmCreateHeaders["x-dashscope-async"] === "enable",
+  mmCreateHeaders ? String(mmCreateHeaders["x-dashscope-async"]) : "(无请求)");
+check("轮询不带 X-DashScope-Async（带了会被 403 拒掉）",
+  !!mmPollHeaders && !mmPollHeaders["x-dashscope-async"],
+  mmPollHeaders ? String(mmPollHeaders["x-dashscope-async"]) : "(无请求)");
+check("轮询仍带鉴权头", !!mmPollHeaders && /^Bearer /.test(mmPollHeaders.authorization || ""),
+  mmPollHeaders ? (mmPollHeaders.authorization || "").slice(0, 20) : "(无请求)");
+
+const mmOut = await f.evaluate(() => ({
+  cards: document.querySelectorAll("#vidResults .vcard").length,
+  videos: document.querySelectorAll("#vidResults video").length,
+  src: document.querySelector("#vidResults video") ? document.querySelector("#vidResults video").getAttribute("src") : "",
+  kvLabel: document.querySelector("#vidResults .kv .k") ? document.querySelector("#vidResults .kv .k").textContent : "",
+  kvVal: document.querySelector("#vidResults .mono") ? document.querySelector("#vidResults .mono").textContent : "",
+  tags: [...document.querySelectorAll("#vidResults .tag")].map((e) => e.textContent),
+}));
+info("MiniMax 结果卡", mmOut);
+check("出现 1 张任务卡", mmOut.cards === 1, `cards=${mmOut.cards}`);
+// 任务式接口没有 video_id：卡上要显示 task_id，而不是留一个永远的「—」
+check("任务句柄显示成 task_id 而不是空的 video_id",
+  mmOut.kvLabel === "task_id" && mmOut.kvVal === "mm-task-01",
+  `${mmOut.kvLabel}=${mmOut.kvVal}`);
+check("完成后渲染出 video 元素", mmOut.videos === 1, `videos=${mmOut.videos}`);
+check("成片地址取 output.video_url", mmOut.src === "http://localhost:1420/mock/mm.mp4", mmOut.src);
+check("状态标变成已完成", mmOut.tags.some((t) => t.includes("已完成")), mmOut.tags.join(","));
+await shot("19b-ai-video-minimax");
+
+/*
+ * 连接测试的路径必须按服务商走。
+ * 默认那一条是 OpenAI 兼容网关的 /models，但这个中转站上它是 404 ——
+ * 不声明 probe 的话「测试连接」会报一个假的"连不上"，把人引去查一个没坏的 Key。
+ * 所以这里钉两件事：打的是 /api/v1/models，且**没有**去打那条会 404 的根路径。
+ */
+const probeHits = { api: 0, root: 0 };
+const onProbeApi = async (route) => {
+  probeHits.api++;
+  await route.fulfill({
+    status: 200, contentType: "application/json",
+    body: JSON.stringify({ success: true, output: { total: 517, models: [] } }),
+  });
+};
+const onProbeRoot = async (route) => {
+  probeHits.root++;
+  await route.fulfill({ status: 404, contentType: "application/json", body: '{"error":"not found"}' });
+};
+await page.route("**/api/v1/models", onProbeApi);
+await page.route("https://maas.qianwenaiapi.com/models", onProbeRoot);
+
+await f.locator("#btnCfg").click();
+await page.waitForTimeout(400);
+await f.locator("#btnTest").click();
+await page.waitForTimeout(2500);
+const mmTest = await f.locator("#testOut").innerText();
+info("MiniMax 连接测试", mmTest.replace(/\s+/g, " ").slice(0, 120));
+check("连接测试打的是 /api/v1/models", probeHits.api === 1, `api=${probeHits.api} root=${probeHits.root}`);
+check("没有去打会 404 的站点根 /models", probeHits.root === 0, `root=${probeHits.root}`);
+check("读的是这家的返回形状（output.total 而不是 data[]）",
+  /517/.test(mmTest) && /连通/.test(mmTest), mmTest.slice(0, 120));
+await shot("19c-mm-probe");
+await f.locator("#btnCfgClose").click();
+await page.unroute("**/api/v1/models", onProbeApi);
+await page.unroute("https://maas.qianwenaiapi.com/models", onProbeRoot);
+
+// 还原：第 6 节的对话要用 Agnes（MiniMax 没声明对话能力）
+await f.selectOption("#provSel", "agnes");
+await page.waitForTimeout(600);
+
+/* ================================================================== */
 console.log("\n6. 对话：非流式与流式各一次（拦截真实请求）");
 
 await f.locator(".tab[data-tab='chat']").click();
@@ -1018,9 +1229,180 @@ info("连接测试输出", testOut.replace(/\s+/g, " ").slice(0, 140));
 check("连接测试也给出了 401 结论", testOut.includes("401"), testOut.slice(0, 120));
 await f.locator("#btnCfgClose").click();
 
+/* ==================================================================
+ * 8. 模型选择器
+ *
+ * 2026-09-21 把「裸 ID 输入框 + 浏览器原生 datalist」换成了组合框 + 自绘面板。
+ * 自定义控件最容易坏在这三处，这一节就盯这三处：
+ *   · 点开面板时把当前模型的完整 ID 当成搜索词 → 21 档被滤成它自己那一行
+ *   · 从面板点选绕开 refreshImageFields → 尺寸档 / 张数上限还停在上一个模型
+ *   · 浮层被左栏的 overflow 裁掉，或压在配置弹窗底下点不着
+ * ================================================================== */
+console.log("\n8. 模型选择器：展开 / 过滤 / 点选 / 键盘 / 浮层层级");
+
+await f.locator('.tab[data-tab="image"]').click();
+await f.selectOption("#provSel", "aliyun");
+await page.waitForTimeout(900);
+
+/* --- 点开：该列全部档位，而不是只剩当前那一行 --- */
+await f.locator("#imgModel").click();
+await page.waitForTimeout(500);
+const mp0 = await f.evaluate(() => ({
+  open: document.body.dataset.mpOpen,
+  items: document.querySelectorAll("#mpList .mp-item").length,
+  tiers: document.querySelectorAll("#modelsImage option").length,
+  first: (document.querySelector("#mpList .mp-item .mp-name") || {}).textContent || "",
+  price: (document.querySelector("#mpList .mp-item .mp-price") || {}).textContent || "",
+  tags: document.querySelectorAll("#mpList .mp-item .mp-tag").length,
+  selected: document.querySelectorAll('#mpList .mp-item[aria-selected="true"]').length,
+}));
+info("面板展开", mp0);
+check("点开模型框就展开面板", mp0.open === "true", String(mp0.open));
+check("面板列出全部档位（不是被当前 ID 滤成一行）",
+  mp0.items === mp0.tiers && mp0.items > 5, `${mp0.items} / ${mp0.tiers}`);
+check("每项都带中文名，不是只有 ID", /[\u4e00-\u9fa5]/.test(mp0.first), mp0.first);
+check("有单价的档位把单价列在行内", /0\.20/.test(mp0.price), mp0.price);
+check("能力标签跟着档位显示（张数 / 参考图 / 描述上限）", mp0.tags >= 3, String(mp0.tags));
+check("当前档在列表里被标出来", mp0.selected === 1, String(mp0.selected));
+
+/* --- 浮层：比左栏宽也不能被裁，且要在最上层 --- */
+const mpGeo = await f.evaluate(() => {
+  const pop = document.getElementById("mpPop").getBoundingClientRect();
+  const col = document.querySelector(".col-form").getBoundingClientRect();
+  const mid = document.elementFromPoint(pop.left + pop.width / 2, pop.top + 10);
+  return { w: Math.round(pop.width), h: Math.round(pop.height),
+           beyond: Math.round(pop.right - col.right),
+           onTop: !!(mid && mid.closest("#mpPop")) };
+});
+info("面板几何", mpGeo);
+check("面板比左栏宽也完整显示（fixed 定位，不被 overflow 裁）",
+  mpGeo.w >= 330 && mpGeo.h > 200 && mpGeo.beyond > 0, JSON.stringify(mpGeo));
+check("面板确实在最上层（elementFromPoint 落在它身上）", mpGeo.onTop === true, String(mpGeo.onTop));
+
+/* --- 输入即过滤 --- */
+await f.locator("#imgModel").fill("turbo");
+await page.waitForTimeout(450);
+const mpF = await f.evaluate(() => ({
+  items: [...document.querySelectorAll("#mpList .mp-item")].map((x) => x.dataset.id),
+  now: document.getElementById("mpNowImage").textContent.trim(),
+}));
+info("过滤 turbo", mpF);
+check("输入即过滤（只剩含 turbo 的档）",
+  mpF.items.length > 0 && mpF.items.every((x) => x.includes("turbo")), mpF.items.join(","));
+check("搜索期间不在 label 上误报「自定义 ID」", mpF.now !== "自定义 ID", mpF.now);
+
+/* --- 点选：必须走和手输同一条 refresh 路径 --- */
+await f.locator("#imgModel").fill("");
+await page.waitForTimeout(300);
+await f.locator('#mpList .mp-item[data-id="z-image-turbo"]').click();
+await page.waitForTimeout(700);
+const mpPick = await f.evaluate(() => ({
+  value: document.getElementById("imgModel").value,
+  open: document.body.dataset.mpOpen,
+  now: document.getElementById("mpNowImage").textContent.trim(),
+  nDisabled: document.getElementById("imgN").disabled,
+  sizes: [...document.querySelectorAll("#imgSize option")].map((o) => o.value),
+  price: document.getElementById("imgPrice").textContent.trim(),
+}));
+info("点选 z-image-turbo", mpPick);
+check("点选写回输入框", mpPick.value === "z-image-turbo", mpPick.value);
+check("选完面板收起", mpPick.open === "false", String(mpPick.open));
+check("label 上换成中文名而不是 ID", /Z-Image/.test(mpPick.now) && !/^z-image-turbo$/.test(mpPick.now), mpPick.now);
+check("尺寸档跟着换成这一档自己的（真的走了 refresh）",
+  mpPick.sizes.includes("1024*1024"), mpPick.sizes.slice(0, 3).join(","));
+check("一次只能出一张 → 张数控件锁掉", mpPick.nDisabled === true, String(mpPick.nDisabled));
+check("价格条同步（Z-Image 描述上限 800）", mpPick.price.includes("800"), mpPick.price);
+
+/* --- 键盘 --- */
+await f.locator("#imgModel").click();
+await page.waitForTimeout(400);
+await f.locator("#imgModel").fill("qwen-image-3");
+await page.waitForTimeout(450);
+await f.locator("#imgModel").press("ArrowDown");
+await f.locator("#imgModel").press("ArrowDown");
+await f.locator("#imgModel").press("Enter");
+await page.waitForTimeout(600);
+const mpK = await f.evaluate(() => ({
+  value: document.getElementById("imgModel").value,
+  open: document.body.dataset.mpOpen,
+}));
+info("键盘选档", mpK);
+check("↑↓ + Enter 能选到高亮那一档",
+  mpK.value.startsWith("qwen-image-3"), mpK.value);
+check("键盘选完也收起面板", mpK.open === "false", String(mpK.open));
+
+/* --- 配置弹窗里的同款控件 + 层级 + Esc 只关一层 --- */
+await f.locator("#btnCfg").click();
+await page.waitForTimeout(400);
+await f.locator('.mp[data-mp="cfgImage"] .mp-btn').click();
+await page.waitForTimeout(500);
+const cfgPop = await f.evaluate(() => {
+  const pop = document.getElementById("mpPop").getBoundingClientRect();
+  const mid = document.elementFromPoint(pop.left + pop.width / 2, pop.top + 10);
+  return { open: document.body.dataset.mpOpen,
+           onTop: !!(mid && mid.closest("#mpPop")),
+           items: document.querySelectorAll("#mpList .mp-item").length,
+           head: document.getElementById("mpHead").textContent };
+});
+info("配置弹窗里的面板", cfgPop);
+check("配置弹窗里点 ▾ 也能开面板", cfgPop.open === "true" && cfgPop.items > 0, JSON.stringify(cfgPop));
+check("面板盖在配置弹窗之上（否则点不着）", cfgPop.onTop === true, String(cfgPop.onTop));
+check("面板标题分得清「默认生图」和生图页", cfgPop.head.includes("默认"), cfgPop.head);
+
+await f.locator('.mp[data-mp="cfgImage"] input').press("Escape");
+await page.waitForTimeout(400);
+const mpEsc = await f.evaluate(() => ({
+  open: document.body.dataset.mpOpen,
+  cfg: document.body.dataset.cfgOpen,
+}));
+info("Esc 之后", mpEsc);
+check("Esc 先关面板", mpEsc.open === "false", String(mpEsc.open));
+check("Esc 不会连带把配置弹窗一起关掉", mpEsc.cfg === "true", String(mpEsc.cfg));
+
+/* --- 面板开着时切服务商：清单要跟着换一家 --- */
+await f.locator('.mp[data-mp="cfgImage"] .mp-btn').click();
+await page.waitForTimeout(400);
+await f.locator("#provSel").selectOption("agnes");
+await page.waitForTimeout(800);
+const mpSw = await f.evaluate(() => ({
+  open: document.body.dataset.mpOpen,
+  prov: document.getElementById("mpProv").textContent,
+  items: [...document.querySelectorAll("#mpList .mp-item")].map((x) => x.dataset.id),
+}));
+info("切服务商后的面板", mpSw);
+check("面板开着切服务商时清单跟着换（不停在上一家）",
+  mpSw.prov.includes("Agnes") && mpSw.items.every((x) => x.startsWith("agnes-")),
+  JSON.stringify(mpSw));
+
+await f.locator("#btnCfgClose").click();
+await page.waitForTimeout(300);
+
 /* ================================================================== */
-console.log("\n8. 控制台");
-// 真实 401 会在控制台留一条网络错误，这是预期的，不算产品缺陷
+console.log("\n8b. 停止轮询要结算历史，别把英文状态词漏到界面上");
+{
+  const labels = await f.evaluate(() => HISTORY_LABEL);
+  info("历史状态词表", labels);
+  check("stopped 有中文标签（不能直接显示 \"stopped\"）", labels.stopped === "已停止", String(labels.stopped));
+  check("四个常用状态都有标签",
+    ["queued", "completed", "failed", "stopped"].every((k) => !!labels[k]),
+    JSON.stringify(labels));
+
+  /* 停止轮询原来只写 job.pollError、不碰历史 —— 那条历史会永远停在「排队中」，
+     而任务其实已经在服务端跑起来并计费了。生图那条路取消时是会 updateHistory 的，
+     两边不一致，视频这条路是漏的。 */
+  check("有统一的停止收尾函数（会结算历史）",
+    await f.evaluate(() => typeof stopVideoPolling === "function" &&
+      /updateHistory/.test(stopVideoPolling.toString())));
+  check("停止轮询的三个出口都走它（手动/超时）",
+    await f.evaluate(() => {
+      const src = pollVideo.toString();
+      return (src.match(/stopVideoPolling\(/g) || []).length >= 3 &&
+        /status: "stopped"/.test(stopVideoPolling.toString());
+    }));
+}
+
+/* ================================================================== */
+console.log("\n9. 控制台");
 const realErrors = errors.filter(
   (e) => !/401|Failed to load resource/i.test(e),
 );

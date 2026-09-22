@@ -3382,6 +3382,14 @@ var Gallery = (function () {
   var HOST_SOURCE = 'workbench-host', TOOL_SOURCE = 'workbench-tool';
   var seq = 0, pending = Object.create(null), ctx = null;
 
+  /* 宿主窗口的 origin，握手（tool:context）之后才知道，之前只能发 '*'。
+     ⚠️ 不能一直用 window.location.origin：桌面端工具经 asset 协议加载
+     （http://asset.localhost/…），宿主在 http://tauri.localhost，两者不同源。
+     targetOrigin 填自己的 origin，浏览器会把消息**静默丢掉** —— 不抛错、
+     不告警，表现为每个请求都超时在"工作台无响应"，而宿主压根没收到过。
+     dev 下工具与宿主同源，所以这类问题只在装出来的应用里出现。 */
+  var hostOrigin = null;
+
   /* gallery.put 传的是**一整张 PNG** 的 base64（1080×3 倍的表格能有几百 KB
      到几 MB），要穿过 postMessage 再落盘，8 秒衡量不了它 */
   function ask(op, payload, timeoutMs) {
@@ -3391,7 +3399,7 @@ var Gallery = (function () {
       pending[id] = { resolve: resolve, reject: reject };
       try {
         parent.postMessage({ source: TOOL_SOURCE, type: 'tool:request', id: id, op: op, payload: payload || {} },
-          window.location.origin);
+          hostOrigin || '*');
       } catch (e) { delete pending[id]; reject(e); return; }
       setTimeout(function () {
         if (pending[id]) { delete pending[id]; reject(new Error('工作台无响应（' + op + '）')); }
@@ -3402,6 +3410,10 @@ var Gallery = (function () {
   window.addEventListener('message', function (e) {
     var d = e.data;
     if (!d || d.source !== HOST_SOURCE) return;
+    // 只把**父窗口**发来的那条认作宿主 origin：页面上别的 iframe 也能 postMessage
+    // 给这里。**不 return** —— 消息是否处理只看 source 字段（协议标记），
+    // 硬拦 e.source 会把"消息到了却没人理"做成最难查的那种失败。
+    if (e.source === parent && e.origin && e.origin !== 'null') hostOrigin = e.origin;
     if (d.type === 'tool:context') {
       ctx = d.data;
       syncGalleryUI();

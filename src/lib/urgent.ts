@@ -12,13 +12,13 @@
  */
 
 import { humanDuration } from "./due";
-import type { Task, WorkOrder } from "../types";
+import type { Step, Task, WorkOrder } from "../types";
 
 /** 截止时间取自哪个字段，界面上要能说清"凭什么算它紧急" */
-export type UrgentSource = "remind" | "due" | "stage";
+export type UrgentSource = "remind" | "due" | "stage" | "subtask";
 
 export interface UrgentEntry {
-  kind: "task" | "order";
+  kind: "task" | "order" | "subtask";
   id: string;
   title: string;
   /** 截止时刻（毫秒时间戳） */
@@ -33,6 +33,13 @@ export interface UrgentEntry {
   source: UrgentSource;
   /** 工单单号（待办为 undefined） */
   no?: string;
+  /**
+   * 子任务所属的待办。
+   *
+   * 光有子任务标题没法行动 —— "把图发出去"是谁的图？
+   * 而且点它要跳到**父任务**的详情（子任务没有自己的详情页）。
+   */
+  parent?: { id: string; title: string };
 }
 
 /**
@@ -109,18 +116,22 @@ export interface UrgentQuery {
 }
 
 /**
- * 收集紧急条目：待办与工单混在一起，按截止时刻升序。
+ * 收集紧急条目：待办、子任务与工单混在一起，按截止时刻升序。
  *
  * 逾期（remainMs < 0）天然排在最前 —— 它比任何"还剩一点"的都急，
  * 而且按截止时刻升序时，逾最久的排第一，正好是"欠得最多的先处理"。
  *
- * 完成的待办与已完结的工单一律排除：勾掉的待办还标红，
+ * 完成的待办/子任务与已完结的工单一律排除：勾掉的东西还标红，
  * 会让人以为有一堆事没处理。
+ *
+ * stepsByTask 传进来的**父任务必须在 tasks 里**：子任务不单独存在，
+ * 父任务已经完成或删除时，它的子任务再急也没意义（找都找不到）。
  */
 export function collectUrgent(
   tasks: Task[],
   orders: WorkOrder[],
   q: UrgentQuery,
+  stepsByTask: Record<string, Step[]> = {},
 ): UrgentEntry[] {
   const nowMs = q.nowMs ?? Date.now();
   const window = Math.max(0, q.thresholdMinutes) * 60_000;
@@ -142,6 +153,35 @@ export function collectUrgent(
       remainText: remainMs < 0 ? `已超 ${humanDuration(-remainMs)}` : `还剩 ${humanDuration(remainMs)}`,
       source: d.source,
     });
+  }
+
+  // 子任务：它自己的到期时刻（due_at）说了算。
+  //
+  // 为什么不继承父任务的截止时间：那会让"待办 9 点到期"连带把 7 条子任务
+  // 全部塞进紧急区，区里立刻被同一件事占满。子任务只有**自己**设了时间才算
+  // —— 设时间这个动作本身就是"这一步要紧"的表达。
+  const parentById = new Map(tasks.map((t) => [t.id, t]));
+  for (const [taskId, list] of Object.entries(stepsByTask)) {
+    const parent = parentById.get(taskId);
+    if (!parent || parent.deleted || parent.done) continue;
+    for (const s of list ?? []) {
+      if (s.done || !s.dueAt) continue;
+      const atMs = isoMs(s.dueAt);
+      if (atMs === null) continue;
+      const remainMs = atMs - nowMs;
+      if (remainMs > window) continue;
+      out.push({
+        kind: "subtask",
+        id: s.id,
+        title: s.title,
+        atMs,
+        remainMs,
+        overdue: remainMs < 0,
+        remainText: remainTextOf(remainMs),
+        source: "subtask",
+        parent: { id: parent.id, title: parent.title },
+      });
+    }
   }
 
   for (const o of orders) {

@@ -41,7 +41,16 @@ const page = await browser.newPage({ viewport: { width: 1180, height: 780 } });
 
 // 侧边栏里的条目。带计数角标的项，可访问名称会变成「全部 6」，
 // 所以用按钮内首个文本节点做精确匹配，而不是整名字符串相等。
-const navItem = (name) => page.locator("aside button").filter({ hasText: name }).first();
+//
+// 两处必须限定：
+// - 只认侧边栏那个 aside（详情面板也是 aside）
+// - 排除账户按钮：资料没设置时它显示「点击设置个人资料」，
+//   用 hasText("个人") 会先命中它，一下把设置面板点开，后面全线崩。
+const navItem = (name) =>
+  page
+    .locator('aside[data-sidebar-width] button:not([data-nav="profile"])')
+    .filter({ hasText: name })
+    .first();
 
 // 收集控制台错误与页面异常，这是发现运行时问题的关键
 const errors = [];
@@ -63,28 +72,39 @@ check(
 );
 
 console.log("\n2. 侧边栏");
-const sidebarText = await page.locator("aside").innerText();
+// 详情面板也是 aside，别抓错 —— 侧边栏有专属的 data-sidebar-width 标记
+const sidebarText = await page.locator("aside[data-sidebar-width]").innerText();
 check("显示我的一天", sidebarText.includes("我的一天"));
 check("显示重要", sidebarText.includes("重要"));
-check("显示计划内", sidebarText.includes("计划内"));
 check("显示全部", sidebarText.includes("全部"));
 check("显示工具分区", sidebarText.includes("工具"));
 check("显示内置图片裁剪工具", sidebarText.includes("图片裁剪"));
 check("显示工作列表", sidebarText.includes("工作"));
 check("显示个人列表", sidebarText.includes("个人"));
 check("显示新建列表入口", sidebarText.includes("新建列表"));
-check("显示账户邮箱", sidebarText.includes("name@example.com"));
+// 资料区有两种合法状态：种了默认邮箱（name@example.com），或用户清空过资料
+// （显示「点击设置个人资料」占位）—— 快照状态不同，别写死一种
+check("显示账户区（邮箱或未设置占位）",
+  sidebarText.includes("name@example.com") || sidebarText.includes("点击设置个人资料"));
 
-console.log("\n3. 顶栏状态");
-const headerText = await page.locator("body").innerText();
-check("显示数据库驱动状态", headerText.includes("内存库") || headerText.includes("SQLite"));
-check("显示 schema 版本", headerText.includes("schema v1"));
+console.log("\n3. 顶栏（已移除）");
+const topText = await page.locator("body").innerText();
+// 顶栏整条删掉后，界面里不应再出现标题文案与数据库/schema 徽标
+check("顶栏已移除（无标题文案）", !topText.includes("待办工作台"));
+check("顶栏已移除（无 schema 徽标）", !topText.includes("schema v"));
+// 侧边栏收起后，恢复入口由顶栏按钮改为左上角悬浮按钮 —— 这是唯一入口，必须有
+await page.locator('[title="收起侧边栏"]').click();
+await page.waitForTimeout(200);
+check("侧边栏收起后出现悬浮恢复按钮", (await page.locator("[data-sidebar-reopen]").count()) === 1);
+await page.locator("[data-sidebar-reopen]").click();
+await page.waitForTimeout(200);
+check("点悬浮按钮侧边栏恢复", (await page.locator("aside[data-sidebar-width]").count()) > 0);
 
 console.log("\n4. 我的一天视图（默认）");
 check("标题为我的一天", (await page.locator("h1").first().innerText()) === "我的一天");
 const headerBlock = await page.locator("h1").first().evaluate((el) => el.parentElement.parentElement.innerText);
 check("显示日期副标题", /\d+月\d+日,星期/.test(headerBlock), JSON.stringify(headerBlock));
-check("存在种子任务 1027 改码发货", headerText.includes("1027 改码发货"));
+check("存在种子任务 1027 改码发货", topText.includes("1027 改码发货"));
 check("显示底部添加任务输入框", (await page.getByPlaceholder("添加任务").count()) > 0);
 check("显示建议按钮（我的一天专属）", (await page.locator('[title="建议"]').count()) > 0);
 
@@ -120,12 +140,17 @@ check(
   (await page.locator("body").innerText()).includes("1027 改码发货"),
 );
 
-console.log("\n8. 切换到计划内视图");
-await navItem("计划内").click();
-await page.waitForTimeout(500);
-check("标题切换为计划内", (await page.locator("h1").first().innerText()) === "计划内");
-const plannedText = await page.locator("body").innerText();
-check("显示日期分组（今天）", plannedText.includes("今天"));
+console.log("\n8. 底部区块：图库在设置正上方");
+// 「计划内」整个视图已删（侧边栏入口也一起没了），这里顺手守住"它不会再回来"
+check("侧边栏不再有计划内", !sidebarText.includes("计划内"));
+const bottomNav = await page
+  .locator("aside[data-sidebar-width] [data-nav]")
+  .evaluateAll((els) => els.map((e) => e.getAttribute("data-nav")));
+const gi = bottomNav.indexOf("gallery");
+const si = bottomNav.indexOf("settings");
+console.log(`    · 底部顺序: 图库@${gi} 设置@${si}`);
+check("图库与设置都在侧边栏底部", gi !== -1 && si !== -1, bottomNav.join(","));
+check("图库紧挨在设置上面", gi !== -1 && si === gi + 1, `${gi} vs ${si}`);
 
 console.log("\n9. 切换到全部视图与列表视图");
 await navItem("全部").click();
@@ -137,13 +162,14 @@ await page.waitForTimeout(400);
 check("标题切换为个人", (await page.locator("h1").first().innerText()) === "个人");
 
 console.log("\n9b. 列表不重复渲染");
-const sidebarText2 = await page.locator("aside").innerText();
+const sidebarText2 = await page.locator("aside[data-sidebar-width]").innerText();
 const dupCheck = (name) => sidebarText2.split("\n").filter((l) => l.trim() === name).length;
 check("工作列表只出现一次", dupCheck("工作") === 1, `出现 ${dupCheck("工作")} 次`);
 check("个人列表只出现一次", dupCheck("个人") === 1, `出现 ${dupCheck("个人")} 次`);
 
 console.log("\n10. 搜索（跨列表检索）");
-const searchBox = page.getByPlaceholder("搜索");
+// 详情面板常驻在 DOM 里（收起只是宽度归零），它也有搜索框 —— 必须圈定侧边栏
+const searchBox = page.locator("aside[data-sidebar-width]").getByPlaceholder("搜索");
 await searchBox.fill("订单");
 await page.waitForTimeout(600);
 const searchText = await page.locator("body").innerText();
@@ -168,22 +194,18 @@ check("自动切换到新列表", (await page.locator("h1").first().innerText())
 
 console.log("\n12. 工具模块");
 await navItem("图片裁剪").click();
-await page.waitForTimeout(700);
+await page.waitForTimeout(900);
 const toolText = await page.locator("body").innerText();
 check("退出待办进入工具页", !(await page.locator("h1").first().isVisible().catch(() => false)));
 check("显示工具名", toolText.includes("图片裁剪"));
-check("显示浏览器演示模式提示", toolText.includes("浏览器演示模式"));
-check("显示工具接入契约", toolText.includes("工具接入契约"));
-check("显示 manifest 示例", toolText.includes("manifest.json"));
-check("显示数据隔离说明", toolText.includes("数据隔离"));
-
-console.log("\n13. 工具数据库连通性验证");
-await page.getByText("建表并写入示例订单").click();
-await page.waitForTimeout(900);
-const demoText = await page.locator("body").innerText();
-check("工具表已创建", demoText.includes("tool_image_crop_orders"));
-check("示例订单数据已写入", demoText.includes("SO-20260917-001"));
-check("金额格式化正确", demoText.includes("¥1280.50"));
+// 工具是跑在 iframe 里的**真页面**。
+// 契约说明页（「工具接入契约」「manifect.json」「数据隔离」那些）只在
+// 入口解析不出来时才兜底显示 —— 工具能正常加载时页面里根本没有这些字，
+// 所以这里要验的是"iframe 真的挂上了并且有内容"。
+const toolFrames = page.frames().filter((f) => f !== page.mainFrame());
+check("工具 iframe 已挂载", toolFrames.length > 0, `frames=${toolFrames.length}`);
+const frameHtml = toolFrames.length ? await toolFrames[0].content() : "";
+check("工具页面真的载入了内容", frameHtml.length > 200, `${frameHtml.length} 字符`);
 
 console.log("\n14. 返回待办并确认数据未受影响");
 await page.getByText("返回待办").click();

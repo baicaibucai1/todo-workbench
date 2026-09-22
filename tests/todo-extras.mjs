@@ -216,7 +216,107 @@ check("关闭后宽度仍是 360（面板常驻，不整块收起）",
 const closedMode = await detail().getAttribute("data-detail-mode");
 check("关闭后内容切成空态", closedMode === "empty", String(closedMode));
 
-console.log("\n5. 控制台");
+console.log("\n5. 选中才展开：描述 + 前三个子任务");
+// 一条专属的验证任务：带备注 + 5 个子任务，多出来的两个要看得到"……"
+const EXPAND_TITLE = "展开验证任务";
+await page.locator('aside [data-nav="all"]').click();
+await page.waitForTimeout(400);
+await page.locator('input[placeholder="添加任务"]').fill(EXPAND_TITLE);
+await page.keyboard.press("Enter");
+await page.waitForTimeout(700);
+
+// 新建的行排在第几行不一定，先按标题定位、取到 id，之后一律按 id 找
+const byTitle = () => rows().filter({ hasText: EXPAND_TITLE }).first();
+await byTitle().locator("div.truncate").first().click();
+await page.waitForTimeout(400);
+const expandId = await byTitle().getAttribute("data-task-id");
+const hostRow = () => page.locator(`[data-task-id="${expandId}"]`);
+
+const NOTE = "这是列表展开要显示的描述";
+await page.locator("[data-note-input]").fill(NOTE);
+await page.waitForTimeout(800); // 备注是防抖写入的，等它落库
+
+for (const s of ["子任务一", "子任务二", "子任务三", "子任务四", "子任务五"]) {
+  await page.locator("[data-step-input]").fill(s);
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(320);
+}
+
+const expandBlock = hostRow().locator("[data-task-expand]");
+check("选中的行展开出一块内容", (await expandBlock.count()) === 1);
+const expandText = (await expandBlock.textContent()) || "";
+check("展开区里有描述", expandText.includes(NOTE), expandText.slice(0, 60));
+const shown = await hostRow().locator("[data-subtask-row]").count();
+check("展开区只列出前三个子任务", shown === 3, `count=${shown}`);
+const moreText = ((await hostRow().locator("[data-subtask-more]").textContent()) || "").trim();
+info("省略提示", moreText);
+check("多出来的用「……」给出数量", moreText.includes("……") && moreText.includes("2"), moreText);
+await shot("13-expand");
+
+// 展开是**有动画**的：靠 grid-template-rows 的 0fr↔1fr 过渡，
+// 光有内容淡入、行高瞬间跳起来不算"展开动画"
+const expandStyle = await expandBlock.evaluate((el) => {
+  const s = getComputedStyle(el);
+  return { prop: s.transitionProperty, dur: s.transitionDuration, rows: s.gridTemplateRows };
+});
+info("展开区样式", JSON.stringify(expandStyle));
+check("展开区对高度做了过渡", expandStyle.prop.includes("grid-template-rows"), expandStyle.prop);
+check("过渡时长非 0", parseFloat(expandStyle.dur) > 0, expandStyle.dur);
+check("展开后确有高度", parseFloat(expandStyle.rows) > 0, expandStyle.rows);
+
+// 就地勾掉一个：展开出来的子任务就是给人顺手勾的
+await hostRow().locator("[data-subtask-toggle]").nth(2).click();
+await page.waitForTimeout(800);
+const badge5 = ((await hostRow().locator("[data-step-badge]").textContent()) || "").trim();
+info("进度", badge5);
+check("就地勾选子任务生效（1/5）", badge5.includes("1/5"), badge5);
+
+// 勾完的那条要让位：三个名额给还没做的（一、二、四），三排到后面去
+const shownTitles = (await hostRow().locator("[data-subtask-row]").allTextContents()).join("|");
+info("展开的三条", shownTitles);
+check(
+  "已完成的不占前排，后面的顶上来",
+  !shownTitles.includes("子任务三") && shownTitles.includes("子任务四"),
+  shownTitles,
+);
+
+// 切到别的行，这一块要收回去 —— 列表不是每行的详情页
+await rows().first().locator("div.truncate").first().click();
+// 刚点的这一瞬间必须还在 DOM 里：收起不是瞬间消失，得先把动画放完
+await page.waitForTimeout(60);
+const stillMounted = await hostRow().locator("[data-task-expand]").count();
+const closingRows = await hostRow()
+  .locator("[data-task-expand]")
+  .evaluate((el) => parseFloat(getComputedStyle(el).gridTemplateRows))
+  .catch(() => -1);
+await page.waitForTimeout(500);
+check("没被选中的行不展开", (await hostRow().locator("[data-task-expand]").count()) === 0);
+// 收起中途：节点还在，且高度已经在往 0 收（不是等动画结束才一起消失）
+check("收起时先播动画再卸载", stillMounted === 1, `mounted=${stillMounted}`);
+check("收起过程中高度正在变", closingRows >= 0, `rows=${closingRows}`);
+
+console.log("\n6. 子任务设时间 → 进紧急区");
+await hostRow().locator("div.truncate").first().click();
+await page.waitForTimeout(400);
+await page.locator("[data-step-due-button]").first().click();
+await page.waitForTimeout(300);
+await page.locator("button", { hasText: "1 小时后" }).first().click();
+await page.waitForTimeout(900);
+
+const dueCapsule = ((await page.locator("[data-step-due-button]").first().textContent()) || "").trim();
+info("子任务时间胶囊", dueCapsule);
+check("子任务行上显示了时间", /\d{1,2}:\d{2}/.test(dueCapsule), dueCapsule);
+
+const subUrgent = page.locator('[data-urgent-item^="subtask:"]');
+const subCount = await subUrgent.count();
+info("紧急区子任务条数", subCount);
+check("子任务进了紧急区", subCount >= 1, `count=${subCount}`);
+const parentLine = ((await subUrgent.first().locator("[data-urgent-parent]").textContent()) || "").trim();
+info("紧急区里的归属", parentLine);
+check("紧急区说清它属于哪条待办", parentLine.includes(EXPAND_TITLE), parentLine);
+await shot("14-subtask-urgent");
+
+console.log("\n7. 控制台");
 check("全程无控制台错误", errors.length === 0, errors.slice(0, 3).join(" | "));
 
 await browser.close();

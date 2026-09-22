@@ -6,6 +6,9 @@
  */
 
 import type { SmartView } from "../types";
+import { DEFAULT_DETAIL_SECTIONS } from "./detailSections";
+/* 键名与默认值在这里；「特殊单号」那几个偏好的**解析**放在 lib/special.ts，
+   因为列的合法范围、复制模板的取值集合都是那个领域自己才知道的事。 */
 
 export type ThemeMode = "light" | "dark" | "system";
 
@@ -32,6 +35,13 @@ export const SETTINGS = {
    * 同样是"我习惯看多宽"的偏好，必须跨启动保留。
    */
   sidebarWidth: "behavior.sidebarWidth",
+  /**
+   * 右侧详情面板里，一条待办的各分区按什么顺序显示（JSON 数组）。
+   *
+   * 排在最上面的那块决定"打开待办第一眼是什么"：天天在改日期的人要它第一，
+   * 拿待办当便签的人要备注第一。解析与重排见 lib/detailSections.ts。
+   */
+  detailSectionOrder: "behavior.detailSectionOrder",
   reminderEnabled: "reminder.enabled",
   reminderSystem: "reminder.system",
   reminderSnooze: "reminder.snoozeMinutes",
@@ -60,6 +70,25 @@ export const SETTINGS = {
    * 因为它们的生效方式一样 —— 都是"过滤注册表"。
    */
   toolsDisabled: "tools.disabled",
+  /**
+   * 「特殊单号」记录表上额外挂哪些列（JSON 数组，元素是相关信息字段名）。
+   *
+   * 字段名是用户自己起的，所以"哪一列该上表"只有他自己知道：
+   * 有人要一眼看到客户，有人要看到补发单号。写死几列等于所有人都要
+   * 点开详情才能核对 —— 那这个记录表就白做了。
+   */
+  specialColumns: "special.columns",
+  /** 相关信息的复制格式（见 lib/special.ts 的 CopyTemplate） */
+  specialCopyTemplate: "special.copyTemplate",
+  /** 记录表的行高密度：comfortable | compact */
+  specialDensity: "special.density",
+  /**
+   * 快递单号的查询渠道：快递100 / 菜鸟 / 快递商官网（见 lib/couriers.ts）。
+   *
+   * 它是**全局偏好**而不是每张单的属性：一个人手上跑的单子渠道是固定的
+   * （做平台单就一直用菜鸟），每张单都选一次等于把习惯变成重复劳动。
+   */
+  specialTrackChannel: "special.trackChannel",
 } as const;
 
 /** 头像可选色，与列表色板同源，避免两套颜色语言 */
@@ -98,7 +127,7 @@ export const SIDEBAR_WIDTH = { min: 220, max: 420, default: 280 } as const;
  * 下限 5 分钟：再小就没有任何意义 —— 一条"还剩 3 分钟"的待办
  * 在你看到它的时候往往已经过期了，等于把紧急区变成逾期区。
  * 上限 14 天是布局决定的：紧急区的定位是"接下来这一两天要出手的"，
- * 真要拿它排两周的活儿，那该去的是「计划内」视图。
+ * 真要按日期排两周的活儿，那看的是列表本身（到期日跟着行走），不是这里。
  */
 export const URGENT_MINUTES = { min: 5, max: 20160, default: 480 } as const;
 
@@ -127,12 +156,17 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.sidebarOpen]: "1",
   [SETTINGS.detailWidth]: String(DETAIL_WIDTH.default),
   [SETTINGS.sidebarWidth]: String(SIDEBAR_WIDTH.default),
+  [SETTINGS.detailSectionOrder]: JSON.stringify(DEFAULT_DETAIL_SECTIONS),
   [SETTINGS.reminderEnabled]: "1",
   [SETTINGS.reminderSystem]: "0",
   [SETTINGS.reminderSnooze]: "10",
   [SETTINGS.urgentMinutes]: String(URGENT_MINUTES.default),
   [SETTINGS.toolKeepState]: "1",
   [SETTINGS.toolsDisabled]: "",
+  [SETTINGS.specialColumns]: "[]",
+  [SETTINGS.specialCopyTemplate]: "label-cn",
+  [SETTINGS.specialDensity]: "comfortable",
+  [SETTINGS.specialTrackChannel]: "kuaidi100",
 };
 
 /**
@@ -257,7 +291,6 @@ export function watchSystemTheme(onChange: () => void): () => void {
 export const STARTUP_VIEWS: Array<{ value: SmartView; label: string }> = [
   { value: "myday", label: "我的一天" },
   { value: "important", label: "重要" },
-  { value: "planned", label: "计划内" },
   { value: "all", label: "全部" },
   { value: "orders", label: "工单" },
   { value: "gallery", label: "图库" },

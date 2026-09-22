@@ -10,7 +10,7 @@ import FlowEditor from "./components/FlowEditor";
 import { useStore } from "./store";
 import { pickActiveTool } from "./lib/tools";
 import { applyTheme, SETTINGS, watchSystemTheme } from "./lib/settings";
-import { Database, Package } from "lucide-react";
+import { PanelLeftOpen } from "lucide-react";
 
 export default function App() {
   const {
@@ -22,7 +22,6 @@ export default function App() {
     settings,
     sidebarOpen,
     toggleSidebar,
-    dbInfo,
     view,
   } = useStore();
 
@@ -74,29 +73,22 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* 标题栏，模仿应用窗口顶栏 */}
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line bg-panel px-3">
-        {!sidebarOpen && (
-          <button
-            onClick={toggleSidebar}
-            className="rounded px-1.5 py-0.5 text-[12px] text-fg-3 hover:bg-hover"
-          >
-            显示侧边栏
-          </button>
-        )}
-        <span className="text-[12px] text-fg-dim">待办工作台</span>
-        <div className="flex-1" />
-        <StatusPill
-          icon={<Database size={11} />}
-          label={dbInfo?.driver === "sqlite" ? "SQLite" : "内存库"}
-          tone={dbInfo?.driver === "sqlite" ? "good" : "warn"}
-        />
-        <StatusPill
-          icon={<Package size={11} />}
-          label={`schema v${dbInfo?.schemaVersion ?? "-"}`}
-          tone="plain"
-        />
-      </div>
+      {/*
+        顶栏整条移除（2026-09-21 用户要求）：窗口用的是系统原生标题栏，
+        这条 bar 不承担拖拽，只剩装饰性徽标。侧边栏收起后的恢复入口
+        改成左上角悬浮按钮 —— 收起后侧边栏 return null，没有这个按钮
+        就再也打不开了。
+      */}
+      {!sidebarOpen && (
+        <button
+          onClick={toggleSidebar}
+          title="显示侧边栏"
+          data-sidebar-reopen=""
+          className="fixed left-2 top-2 z-30 grid size-7 place-items-center rounded-md bg-card text-fg-dim shadow-[0_1px_4px_rgba(0,0,0,0.18)] hover:bg-hover hover:text-fg"
+        >
+          <PanelLeftOpen size={14} />
+        </button>
+      )}
 
       <div className="flex min-h-0 flex-1">
         <Sidebar />
@@ -125,35 +117,5 @@ export default function App() {
           挂在这里才能保证只有一份实例 */}
       <FlowEditor />
     </div>
-  );
-}
-
-function StatusPill({
-  icon,
-  label,
-  tone,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  tone: "good" | "warn" | "plain";
-}) {
-  const styles = {
-    good: "text-[#0f6e56] bg-[#e1f5ee]",
-    warn: "text-[#854f0b] bg-[#faeeda]",
-    plain: "text-fg-3 bg-chip",
-  }[tone];
-
-  return (
-    <span
-      className={`flex items-center gap-1 rounded px-1.5 py-px text-[11px] ${styles}`}
-      title={
-        tone === "warn"
-          ? "浏览器演示模式：数据存在 localStorage，打包后自动切换到 SQLite 文件"
-          : undefined
-      }
-    >
-      {icon}
-      {label}
-    </span>
   );
 }

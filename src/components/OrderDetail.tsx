@@ -16,9 +16,22 @@ import {
   Timer,
   Copy,
   ListTree,
+  ExternalLink,
 } from "lucide-react";
 import { useStore } from "../store";
 import { addDays, today } from "../lib/repo";
+import { SETTINGS } from "../lib/settings";
+import { formatFields, parseCopyTemplate } from "../lib/special";
+import {
+  COURIERS,
+  channelLabel,
+  courierCodeOf,
+  courierName,
+  detectCourier,
+  openTrackUrl,
+  parseTrackChannel,
+  resolveTrack,
+} from "../lib/couriers";
 import { DUE_PRESETS, dueAtText, dueState, dueText, fromLocalInputValue, toLocalInputValue } from "../lib/due";
 import type { WorkOrder } from "../types";
 import AttachmentPanel from "./AttachmentPanel";
@@ -49,7 +62,26 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
     addWoField,
     editWoField,
     removeWoField,
+    settings,
   } = useStore();
+
+  const isSpecial = order.kind === "special";
+  /** 查件走哪个渠道（全局偏好，见 SETTINGS.specialTrackChannel） */
+  const channel = parseTrackChannel(settings[SETTINGS.specialTrackChannel]);
+  /**
+   * 这张单上生效的快递商：库里指定了就用指定的，否则按单号识别。
+   * 走 courierCodeOf 而不是直接读 order.courier —— 大多数单是"没指定"的，
+   * 那时要按当前规则算，而不是显示"未知"。
+   */
+  const effectiveCourier = courierCodeOf(order.no, order.courier);
+  /** 自动识别的结果（下拉里那句"跟随识别（顺丰速运）"要用） */
+  const guessed = detectCourier(order.no)?.code ?? "";
+
+  const openTrack = () => {
+    const link = resolveTrack(order.no, effectiveCourier, channel);
+    if (!link) return;
+    openTrackUrl(link.url);
+  };
 
   const flowStages = stages
     .filter((s) => s.flowId === order.flowId)
@@ -209,11 +241,14 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
 
   // 只复制值（快递单号之类），不带上"字段名：" —— 粘到别处时那三个字是多余的。
   // 需要带名字的是"复制全部"，那里每行一个"字段名：值"，方便整段贴进聊天窗口。
+  //
+  // 格式走**记录视图里配的那套模板**：同一批信息在表上复制和在详情里复制
+  // 出来两份不一样的东西，是最难解释的那类 bug。
   const copyAll = async () => {
-    const text = woFields
-      .map((f) => (f.label ? `${f.label}：${f.value}` : f.value))
-      .filter(Boolean)
-      .join("\n");
+    const text = formatFields(
+      woFields,
+      parseCopyTemplate(settings[SETTINGS.specialCopyTemplate]),
+    );
     if (!text) return;
     if (await copyText(text)) flashCopied("__all__");
   };
@@ -247,9 +282,38 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-        {/* 单号 */}
+        {/* 单号 + 快递商 + 查件入口 */}
         <div className="px-4">
           <NoEditor value={order.no} onCommit={(v) => void patchOrder(order.id, { no: v })} />
+          {isSpecial && order.no && (
+            <div className="mt-1 flex items-center gap-1.5">
+              <select
+                value={order.courier}
+                onChange={(e) => void patchOrder(order.id, { courier: e.target.value })}
+                data-od-courier=""
+                title="认错了就在这里改一次，改完按你说的算"
+                className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-0.5 text-[11.5px] text-fg-2 outline-none"
+              >
+                <option value="">
+                  {guessed ? `跟随识别（${courierName(guessed)}）` : "跟随识别"}
+                </option>
+                {COURIERS.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={openTrack}
+                data-od-track=""
+                title={`去${channelLabel(channel)}查 ${order.no}`}
+                className="flex shrink-0 items-center gap-1 rounded-md border border-line px-1.5 py-0.5 text-[11.5px] text-fg-3 transition-colors hover:bg-hover hover:text-fg"
+              >
+                <ExternalLink size={11} />
+                查询物流
+              </button>
+            </div>
+          )}
         </div>
 
         {/* 过程态进度：工单的核心信息，摆在最前面 */}

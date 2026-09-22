@@ -453,6 +453,22 @@ export const migrations: Migration[] = [
       ALTER TABLE core_work_orders ADD COLUMN courier TEXT NOT NULL DEFAULT '';
     `,
   },
+  {
+    // 子任务（core_steps，界面上叫「子任务」）带上自己的到期时刻。
+    //
+    // 之前子任务只有"做完没做完"，它**在时间上是隐形的**：一条待办挂着
+    // 5 个子任务，其中"三点前把图发出去"到点了，紧急区里却只有那条待办
+    // 自己的到期日 —— 真正要命的那一步没人提醒。有了 due_at，子任务就能
+    // 和待办、工单一样按"还剩多久"排序进紧急区。
+    //
+    // 存**绝对时刻**而不是"提前多久"：跨重启后"提前 2 小时"要再记一次起点，
+    // 起点一丢就算不清了（与 core_work_orders.stage_due_at 同一套取舍）。
+    version: 12,
+    name: "add_step_due_at",
+    sql: `
+      ALTER TABLE core_steps ADD COLUMN due_at TEXT;
+    `,
+  },
 ];
 
 /** 当前代码期望的 schema 版本 */
