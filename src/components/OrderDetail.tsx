@@ -32,9 +32,10 @@ import {
   parseTrackChannel,
   resolveTrack,
 } from "../lib/couriers";
-import { DUE_PRESETS, dueAtText, dueState, dueText, fromLocalInputValue, toLocalInputValue } from "../lib/due";
+import { DUE_PRESETS, dueAtText, dueState, dueText } from "../lib/due";
 import type { WorkOrder } from "../types";
 import AttachmentPanel from "./AttachmentPanel";
+import DateTimePicker from "./DateTimePicker";
 
 /**
  * 右侧工单详情。
@@ -178,29 +179,6 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
       : ds === "overdue" || ds === "soon"
         ? "var(--color-danger)"
         : "#0f6e56";
-
-  /**
-   * 时效输入框走本地态 + 失焦落库。
-   *
-   * 不能像日期那样 change 即落库：datetime-local 每敲一段就会 onChange 一次，
-   * 中间值是残缺的（"2026-09-21T14:"），落库成 null 再回灌进受控输入框，
-   * 就等于把用户刚敲的东西擦掉。
-   *
-   * 但推进过程态后 DB 会把时效重设成新值 —— 那时又必须跟着变。
-   * 所以同步条件是"不在输入中"：光标还在框里就别动它。
-   */
-  const [dueInput, setDueInput] = useState(() => toLocalInputValue(order.stageDueAt));
-  const dueFocus = useRef(false);
-  useEffect(() => {
-    if (dueFocus.current) return;
-    setDueInput(toLocalInputValue(order.stageDueAt));
-  }, [order.id, order.stageDueAt]);
-
-  const commitDue = (v: string) => {
-    const iso = fromLocalInputValue(v);
-    if (iso === order.stageDueAt) return;
-    void patchOrder(order.id, { stageDueAt: iso });
-  };
 
   /* ---------------- 相关信息 ---------------- */
 
@@ -408,7 +386,6 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
                 <button
                   type="button"
                   onClick={() => {
-                    setDueInput("");
                     void patchOrder(order.id, { stageDueAt: null });
                   }}
                   data-order-due-clear=""
@@ -449,7 +426,6 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
                         data-order-due-preset={p.label}
                         onClick={() => {
                           const at = p.at(Date.now());
-                          setDueInput(toLocalInputValue(at));
                           void patchOrder(order.id, { stageDueAt: at });
                         }}
                         className="rounded-md border border-line px-2 py-1 text-[12px] text-fg-3 hover:bg-hover"
@@ -459,20 +435,19 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
                     ))}
                   </div>
 
-                  <input
-                    type="datetime-local"
-                    value={dueInput}
-                    data-order-due-input=""
-                    onFocus={() => {
-                      dueFocus.current = true;
-                    }}
-                    onChange={(e) => setDueInput(e.target.value)}
-                    onBlur={() => {
-                      dueFocus.current = false;
-                      commitDue(dueInput);
-                    }}
-                    className="mt-1.5 w-full rounded-lg border border-line px-2 py-1.5 text-[12.5px] text-fg-2 outline-none hover:bg-hover"
-                  />
+                  <div className="mt-1.5">
+                    <DateTimePicker
+                      mode="datetime"
+                      value={order.stageDueAt}
+                      onChange={(v) => {
+                        if ((v ?? null) === order.stageDueAt) return;
+                        void patchOrder(order.id, { stageDueAt: v });
+                      }}
+                      align="right"
+                      inputAttrs={{ "data-order-due-input": "" }}
+                      inputClassName="min-w-0 flex-1 rounded-lg border border-line px-2 py-1.5 text-[12.5px] text-fg-2 outline-none hover:bg-hover focus:bg-hover"
+                    />
+                  </div>
                 </>
               )}
 
@@ -863,14 +838,17 @@ function DateRow({
           明天
         </button>
       </div>
-      <input
-        type="date"
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value || null)}
-        className={`w-[112px] shrink-0 rounded px-1 py-0.5 text-[12px] outline-none hover:bg-hover ${
-          danger ? "text-danger" : "text-fg-3"
-        }`}
-      />
+      <div className="w-[132px] shrink-0">
+        <DateTimePicker
+          mode="date"
+          value={value ?? null}
+          onChange={(v) => onChange(v)}
+          align="right"
+          inputClassName={`w-full rounded px-1 py-0.5 text-[12px] outline-none hover:bg-hover focus:bg-hover ${
+            danger ? "text-danger" : "text-fg-3"
+          }`}
+        />
+      </div>
       {value && (
         <button
           onClick={() => onChange(null)}

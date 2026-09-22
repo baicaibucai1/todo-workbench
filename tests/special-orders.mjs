@@ -178,7 +178,11 @@ check("被拦住时没有落库", (await page.locator("[data-order-create]").cou
 
 // 再验证「没时效不让建」—— 时效是这类单子的意义所在
 await page.locator("[data-oc-no]").fill(TRACK);
-const clearBtn = page.locator("[data-oc-due-input]").locator("xpath=../button");
+// 用专门的 data-oc-due-clear，别走 `xpath=../button`：
+// 那种"输入框旁边的按钮"定位绑死了 DOM 层级，控件外面多包一层 div
+// （把原生 input 换成自绘选择器时就这么干了）就会点到别的按钮上，
+// 而且失败得毫无提示 —— 清空没生效、直接建成功了。
+const clearBtn = page.locator("[data-oc-due-clear]");
 if ((await clearBtn.count()) > 0) await clearBtn.first().click();
 else await page.locator("[data-oc-due-input]").fill("");
 await page.waitForTimeout(300);

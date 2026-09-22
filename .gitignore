@@ -19,6 +19,9 @@ src-tauri/gen/
 src-tauri/.cargo/config.toml
 src-tauri/.cargo/config.toml.bak
 
+# 会话规范与记忆（Tools 顶层有权威副本，不进版本控制）
+.workbuddy/
+
 # 本地环境
 .env
 .env.local

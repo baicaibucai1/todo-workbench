@@ -47,7 +47,25 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    host: false,
+    /**
+     * ⚠️ 必须是 `127.0.0.1`，不能省成 `false`（= 默认 `localhost`），也不能是 `::1`。
+     *
+     * 这不是风格问题，是**到底谁能连上**的问题。实测（Node 在 Windows 上起 http
+     * server，逐一验证三种 client 地址）：
+     *
+     *   监听 127.0.0.1 ── 127.0.0.1 ✅   [::1] ❌   localhost ✅
+     *   监听 ::1       ── 127.0.0.1 ❌   [::1] ✅   localhost ✅  ← 原来的默认值
+     *   监听 ::        ── 三个都 ✅（但那是全接口，等于把 dev server 摊到局域网上）
+     *
+     * 本机 `localhost` 解析到 IPv6 的 `::1`，而 Vite 的默认 `host: false` 就绑到
+     * 它上面 —— 于是**只认 IPv6**。工作台自己的内置浏览器预览走的是 127.0.0.1，
+     * 连不上就白屏，而且半点提示都没有。
+     *
+     * 绑 127.0.0.1 是这里的最优解：IPv4 通、`localhost` 也通（Chromium 与 Node
+     * 都会在 ::1 被拒后回落），同时**不**把服务暴露到局域网 —— `::` 虽然三个地址
+     * 全通，但那等于对外开了一个口子。
+     */
+    host: "127.0.0.1",
     watch: {
       ignored: ["**/src-tauri/**"],
     },

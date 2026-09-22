@@ -17,13 +17,14 @@ import {
 } from "lucide-react";
 import { useStore } from "../store";
 import { addDays, today } from "../lib/repo";
-import { formatDateTime, isoToLocalInput, localInputToIso } from "../lib/datetime";
+import { formatDateTime, isoToLocalInput } from "../lib/datetime";
 import { DETAIL_WIDTH, SETTINGS, parseDetailWidth } from "../lib/settings";
 import { parseDetailSections, type DetailSectionId } from "../lib/detailSections";
 import { useDragWidth } from "../lib/useDragWidth";
 import type { Repeat, Step, Task, WorkOrder } from "../types";
 import OrderDetail from "./OrderDetail";
 import ResizeHandle from "./ResizeHandle";
+import DateTimePicker from "./DateTimePicker";
 
 const REPEAT_OPTIONS: Array<{ value: Repeat; label: string }> = [
   { value: "none", label: "不重复" },
@@ -370,7 +371,7 @@ function DetailBody({
         <div className="mt-1.5 overflow-hidden rounded-lg border border-line bg-card">
           <div data-detail-part="due" className="p-1.5">
             <div className="px-1 pb-1 text-[11.5px] text-fg-dim">截止日期</div>
-            <div className="flex gap-1">
+            <div className="flex items-center gap-1">
               {[
                 { label: "今天", date: today() },
                 { label: "明天", date: addDays(today(), 1) },
@@ -387,17 +388,20 @@ function DetailBody({
                   {o.label}
                 </button>
               ))}
-              <input
-                type="date"
-                value={task.dueDate ?? ""}
-                onChange={(e) => onSetDueDate(e.target.value || null)}
-                className="w-[104px] rounded px-1.5 py-1 text-[12.5px] text-fg-3 outline-none hover:bg-hover"
-              />
+              <div className="w-[132px] shrink-0">
+                <DateTimePicker
+                  mode="date"
+                  value={task.dueDate}
+                  onChange={onSetDueDate}
+                  align="right"
+                  inputAttrs={{ "data-due-date-input": "" }}
+                />
+              </div>
               {task.dueDate && (
                 <button
                   onClick={() => onSetDueDate(null)}
                   title="移除日期"
-                  className="grid w-8 place-items-center rounded text-fg-dim hover:bg-danger-soft"
+                  className="grid w-7 shrink-0 place-items-center rounded text-fg-dim hover:bg-danger-soft"
                 >
                   <X size={13} />
                 </button>
@@ -433,13 +437,16 @@ function DetailBody({
                 </button>
               ))}
             </div>
-            <input
-              type="datetime-local"
-              data-reminder-input=""
-              value={isoToLocalInput(task.remindAt)}
-              onChange={(e) => onPatch({ remindAt: localInputToIso(e.target.value) })}
-              className="mt-1.5 w-full rounded px-2 py-1 text-[12.5px] text-fg-3 outline-none hover:bg-hover"
-            />
+            <div className="mt-1.5">
+              <DateTimePicker
+                mode="datetime"
+                value={task.remindAt}
+                onChange={(v) => onPatch({ remindAt: v })}
+                align="right"
+                inputAttrs={{ "data-reminder-input": "" }}
+                inputClassName="min-w-0 flex-1 rounded px-2 py-1 text-[12.5px] text-fg-3 outline-none hover:bg-hover focus:bg-hover"
+              />
+            </div>
             <div className="mt-1 px-1 text-[11.5px] text-fg-dim">
               {task.remindAt ? (
                 <span data-reminder-hint="">
@@ -815,13 +822,18 @@ function StepDuePicker({
               </button>
             ))}
           </div>
-          <input
-            type="datetime-local"
-            data-step-due-input=""
-            value={isoToLocalInput(value)}
-            onChange={(e) => onChange(localInputToIso(e.target.value))}
-            className="mt-1 w-full rounded px-1.5 py-1 text-[12px] text-fg-3 outline-none hover:bg-hover"
-          />
+          <div className="mt-1">
+            <DateTimePicker
+              mode="datetime"
+              value={value}
+              onChange={(v) => {
+                onChange(v);
+              }}
+              align="right"
+              inputAttrs={{ "data-step-due-input": "" }}
+              inputClassName="min-w-0 flex-1 rounded px-1.5 py-1 text-[12px] text-fg-3 outline-none hover:bg-hover focus:bg-hover"
+            />
+          </div>
           {/* 能撤掉比能设置更关键：设错一个时间点会在紧急区里挂到天荒地老，
               比压根没设过更烦人 */}
           {value && (

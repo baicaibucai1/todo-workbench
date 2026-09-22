@@ -11,9 +11,10 @@ import {
 } from "lucide-react";
 import { useStore } from "../store";
 import { addDays, today, nextOrderNo } from "../lib/repo";
-import { DUE_PRESETS, dueAtText, fromLocalInputValue, toLocalInputValue } from "../lib/due";
+import { DUE_PRESETS, dueAtText } from "../lib/due";
 import { COURIERS, courierName, detectCourier } from "../lib/couriers";
 import type { WorkOrderKind } from "../types";
+import DateTimePicker from "./DateTimePicker";
 
 /**
  * 新建工单：一次把参数填全。
@@ -493,19 +494,23 @@ export default function OrderCreateDialog({
                 ))}
               </div>
               <div className="mt-1.5 flex items-center gap-2">
-                <input
-                  type="datetime-local"
-                  value={toLocalInputValue(stageDueAt)}
-                  data-oc-due-input=""
-                  onChange={(e) => {
-                    setDueTouched(true);
-                    setStageDueAt(fromLocalInputValue(e.target.value) ?? "");
-                  }}
-                  className="min-w-0 flex-1 rounded-lg border border-line bg-card px-2 py-1.5 text-[12.5px] text-fg-2 outline-none hover:bg-hover"
-                />
+                <div className="min-w-0 flex-1">
+                  <DateTimePicker
+                    mode="datetime"
+                    value={stageDueAt || null}
+                    onChange={(v) => {
+                      setDueTouched(true);
+                      setStageDueAt(v ?? "");
+                    }}
+                    align="right"
+                    inputAttrs={{ "data-oc-due-input": "" }}
+                    inputClassName="min-w-0 flex-1 rounded-lg border border-line bg-card px-2 py-1.5 text-[12.5px] text-fg-2 outline-none hover:bg-hover focus:bg-hover"
+                  />
+                </div>
                 {stageDueAt && (
                   <button
                     type="button"
+                    data-oc-due-clear=""
                     onClick={() => {
                       setDueTouched(true);
                       setStageDueAt("");
@@ -730,7 +735,7 @@ function Field({
   );
 }
 
-/** 日期：今天/明天快捷键 + 原生 date 输入。原生控件负责"选任意一天" */
+/** 日期：今天/明天快捷键 + 自绘日历。原生的弹层长相不受控，见 DateTimePicker 的注释 */
 function DateInput({
   value,
   onChange,
@@ -763,13 +768,15 @@ function DateInput({
       >
         明天
       </button>
-      <input
-        type="date"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        {...{ [dataKey]: "" }}
-        className="min-w-0 flex-1 rounded px-1 py-0.5 text-[12px] text-fg-3 outline-none hover:bg-hover"
-      />
+      <div className="min-w-0 flex-1">
+        <DateTimePicker
+          mode="date"
+          value={value || null}
+          onChange={(v) => onChange(v ?? "")}
+          align="right"
+          inputAttrs={{ [dataKey]: "" }}
+        />
+      </div>
       {allowEmpty && value && (
         <button
           type="button"
