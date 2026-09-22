@@ -32,6 +32,9 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
+  GripVertical,
+  RotateCcw,
   HardDrive,
   Save,
   Table2,
@@ -67,6 +70,14 @@ import { ICONS, resolveIcon } from "../lib/icons";
 import type { ToolManifest } from "../types";
 import tauriConf from "../../src-tauri/tauri.conf.json";
 import { notifyPermission, requestNotifyPermission } from "../lib/notify";
+import {
+  DEFAULT_DETAIL_SECTIONS,
+  DETAIL_SECTIONS,
+  moveDetailSection,
+  parseDetailSections,
+  placeDetailSection,
+  type DetailSectionId,
+} from "../lib/detailSections";
 import {
   inspectDatabases,
   inspectTable,
@@ -1074,6 +1085,13 @@ function BehaviorSection({
   const systemNotify = (settings[SETTINGS.reminderSystem] ?? "0") === "1";
   const snooze = settings[SETTINGS.reminderSnooze] ?? "10";
   const urgentMinutes = parseUrgentMinutes(settings[SETTINGS.urgentMinutes]);
+  // 详情面板的分区顺序：拖拽中的两块要单独记住，松手才知道"移到哪儿去"
+  const detailOrder = parseDetailSections(settings[SETTINGS.detailSectionOrder]);
+  const [dragId, setDragId] = useState<DetailSectionId | null>(null);
+  const [hoverId, setHoverId] = useState<DetailSectionId | null>(null);
+
+  const commitDetailOrder = (next: DetailSectionId[]) =>
+    void saveSettings({ [SETTINGS.detailSectionOrder]: JSON.stringify(next) });
   // 档位里没有当前值时（用户自定义过）才算"自定义"，否则下拉会莫名跳到那一档
   const urgentIsPreset = URGENT_PRESETS.some((p) => p.minutes === urgentMinutes);
   const [urgentCustom, setUrgentCustom] = useState(String(urgentMinutes));
@@ -1258,6 +1276,89 @@ function BehaviorSection({
       </div>
 
       <div className="mt-5">
+        <SectionTitle
+          title="详情面板分区"
+          desc="右侧详情里一条待办的各块，从上到下按这里的顺序显示。"
+        />
+        <Card>
+          <div className="flex flex-col gap-1" data-detail-order="">
+            {detailOrder.map((id, i) => {
+              const label = DETAIL_SECTIONS.find((s) => s.id === id)?.label ?? id;
+              // 只有"正拖着别人悬停在这一行"才染色，自己悬停自己没必要提示
+              const isTarget = !!dragId && dragId !== id && hoverId === id;
+              return (
+                <div
+                  key={id}
+                  data-detail-order-row={id}
+                  data-detail-order-index={i}
+                  draggable
+                  onDragStart={() => setDragId(id)}
+                  onDragEnd={() => {
+                    setDragId(null);
+                    setHoverId(null);
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setHoverId(id);
+                  }}
+                  onDragLeave={() => setHoverId((h) => (h === id ? null : h))}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (dragId && dragId !== id) {
+                      commitDetailOrder(placeDetailSection(detailOrder, dragId, id));
+                    }
+                    setDragId(null);
+                    setHoverId(null);
+                  }}
+                  className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors ${
+                    isTarget ? "border-[#378add] bg-hover" : "border-line bg-card"
+                  } ${dragId === id ? "opacity-50" : ""}`}
+                >
+                  <GripVertical size={13} className="shrink-0 cursor-grab text-fg-dim" />
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-fg-2">
+                    {label}
+                  </span>
+                  {/* 按钮不是装饰：只有一条搬动路径的话，触屏和键盘用户就改不了了 */}
+                  <button
+                    onClick={() => commitDetailOrder(moveDetailSection(detailOrder, id, -1))}
+                    disabled={i === 0}
+                    data-act="detail-up"
+                    title="上移"
+                    className="grid size-6 shrink-0 place-items-center rounded text-fg-dim hover:bg-hover disabled:opacity-30"
+                  >
+                    <ChevronUp size={14} />
+                  </button>
+                  <button
+                    onClick={() => commitDetailOrder(moveDetailSection(detailOrder, id, 1))}
+                    disabled={i === detailOrder.length - 1}
+                    data-act="detail-down"
+                    title="下移"
+                    className="grid size-6 shrink-0 place-items-center rounded text-fg-dim hover:bg-hover disabled:opacity-30"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-line pt-3">
+            <div className="min-w-0 text-[11.5px] leading-relaxed text-fg-dim">
+              拖把手或点箭头都可以，改完右侧详情立刻跟着变。
+            </div>
+            <button
+              onClick={() => commitDetailOrder(DEFAULT_DETAIL_SECTIONS)}
+              data-act="detail-order-reset"
+              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-card px-2.5 py-1.5 text-[12.5px] text-fg-3 hover:bg-hover"
+            >
+              <RotateCcw size={12} />
+              恢复默认
+            </button>
+          </div>
+        </Card>
+      </div>
+
+      <div className="mt-5">
         <SectionTitle title="每日任务" desc="每日任务今天勾掉后，第二天会自动变回未完成。" />
         <Card>
           <div className="flex items-center justify-between gap-3">
@@ -1278,7 +1379,6 @@ function BehaviorSection({
     </div>
   );
 }
-
 /* ------------------------------ 分区：关于与更新 ------------------------------ */
 
 function AboutSection({ say }: { say: (text: string, tone?: Flash["tone"]) => void }) {
@@ -1309,7 +1409,16 @@ function AboutSection({ say }: { say: (text: string, tone?: Flash["tone"]) => vo
         <div className="grid grid-cols-2 gap-y-2.5 text-[13px]">
           <InfoCell label="版本" value={`v${tauriConf.version}`} />
           <InfoCell label="运行环境" value={isTauri() ? "桌面应用" : "浏览器演示"} />
+          <InfoCell label="作者" value="Sogapopo" />
+          <InfoCell label="标识符" value={tauriConf.identifier} />
         </div>
+
+        <p
+          data-about-motto
+          className="mt-4 border-t border-line pt-3.5 text-[11.5px] leading-relaxed text-fg-dim"
+        >
+          我们的生命都相当无序甚至是荒谬，也许这款应用能帮您从中构建部分的秩序
+        </p>
       </Card>
 
       <div className="mt-4">

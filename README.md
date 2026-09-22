@@ -1,12 +1,20 @@
 # 待办工作台
 
 以 Microsoft To Do 为原型的 Windows 桌面应用，但定位不止于待办——
-它是一个**可扩展的工作台**：待办是核心模块，图片工具、订单记录等作为独立工具随时插入，
+它是一个**可扩展的工作台**：待办是核心模块，工单、特殊单号、图片工具等作为独立模块插入，
 全部共用同一个本地数据库。
 
-> **当前状态：桌面版已打包成功。** 产出 2.48 MB 的 NSIS 安装包，
+> 我们的生命都相当无序甚至是荒谬，也许这款应用能帮您从中构建部分的秩序。
+
+作者：**Sogapopo**
+
+> **当前状态：桌面版已打包成功，实机跑通。** 产出 **62.9 MB** 的 NSIS 安装包，
 > 采用 GNU 工具链（MSYS2 + MinGW-w64），**全程不需要管理员权限，
 > 也不需要 2–4 GB 的 Visual Studio**。
+>
+> 体积的大头是**内置工具**（`tools/` 共 50.8 MB，其中图片工具的本地 AI 模型
+> `migan.js` + `ort-wasm.js` 占 49.6 MB）。宿主本身很轻——这些工具装不装、
+> 开不开都在设置里可控。
 
 ---
 
@@ -14,29 +22,86 @@
 
 > 截图均为内置演示数据（浏览器演示库自动生成），非真实业务数据。
 
-| 我的一天 | 全部 · 常驻详情面板 |
+| 我的一天 · 紧急区 + 常驻详情面板 | 全部 · 待办与工单混排 |
 | --- | --- |
 | ![我的一天](docs/screenshots/my-day.png) | ![全部](docs/screenshots/all-tasks.png) |
 
-| 工单 | 工单详情 · 过程态流转留痕 |
+| 工单视图 | 工单详情 · 过程态流转留痕 |
 | --- | --- |
 | ![工单](docs/screenshots/orders.png) | ![工单详情](docs/screenshots/order-detail.png) |
 
-| 特殊单号 | 图库 |
+| 特殊单号 · 时效倒计时 | 图库 |
 | --- | --- |
 | ![特殊单号](docs/screenshots/special-orders.png) | ![图库](docs/screenshots/gallery.png) |
-
-| 工具：尺码表生成器（多工具标签条 + 头部重置） | 工具：AI 生成（阿里云百炼） |
-| --- | --- |
-| ![尺码表](docs/screenshots/tool-size-chart.png) | ![AI 生成](docs/screenshots/tool-ai-gen.png) |
-
-| 设置 · 工具（启用停用 / 安装卸载 / 导入单文件） |
-| --- |
-| ![设置 · 工具](docs/screenshots/settings-tools.png) |
 
 | 侧边栏紧急区（剩余时间不足自动聚合） | 左右面板宽度可拖拽 |
 | --- | --- |
 | ![紧急区](docs/screenshots/urgent.png) | ![面板拖宽](docs/screenshots/resizable-panels.png) |
+
+| 设置 · 工具（启用停用 / 安装卸载 / 导入单文件） | 设置 · 关于 |
+| --- | --- |
+| ![设置 · 工具](docs/screenshots/settings-tools.png) | ![设置 · 关于](docs/screenshots/about.png) |
+
+内置工具（都是完全自治的单页应用，共用同一个数据库）：
+
+| 图片裁剪 · Image Studio | 尺码表生成器 |
+| --- | --- |
+| ![图片裁剪](docs/screenshots/tool-image-crop.png) | ![尺码表](docs/screenshots/tool-size-chart.png) |
+
+| 随手记 | AI 生成（多厂商可切） |
+| --- | --- |
+| ![随手记](docs/screenshots/tool-scratchpad.png) | ![AI 生成](docs/screenshots/tool-ai-gen.png) |
+
+---
+
+## 核心功能
+
+### 待办
+
+- **我的一天 / 重要 / 全部** 三个智能视图，外加自建清单
+- **子任务**：可逐个勾选完成，可各自设到期时刻；任务被选中时行内展开，
+  显示描述与前 3 条子任务（其余折成「……还有 N 项」）
+- **重复规则**：每日任务的完成状态按**本地日期**记账（`repeat_done_on`），
+  跨时区不会错位
+- **截止日期与提醒**合成一张卡片；提醒到点弹系统通知
+- **附件**：图片 / 文件拖进来即存，支持粘贴与灯箱预览
+- **选中行整行浮起**（圆角 + 投影），不是左侧一条色带
+
+### 工单与特殊单号
+
+- 工单与待办**分表存储，只在展示层混排**——不会因为看到一条工单而把待办的数据模型污染
+- 工单有**可定制流程**：过程态编辑走 `moveOrderToStage`，每次流转留痕
+- **特殊单号**以快递单号起算，时效 =「距下一步骤的剩余时间」，流程可定制，
+  可绑定多个一键复制的关联信息字段
+- 逾期与临期各提醒一次，临近过期红色高亮
+- ⚠️ **工单永不进「我的一天」**——那是待办的地盘
+
+### 紧急区
+
+三类来源统一聚合在侧边栏底部，怎么算集中在一个文件里（`src/lib/urgent.ts`）：
+
+| 来源 | 取什么时间 |
+|---|---|
+| 待办 | 提醒时刻 / 到期日 |
+| 工单 | 步骤时效 / 交付日 |
+| 子任务 | 自己的 `due_at`（只认显式设了时刻的） |
+
+阈值（提前多久算「紧急」）在设置里调，不是写死的。
+
+### 工具是可配置的模块
+
+设置 → 工具里每个工具一行。四件事刻意分开，别混为一谈：
+
+| 维度 | 动的是什么 | 说明 |
+|---|---|---|
+| 启用 / 停用 | 配置 `tools.disabled` | 只是不在侧边栏出现，工具文件还在 |
+| 安装 / 卸载 | `%APPDATA%/…/tools/<id>/` | 自己导入的工具删了就没了；内置工具删了能从安装包再装回来 |
+| 保持状态 | 配置 `tools.keepState` | 默认开：切走再切回来还是你离开时的样子 |
+| 关闭运行 | 本次会话的挂载集合 | 释放那个工具占用的内存与后台计算 |
+
+工具的**数据表**与**互相调用**都走受控通道，不给 SQL 直连：每个工具有自己的
+`tool_<id>_*` 前缀，跨工具调用走 `tools.list/open/send` 这类意图队列，
+iframe 加载完成之后才投递（否则消息发给一个还不存在的窗口，静默丢掉）。
 
 ---
 
@@ -44,9 +109,9 @@
 
 | 层 | 选型 | 说明 |
 |---|---|---|
-| 桌面外壳 | Tauri 2.x | 复用系统 WebView2，安装包约 10 MB |
+| 桌面外壳 | Tauri 2.x | 复用系统 WebView2，宿主本体很轻 |
 | 前端 | React 19 + TypeScript + Vite | |
-| 样式 | Tailwind CSS v4 | |
+| 样式 | Tailwind CSS v4 | 颜色/阴影一律走 `@theme` 语义令牌，禁裸 hex |
 | 状态 | Zustand | 单 store，任务数据以数据库为准 |
 | 数据库 | SQLite（tauri-plugin-sql） | 开 WAL，单文件可备份 |
 | 打包 | NSIS | Windows 上不用 MSI |
@@ -74,6 +139,38 @@ Electron 换来的是 Node 原生模块能力，而本项目的工具全部是�
 
 启动时通过 `__TAURI_INTERNALS__` 自动判定环境，无需手工切换。
 
+> ⚠️ **MemoryDb 有硬限制，踩过一次**：它不支持 JOIN / 子查询 / 多聚合，
+> 遇到这类 SQL 会**静默返回空**（不是报错）。所以取数一律"拆成单表查询 + 在 JS 里合并"。
+> 桌面端的事务也**必须**走 Rust 侧的 `db_transaction` 命令，不能自己拼 BEGIN/COMMIT。
+
+### 迁移规范（不可破坏）
+
+数据库迁移从第一天就版本化（`PRAGMA user_version` + `src/lib/migrations.ts`），
+**当前 schema = v12**：
+
+| 版本 | 名称 | 内容 |
+|---|---|---|
+| 1 | `init_core_schema` | 清单 / 任务 / 子任务 / 设置 |
+| 2 | `add_task_repeat` | 重复规则 |
+| 3 | `add_task_links` | 任务间关联 |
+| 4 | `add_special_orders_tool_schema` | 特殊单号（早期以工具形式承载） |
+| 5 | `add_tool_kv_store` | 工具私有 KV |
+| 6 | `add_work_orders` | 工单 |
+| 7 | `add_wo_attachments` | 工单附件 |
+| 8 | `add_special_orders_as_work_orders` | 特殊单号升格为工单的一类 |
+| 9 | `add_gallery` | 图库 |
+| 10 | `add_tool_schema_ledger` | 工具 schema 台账 |
+| 11 | `add_wo_courier` | 工单的快递字段 |
+| 12 | `add_step_due_at` | 子任务的到期时刻 |
+
+四条铁律：
+
+1. 只追加，已发布的迁移脚本**永不修改**——用户库里可能已经跑过它
+2. 每个迁移是一个原子事务，失败整批回滚，绝不留半截 schema
+3. 核心表用 `core_` 前缀，工具表用 `tool_<id>_` 前缀，两套迁移互不干扰
+4. SQLite 的 `ALTER TABLE` 能力有限，涉及重建表时用
+   "建新表 → 拷数据 → 删旧表 → 改名"四步法
+
 ### 工具装载子系统
 
 工具契约：
@@ -90,7 +187,7 @@ tools/<id>/
 {
   "id": "image-crop",
   "name": "图片裁剪",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "icon": "crop",
   "entry": "index.html",
   "dbVersion": 1
@@ -104,17 +201,6 @@ tools/<id>/
 
 **工具目录放用户数据区而非安装包，是"可更新"设计的一部分**：
 新增工具只需往该目录丢一个文件夹，不必重新打包发版。
-
-### 工具是可配置的模块
-
-设置 → 工具里每个工具一行。四件事刻意分开，别混为一谈：
-
-| 维度 | 动的是什么 | 说明 |
-|---|---|---|
-| 启用 / 停用 | 配置 `tools.disabled` | 只是不在侧边栏出现，工具文件还在 |
-| 安装 / 卸载 | `%APPDATA%/…/tools/<id>/` | 自己导入的工具删了就没了；内置工具删了能从安装包再装回来 |
-| 保持状态 | 配置 `tools.keepState` | 默认开：切走再切回来还是你离开时的样子 |
-| 关闭运行 | 本次会话的挂载集合 | 释放那个工具占用的内存与后台计算 |
 
 **「保持工具状态」是怎么做到的**：打开过的工具不卸载，只是隐藏 ——
 iframe 的文档一直活着，里面的变量、DOM、滚动位置都还在。两个实现上的硬约束：
@@ -135,11 +221,24 @@ iframe 的文档一直活着，里面的变量、DOM、滚动位置都还在。�
 **单文件导入**：设置 → 工具 → 选择 HTML 文件 → 确认名称与 id 即可。
 CSS/JS 必须内联，相对引用不会跟着进来（原因见 `ToolHost` 里那段 asset 协议说明）。
 
+**内置工具一览**：
+
+| 工具 | 版本 | 做什么 |
+|---|---|---|
+| 图片裁剪 | 2.0.0 | 裁剪 / 尺寸与比例 / 镜像 / 选区填充 / 批量导出；可存进工作台图库、可从图库自取；本地 AI 补全（模型随包分发，无需联网） |
+| 尺码表生成器 | 1.1.0 | 粘贴 Excel 尺码数据生成尺码表；导出的图能存进工作台图库 |
+| 随手记 | 1.0.0 | 跑在工具表数据库上的便签本，也是"工具怎么用自己的数据表"的样例 |
+| AI 生成 | 0.5.0 | 文生图 / 图生图 / 生视频与对话；已接入阿里云百炼（万相、千问图像、Z-Image 共 21 档，按族走不同接口）与 Agnes；出图可自动存图库 |
+
+> 加一家服务商 = 往 `PROVIDERS` 里加一个对象，UI 不用改。描述符里的可选键就是扩展点：
+> 生图用 `async`，生视频用 `headers` + `pollPathFor`
+> （**有它就按 task_id 轮询，没有才走 Agnes 的 video_id 查询串**）。
+
 ### 数据隔离
 
 所有表在同一数据库文件中，但命名空间严格分开：
 
-- `core_*` —— 宿主核心（`core_lists` / `core_tasks` / `core_steps` / `core_settings`）
+- `core_*` —— 宿主核心（`core_lists` / `core_tasks` / `core_steps` / `core_settings` 等）
 - `tool_<id>_*` —— 各工具私有表，由 `toolTable()` 强制生成前缀
 
 卸载或回滚某个工具，不影响待办数据。
@@ -151,7 +250,7 @@ CSS/JS 必须内联，相对引用不会跟着进来（原因见 `ToolHost` 里�
 建议做成"后台静默下载 + 提示重启"，不做强制更新。
 
 **第二层，工具与数据结构独立演进。** 工具目录放用户数据区（见上），
-数据库迁移从第一天就版本化（`PRAGMA user_version` + `src/lib/migrations.ts`）。
+数据库迁移版本化（见「迁移规范」）。
 一旦用户已有数据再补迁移机制，就只能手工修库了。
 
 ---
@@ -161,24 +260,46 @@ CSS/JS 必须内联，相对引用不会跟着进来（原因见 `ToolHost` 里�
 ```
 main/
   src/
-    core/            待办核心逻辑（规划中，当前在 lib/repo.ts 内）
     lib/
-      db.ts          数据库抽象层（双驱动）
-      migrations.ts  版本化迁移定义
-      repo.ts        业务数据仓库
-      tools.ts       工具扫描与校验
-      toolDemo.ts    工具数据隔离演示
-      icons.ts       图标名映射
+      db.ts            数据库抽象层（双驱动）+ 迁移执行
+      migrations.ts    版本化迁移定义（当前 v12）
+      repo.ts          业务数据仓库
+      rows.ts          列表分组与排序（"默认展开第一条"同源）
+      urgent.ts        紧急区取数（待办 / 工单 / 子任务三类来源）
+      tools.ts         工具扫描与校验
+      toolBridge.ts    工具与宿主的受控通道
+      toolStore.ts     工具私有表读写
+      settings.ts      设置键与默认值（禁裸字符串键）
+      detailSections.ts 详情面板分区顺序
+      rowStyle.ts      列表行表面样式（选中浮起等共用规则）
+      datetime.ts      时间转换与格式化
+      couriers.ts      快递公司表
+      special.ts       特殊单号业务规则
+      gallery.ts       图库
+      attachments.ts   附件
+      notify.ts        系统通知
+      wallpapers.ts    壁纸
+      icons.ts         图标名映射
     components/
-      Sidebar.tsx    侧边栏（智能视图 + 工具区 + 清单）
-      TaskList.tsx   任务列表主体
-      TaskRow.tsx    单条任务
-      ToolHost.tsx   工具容器
-    store.ts         Zustand 全局状态
-    types.ts        数据模型
-  tools/             内置工具（随安装包分发）
-    image-crop/
-  src-tauri/         Rust 端：插件注册、工具同步、打包配置
+      Sidebar.tsx      侧边栏（智能视图 + 工具区 + 清单 + 紧急区）
+      TaskList.tsx     任务列表主体
+      TaskRow.tsx      单条待办（含展开子任务）
+      OrderRow.tsx     单条工单
+      TaskDetail.tsx   右侧常驻详情面板
+      OrderDetail.tsx  工单详情
+      SpecialOrdersView.tsx  特殊单号专用视图
+      GalleryView.tsx  图库
+      Settings.tsx     设置（七个分区）
+      UrgentPanel.tsx  紧急区
+      ToolHost.tsx / ToolArea.tsx  工具容器与标签条
+      FlowEditor.tsx   工单流程编辑器
+      ...
+    store.ts           Zustand 全局状态
+    types.ts          数据模型
+  tools/              内置工具（随安装包分发）
+    image-crop/  size-chart/  scratchpad/  ai-gen/
+  tests/              单测与 e2e
+  src-tauri/          Rust 端：插件注册、工具同步、打包配置
 ```
 
 ---
@@ -321,10 +442,9 @@ npm run tauri build  # 打包成 NSIS 安装包
 > 更省事的做法是用 `npm run build:desktop`，它会把 PATH、签名密码、
 > WebView2Loader.dll 都处理好，不会弹提示。
 
-浏览器模式下顶栏显示「内存库」状态标（数据存在 localStorage）；
-桌面模式下自动切换为 SQLite 文件数据库，顶栏变为「SQLite」。
-
-> 两个模式共用同一份业务代码，所以浏览器里验证过的功能，打包后行为一致。
+浏览器模式下用内存库（数据存在 localStorage）；桌面模式下自动切换为
+SQLite 文件数据库。**两个模式共用同一份业务代码**，所以浏览器里验证过的功能，
+打包后行为一致。
 
 装完 Rust 后**必须重新打开命令行窗口**（环境变量需要刷新），否则会提示找不到 cargo。
 
@@ -342,23 +462,59 @@ npm run env:check    # 环境自检，逐项报告缺什么、怎么补
 
 它只读不写，不会安装或修改任何东西，最后给出一份纯文本报告。
 
-改完代码想确认没弄坏东西，跑这三个：
+改完代码想确认没弄坏东西，按这个顺序跑：
 
 ```bash
 npm run typecheck      # TypeScript 类型检查，应 0 错误
-npm run smoke          # 逻辑单测 58 项（数据库层 / 仓库层 / 工具隔离）
+npm run smoke          # 逻辑单测，无浏览器（数据库层 / 仓库层 / 设置 / 分区排序 …）
 npm run icons:check    # 图标格式校验（PNG 结构 + ICO 各帧）
 npm run webview2:check # 校验 WebView2Loader.dll 与 Rust 依赖版本一致
 npm run bat:check      # .bat 规范检查（纯 ASCII + CRLF + 无 BOM）
-npm run dev            # 另开一个窗口跑，然后：
-node tests/browser.mjs   # 真实浏览器端到端 55 项（自动用本机 Edge）
+
+# 浏览器 e2e（另开一个窗口跑 dev server，然后）
+node tests/_run-all-e2e.mjs      # 全量，17 个套件一次跑完
+node tests/task-detail.mjs       # 也可以单跑某一个套件
 ```
 
-`tests/browser.mjs` 会启动 Edge 走完整交互流程：新建任务、完成、切换各视图、搜索、
-新建列表、打开工具、建工具表、刷新验证持久化，最后报告通过数。
+### 测试现状
 
-> 注：`npm run smoke` 内部用 esbuild 先打包再运行——Node 的 ESM 解析不认
-> 无扩展名的 TS 导入，这一步不能省。
+| 层 | 规模 | 命令 |
+|---|---|---|
+| 类型检查 | 0 错误 | `npm run typecheck` |
+| 逻辑单测（smoke） | **519 项** | `npm run smoke` |
+| 浏览器 e2e | **17 套件 / 977 项** | `node tests/_run-all-e2e.mjs` |
+
+e2e 用本机 Edge（与 Tauri 的 WebView2 同源），覆盖 17 个面：
+
+```
+task-detail    选中浮起 / 详情与列表同源 / 分区排序
+todo-extras    行内展开子任务 / 子任务时间
+daily-settings 我的一天分组 / 重复 / 设置持久化 / 关于页
+background     壁纸与主题
+tool-browser   工具装载 / 状态保持 / 单文件导入
+tool-database  工具私有表与跨工具调用
+image-crop-ai  图片工具与本地 AI
+placeholder-tools  占位工具
+ai-gen         AI 生成（多厂商切换 / 异步轮询 / 真实连通性）
+cross-origin-bridge  跨源工具桥（只在装出来的应用里能复现的那类断链）
+gallery / wallpapers / attachments  图库 / 壁纸 / 附件
+orders-view    工单视图
+special-orders 特殊单号
+urgent         紧急区三类来源
+panel-resize   面板拖拽
+```
+
+> 大规模改动（加工具、动取数层、改数据模型）跑**全量**。
+> 只改一处 UI 时可以单跑受影响的套件，省时间。
+
+### 重拍 README 截图
+
+界面改了之后，README 里的图要跟着更新：
+
+```bash
+node tests/gen-readme-shots.mjs   # 清演示库 → 逐视图截图 → 写 docs/screenshots/
+node tests/gen-about-shot.mjs     # 单拍「设置 → 关于」
+```
 
 ### 图标
 
@@ -375,32 +531,25 @@ npm run icons:check  # 校验生成的 PNG 结构、ICO 各帧、以及配置引
 
 ---
 
-## 迁移规范（不可破坏）
-
-1. 只追加，已发布的迁移脚本**永不修改**——用户库里可能已经跑过它
-2. 每个迁移是一个原子事务，失败整批回滚，绝不留半截 schema
-3. 核心表用 `core_` 前缀，工具表用 `tool_<id>_` 前缀，两套迁移互不干扰
-4. SQLite 的 `ALTER TABLE` 能力有限，涉及重建表时用
-   "建新表 → 拷数据 → 删旧表 → 改名"四步法
-
----
-
 ## 待办事项
 
 - [x] 生成 updater 签名密钥并填入 `tauri.conf.json` 的 `pubkey`
 - [x] 补齐应用图标（14 个文件，含多尺寸 ICO）
 - [x] 环境自检脚本 `npm run env:check`
 - [x] GNU 工具链配置脚本 `npm run setup:gnu`
-- [x] **跑通首次桌面打包**（产出 2.55 MB NSIS 安装包，无提权）
+- [x] **跑通首次桌面打包**（无提权）
 - [x] **修复「装得上但启动报找不到 WebView2Loader.dll」**（DLL 未被打进安装包）
 - [x] **修复 6 个 `.bat` 在 cmd 下被解析成乱码**（改为纯 ASCII 启动器 + Node 实现）
 - [x] **修复打包完成后因签名密码提示而卡死**（cmd 的 `set "VAR="` 会删除变量）
-- [ ] 实机安装一次，确认应用能正常启动 + 工具目录同步 + SQLite 落盘
+- [x] **实机安装并跑通**：应用正常启动 + 工具目录同步 + SQLite 落盘
+- [x] 任务详情面板（子任务、备注、截止日期与提醒）
+- [x] 系统通知提醒（`notify.ts`；拿不到权限时用应用内提醒卡片兜底）
+- [x] 工单与特殊单号（可定制流程、过程态留痕、时效倒计时）
+- [x] 图库与附件
+- [x] 工具的数据表、互相调用、设置里的数据库浏览
+- [x] 侧边栏紧急区（三类来源统一聚合）
 - [ ] 部署 `update.json` 到可达的静态地址
-- [ ] 任务详情面板（步骤、备注、提醒时间）
-- [ ] 拖拽排序
-- [ ] 系统通知提醒
-- [ ] 订单记录工具
+- [ ] 列表内拖拽排序（当前排序规则固定：重要 / 到期 / 创建）
 
 ---
 
@@ -484,11 +633,20 @@ npm run webview2:check   # 只校验，不一致则退出码 1
 ### 编译很慢是正常的
 
 `Cargo.toml` 的发布配置用了 `lto = true` + `codegen-units = 1`，
-这是「把安装包做到最小」的极限设置，首次全量编译约 **25–30 分钟**。
-想快可以改成 `lto = "thin"` + `codegen-units = 16`，代价是安装包大约 2–5 MB。
+这是「把可执行文件做到最小」的极限设置，首次全量编译约 **25–30 分钟**。
+想快可以改成 `lto = "thin"` + `codegen-units = 16`。
 
 期间没有输出是正常的，用这个看进度：
 
 ```bash
 npm run build:status
 ```
+
+---
+
+## 许可与致谢
+
+- 作者：Sogapopo
+- 应用图标与壁纸的生成 / 抓取脚本均在本仓库内，**不依赖第三方图标库**
+- 图片工具的本地 AI 推理基于 ONNX Runtime Web 与开源去背景模型，
+  许可证文件随模型一同分发（`tools/image-crop/ai/LICENSE.txt`）

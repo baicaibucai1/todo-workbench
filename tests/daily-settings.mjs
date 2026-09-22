@@ -213,6 +213,22 @@ await page.waitForTimeout(300);
 const aboutText = (await page.locator("[data-settings]").innerText()) || "";
 info("关于页文本", aboutText.replace(/\n+/g, " | ").slice(0, 160));
 check("关于页显示版本号", /v\d+\.\d+\.\d+/.test(aboutText), aboutText.slice(0, 80));
+check("关于页标注作者 Sogapopo", /Sogapopo/.test(aboutText), aboutText.slice(0, 80));
+
+// 底部那句灰色小字：文案与样式都要在，改文案时这里会红，是故意的。
+const motto = page.locator("[data-about-motto]");
+check("关于页有底部题记", (await motto.count()) === 1);
+if ((await motto.count()) === 1) {
+  const mottoText = ((await motto.innerText()) || "").trim();
+  const mottoClass = (await motto.getAttribute("class")) || "";
+  check(
+    "题记是约定的那句",
+    mottoText === "我们的生命都相当无序甚至是荒谬，也许这款应用能帮您从中构建部分的秩序",
+    mottoText,
+  );
+  check("题记用灰色小字（text-fg-dim）", mottoClass.includes("text-fg-dim"), mottoClass);
+}
+
 await page.locator('[data-act="check-update"]').click();
 await page.waitForTimeout(600);
 check("检查更新给出明确反馈", (await page.locator("[data-flash]").count()) === 1);
