@@ -320,7 +320,7 @@ main/
 ### 只是想用：直接下载安装包
 
 到 [**Releases**](https://github.com/baicaibucai1/todo-workbench/releases/latest) 下载
-`待办工作台_x.y.z_x64-setup.exe`，双击安装 —— **不装 Node、不装 Rust、
+`todo-workbench_x.y.z_x64-setup.exe`，双击安装 —— **不装 Node、不装 Rust、
 不需要管理员权限**（`installMode = currentUser`，装进用户目录），
 装完就是上面截图里的样子。之后应用会自己去 Releases 拉 `update.json` 检查新版本。
 
@@ -468,6 +468,26 @@ SQLite 文件数据库。**两个模式共用同一份业务代码**，所以浏
 
 首次 `npm run tauri dev` 要编译 Rust 依赖，约 3–10 分钟；之后增量编译只需几秒。
 
+### 发版：把安装包发成 Release
+
+```bash
+node scripts/build-desktop.mjs          # 1. 打包（产出 *-setup.exe 与配对 .sig）
+node scripts/publish-release.mjs        # 2. 发布：改名 → 生成 update.json → 建 Release → 上传 → 匿名验证
+node scripts/publish-release.mjs --dry  # 只看计划，不发
+```
+
+发布脚本负责三件最容易漏的事：
+
+| 事 | 为什么必须由脚本做 |
+|---|---|
+| **资产名改 ASCII** | GitHub 会**丢掉** assets 上传 URL 里 `?name=` 的非 ASCII 字符：「待办工作台_0.1.0_x64-setup.exe」被存成「_0.1.0_x64-setup.exe」，于是 update.json 里的下载地址 404，而客户端是**静默**失败 |
+| **三样一起换** | 安装包 / `.sig` 签名 / `update.json` —— 漏签名老版本拒绝安装，漏换清单客户端就一直以为已是最新 |
+| **匿名验证** | 只看带凭据的 API 返回不算数；脚本会以匿名身份拉一次 `latest/download/update.json`，并检查安装包确实是 PE 文件 |
+
+发一个新版本只需要三步：把 `src-tauri/tauri.conf.json` 的 `version` 改高 →
+重新打包 → 再跑一次发布脚本。客户端地址是 `releases/latest/download/update.json`
+（固定转发），**任何配置都不用改**。
+
 ---
 
 ## 项目自检
@@ -566,7 +586,8 @@ npm run icons:check  # 校验生成的 PNG 结构、ICO 各帧、以及配置引
 - [x] 图库与附件
 - [x] 工具的数据表、互相调用、设置里的数据库浏览
 - [x] 侧边栏紧急区（三类来源统一聚合）
-- [ ] 部署 `update.json` 到可达的静态地址
+- [x] **发布首个 Release（v0.1.0）**：安装包 + `.sig` 签名 + `update.json` 一起挂在 Releases，
+      `releases/latest/download/update.json` 作为固定的更新源（发新版不用改客户端）
 - [ ] 列表内拖拽排序（当前排序规则固定：重要 / 到期 / 创建）
 
 ---
