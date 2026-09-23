@@ -31,7 +31,12 @@ export interface UrgentEntry {
   remainText: string;
   /** 截止时间是靠哪个字段算出来的 */
   source: UrgentSource;
-  /** 流程任务单号（待办为 undefined） */
+  /**
+   * 流程任务单号（待办为 undefined）。
+   *
+   * 只有特殊单号有值 —— 那里它放的是快递单号。普通流程任务从 schema v13
+   * 起不再编号（见 types.ts 的 WorkOrder.no），所以这里绝大多数时候是空的。
+   */
   no?: string;
   /**
    * 子任务所属的待办。

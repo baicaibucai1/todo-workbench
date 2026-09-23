@@ -260,9 +260,17 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-        {/* 单号 + 快递商 + 查件入口 */}
+        {/* 特殊单号：单号（= 快递单号）+ 快递商 + 查件入口
+            普通流程任务：描述（它没有单号，也不查物流） */}
         <div className="px-4">
-          <NoEditor value={order.no} onCommit={(v) => void patchOrder(order.id, { no: v })} />
+          {isSpecial ? (
+            <NoEditor value={order.no} onCommit={(v) => void patchOrder(order.id, { no: v })} />
+          ) : (
+            <DescEditor
+              value={order.description}
+              onCommit={(v) => void patchOrder(order.id, { description: v })}
+            />
+          )}
           {isSpecial && order.no && (
             <div className="mt-1 flex items-center gap-1.5">
               <select
@@ -462,135 +470,134 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
           </div>
         )}
 
-        {/* 相关信息：字段名由用户定，列表只负责改、删、复制 */}
-        {order.kind === "special" && (
-          <div className="mt-4 px-4" data-wo-fields="">
-            <div className="flex items-center justify-between">
-              <SectionLabel icon={<ListTree size={13} />} text="相关信息" />
-              {woFields.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => void copyAll()}
-                  data-wo-copy-all=""
-                  title="按「字段名：值」逐行复制"
-                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px] text-fg-dim hover:bg-hover"
-                >
-                  {copied === "__all__" ? (
-                    <Check size={12} className="text-[#0f6e56]" />
-                  ) : (
-                    <Copy size={12} />
-                  )}
-                  {copied === "__all__" ? "已复制" : "复制全部"}
-                </button>
-              )}
-            </div>
+        {/* 相关信息：字段名由用户定，列表只负责改、删、复制。
+            两种流程任务都开放 —— 普通流程任务从 v13 起也能绑（见 migrations.ts） */}
+        <div className="mt-4 px-4" data-wo-fields="">
+          <div className="flex items-center justify-between">
+            <SectionLabel icon={<ListTree size={13} />} text="相关信息" />
+            {woFields.length > 0 && (
+              <button
+                type="button"
+                onClick={() => void copyAll()}
+                data-wo-copy-all=""
+                title="按「字段名：值」逐行复制"
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px] text-fg-dim hover:bg-hover"
+              >
+                {copied === "__all__" ? (
+                  <Check size={12} className="text-[#0f6e56]" />
+                ) : (
+                  <Copy size={12} />
+                )}
+                {copied === "__all__" ? "已复制" : "复制全部"}
+              </button>
+            )}
+          </div>
 
-            <div className="mt-1.5 overflow-hidden rounded-lg border border-line bg-card">
-              {woFields.length === 0 && !draftDirty && (
+          <div className="mt-1.5 overflow-hidden rounded-lg border border-line bg-card">
+            {woFields.length === 0 && !draftDirty && (
                 <div className="px-2.5 py-2 text-[12px] text-fg-dim">
-                  还没有绑定信息（比如补发单号、客户名）
+                  还没有绑定信息（字段名自己定，比如客户名、关联单号）
                 </div>
-              )}
+            )}
 
-              {woFields.map((f) => (
-                <div
-                  key={f.id}
-                  data-wo-field={f.id}
-                  className="flex items-center gap-1.5 border-b border-line px-1.5 py-1 last:border-0"
-                >
-                  {/* 非受控 + key=f.id：刷新时 React 复用同一个 DOM 节点，
-                      正在输入的内容不会被重渲染擦掉，所以不需要本地态兜着 */}
-                  <input
-                    defaultValue={f.label}
-                    data-wo-field-label={f.id}
-                    onBlur={(e) => {
-                      const v = e.target.value.trim();
-                      if (v !== f.label) void editWoField(f.id, { label: v });
-                    }}
-                    placeholder="字段名"
-                    className="w-[92px] shrink-0 rounded px-1 py-0.5 text-[12.5px] text-fg-2 outline-none placeholder:text-fg-dim focus:bg-panel"
-                  />
-                  <input
-                    defaultValue={f.value}
-                    data-wo-field-value={f.id}
-                    onBlur={(e) => {
-                      const v = e.target.value.trim();
-                      if (v !== f.value) void editWoField(f.id, { value: v });
-                    }}
-                    placeholder="值"
-                    className="min-w-0 flex-1 rounded px-1 py-0.5 font-mono text-[12.5px] text-fg-2 outline-none placeholder:font-sans placeholder:text-fg-dim focus:bg-panel"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void copyOne(f.id, f.value)}
-                    data-wo-field-copy={f.id}
-                    title="复制这个值"
-                    className="grid size-6 shrink-0 place-items-center rounded text-fg-dim hover:bg-hover"
-                  >
-                    {copied === f.id ? (
-                      <Check size={12} className="text-[#0f6e56]" />
-                    ) : (
-                      <Copy size={12} />
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void removeWoField(f.id)}
-                    data-wo-field-del={f.id}
-                    title="删掉这一行"
-                    className="grid size-6 shrink-0 place-items-center rounded text-fg-dim hover:bg-danger-soft hover:text-danger"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              ))}
-
-              {/* 新行：本地草稿，填写后才落库 */}
-              <div className="flex items-center gap-1.5 border-t border-line px-1.5 py-1">
+            {woFields.map((f) => (
+              <div
+                key={f.id}
+                data-wo-field={f.id}
+                className="flex items-center gap-1.5 border-b border-line px-1.5 py-1 last:border-0"
+              >
+                {/* 非受控 + key=f.id：刷新时 React 复用同一个 DOM 节点，
+                    正在输入的内容不会被重渲染擦掉，所以不需要本地态兜着 */}
                 <input
-                  value={draftLabel}
-                  data-wo-field-new-label=""
-                  onChange={(e) => setDraftLabel(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void commitDraft();
-                    }
+                  defaultValue={f.label}
+                  data-wo-field-label={f.id}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v !== f.label) void editWoField(f.id, { label: v });
                   }}
-                  placeholder="+ 字段名"
+                  placeholder="字段名"
                   className="w-[92px] shrink-0 rounded px-1 py-0.5 text-[12.5px] text-fg-2 outline-none placeholder:text-fg-dim focus:bg-panel"
                 />
                 <input
-                  value={draftValue}
-                  data-wo-field-new-value=""
-                  onChange={(e) => setDraftValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void commitDraft();
-                    }
+                  defaultValue={f.value}
+                  data-wo-field-value={f.id}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v !== f.value) void editWoField(f.id, { value: v });
                   }}
-                  placeholder="值（回车绑定）"
+                  placeholder="值"
                   className="min-w-0 flex-1 rounded px-1 py-0.5 font-mono text-[12.5px] text-fg-2 outline-none placeholder:font-sans placeholder:text-fg-dim focus:bg-panel"
                 />
                 <button
                   type="button"
-                  onClick={() => void commitDraft()}
-                  data-wo-field-new-add=""
-                  disabled={!draftDirty}
-                  title="绑定这一行"
-                  className="grid size-6 shrink-0 place-items-center rounded text-fg-dim hover:bg-hover disabled:opacity-30"
+                  onClick={() => void copyOne(f.id, f.value)}
+                  data-wo-field-copy={f.id}
+                  title="复制这个值"
+                  className="grid size-6 shrink-0 place-items-center rounded text-fg-dim hover:bg-hover"
                 >
-                  <Plus size={13} />
+                  {copied === f.id ? (
+                    <Check size={12} className="text-[#0f6e56]" />
+                  ) : (
+                    <Copy size={12} />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void removeWoField(f.id)}
+                  data-wo-field-del={f.id}
+                  title="删掉这一行"
+                  className="grid size-6 shrink-0 place-items-center rounded text-fg-dim hover:bg-danger-soft hover:text-danger"
+                >
+                  <Trash2 size={12} />
                 </button>
               </div>
-            </div>
+            ))}
 
-            <div className="mt-1 px-0.5 text-[11.5px] text-fg-dim">
-              点行尾图标复制该值；「复制全部」按「字段名：值」逐行复制。
+            {/* 新行：本地草稿，填写后才落库 */}
+            <div className="flex items-center gap-1.5 border-t border-line px-1.5 py-1">
+              <input
+                value={draftLabel}
+                data-wo-field-new-label=""
+                onChange={(e) => setDraftLabel(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void commitDraft();
+                  }
+                }}
+                placeholder="+ 字段名"
+                className="w-[92px] shrink-0 rounded px-1 py-0.5 text-[12.5px] text-fg-2 outline-none placeholder:text-fg-dim focus:bg-panel"
+              />
+              <input
+                value={draftValue}
+                data-wo-field-new-value=""
+                onChange={(e) => setDraftValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void commitDraft();
+                  }
+                }}
+                placeholder="值（回车绑定）"
+                className="min-w-0 flex-1 rounded px-1 py-0.5 font-mono text-[12.5px] text-fg-2 outline-none placeholder:font-sans placeholder:text-fg-dim focus:bg-panel"
+              />
+              <button
+                type="button"
+                onClick={() => void commitDraft()}
+                data-wo-field-new-add=""
+                disabled={!draftDirty}
+                title="绑定这一行"
+                className="grid size-6 shrink-0 place-items-center rounded text-fg-dim hover:bg-hover disabled:opacity-30"
+              >
+                <Plus size={13} />
+              </button>
             </div>
           </div>
-        )}
+
+          <div className="mt-1 px-0.5 text-[11.5px] text-fg-dim">
+            点行尾图标复制该值；「复制全部」按「字段名：值」逐行复制。
+          </div>
+        </div>
 
         {/* 所属流程 */}
         <div className="mt-4 px-4">
@@ -768,6 +775,44 @@ function NoEditor({ value, onCommit }: { value: string; onCommit: (v: string) =>
         placeholder="未编号"
         className="min-w-0 flex-1 border-0 bg-transparent font-mono text-[12.5px] text-fg-2 outline-none placeholder:text-fg-dim"
       />
+    </div>
+  );
+}
+
+/**
+ * 描述编辑：普通流程任务的主要文字信息。
+ *
+ * 头部那行大字是标题（列表扫视用，所以要求短），这里是它的展开说明，
+ * 所以给的是多行输入框。走 blur 落库而不是回车 —— 回车在这个控件里是换行，
+ * 和标题的"回车即提交"不同，这一点必须区分开。
+ */
+function DescEditor({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+
+  return (
+    <div className="rounded-lg border border-line bg-card px-2.5 py-1.5">
+      <div className="flex items-start gap-2">
+        <span className="mt-[3px] shrink-0 text-[11.5px] text-fg-dim">描述</span>
+        <textarea
+          value={text}
+          data-order-desc-input=""
+          rows={2}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={() => {
+            const t = text.trim();
+            if (t !== value) onCommit(t);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setText(value);
+              e.currentTarget.blur();
+            }
+          }}
+          placeholder="这件事要办什么"
+          className="max-h-32 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent text-[12.5px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim"
+        />
+      </div>
     </div>
   );
 }

@@ -469,6 +469,27 @@ export const migrations: Migration[] = [
       ALTER TABLE core_steps ADD COLUMN due_at TEXT;
     `,
   },
+  {
+    // 流程任务的「描述」。
+    //
+    // 起因：普通流程任务原来靠自动生成的单号（WO-YYYYMMDD-NNN）当标识，
+    // 但那个号对用户没有任何意义 —— 他手上没有一张纸质单据对得上它，
+    // 真正想写下来的是"这件事到底要办什么"。所以普通流程任务不再自动编号，
+    // 改成一句自由填写的描述。
+    //
+    // 为什么**新加一列**而不是把 no 直接改语义：
+    // no 目前是特殊单号的**快递单号**（那是这类单子的起点，要拿去查物流），
+    // 蹭用同一列会让"这一列到底是编号还是人话"永远说不清；
+    // 而且迁移只追加、永不改已发布的列，改语义等于对所有老库做不可逆的心智迁移。
+    //
+    // 老数据里那些 WO- 号**留在库里不动**（只是界面不再显示）：
+    // 清空是不可逆的写操作，而它至少还是老单唯一的对账标识。
+    version: 13,
+    name: "add_wo_description",
+    sql: `
+      ALTER TABLE core_work_orders ADD COLUMN description TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];
 
 /** 当前代码期望的 schema 版本 */

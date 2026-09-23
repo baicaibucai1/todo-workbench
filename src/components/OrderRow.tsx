@@ -140,8 +140,10 @@ export default function OrderRow({
 
       <div className="min-w-0 flex-1 pt-[1px]">
         <div className="flex min-w-0 items-center gap-1.5">
-          {/* 单号用等宽字体，和标题拉开层次；它是"对账用的标识"不是内容 */}
-          {order.no && (
+          {/* 单号用等宽字体，和标题拉开层次；它是"对账用的标识"不是内容。
+              只有特殊单号有它 —— 那里放的是快递单号。普通流程任务从 v13 起
+              不再编号，它要写的是下面那行描述 */}
+          {isSpecial && order.no && (
             <span
               data-order-no={order.no}
               className="shrink-0 rounded bg-chip px-1.5 py-px font-mono text-[10.5px] text-fg-3"
@@ -158,6 +160,20 @@ export default function OrderRow({
             {order.title}
           </span>
         </div>
+
+        {/* 描述：标题写不下的交代。
+            只占一行并截断 —— 列表是拿来扫的，每行高度必须一致，
+            要看全的到右侧详情面板里去（那里可以多行编辑）。
+            不加"已完结就划掉"：描述是背景信息，划掉反而更难读。 */}
+        {order.description && (
+          <div
+            data-order-desc=""
+            title={order.description}
+            className="mt-0.5 truncate text-[12.5px] leading-[17px] text-fg-dim"
+          >
+            {order.description}
+          </div>
+        )}
 
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
           {/* 当前过程态：这是流程任务行最该被看到的信息 */}

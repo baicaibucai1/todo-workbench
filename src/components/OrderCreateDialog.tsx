@@ -10,7 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useStore } from "../store";
-import { addDays, today, nextOrderNo } from "../lib/repo";
+import { addDays, today } from "../lib/repo";
 import { SETTINGS, parseSpecialEnabled } from "../lib/settings";
 import { DUE_PRESETS, dueAtText } from "../lib/due";
 import { COURIERS, courierName, detectCourier } from "../lib/couriers";
@@ -25,7 +25,9 @@ import DateTimePicker from "./DateTimePicker";
  * 得再点进去删的垃圾数据。开流程任务本来就不是一件"随手记一笔"的事，
  * 所以这里走弹窗：填完再建，取消就什么都不留。
  *
- * 单号留空仍会自动生成（WO-YYYYMMDD-NNN），填了就用填的。
+ * 普通流程任务填的是「描述」而不是单号 —— 从 schema v13 起不再自动编号
+ * （那个 WO- 号用户手上没有对应的单据，对不上账，见 types.ts）。
+ * 特殊单号那边仍然是快递单号 + 处理时效，两者互不影响。
  */
 export default function OrderCreateDialog({
   initialTitle = "",
@@ -72,8 +74,8 @@ export default function OrderCreateDialog({
     initialKind === "special" && !specialOn ? "normal" : initialKind,
   );
   const [title, setTitle] = useState(initialTitle);
+  const [description, setDescription] = useState("");
   const [no, setNo] = useState(initialNo);
-  const [autoNo, setAutoNo] = useState("");
   const [flowId, setFlowId] = useState("");
   const [stageId, setStageId] = useState("");
   const [startDate, setStartDate] = useState(today());
@@ -185,19 +187,6 @@ export default function OrderCreateDialog({
     // effectiveStage 每次渲染都是新算出来的对象，依赖它的两个字段就够了
   }, [isSpecial, dueTouched, effectiveStage?.id, effectiveStage?.defaultMinutes]);
 
-  // 单号占位符显示"不填会是什么"，比写一句"留空自动生成"有用得多。
-  // 特殊单号的单号就是快递单号（不自动编号），所以这里不必去算那个号。
-  useEffect(() => {
-    if (isSpecial) return;
-    let alive = true;
-    void nextOrderNo().then((v) => {
-      if (alive) setAutoNo(v);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [isSpecial]);
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -244,7 +233,12 @@ export default function OrderCreateDialog({
       await createOrder({
         // 特殊单号允许留空标题，退化成快递单号 —— 这类单子本来就是靠号认的
         title: t || (isSpecial ? orderNo : ""),
-        no: orderNo || undefined,
+        // 描述只属于普通流程任务：特殊单号那边已经有快递单号与时效，
+        // 再挂一句描述不会有人填，只会让弹窗更长
+        description: isSpecial ? "" : description.trim(),
+        // 单号只给特殊单号。普通流程任务连输入框都没有了，
+        // 这里再传就等于开后门造一张"界面上看不见它的号"的单
+        no: isSpecial ? orderNo : undefined,
         kind,
         flowId,
         stageId: effectiveStageId,
@@ -256,8 +250,9 @@ export default function OrderCreateDialog({
         // 只存用户手动指定的那次；留空表示"以后按单号自动识别"
         courier: courierCode || undefined,
         // 建单时就一起绑上。分两步（先建单、再回详情里一条条加）
-        // 在连着登记好几张单的时候格外烦
-        fields: isSpecial ? fields : undefined,
+        // 在连着登记好几张单的时候格外烦。
+        // 两种流程任务都支持 —— 字段名由用户定，宿主不预设一套。
+        fields,
       });
       onCreated?.();
       onClose();
@@ -439,15 +434,19 @@ export default function OrderCreateDialog({
             />
           </Field>
 
-          {/* 单号。特殊单号的单号就是上面那个快递单号，这里不再问第二遍 */}
+          {/* 描述。
+              标题只有一行 —— 那是用来扫列表的，写长了会被截断；
+              真正要交代清楚的（"空调不制冷，去年换过一次压缩机"）写在这里。
+              特殊单号不要这一项：它的语义全在快递单号与处理时效上。 */}
           {!isSpecial && (
-            <Field label="单号">
-              <input
-                value={no}
-                onChange={(e) => setNo(e.target.value)}
-                data-oc-no=""
-                placeholder={autoNo ? `留空自动生成 ${autoNo}` : "留空自动生成"}
-                className="w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-fg-2 outline-none placeholder:text-fg-dim focus:border-[#378add]"
+            <Field label="描述">
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                data-oc-desc=""
+                rows={2}
+                placeholder="这件事要办什么（可选；标题写不下的放这里）"
+                className="mt-1.5 w-full resize-none rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim focus:border-[#378add]"
               />
             </Field>
           )}
@@ -561,9 +560,10 @@ export default function OrderCreateDialog({
             </Field>
           )}
 
-          {/* 相关信息：字段名由用户定，所以这里只是几行"名字 + 值" */}
-          {isSpecial && (
-            <Field label="相关信息（字段名自己定）">
+          {/* 相关信息：字段名由用户定，所以这里只是几行"名字 + 值"。
+              两种流程任务都开放 —— 它本来就是同一张表里的同一批单，
+              给普通单单独砍掉这个能力，只会逼着人把键值对写进描述里去。 */}
+          <Field label="相关信息（字段名自己定）">
               <div
                 data-oc-fields=""
                 className="mt-1 overflow-hidden rounded-lg border border-line bg-card"
@@ -614,8 +614,7 @@ export default function OrderCreateDialog({
                 <Plus size={12} />
                 再加一行
               </button>
-            </Field>
-          )}
+          </Field>
 
           {/* 日期 */}
           <div className="mt-3 flex gap-2">

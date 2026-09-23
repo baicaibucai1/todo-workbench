@@ -480,7 +480,7 @@ export default function TaskList() {
                 composeKind === "order"
                   ? specialOnly
                     ? "快递单号，回车填写时效与相关信息"
-                    : "流程任务标题，回车填写完整信息"
+                    : "流程任务标题，回车填写描述与相关信息"
                   : draftDaily
                     ? "添加每日任务"
                     : "添加任务"
@@ -530,7 +530,7 @@ export default function TaskList() {
                   ? "流程任务不进「我的一天」，建好后在侧边栏「流程任务」里看"
                   : specialOnly
                     ? "回车或点「登记单号」，弹窗里填时效与相关信息；时效是到下一步之前的时间"
-                    : "回车或点「创建流程任务」，弹窗里一次填完流程、过程态、日期与备注"}
+                    : "回车或点「创建流程任务」，弹窗里一次填完描述、流程、过程态与日期"}
               </span>
               <button
                 // 这里必须给一个**真实的 flowId**：openFlowEditor 的开关语义是

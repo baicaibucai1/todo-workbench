@@ -12,6 +12,8 @@
  *      留着那个"待办"按钮就是假入口
  *   6. 推进到终态后，流程任务真的从「进行中」挪到「已完成」组
  *   7. 「全部」里流程任务继续混排（用户明确要求保留，不因为有了专属入口就改掉）
+ *   8. 普通流程任务写的是**描述**而不是单号（schema v13 起不再自动编号），
+ *      并且两种流程任务都能绑自定义键值的「相关信息」
  *
  * 用法：
  *   node tests/orders-view.mjs           # 复用当前演示库
@@ -157,6 +159,61 @@ if ((await newRow.count()) === 1) {
   check("已完结的单仍在视图里（进历史组，不是消失）",
     totalAfter === rowsBefore, `推进前 ${rowsBefore} / 推进后 ${totalAfter}`);
 }
+
+/* ---- 4b. 普通流程任务：描述 + 自定义键值 ---- */
+
+// 单号：普通流程任务从 schema v13 起不再自动编号（WO-YYYYMMDD-NNN）。
+// 那个号用户手上没有对应的纸质单据、对不上账，要写的是「描述」。
+// 所以表单里**不该再有**单号输入框 —— 留着它就是留了一个不知道怎么填的格子。
+await page.locator("[data-compose-input]").fill("描述与相关信息的测试单");
+await page.locator("[data-compose-submit]").click();
+await page.waitForTimeout(700);
+
+check("新建表单里没有「单号」输入框", (await page.locator("[data-oc-no]").count()) === 0);
+check("新建表单里有「描述」", (await page.locator("[data-oc-desc]").count()) === 1);
+check("普通流程任务也能绑相关信息", (await page.locator("[data-oc-fields]").count()) === 1);
+
+await page.locator("[data-oc-desc]").fill("空调不制冷，去年换过一次压缩机");
+await page.locator('[data-oc-field-label="0"]').fill("工位");
+await page.locator('[data-oc-field-value="0"]').fill("B-1207");
+await page.locator("[data-oc-submit]").click();
+await page.waitForTimeout(1000);
+
+const descRow = page
+  .locator("[data-order-id]")
+  .filter({ hasText: "描述与相关信息的测试单" })
+  .first();
+check("建完能在列表里看到这张单", (await descRow.count()) === 1);
+
+const rowDesc = async () =>
+  (await descRow.locator("[data-order-desc]").innerText().catch(() => "")) || "";
+check("行上带着描述", (await rowDesc()).includes("空调不制冷"), await rowDesc());
+// 单号胶囊只该出现在特殊单号上：普通单要是还挂着个空胶囊，
+// 这一列就变成了"每行都有但都没内容"的噪音
+check("普通流程任务行上没有单号胶囊", (await descRow.locator("[data-order-no]").count()) === 0);
+
+const descInput = page.locator("[data-order-desc-input]");
+check("详情里有描述编辑器", (await descInput.count()) === 1);
+check("详情里回显了描述", ((await descInput.inputValue()) || "").includes("空调不制冷"));
+const fieldsBox = page.locator("[data-wo-fields]");
+check("详情里有相关信息区块", (await fieldsBox.count()) === 1);
+// 键值要用 inputValue 读 —— 它们在 <input> 里，innerText 只返回文本节点，
+// 拿 innerText 断言永远为空，看起来像"没存进去"（这个坑已经踩过一次）
+const boundLabels = await page
+  .locator("[data-wo-field-label]")
+  .evaluateAll((els) => els.map((e) => e.value));
+const boundValues = await page
+  .locator("[data-wo-field-value]")
+  .evaluateAll((els) => els.map((e) => e.value));
+check("详情里绑上了刚填的键值", boundValues.includes("B-1207"), JSON.stringify(boundValues));
+check("键名也是我填的那个", boundLabels.includes("工位"), JSON.stringify(boundLabels));
+
+// 描述走失焦落库（回车在这个控件里是换行，见 DescEditor 的注释）。
+// 改完必须**列表跟着变** —— 只改库不刷界面是这类"直接落库"控件最容易出的问题
+await descInput.fill("空调不制冷（已约周三上门）");
+await descInput.blur();
+await page.waitForTimeout(900);
+check("改完描述列表跟着变", (await rowDesc()).includes("已约周三"), await rowDesc());
 
 /* ---- 5. 流程任务不进「我的一天」 ---- */
 

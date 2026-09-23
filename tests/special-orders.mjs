@@ -165,6 +165,9 @@ check(
 check("有时效快捷按钮", (await page.locator("[data-oc-due-preset]").count()) >= 4);
 check("有时效输入框", (await page.locator("[data-oc-due-input]").count()) === 1);
 check("有相关信息区块", (await page.locator("[data-oc-fields]").count()) === 1);
+// 描述是普通流程任务的东西（那里没有单号，见 migrations v13）。
+// 特殊单号的语义全在快递单号 + 处理时效上，多一个描述框只会让人犹豫填哪个
+check("特殊单号不问「描述」", (await page.locator("[data-oc-desc]").count()) === 0);
 check("相关信息预置了两行（这类单子几乎总要绑点什么）",
   (await page.locator("[data-oc-field-label]").count()) === 2);
 

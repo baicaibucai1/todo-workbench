@@ -974,6 +974,8 @@ type RawOrder = {
   /** v8 之前的老行没有这一列（内存库是 schemaless），按 normal 兜底 */
   kind?: string;
   no: string;
+  /** v13 之前的老行没有这一列（内存库是 schemaless），按空串兜底 */
+  description?: string;
   /** v11 之前的老行没有这一列，按"没指定（自动识别）"兜底 */
   courier?: string;
   title: string;
@@ -1001,6 +1003,7 @@ const toOrder = (r: RawOrder): WorkOrder => ({
   no: r.no,
   courier: r.courier ?? "",
   title: r.title,
+  description: r.description ?? "",
   flowId: r.flow_id,
   stageId: r.stage_id,
   note: r.note,
@@ -1095,8 +1098,9 @@ export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
 
   if (q.search?.trim()) {
     const like = `%${q.search.trim()}%`;
-    // 单号也要能搜到：用户手上拿到的往往是单号而不是标题
-    const byText = "(title LIKE ? OR no LIKE ?)";
+    // 单号与描述也要能搜到：手上拿到的往往是一个号或一句"报修空调"，
+    // 而标题为了能扫视是写得很短的（长句都在描述里）。
+    const byText = "(title LIKE ? OR no LIKE ? OR description LIKE ?)";
     // 绑定的相关信息也要能搜到 —— "这个快递单号是哪张单"问的就是这个，
     // 而那个号码常常是绑上去的第二个单号，不是流程任务的单号。
     // 子查询 / JOIN / IN 在 MemoryDb 里都不成立（不报错，静默返回空），
@@ -1104,10 +1108,10 @@ export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
     const hitIds = await searchWoFieldValueIds(like);
     if (hitIds.length) {
       where.push(`(${byText} OR ${hitIds.map(() => "id = ?").join(" OR ")})`);
-      params.push(like, like, ...hitIds);
+      params.push(like, like, like, ...hitIds);
     } else {
       where.push(byText);
-      params.push(like, like);
+      params.push(like, like, like);
     }
   }
 
@@ -1158,6 +1162,15 @@ export async function fetchOrderById(id: string): Promise<WorkOrder | null> {
 
 export interface NewWorkOrderInput {
   title: string;
+  /**
+   * 描述 —— "这件事要办什么"。普通流程任务的主要文字信息，
+   * 标题之外的展开说明（见 types.ts 里 description 的说明）。
+   */
+  description?: string;
+  /**
+   * 单号。**只有特殊单号该传**（它填的是快递单号）；
+   * 普通流程任务从 v13 起不再编号，传了也只会被丢掉。
+   */
   no?: string;
   flowId: string;
   /** 不传则落在流程的第一步 */
@@ -1186,20 +1199,10 @@ export interface NewWorkOrderInput {
   fields?: Array<{ label: string; value: string }>;
 }
 
-/**
- * 生成单号：WO-YYYYMMDD-NNN。
- *
- * 按"当天已有几张"取序号，简单且人眼可读。不追求全局严格递增 ——
- * 本机单机应用没有并发写入，用户读单号是为了对账，不是为了排序。
- */
-export async function nextOrderNo(dateStr: string = today()): Promise<string> {
-  const compact = dateStr.replace(/-/g, "");
-  const rows = await db().select<{ c: number }>(
-    `SELECT COUNT(*) AS c FROM core_work_orders WHERE no LIKE ?`,
-    [`WO-${compact}-%`],
-  );
-  return `WO-${compact}-${String((rows[0]?.c ?? 0) + 1).padStart(3, "0")}`;
-}
+/* 这里原本有 nextOrderNo()：普通流程任务自动编号 WO-YYYYMMDD-NNN。
+   从 v13 起取消了 —— 那个号用户手上没有对应的单据，对不上账，
+   他要写的是 description。特殊单号的"号"是他自己填的快递单号，不靠生成。
+   老数据里的 WO- 号仍留在库里（不删），只是界面不再显示。 */
 
 /**
  * 按过程态的**默认时效**算出截止时刻。没有默认时效（0）就返回 null。
@@ -1240,11 +1243,15 @@ export async function createWorkOrder(input: NewWorkOrderInput): Promise<WorkOrd
   const order: WorkOrder = {
     id: uid(),
     kind,
-    no: (input.no ?? "").trim() || (await nextOrderNo()),
+    // 单号只为特殊单号保留：那里它是**快递单号**，是这类单子的起点。
+    // 普通流程任务不再自动编号，传进来的号也丢掉 —— 界面已经没有这个入口了，
+    // 留着这条通路只会让"某张普通单上怎么会有单号"变成没法解释的事。
+    no: kind === "special" ? (input.no ?? "").trim() : "",
     // 登记时可以显式指定快递商（识别错了就改一次），不指定就留空 ——
     // 空串是"以后按单号自动识别"，不把当时的猜测结果冻进库里
     courier: (input.courier ?? "").trim(),
     title: input.title,
+    description: (input.description ?? "").trim(),
     flowId: input.flowId,
     stageId,
     note: input.note ?? "",
@@ -1266,15 +1273,16 @@ export async function createWorkOrder(input: NewWorkOrderInput): Promise<WorkOrd
 
   await db().execute(
     `INSERT INTO core_work_orders
-       (id, kind, no, courier, title, flow_id, stage_id, note, important, my_day, start_date, due_date,
+       (id, kind, no, courier, title, description, flow_id, stage_id, note, important, my_day, start_date, due_date,
         stage_due_at, stage_due_notified_at, completed_at, sort_order, deleted, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, ?, 0, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, ?, 0, ?, ?)`,
     [
       order.id,
       order.kind,
       order.no,
       order.courier,
       order.title,
+      order.description,
       order.flowId,
       order.stageId,
       order.note,
@@ -1327,6 +1335,7 @@ const ORDER_COLUMNS: Record<string, string> = {
   // 而单号改了之后原来指定的那家也未必还对（改单号见 NoEditor）。
   courier: "courier",
   title: "title",
+  description: "description",
   flowId: "flow_id",
   stageId: "stage_id",
   note: "note",
@@ -1760,6 +1769,7 @@ async function seedDemoOrdersInner(): Promise<void> {
   const t = today();
   const a = await createWorkOrder({
     title: "1027 批次改码返工",
+    description: "这批标签把 M 码印成了 L 码，返工重贴后要重新对一次库存数。",
     flowId: flow.id,
     startDate: addDays(t, -1),
     dueDate: addDays(t, 2),
@@ -1770,14 +1780,15 @@ async function seedDemoOrdersInner(): Promise<void> {
 
   const b = await createWorkOrder({
     title: "客户 A 换货处理",
+    description: "客户收到的是 M 码，要换 L 码；替换件已寄出，等对方签收。",
     flowId: flow.id,
     startDate: t,
     dueDate: addDays(t, 1),
   });
   if (stages[2]) await moveOrderToStage(b.id, stages[2].id, "已寄出替换件");
 
-  // 一张特殊单号：让「时效」「绑定的相关信息」这两样第一次打开就有样子看 ——
-  // 它们正是特殊单号相对普通流程任务的全部差异。
+  // 一张特殊单号：让「时效」第一次打开就有样子看 ——
+  // 它是特殊单号相对普通流程任务的核心差异（相关信息两者都有）。
   // 时效给 90 分钟：看得出"还剩多久"，又不会一进应用就是逾期的样子。
   const spFlow = (await fetchFlows()).find((f) => f.name === "特殊单号处理");
   if (spFlow) {
