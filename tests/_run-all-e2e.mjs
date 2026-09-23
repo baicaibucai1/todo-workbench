@@ -2,6 +2,11 @@
  * 跑一遍全部浏览器 e2e，汇总通过/失败。
  * 这些脚本都要 dev server 在 localhost:1420 上（已起）。
  * 逐个跑，不并发 —— 它们共用同一个 dev server 与 localStorage，并发会互相踩。
+ *
+ * ⚠️ 这里只收**需要浏览器**的套件。不依赖浏览器的两套走 npm 脚本：
+ *   npm run smoke       —— 数据层 / 仓库 / 工具隔离
+ *   npm run sync:test   —— 同步的合并算法与写回（含 MemoryDb 往返）
+ * 漏跑它们不会让这一轮变红，所以改完数据层记得单独跑一次。
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -10,6 +15,10 @@ const SUITES = [
   ["task-detail.mjs", []],
   ["todo-extras.mjs", []],
   ["daily-settings.mjs", []],
+  // 同步分区：只验界面这一层（默认只勾待办、勾选落库、演示模式下的禁用态）。
+  // 合并算法与写回走的是 Node 侧的 npm run sync:test —— 那边不需要浏览器，
+  // 也不会因为多开一个渲染进程而拖慢这一轮。
+  ["sync-panel.mjs", []],
   ["background.mjs", []],
   ["tool-browser.mjs", []],
   // 工具自己的数据表与互相调用；依赖 tool-browser 之后仍在同一份 localStorage 上跑，

@@ -98,6 +98,43 @@ export const SETTINGS = {
    * （做平台单就一直用菜鸟），每张单都选一次等于把习惯变成重复劳动。
    */
   specialTrackChannel: "special.trackChannel",
+
+  /* ------------------------------ 同步 ------------------------------ */
+
+  /**
+   * 坚果云 WebDAV 的服务地址。
+   *
+   * 默认是官方地址；做成可配置不只是"以后能换服务商"——
+   * 群晖、Nextcloud、InfiniCLOUD 都提供 WebDAV，同一套代码能直接用。
+   */
+  syncBaseUrl: "sync.baseUrl",
+  syncUsername: "sync.username",
+  /**
+   * 应用密码。
+   *
+   * ⚠️ **明文存在本机 SQLite 里**，没有做加密。理由：加密密钥也得存在本机
+   * 才能自动同步（否则每次同步都要用户输一遍密码），而用系统凭据管理器
+   * 要新增依赖、可能连带触发整树重编（见 attachments.rs 顶部那条教训）。
+   * 代价是有限的 —— 数据库文件本来就在用户自己的机器上。
+   * 但**界面上必须说清楚**，不能让用户以为它被加密了。
+   */
+  syncPassword: "sync.password",
+  /** 远程目录，相对服务地址。多级用 / 分隔 */
+  syncDir: "sync.dir",
+  /**
+   * 要同步的分片，逗号分隔。
+   *
+   * 默认 **只有 tasks** —— 「默认只同步待办」是刻意的：待办是每天在用的核心，
+   * 流程任务/图库/附件的数据量与隐私权重都不一样，让用户自己决定要不要一起走。
+   */
+  syncShards: "sync.shards",
+  /** 本机标识。首次使用时生成一个 uuid 并落库，此后不变 */
+  syncDeviceId: "sync.deviceId",
+  /** 设备名。用来在"上次是另一台机器写的"这类提示里说得清楚 */
+  syncDeviceName: "sync.deviceName",
+  /** 上次成功同步的时刻与摘要。只用于展示，不参与任何判断 */
+  syncLastAt: "sync.lastAt",
+  syncLastSummary: "sync.lastSummary",
 } as const;
 
 /** 头像可选色，与列表色板同源，避免两套颜色语言 */
@@ -177,6 +214,15 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.specialCopyTemplate]: "label-cn",
   [SETTINGS.specialDensity]: "comfortable",
   [SETTINGS.specialTrackChannel]: "kuaidi100",
+  [SETTINGS.syncBaseUrl]: "https://dav.jianguoyun.com/dav",
+  [SETTINGS.syncUsername]: "",
+  [SETTINGS.syncPassword]: "",
+  [SETTINGS.syncDir]: "待办工作台",
+  [SETTINGS.syncShards]: "tasks",
+  [SETTINGS.syncDeviceId]: "",
+  [SETTINGS.syncDeviceName]: "",
+  [SETTINGS.syncLastAt]: "",
+  [SETTINGS.syncLastSummary]: "",
 };
 
 /**

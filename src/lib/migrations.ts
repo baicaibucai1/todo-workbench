@@ -490,6 +490,28 @@ export const migrations: Migration[] = [
       ALTER TABLE core_work_orders ADD COLUMN description TEXT NOT NULL DEFAULT '';
     `,
   },
+  {
+    // 「坚果云同步」（v14）的前置条件：双向合并要能回答"这条记录最后一次
+    // 是什么时候改的"。这三张表原先只有 created_at —— 新建时间够用来排序，
+    // 但**改动**在数据里看不见，于是 A 机器改了附件的标题、B 机器改了同一个
+    // 附件的备注，两边都会认为"我没动过，你说了算"，合并结果取决于谁先同步。
+    //
+    // core_task_links 还多补一个 deleted：取消关联原本是硬删（DELETE），
+    // 行没了就无从分辨"这是刚取消的关联"还是"对面还没同步过来"。
+    // 软删之后，取消关联才是一条能被同步的明确变更。
+    //
+    // 老行的 updated_at 是 NULL，不是空串 —— 合并时按 `updated_at ?? created_at`
+    // 兜底（见 lib/sync.ts 的 stampOf），绝不能把 NULL 当成"最小"，
+    // 那会让所有老数据在新机器上永远赢不了。
+    version: 14,
+    name: "add_sync_timestamps",
+    sql: `
+      ALTER TABLE core_gallery_items ADD COLUMN updated_at TEXT;
+      ALTER TABLE core_wo_attachments ADD COLUMN updated_at TEXT;
+      ALTER TABLE core_task_links ADD COLUMN updated_at TEXT;
+      ALTER TABLE core_task_links ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 /** 当前代码期望的 schema 版本 */

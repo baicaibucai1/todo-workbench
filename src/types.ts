@@ -363,6 +363,11 @@ export interface WoAttachment {
   sortOrder: number;
   deleted: boolean;
   createdAt: string;
+  /**
+   * 最后一次改动时间。同步据此判断同一条附件在两端谁更新。
+   * 老行没有这个值，读出来时用 createdAt 兜底（Schema v14 起写入）。
+   */
+  updatedAt: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -420,6 +425,12 @@ export interface GalleryItem {
   prompt: string;
   note: string;
   createdAt: string;
+  /**
+   * 最后一次改动时间（改标题 / 备注 / 尺寸，或删除）。
+   * 同步据此判断同一条目在两端谁更新。老行没有这个值，
+   * 读出来时用 createdAt 兜底（Schema v14 起写入）。
+   */
+  updatedAt: string;
   /**
    * 非持久字段：只在 `addToGallery(…, { dedupe: true })` 命中已有内容时回填，
    * **不写进数据库**。true 表示"这一份图库里本来就有，没有新建记录"。

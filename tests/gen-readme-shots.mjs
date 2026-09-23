@@ -9,7 +9,11 @@
  * 顺手截出来的图状态不可控。这里只做"清库 → 点导航 → 按快门"三件事。
  *
  * 用法（dev server 要先在 1420 上跑）：
- *   node tests/gen-readme-shots.mjs
+ *   node tests/gen-readme-shots.mjs                       # 全部重拍
+ *   node tests/gen-readme-shots.mjs --only settings-sync  # 只拍指定的（可跟多个）
+ *
+ * `--only` 是为了改一处界面时别把 15 张图全换掉 —— 全量重拍会让 diff 里
+ * 混进一堆毫无变化的二进制文件，评审时根本看不出真正改的是哪张。
  *
  * 产物写到 docs/screenshots/，文件名与 README 里的引用一一对应。
  */
@@ -37,7 +41,16 @@ const page = await context.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
 
+/** 只拍这几张；不给 --only 就是全拍 */
+const onlyArg = process.argv.indexOf("--only");
+const ONLY =
+  onlyArg === -1
+    ? null
+    : new Set(process.argv.slice(onlyArg + 1).filter((a) => !a.startsWith("--")));
+const want = (name) => !ONLY || ONLY.has(name);
+
 const shot = async (name) => {
+  if (!want(name)) return;
   await page.waitForTimeout(700);
   const file = path.join(OUT, `${name}.png`);
   await page.screenshot({ path: file });
@@ -107,11 +120,16 @@ await shot("settings");
 await page.locator('[data-section="tools"]').click();
 await shot("settings-tools");
 
+// 「设置 · 同步」：演示模式下按钮是灰的、并有一段说明 —— 截的就是这个真实状态
+await page.locator('[data-section="sync"]').click();
+await shot("settings-sync");
+
 // 工具：每个工具位都进去截一张，README 里按 <id> 引用
 const toolNavs = page.locator('aside[data-sidebar-width] [data-nav^="tool:"]');
 const toolCount = await toolNavs.count();
-console.log(`  发现 ${toolCount} 个工具位`);
-for (let i = 0; i < toolCount; i++) {
+const wantTools = !ONLY || [...ONLY].some((x) => x.startsWith("tool-"));
+if (toolCount && wantTools) console.log(`  发现 ${toolCount} 个工具位`);
+for (let i = 0; wantTools && i < toolCount; i++) {
   const item = toolNavs.nth(i);
   const id = ((await item.getAttribute("data-nav")) || "").replace("tool:", "");
   await item.click();

@@ -113,9 +113,18 @@ export const LIST_COLORS = [
   "#888780",
 ];
 
-export async function fetchLists(): Promise<TaskList[]> {
+/**
+ * 清单。
+ *
+ * `includeDeleted` 只给**同步**用：合并要靠 deleted 这个墓碑知道
+ * "对面把这一条删了"，而界面上的每处调用都只要活着的那些。
+ * 默认 false，所以现有调用点行为不变。
+ */
+export async function fetchLists(includeDeleted = false): Promise<TaskList[]> {
   const rows = await db().select<RawList>(
-    `SELECT * FROM core_lists WHERE deleted = 0 ORDER BY sort_order ASC`,
+    includeDeleted
+      ? `SELECT * FROM core_lists ORDER BY sort_order ASC`
+      : `SELECT * FROM core_lists WHERE deleted = 0 ORDER BY sort_order ASC`,
   );
   return rows.map(toList);
 }
@@ -173,10 +182,13 @@ export interface TaskQuery {
   includeDone?: boolean;
   /** 关键词搜索 */
   search?: string;
+  /** 是否连软删除的一起取。**只给同步用**，界面路径一律不传 */
+  includeDeleted?: boolean;
 }
 
 export async function fetchTasks(q: TaskQuery): Promise<Task[]> {
-  const where: string[] = ["deleted = 0"];
+  // 同步要带上墓碑，界面不要（见 TaskQuery.includeDeleted）
+  const where: string[] = q.includeDeleted ? [] : ["deleted = 0"];
   const params: (string | number | null)[] = [];
 
   switch (q.view) {
@@ -220,8 +232,12 @@ export async function fetchTasks(q: TaskQuery): Promise<Task[]> {
     params.push(`%${q.search.trim()}%`);
   }
 
+  // where 可能整个是空的：同步路径（includeDeleted）不推 `deleted = 0`，
+  // 而 view="all" 本身也不加条件 —— 这时拼出来是 `WHERE  ORDER BY`，语法错误。
+  // 真 SQLite 直接抛、MemoryDb 静默返回空，两边都表现为"同步一条数据都取不到"。
+  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const rows = await db().select<RawTask>(
-    `SELECT * FROM core_tasks WHERE ${where.join(" AND ")}
+    `SELECT * FROM core_tasks ${clause}
      ORDER BY done ASC, sort_order ASC, created_at DESC`,
     params,
   );
@@ -588,13 +604,16 @@ export async function deleteStep(id: string): Promise<void> {
  * 在两种驱动下行为一致，本地数据量下也不在乎这点开销。
  */
 export async function fetchLinkedTasks(taskId: string): Promise<Task[]> {
+  // `deleted IS NULL` 是给 v14 之前写下的关联行留的：那些行走的是"硬删除"，
+  // 当时那列还不存在，MemoryDb 里的老快照也就没有这个键。真 SQLite 上该列
+  // NOT NULL DEFAULT 0，这个分支永远不成立，留着不影响任何东西。
   const [forward, backward] = await Promise.all([
     db().select<{ linked_id: string }>(
-      `SELECT linked_id FROM core_task_links WHERE task_id = ?`,
+      `SELECT linked_id FROM core_task_links WHERE task_id = ? AND (deleted = 0 OR deleted IS NULL)`,
       [taskId],
     ),
     db().select<{ task_id: string }>(
-      `SELECT task_id FROM core_task_links WHERE linked_id = ?`,
+      `SELECT task_id FROM core_task_links WHERE linked_id = ? AND (deleted = 0 OR deleted IS NULL)`,
       [taskId],
     ),
   ]);
@@ -612,34 +631,56 @@ export async function fetchLinkedTasks(taskId: string): Promise<Task[]> {
 export async function linkTasks(taskId: string, linkedId: string): Promise<boolean> {
   if (!taskId || !linkedId || taskId === linkedId) return false;
 
+  // 不过滤 deleted：取消过的关联要能**复活**，而不是插一行新的。
+  // 插新行会留下两条同任务对的记录，同步时无法分辨哪条代表"当前状态"。
   const [a, b] = await Promise.all([
-    db().select<{ id: string }>(
-      `SELECT id FROM core_task_links WHERE task_id = ? AND linked_id = ?`,
+    db().select<{ id: string; deleted: number }>(
+      `SELECT id, deleted FROM core_task_links WHERE task_id = ? AND linked_id = ?`,
       [taskId, linkedId],
     ),
-    db().select<{ id: string }>(
-      `SELECT id FROM core_task_links WHERE task_id = ? AND linked_id = ?`,
+    db().select<{ id: string; deleted: number }>(
+      `SELECT id, deleted FROM core_task_links WHERE task_id = ? AND linked_id = ?`,
       [linkedId, taskId],
     ),
   ]);
-  if (a.length || b.length) return false;
+  const found = a[0] ?? b[0];
+  if (found) {
+    // 已经关联着 → 幂等，什么都不做
+    if (!found.deleted) return false;
+    await db().execute(
+      `UPDATE core_task_links SET deleted = 0, updated_at = ? WHERE id = ?`,
+      [now(), found.id],
+    );
+    return true;
+  }
 
+  const at = now();
+  // deleted 必须显式写 0。真 SQLite 上这一列有 DEFAULT 0，不写也没事；但浏览器
+  // 演示用的 MemoryDb 是 schemaless 的 —— INSERT 没带的列就是**没有这个键**，
+  // 于是 `WHERE deleted = 0` 永远不成立，新关联在演示模式里一建出来就是隐形的。
   await db().execute(
-    `INSERT INTO core_task_links (id, task_id, linked_id, created_at) VALUES (?, ?, ?, ?)`,
-    [uid(), taskId, linkedId, now()],
+    `INSERT INTO core_task_links (id, task_id, linked_id, deleted, created_at, updated_at)
+     VALUES (?, ?, ?, 0, ?, ?)`,
+    [uid(), taskId, linkedId, at, at],
   );
   return true;
 }
 
 export async function unlinkTasks(taskId: string, linkedId: string): Promise<void> {
+  // 软删而不是 DELETE（v14 起）：行没了就无从分辨"这是刚取消的关联"
+  // 还是"对面还没同步过来"—— 前者要同步成一次删除，后者不能动，
+  // 硬删把这两种情况压成了同一个事实。
+  const at = now();
   await db().transaction([
     {
-      sql: `DELETE FROM core_task_links WHERE task_id = ? AND linked_id = ?`,
-      params: [taskId, linkedId],
+      sql: `UPDATE core_task_links SET deleted = 1, updated_at = ?
+            WHERE task_id = ? AND linked_id = ? AND deleted = 0`,
+      params: [at, taskId, linkedId],
     },
     {
-      sql: `DELETE FROM core_task_links WHERE task_id = ? AND linked_id = ?`,
-      params: [linkedId, taskId],
+      sql: `UPDATE core_task_links SET deleted = 1, updated_at = ?
+            WHERE task_id = ? AND linked_id = ? AND deleted = 0`,
+      params: [at, linkedId, taskId],
     },
   ]);
 }
@@ -729,9 +770,12 @@ export const STAGE_COLORS = [
   "#d85a30",
 ];
 
-export async function fetchFlows(): Promise<WorkFlow[]> {
+/** `includeDeleted` 只给同步用，理由同 fetchLists */
+export async function fetchFlows(includeDeleted = false): Promise<WorkFlow[]> {
   const rows = await db().select<RawFlow>(
-    `SELECT * FROM core_wo_flows WHERE deleted = 0 ORDER BY sort_order ASC, created_at ASC`,
+    includeDeleted
+      ? `SELECT * FROM core_wo_flows ORDER BY sort_order ASC, created_at ASC`
+      : `SELECT * FROM core_wo_flows WHERE deleted = 0 ORDER BY sort_order ASC, created_at ASC`,
   );
   return rows.map(toFlow);
 }
@@ -1036,6 +1080,8 @@ export interface OrderQuery {
   /** 是否包含已完结的流程任务 */
   includeDone?: boolean;
   search?: string;
+  /** 是否连软删除的一起取。**只给同步用**，界面路径一律不传 */
+  includeDeleted?: boolean;
 }
 
 /**
@@ -1056,7 +1102,8 @@ export interface OrderQuery {
 export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
   if (q.view === "list") return [];
 
-  const where: string[] = ["deleted = 0"];
+  // 同步要带上墓碑，界面不要（见 OrderQuery.includeDeleted）
+  const where: string[] = q.includeDeleted ? [] : ["deleted = 0"];
   const params: (string | number | null)[] = [];
   const t = today();
 
@@ -1115,8 +1162,10 @@ export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
     }
   }
 
+  // 同 fetchTasks：includeDeleted + view="all" 会让 where 整个为空
+  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const rows = await db().select<RawOrder>(
-    `SELECT * FROM core_work_orders WHERE ${where.join(" AND ")}
+    `SELECT * FROM core_work_orders ${clause}
      ORDER BY sort_order ASC, created_at DESC`,
     params,
   );
@@ -1607,8 +1656,13 @@ export async function deleteWoField(id: string): Promise<void> {
 }
 
 /** 全部绑定的相关信息（备份用，含各流程任务） */
-export async function fetchAllWoFields(): Promise<WoField[]> {
-  const rows = await db().select<RawField>(`SELECT * FROM core_wo_fields WHERE deleted = 0`);
+/** `includeDeleted` 只给同步用，理由同 fetchLists */
+export async function fetchAllWoFields(includeDeleted = false): Promise<WoField[]> {
+  const rows = await db().select<RawField>(
+    includeDeleted
+      ? `SELECT * FROM core_wo_fields`
+      : `SELECT * FROM core_wo_fields WHERE deleted = 0`,
+  );
   return rows.map(toField);
 }
 
@@ -1836,6 +1890,8 @@ interface RawAttachment {
   sort_order: number;
   deleted: number;
   created_at: string;
+  /** v14 起才有。老行为 NULL —— 读的时候用 created_at 兜底，见 toAttachment */
+  updated_at: string | null;
 }
 
 function toAttachment(r: RawAttachment): WoAttachment {
@@ -1860,6 +1916,9 @@ function toAttachment(r: RawAttachment): WoAttachment {
     sortOrder: r.sort_order ?? 0,
     deleted: !!r.deleted,
     createdAt: r.created_at,
+    // v14 之前的行没有 updated_at。用 created_at 兜底而不是留空：
+    // 空串在合并时会被判成"最小时间戳"，那些老附件就永远赢不了新改动。
+    updatedAt: r.updated_at ?? r.created_at,
   };
 }
 
@@ -1903,8 +1962,8 @@ export async function createAttachment(input: NewAttachmentInput): Promise<WoAtt
   await db().execute(
     `INSERT INTO core_wo_attachments
        (id, wo_id, kind, title, rel_path, source_url, mime, size_bytes, hash,
-        width, height, duration_ms, note, sort_order, deleted, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        width, height, duration_ms, note, sort_order, deleted, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       input.woId,
@@ -1921,6 +1980,7 @@ export async function createAttachment(input: NewAttachmentInput): Promise<WoAtt
       "",
       next,
       0,
+      at,
       at,
     ],
   );
@@ -1941,6 +2001,7 @@ export async function createAttachment(input: NewAttachmentInput): Promise<WoAtt
     sortOrder: next,
     deleted: false,
     createdAt: at,
+    updatedAt: at,
   };
 }
 
@@ -1970,6 +2031,10 @@ export async function updateAttachment(
     params.push(v == null ? null : (v as string | number));
   }
   if (!sets.length) return;
+  // 顺手记一次"改过"。同步要靠它判断同一条记录的两份谁更新 ——
+  // 不记的话，"改了个标题"这件事在数据里完全看不见（v14 之前就是这样）。
+  sets.push("updated_at = ?");
+  params.push(now());
   params.push(id);
   await db().execute(`UPDATE core_wo_attachments SET ${sets.join(", ")} WHERE id = ?`, params);
 }
@@ -2014,7 +2079,10 @@ export async function deleteAttachment(id: string): Promise<string | null> {
   const row = rows[0];
   if (!row) return null;
 
-  await db().execute(`UPDATE core_wo_attachments SET deleted = 1 WHERE id = ?`, [id]);
+  await db().execute(
+    `UPDATE core_wo_attachments SET deleted = 1, updated_at = ? WHERE id = ?`,
+    [now(), id],
+  );
 
   if (!row.hash || !row.rel_path) return null;
   const live = await refCountByHash(row.hash);
@@ -2029,6 +2097,7 @@ export async function moveAttachment(id: string, dir: -1 | 1): Promise<void> {
   );
   const me = rows[0];
   if (!me) return;
+  const at = now();
 
   const siblings = await db().select<RawAttachment>(
     `SELECT * FROM core_wo_attachments WHERE wo_id = ? AND deleted = 0
@@ -2047,8 +2116,10 @@ export async function moveAttachment(id: string, dir: -1 | 1): Promise<void> {
   reordered[swapIdx] = me;
   await db().transaction(
     reordered.map((r, i) => ({
-      sql: `UPDATE core_wo_attachments SET sort_order = ? WHERE id = ?`,
-      params: [i, r.id] as (string | number)[],
+      // 换顺序也算改过：否则 A 机器调了顺序、B 机器没动，同步时
+      // 会因"两边时间戳一样"而随机取一边
+      sql: `UPDATE core_wo_attachments SET sort_order = ?, updated_at = ? WHERE id = ?`,
+      params: [i, at, r.id] as (string | number)[],
     })),
   );
 }
@@ -2086,6 +2157,8 @@ export interface GalleryBackupItem {
   note: string;
   deleted: boolean;
   createdAt: string;
+  /** v14 起新增。老备份里没有 —— 导入时用 createdAt 兜底 */
+  updatedAt: string;
 }
 
 /** 全部图库条目（备份用）。和附件一样**含已软删除的**，把 deleted 一起带出去。 */
@@ -2107,6 +2180,7 @@ export async function fetchAllGallery(): Promise<GalleryBackupItem[]> {
     note: string;
     deleted: number;
     created_at: string;
+    updated_at: string | null;
   }>(`SELECT * FROM core_gallery_items ORDER BY created_at ASC, id ASC`);
 
   return rows.map((r) => ({
@@ -2126,6 +2200,7 @@ export async function fetchAllGallery(): Promise<GalleryBackupItem[]> {
     note: r.note ?? "",
     deleted: !!r.deleted,
     createdAt: r.created_at,
+    updatedAt: r.updated_at ?? r.created_at,
   }));
 }
 
@@ -2147,7 +2222,19 @@ export interface BackupPayload {
   tasks: Task[];
   /** 步骤按任务分组，key 是任务 id */
   steps: Record<string, Step[]>;
-  links: Array<{ taskId: string; linkedId: string }>;
+  /**
+   * 任务关联。id / deleted / 时间戳是 v14 起新增的 —— 同步要按它们逐条合并，
+   * 所以**都设为可选**：v14 之前导出的备份里只有 taskId 与 linkedId，
+   * 强制要求新字段会让老备份整份作废。
+   */
+  links: Array<{
+    taskId: string;
+    linkedId: string;
+    id?: string;
+    deleted?: boolean;
+    createdAt?: string;
+    updatedAt?: string;
+  }>;
   settings: Record<string, string>;
   // 以下为 v6 起新增。都是可选的：v6 之前导出的备份里没有这些字段，
   // 导入时必须当作"没有"而不是报错，否则老备份会整份作废。
@@ -2208,9 +2295,14 @@ export async function exportBackup(): Promise<BackupPayload> {
   ]);
 
   const workOrders = await fetchWorkOrders({ view: "all", includeDone: true });
-  const linkRows = await db().select<{ task_id: string; linked_id: string }>(
-    `SELECT task_id, linked_id FROM core_task_links`,
-  );
+  const linkRows = await db().select<{
+    id: string;
+    task_id: string;
+    linked_id: string;
+    deleted: number;
+    created_at: string;
+    updated_at: string | null;
+  }>(`SELECT id, task_id, linked_id, deleted, created_at, updated_at FROM core_task_links`);
   return {
     app: "todo-workbench",
     schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -2218,7 +2310,16 @@ export async function exportBackup(): Promise<BackupPayload> {
     lists,
     tasks,
     steps,
-    links: linkRows.map((r) => ({ taskId: r.task_id, linkedId: r.linked_id })),
+    // 带上 id / deleted / 时间戳：同步要按它们逐条合并。
+    // 老备份里这些字段没有，所以类型上是可选的（见 BackupPayload.links）。
+    links: linkRows.map((r) => ({
+      id: r.id,
+      taskId: r.task_id,
+      linkedId: r.linked_id,
+      deleted: !!r.deleted,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at ?? r.created_at,
+    })),
     settings,
     flows,
     stages,
@@ -2340,8 +2441,16 @@ export async function importBackup(payload: BackupPayload): Promise<{
   for (const l of payload.links ?? []) {
     if (!l?.taskId || !l?.linkedId) continue;
     statements.push({
-      sql: `INSERT INTO core_task_links (id, task_id, linked_id, created_at) VALUES (?, ?, ?, ?)`,
-      params: [uid(), l.taskId, l.linkedId, now()],
+      sql: `INSERT INTO core_task_links (id, task_id, linked_id, deleted, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      params: [
+        l.id ?? uid(),
+        l.taskId,
+        l.linkedId,
+        l.deleted ? 1 : 0,
+        l.createdAt ?? now(),
+        l.updatedAt ?? l.createdAt ?? now(),
+      ],
     });
   }
 
@@ -2451,8 +2560,8 @@ export async function importBackup(payload: BackupPayload): Promise<{
     statements.push({
       sql: `INSERT INTO core_wo_attachments
               (id, wo_id, kind, title, rel_path, source_url, mime, size_bytes, hash,
-               width, height, duration_ms, note, sort_order, deleted, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               width, height, duration_ms, note, sort_order, deleted, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params: [
         a.id,
         a.woId,
@@ -2470,6 +2579,7 @@ export async function importBackup(payload: BackupPayload): Promise<{
         n,
         a.deleted ? 1 : 0,
         a.createdAt ?? now(),
+        a.updatedAt ?? a.createdAt ?? now(),
       ],
     });
   }
@@ -2506,8 +2616,8 @@ export async function importBackup(payload: BackupPayload): Promise<{
     statements.push({
       sql: `INSERT INTO core_gallery_items
               (id, title, kind, rel_path, source_url, mime, size_bytes, hash,
-               width, height, duration_ms, origin, prompt, note, deleted, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               width, height, duration_ms, origin, prompt, note, deleted, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params: [
         it.id,
         it.title ?? "",
@@ -2525,6 +2635,7 @@ export async function importBackup(payload: BackupPayload): Promise<{
         it.note ?? "",
         it.deleted ? 1 : 0,
         it.createdAt ?? now(),
+        it.updatedAt ?? it.createdAt ?? now(),
       ],
     });
   }

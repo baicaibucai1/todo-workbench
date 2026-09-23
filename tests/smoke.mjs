@@ -619,7 +619,9 @@ const wo = await repo.createWorkOrder({
   important: true,
 });
 check("创建成功", !!wo.id);
-check("自动生成单号", /^WO-\d{8}-\d{3}$/.test(wo.no), wo.no);
+// v13 起普通流程任务不再自动编号（WO-YYYYMMDD-NNN 那套已废，见 createWorkOrder 里的说明）：
+// 只有特殊单号才有"单号"，而且那个号是用户填的快递单号，不是系统生成的。
+check("普通流程任务不再自动编号", wo.no === "", wo.no);
 check("落在第一步", wo.stageId === stdStages[0].id);
 check("默认开始日期是今天", wo.startDate === repo.today());
 check("未完结标记正确", wo.closed === false);
@@ -1445,7 +1447,10 @@ section("23. 特殊单号：时效、相关信息与专属视图");
   await repo.moveOrderToStage(spId, spDoing.id, "已揽收");
   const advanced = (await repo.fetchWorkOrders({ view: "all" })).find((o) => o.id === spId);
   const advRemainMin = (new Date(advanced.stageDueAt).getTime() - beforeAdvance) / 60_000;
-  check("推进后时效按目标步默认值重设", advRemainMin > 239 && advRemainMin <= 240, `${advRemainMin.toFixed(1)} 分钟`);
+  // 窗口刻意开成 [239, 241] 而不是 [239, 240]：截止时刻是"推进那一刻 + 240 分钟"，
+  // 而 beforeAdvance 是在推进**之前**取的，两者之间隔着一次事务，
+  // 卡在 240 上必然随机失败（之前就是这条在红）。
+  check("推进后时效按目标步默认值重设", advRemainMin > 239 && advRemainMin <= 241, `${advRemainMin.toFixed(1)} 分钟`);
   check("推进后提醒档位清零（下一步该提醒还会提醒）", advanced.stageDueNotifiedAt === "");
 
   // 推进到终态：不再计时，也不该再进提醒队列

@@ -57,6 +57,8 @@ interface RawGallery {
   note: string;
   deleted: number;
   created_at: string;
+  /** v14 起才有。老行为 NULL —— 读的时候用 created_at 兜底 */
+  updated_at: string | null;
 }
 
 function toItem(r: RawGallery): GalleryItem {
@@ -78,6 +80,9 @@ function toItem(r: RawGallery): GalleryItem {
     prompt: r.prompt,
     note: r.note,
     createdAt: r.created_at,
+    // v14 之前的行没有 updated_at，用 created_at 兜底：
+    // 留空会让这些老条目在合并时被判成"最小时间戳"，永远赢不了新改动
+    updatedAt: r.updated_at ?? r.created_at,
   };
 }
 
@@ -306,6 +311,9 @@ export async function addToGallery(input: AddMediaInput): Promise<GalleryItem> {
   const realKind: GalleryKind = kindFromMime(stored.mime) === "video" ? "video" : "image";
   const title = (input.title || "").trim() || stored.relPath.split("/").pop() || "未命名";
 
+  // 同一个时刻写进 created_at 与 updated_at：新建不是"改过"，
+  // 两次 nowIso() 会产生几毫秒的差，没有必要
+  const at = nowIso();
   const item: GalleryItem = {
     id: uid(),
     title,
@@ -321,7 +329,8 @@ export async function addToGallery(input: AddMediaInput): Promise<GalleryItem> {
     origin: input.origin,
     prompt: input.prompt ?? "",
     note: input.note ?? "",
-    createdAt: nowIso(),
+    createdAt: at,
+    updatedAt: at,
   };
 
   // 命中已有内容：把那一条交回去，不新增记录（理由见 findGalleryByHash 的注释）
@@ -333,8 +342,8 @@ export async function addToGallery(input: AddMediaInput): Promise<GalleryItem> {
   await db().execute(
     `INSERT INTO core_gallery_items
        (id, title, kind, rel_path, source_url, mime, size_bytes, hash,
-        width, height, duration_ms, origin, prompt, note, deleted, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+        width, height, duration_ms, origin, prompt, note, deleted, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
     [
       item.id,
       item.title,
@@ -351,6 +360,7 @@ export async function addToGallery(input: AddMediaInput): Promise<GalleryItem> {
       item.prompt,
       item.note,
       item.createdAt,
+      item.updatedAt,
     ],
   );
 
@@ -378,6 +388,10 @@ export async function updateGalleryItem(
     params.push(v == null ? null : (v as string | number));
   }
   if (!sets.length) return;
+  // 改标题 / 备注 / 尺寸都算"改过"。同步靠它判断两端谁更新 ——
+  // 不记的话，改标题在图库里完全看不见（v14 之前就是这个状态）。
+  sets.push("updated_at = ?");
+  params.push(nowIso());
   params.push(id);
   await db().execute(`UPDATE core_gallery_items SET ${sets.join(", ")} WHERE id = ?`, params);
 }
@@ -405,7 +419,10 @@ export async function deleteGalleryItem(id: string): Promise<string | null> {
 
   // 软删除：先把记录标记掉，再数引用 —— 顺序反了会把自己算进去，
   // 于是引用数永远 ≥ 1，文件永远删不掉
-  await db().execute(`UPDATE core_gallery_items SET deleted = 1 WHERE id = ?`, [id]);
+  await db().execute(
+    `UPDATE core_gallery_items SET deleted = 1, updated_at = ? WHERE id = ?`,
+    [nowIso(), id],
+  );
 
   if (!row.hash || !row.rel_path) return null;
   const live = await refCountByHash(row.hash);

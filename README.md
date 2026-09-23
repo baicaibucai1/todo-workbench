@@ -108,6 +108,41 @@
 `tool_<id>_*` 前缀，跨工具调用走 `tools.list/open/send` 这类意图队列，
 iframe 加载完成之后才投递（否则消息发给一个还不存在的窗口，静默丢掉）。
 
+### 坚果云同步（WebDAV）
+
+两台机器之间对齐数据，走坚果云的 WebDAV —— 不用自建服务器，也不依赖任何第三方账号体系，
+填一个坚果云账号 + 一个**应用密码**（不是登录密码）就能用。
+
+**双向合并，不是覆盖。** 两边各留一份完整记录，按记录上的 `updatedAt` 比新旧，
+谁后改听谁的（Last-Write-Wins）。删除走**软删除**（墓碑），所以"我这边删了"
+也能同步过去，而不是下一次同步又把它从对面拉回来。
+
+**可以选同步什么，默认只同步待办。**
+
+| 分片 | 装的是什么 |
+|---|---|
+| 待办 | 列表、待办、子任务，以及待办之间的关联 |
+| 流程任务 | 流程模板、流程任务、自定义字段、流转记录 |
+| 图库 | 图库**记录** |
+| 附件 | 流程任务附件的**记录** |
+
+三条刻意定下的规则，写在设置页上也写在代码里：
+
+- ⚠️ **文件本体永远不上传。** 图片、视频的原文件只留在本地仓库，同步的只有记录。
+  两边都要看到图，自己按目录同步即可（坚果云本来就是个网盘）
+- ⚠️ **设置项完全不进同步。** 主题、工具开关、设备名这些是"本机的事"，
+  两台机器对着改只会互相覆盖，而且没有哪一方算"对的"
+- ⚠️ **同步只在桌面版可用。** 浏览器演示模式的数据存在 `localStorage`，
+  跟桌面版的 SQLite 是两套；而且 WebDAV 要用的 `PROPFIND` / `MKCOL` 浏览器也发不出去
+
+子任务和流程的过程态**跟着父记录整体走**：它们是硬删除、没有墓碑，
+"哪一条被删掉了"只能靠"整组替换"表达，逐个按 id 取并集是同步不过去的。
+
+触发是手动的，界面会显示上次同步时间与本次结果（取回 / 更新 / 上传 / 冲突各多少条）。
+传输层在 Rust 侧（`src-tauri/src/webdav.rs`，`reqwest` + `rustls`，
+**刻意关掉代理** —— 本机一个挂掉的代理会让所有请求原地失败）；
+合并算法是纯 TS 函数（`src/lib/sync.ts`），不碰网络，所以能被完整单测覆盖。
+
 ---
 
 ## 技术选型（已定稿）
@@ -249,6 +284,11 @@ CSS/JS 必须内联，相对引用不会跟着进来（原因见 `ToolHost` 里�
 
 卸载或回滚某个工具，不影响待办数据。
 
+同步也按同样的边界切：**一个分片只碰它自己那几张表**。只勾「待办」时，
+流程任务、图库、附件在本机一行都不会被动到；反过来，只勾「流程任务」时
+附件记录也不会被连带清掉（`core_wo_attachments` 挂在流程任务下且是级联删除，
+所以写回一律走 upsert 而不是"清空重插"）。
+
 ### 更新机制（两层）
 
 **第一层，应用本体升级。** `tauri-plugin-updater` + Minisign 签名 + 静态 `update.json`。
@@ -279,7 +319,7 @@ main/
   src/
     lib/
       db.ts            数据库抽象层（双驱动）+ 迁移执行
-      migrations.ts    版本化迁移定义（当前 v13）
+      migrations.ts    版本化迁移定义（当前 v14）
       repo.ts          业务数据仓库
       rows.ts          列表分组与排序（"默认展开第一条"同源）
       urgent.ts        紧急区取数（待办 / 流程任务 / 子任务三类来源）
@@ -297,6 +337,9 @@ main/
       notify.ts        系统通知
       wallpapers.ts    壁纸
       icons.ts         图标名映射
+      sync.ts          合并算法（纯函数：LWW / 墓碑 / 分片信封）
+      syncRepo.ts      同步与数据库之间的搬运（导出快照 / 写回）
+      syncClient.ts    同步编排（读配置、跑分片、出报告）
     components/
       Sidebar.tsx      侧边栏（智能视图 + 工具区 + 清单 + 紧急区）
       TaskList.tsx     任务列表主体
@@ -306,7 +349,7 @@ main/
       OrderDetail.tsx  流程任务详情
       SpecialOrdersView.tsx  特殊单号专用视图
       GalleryView.tsx  图库
-      Settings.tsx     设置（七个分区）
+      Settings.tsx     设置（八个分区）
       UrgentPanel.tsx  紧急区
       ToolHost.tsx / ToolArea.tsx  工具容器与标签条
       FlowEditor.tsx   流程模板编辑器
@@ -317,6 +360,7 @@ main/
     image-crop/  size-chart/  scratchpad/  ai-gen/
   tests/              单测与 e2e
   src-tauri/          Rust 端：插件注册、工具同步、打包配置
+    src/webdav.rs     WebDAV 传输层（坚果云同步用；独立于「工具同步」）
 ```
 
 ---
@@ -511,12 +555,13 @@ npm run env:check    # 环境自检，逐项报告缺什么、怎么补
 ```bash
 npm run typecheck      # TypeScript 类型检查，应 0 错误
 npm run smoke          # 逻辑单测，无浏览器（数据库层 / 仓库层 / 设置 / 分区排序 …）
+npm run sync:test      # 同步的合并算法与写回（无浏览器；含"另一台机器"的合并场景）
 npm run icons:check    # 图标格式校验（PNG 结构 + ICO 各帧）
 npm run webview2:check # 校验 WebView2Loader.dll 与 Rust 依赖版本一致
 npm run bat:check      # .bat 规范检查（纯 ASCII + CRLF + 无 BOM）
 
 # 浏览器 e2e（另开一个窗口跑 dev server，然后）
-node tests/_run-all-e2e.mjs      # 全量，17 个套件一次跑完
+node tests/_run-all-e2e.mjs      # 全量，18 个套件一次跑完
 node tests/task-detail.mjs       # 也可以单跑某一个套件
 ```
 
@@ -534,6 +579,7 @@ e2e 用本机 Edge（与 Tauri 的 WebView2 同源），覆盖 17 个面：
 task-detail    选中浮起 / 详情与列表同源 / 分区排序
 todo-extras    行内展开子任务 / 子任务时间
 daily-settings 我的一天分组 / 重复 / 设置持久化 / 关于页
+sync-panel     同步分区（默认只勾待办 / 勾选落库 / 演示模式下的禁用态）
 background     壁纸与主题
 tool-browser   工具装载 / 状态保持 / 单文件导入
 tool-database  工具私有表与跨工具调用
@@ -592,6 +638,7 @@ npm run icons:check  # 校验生成的 PNG 结构、ICO 各帧、以及配置引
 - [x] 图库与附件
 - [x] 工具的数据表、互相调用、设置里的数据库浏览
 - [x] 侧边栏紧急区（三类来源统一聚合）
+- [x] **坚果云同步**（WebDAV 双向合并，默认只同步待办；只同步记录不传文件，设置不进同步）
 - [x] **发布首个 Release（v0.1.0）**：安装包 + `.sig` 签名 + `update.json` 一起挂在 Releases，
       `releases/latest/download/update.json` 作为固定的更新源（发新版不用改客户端）
 - [ ] 列表内拖拽排序（当前排序规则固定：重要 / 到期 / 创建）

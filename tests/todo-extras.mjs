@@ -63,6 +63,28 @@ async function openRow(i = 0) {
   await page.waitForTimeout(350);
 }
 
+/**
+ * 等关联候选池真的就绪。
+ *
+ * 候选池是**聚焦搜索框时**才去取的（见 TaskLinkPool 里的说明），异步的。
+ * 原来填完搜索框固定 sleep 一下就数 `[data-link-option]` —— 机器忙的时候
+ * 那点时间不够，表现为"搜索能找到候选任务 count=0"，单跑绿、连跑红。
+ * 这里改成等它自己从 loading 变成数字，不猜时长。
+ */
+async function waitLinkOptions() {
+  await page
+    .waitForFunction(
+      () => {
+        const el = document.querySelector("[data-link-pool]");
+        return !!el && el.getAttribute("data-link-pool") !== "loading";
+      },
+      null,
+      { timeout: 15000 },
+    )
+    .catch(() => {});
+  await page.locator("[data-link-option]").first().waitFor({ timeout: 15000 }).catch(() => {});
+}
+
 /** 提醒扫描是 30 秒一轮，测试里用"窗口重新可见"这条即时通道触发 */
 const pokeReminders = () =>
   page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
@@ -150,7 +172,7 @@ info("主任务", hostTitle);
 check("宿主任务不是刚建的那条", !hostTitle.includes("关联目标"), hostTitle);
 
 await page.locator("[data-link-search]").fill("关联目标");
-await page.waitForTimeout(400);
+await waitLinkOptions();
 const optionCount = await page.locator("[data-link-option]").count();
 check("搜索能找到候选任务", optionCount >= 1, `count=${optionCount}`);
 await page.locator("[data-link-option]").first().click();
@@ -183,7 +205,7 @@ const hostStill = await detail().locator("textarea").first().inputValue();
 check("新建任务不会把详情面板顶走", hostStill === hostTitle, hostStill);
 
 await page.locator("[data-link-search]").fill("刚建好就要关联");
-await page.waitForTimeout(800);
+await waitLinkOptions();
 const freshHits = await page.locator("[data-link-option]").count();
 check("刚建的任务立刻出现在候选里", freshHits >= 1, `count=${freshHits}`);
 await page.locator("[data-link-search]").fill("");
