@@ -102,6 +102,16 @@ export const SETTINGS = {
   /* ------------------------------ 同步 ------------------------------ */
 
   /**
+   * 同步用哪个网盘：`webdav`（坚果云、群晖、Nextcloud 都走这个）或 `onedrive`。
+   *
+   * 两者是**两套协议**，不是同一套的两种填法：OneDrive 个人版没有 WebDAV，
+   * 走的是 Microsoft Graph + OAuth 登录。所以这个键决定的是
+   * 「下面哪些字段有意义」—— 选了 OneDrive，账号密码那几项就不该再出现。
+   * 默认保持 webdav：不能因为多了个新后端，就让老用户的配置换一种读法。
+   */
+  syncProvider: "sync.provider",
+
+  /**
    * 坚果云 WebDAV 的服务地址。
    *
    * 默认是官方地址；做成可配置不只是"以后能换服务商"——
@@ -135,6 +145,27 @@ export const SETTINGS = {
   /** 上次成功同步的时刻与摘要。只用于展示，不参与任何判断 */
   syncLastAt: "sync.lastAt",
   syncLastSummary: "sync.lastSummary",
+
+  /* ---------------------------- OneDrive ---------------------------- */
+
+  /**
+   * Azure 应用（客户端）ID。
+   *
+   * 公共客户端的 client_id **不是密钥** —— 它本来就会出现在授权页的网址里，
+   * 内置进应用、明文存在设置里都无妨。真正要保密的是下面那个 refresh_token。
+   */
+  onedriveClientId: "onedrive.clientId",
+  /**
+   * 长期令牌，用来换短期 access_token。
+   *
+   * ⚠️ 与 syncPassword 同一个待遇：**明文存在本机 SQLite 里**，没有加密
+   * （理由见上面那条）。它比应用密码还要敏感一点 —— 拿到它就能读写你
+   * OneDrive 里这个应用的专属文件夹。
+   * 唯一的好消息是**同步设置本身不参与同步**，它不会被带到别的机器上。
+   */
+  onedriveRefreshToken: "onedrive.refreshToken",
+  /** 已连接账号（邮箱）。只用于界面显示"已连接为 xxx" */
+  onedriveAccount: "onedrive.account",
 } as const;
 
 /** 头像可选色，与列表色板同源，避免两套颜色语言 */
@@ -223,6 +254,11 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.syncDeviceName]: "",
   [SETTINGS.syncLastAt]: "",
   [SETTINGS.syncLastSummary]: "",
+  // 新后端不改变既有行为：默认仍是坚果云 WebDAV
+  [SETTINGS.syncProvider]: "webdav",
+  [SETTINGS.onedriveClientId]: "",
+  [SETTINGS.onedriveRefreshToken]: "",
+  [SETTINGS.onedriveAccount]: "",
 };
 
 /**

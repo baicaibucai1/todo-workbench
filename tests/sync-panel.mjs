@@ -183,8 +183,7 @@ await openSync();
 check("账号存下来了", (await page.locator('[data-field="sync-user"]').inputValue()) === "someone@example.com");
 check("目录存下来了", (await page.locator('[data-field="sync-dir"]').inputValue()) === "我的待办数据");
 check("账号已填，但演示模式下按钮仍然禁用", await page.locator("[data-sync-now]").isDisabled());
-const afterFill = (await page.locator("[data-settings]").innerText()) || "";
-check("填完账号后不再提示「先填账号」", !afterFill.includes("账号和应用密码都填上之后"));
+check("填完账号后提示消失了（说明配置判定认了这份配置）", (await page.locator("[data-sync-hint]").count()) === 0);
 await shot("42-sync-filled");
 
 console.log("\n7. 恢复成默认（只同步待办），别给后面的套件留脏状态");
@@ -200,7 +199,109 @@ await page.waitForTimeout(400);
 const st4 = await shardState();
 check("恢复成只勾待办", st4.tasks === true && st4.gallery === false, JSON.stringify(st4));
 
-console.log("\n8. 控制台");
+console.log("\n8. 换后端：OneDrive 该只问该问的，注册指引要能照做");
+const providerState = async () =>
+  page.evaluate(() =>
+    Object.fromEntries(
+      [...document.querySelectorAll("[data-sync-provider]")].map((el) => [
+        el.getAttribute("data-sync-provider"),
+        el.getAttribute("data-on") === "1",
+      ]),
+    ),
+  );
+
+let pv = await providerState();
+info("后端选项", pv);
+check("两个后端都在（坚果云 / OneDrive）", Object.keys(pv).length === 2, Object.keys(pv).join(","));
+check("默认还是坚果云 WebDAV（老用户不受新后端影响）", pv.webdav === true, JSON.stringify(pv));
+check("OneDrive 没被默认选中", pv.onedrive === false);
+
+await page.locator('[data-sync-provider="onedrive"]').click();
+await page.waitForTimeout(400);
+pv = await providerState();
+check("点一下就切过去了", pv.onedrive === true && pv.webdav === false, JSON.stringify(pv));
+check("出现了 OneDrive 的字段区", (await page.locator("[data-sync-onedrive]").count()) === 1);
+check("WebDAV 的账号框收起来了（不该再要坚果云的账号）", (await page.locator('[data-field="sync-user"]').count()) === 0);
+check("服务器地址框也收起来了", (await page.locator('[data-field="sync-base"]').count()) === 0);
+check("换成要「Azure 客户端 ID」", (await page.locator('[data-field="onedrive-client"]').count()) === 1);
+
+const odText = (await page.locator("[data-settings]").innerText()) || "";
+check("说清了数据放在 OneDrive 的「应用」文件夹", odText.includes("Apps") && odText.includes("应用"), "");
+check(
+  "提醒了网页版看不到那个文件夹是正常的",
+  odText.includes("网页版默认不显示") || odText.includes("只有这个应用看得到"),
+);
+check("点了 client_id 不是密钥这件事（免得用户以为是敏感信息不敢填）", odText.includes("不是密钥"));
+
+const guide = page.locator("[data-onedrive-guide]");
+check("有可折叠的注册指引", (await guide.count()) === 1);
+// <details> 默认是收着的：innerText 只会给出 summary 那一行。
+// 先点开再读 —— 顺带把「指引点得开」这件事也验了。
+await guide.locator("summary").click();
+await page.waitForTimeout(300);
+check("指引点得开", await guide.evaluate((el) => el.open === true));
+const guideText = (await guide.innerText()) || "";
+check("指引里点了 Azure 门户", guideText.includes("portal.azure.com"), guideText.slice(0, 80));
+check("说清了重定向 URI 要勾 http://localhost（勾了就不必为端口操心）", guideText.includes("http://localhost"));
+check("点明了最小权限 Files.ReadWrite.AppFolder", guideText.includes("Files.ReadWrite.AppFolder"));
+check("提醒了「允许公共客户端流」要开，否则报 unauthorized_client", guideText.includes("公共客户端") && guideText.includes("unauthorized_client"));
+check("说清了要选「个人 Microsoft 帐户」那一项，否则个人版登不进", guideText.includes("个人 Microsoft 帐户"));
+
+const signin = page.locator("[data-onedrive-signin]");
+check("「连接 OneDrive」按钮在", (await signin.count()) === 1);
+check("还没填客户端 ID 时按钮是灰的", await signin.isDisabled());
+check(
+  "灰的原因写了（先填客户端 ID）",
+  ((await page.locator("[data-sync-hint]").innerText()) || "").includes("客户端 ID"),
+  (await page.locator("[data-sync-hint]").innerText()) || "",
+);
+
+await page.locator('[data-field="onedrive-client"]').fill("11111111-2222-3333-4444-555555555555");
+await page.locator('[data-field="onedrive-client"]').press("Enter");
+await page.waitForTimeout(500);
+check("填了 ID 后仍然不给点（演示模式开不了本地端口收回调）", await signin.isDisabled());
+check(
+  "提示换成了「去点连接」",
+  ((await page.locator("[data-sync-hint]").innerText()) || "").includes("连接 OneDrive"),
+  (await page.locator("[data-sync-hint]").innerText()) || "",
+);
+await shot("43-sync-onedrive");
+
+// 刷新后后端选择与 ID 都要在 —— 光切不存等于每次开机都要重选
+await page.goto(BASE, { waitUntil: "load" });
+await page.waitForSelector("aside", { timeout: 20000 });
+await page.waitForTimeout(800);
+await openSync();
+pv = await providerState();
+check("刷新后仍然是 OneDrive", pv.onedrive === true, JSON.stringify(pv));
+check(
+  "客户端 ID 存下来了",
+  (await page.locator('[data-field="onedrive-client"]').inputValue()) === "11111111-2222-3333-4444-555555555555",
+);
+
+console.log("\n9. 来回切后端不该有成本（另一边的配置不许被清掉）");
+await page.locator('[data-sync-provider="webdav"]').click();
+await page.waitForTimeout(400);
+pv = await providerState();
+check("切回坚果云后选中态跟上了", pv.webdav === true && pv.onedrive === false, JSON.stringify(pv));
+check("账号框回来了", (await page.locator('[data-field="sync-user"]').count()) === 1);
+check("OneDrive 字段区收起来了", (await page.locator("[data-sync-onedrive]").count()) === 0);
+
+await page.locator('[data-sync-provider="onedrive"]').click();
+await page.waitForTimeout(400);
+check(
+  "再切回 OneDrive，客户端 ID 还在（这才叫「来回切成本为零」）",
+  (await page.locator('[data-field="onedrive-client"]').inputValue()) === "11111111-2222-3333-4444-555555555555",
+);
+
+// 收尾：把后端恢复成默认的坚果云，别给共用同一浏览器 profile 的套件留脏状态。
+// 客户端 ID 留着无妨（它有值也连不上，因为演示模式点不了「连接」）。
+await page.locator('[data-sync-provider="webdav"]').click();
+await page.waitForTimeout(400);
+pv = await providerState();
+check("收尾恢复成坚果云 WebDAV", pv.webdav === true, JSON.stringify(pv));
+
+console.log("\n10. 控制台");
 check("全程无控制台错误", errors.length === 0, errors.slice(0, 3).join(" | "));
 
 await browser.close();

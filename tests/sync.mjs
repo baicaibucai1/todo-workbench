@@ -1,11 +1,15 @@
 /**
- * 同步的 Node 侧验证（不依赖浏览器与 Rust）。
+ * 同步的 Node 侧验证（不依赖浏览器，也不需要真的连上云盘）。
  *
- * 分两半：
+ * 分三段：
  *   A. **纯合并算法**（src/lib/sync.ts）—— 这是同步最核心、也最难靠手点验证的部分。
  *      两边的时间戳、墓碑、坏时间戳、字段缺失的组合太多，只有穷举断言才敢说它对。
  *   B. **数据库往返**（src/lib/syncRepo.ts）—— 合并结果能不能正确写回库，
  *      以及"只勾待办"时会不会误伤别的分片的表（附件记录被连带删除是这里最贵的一个坑）。
+ *   C. **传输层分派**（src/lib/syncClient.ts）—— 「哪个后端打哪个命令、参数长什么样」。
+ *      这一层只有真的连上云盘才会暴露问题，所以这里把 Tauri 的 invoke 落地端
+ *      （`window.__TAURI_INTERNALS__.invoke`）换成一个记录器，既不启动真应用也不连网。
+ *      配置读取在后端上的分叉（第 13 节）也在这里。
  *
  * 用法：
  *   npm run sync:test
@@ -433,7 +437,9 @@ section("12. 外部输入健壮性：payload 里字段整个缺失也不能炸")
 section("13. 分片选择器与配置读取");
 {
   const C = await import("../src/lib/syncClient.ts");
-  const K = (await import("../src/lib/settings.ts")).SETTINGS;
+  const SET = await import("../src/lib/settings.ts");
+  const K = SET.SETTINGS;
+  const DEFAULT = SET.DEFAULT_SETTINGS;
 
   check("空值回落成只同步待办", JSON.stringify(C.parseShards(undefined)) === '["tasks"]');
   check("空串回落成只同步待办", JSON.stringify(C.parseShards("")) === '["tasks"]');
@@ -460,6 +466,73 @@ section("13. 分片选择器与配置读取");
   check("设备 id 缺失时会现生成（且非空）", C.readSyncConfig({}).deviceId.length > 0);
   check("设备 id 存过就用存的", C.readSyncConfig({ [K.syncDeviceId]: "固定 id" }).deviceId === "固定 id");
   check("文件名：分片名 + .json", C.shardFileName("tasks") === "tasks.json");
+
+  /* ---------------- 后端分派：OneDrive 是另一套协议 ---------------- */
+
+  // 这一条是**老用户的兼容底线**：他们的设置里根本没有 sync.provider 这个键，
+  // 读出来必须是 webdav，否则升级后同步会突然找不到账号密码。
+  check("设置里没这个键时回落 webdav", C.parseSyncProvider(undefined) === "webdav");
+  check("空串回落 webdav", C.parseSyncProvider("") === "webdav");
+  check("认得出 webdav", C.parseSyncProvider("webdav") === "webdav");
+  check("认得出 onedrive", C.parseSyncProvider("onedrive") === "onedrive");
+  check("大小写不对的脏值也回落 webdav（手改过库不能把同步弄死）", C.parseSyncProvider("OneDrive") === "webdav");
+  check("别的后端的残留值回落 webdav", C.parseSyncProvider("dropbox") === "webdav");
+  check("readSyncConfig 默认读到 webdav", cfg.provider === "webdav", cfg.provider);
+  check("默认值表里也写着 webdav", DEFAULT[K.syncProvider] === "webdav", DEFAULT[K.syncProvider]);
+  check(
+    "后端只有两个，且顺序稳定",
+    C.SYNC_PROVIDERS.map((p) => p.id).join(",") === "webdav,onedrive",
+    C.SYNC_PROVIDERS.map((p) => p.id).join(","),
+  );
+  check("每个后端都有人看的名字和一句说明", C.SYNC_PROVIDERS.every((p) => !!p.label && !!p.hint));
+  check("providerLabel 取得到中文名", C.providerLabel("onedrive") === "OneDrive", C.providerLabel("onedrive"));
+  check("providerLabel 对 webdav 取到坚果云", C.providerLabel("webdav").includes("坚果云"), C.providerLabel("webdav"));
+
+  // OneDrive 那三项的解析。client_id 常是从网页上复制来的，带空格；令牌则不该被加工
+  const odRaw = C.readSyncConfig({
+    [K.syncProvider]: "onedrive",
+    [K.onedriveClientId]: "  11111111-2222-3333-4444-555555555555  ",
+    [K.onedriveRefreshToken]: " M.C5xx_refresh-token ",
+    [K.onedriveAccount]: " someone@outlook.com ",
+  });
+  check("读得出 onedrive 后端", odRaw.provider === "onedrive");
+  check("client_id 去掉首尾空白", odRaw.onedriveClientId === "11111111-2222-3333-4444-555555555555", `[${odRaw.onedriveClientId}]`);
+  check("账号去掉首尾空白", odRaw.onedriveAccount === "someone@outlook.com", `[${odRaw.onedriveAccount}]`);
+  check(
+    "令牌原样保留（它是照抄回去换短令牌的，加工一个字符就废了）",
+    odRaw.onedriveRefreshToken === " M.C5xx_refresh-token ",
+    `[${odRaw.onedriveRefreshToken}]`,
+  );
+  check("OneDrive 后端照样读分片（两套协议共用同一套分片）", JSON.stringify(odRaw.shards) === '["tasks"]');
+  check("切到 OneDrive 也不影响 WebDAV 那几项的读取", odRaw.baseUrl === C.DEFAULT_BASE_URL, odRaw.baseUrl);
+
+  // 「配好了」的门槛两个后端不同 —— 共用一句判断会让 OneDrive 用户
+  // 被要求去填坚果云的账号和应用密码
+  const odBare = { ...odRaw, onedriveClientId: "", onedriveRefreshToken: "" };
+  check("OneDrive：什么都没有 → 未配置", C.isSyncConfigured(odBare) === false);
+  check(
+    "OneDrive：只填了 client_id（还没登录）→ 仍未配置",
+    C.isSyncConfigured({ ...odBare, onedriveClientId: "abc" }) === false,
+  );
+  check(
+    "OneDrive：登录过（有令牌）→ 已配置",
+    C.isSyncConfigured({ ...odBare, onedriveClientId: "abc", onedriveRefreshToken: "rt" }) === true,
+  );
+  check(
+    "OneDrive：填了 WebDAV 账号密码也不算配好",
+    C.isSyncConfigured({ ...odBare, username: "u@b.c", password: "p" }) === false,
+  );
+  check(
+    "WebDAV：塞了 OneDrive 令牌也不算配好",
+    C.isSyncConfigured({ ...cfg, onedriveClientId: "abc", onedriveRefreshToken: "rt" }) === false,
+  );
+
+  const hintBare = C.missingConfigHint(odBare);
+  const hintHalf = C.missingConfigHint({ ...odBare, onedriveClientId: "abc" });
+  check("OneDrive 缺 ID 时提示先填 ID", hintBare.includes("客户端 ID"), hintBare);
+  check("OneDrive 填了 ID 未登录时提示去点连接", hintHalf.includes("连接 OneDrive"), hintHalf);
+  check("两句提示不是同一句（缺什么说什么）", hintBare !== hintHalf);
+  check("WebDAV 的提示仍指向账号与应用密码", C.missingConfigHint(cfg).includes("账号和应用密码"), C.missingConfigHint(cfg));
 
   // 设置项本身不参与同步：这些键不该出现在任何分片载荷里
   const shards = ["tasks", "orders", "gallery", "attachments"];
@@ -718,6 +791,183 @@ section("22. 幂等：同一份数据同步两次，第二次不该再产生改�
   check("第二次合并没有要推上去的", m2.stats.pushed === 0, JSON.stringify(m2.stats));
   check("第二次合并没有冲突", m2.conflicts.length === 0);
   check("任务数没变", (await repo.fetchTasks({ view: "all" })).length === 1);
+}
+
+/* ==================================================================== */
+/* C. 传输层分派（不连网、不起真应用：把 Tauri 的落地端换成记录器）        */
+/* ==================================================================== */
+
+section("23. 传输层分派：两个后端各打各的命令，配置形状不许串味");
+{
+  const C = await import("../src/lib/syncClient.ts");
+  const D = await import("../src/lib/db.ts");
+  const K = (await import("../src/lib/settings.ts")).SETTINGS;
+
+  // Tauri v2 的 invoke 只有薄薄一层：window.__TAURI_INTERNALS__.invoke(...)。
+  // 换掉它就等于把「Rust 那边」整个换掉 —— 不用启动真应用，也能断言
+  // 「哪个后端打哪个命令、参数长什么样」这件事。这正是最容易写错、
+  // 又只有真连上云盘才会暴露的一层。
+  const calls = [];
+  const replies = {};
+  globalThis.window.__TAURI_INTERNALS__ = {
+    invoke: async (cmd, args) => {
+      calls.push({ cmd, args });
+      const r = replies[cmd];
+      return typeof r === "function" ? r(args) : r;
+    },
+  };
+  const last = () => calls[calls.length - 1];
+  const cmds = () => calls.map((c) => c.cmd).join(",");
+  const reset = () => {
+    calls.length = 0;
+  };
+
+  check("立起 Tauri 标记后 isTauri() 为真", D.isTauri() === true);
+
+  /* ------------------------------ WebDAV ------------------------------ */
+
+  const davCfg = C.readSyncConfig({
+    [K.syncBaseUrl]: "  https://dav.example.com/dav  ",
+    [K.syncUsername]: "u@example.com",
+    [K.syncPassword]: "app-pass",
+    [K.syncDir]: "待办工作台",
+  });
+
+  const dav = await C.openRemote(davCfg);
+  check("WebDAV 开句柄不发任何请求（没有要先换的令牌）", calls.length === 0, cmds());
+
+  replies["webdav_check"] = { dirExists: true, message: "目录可用，可以同步" };
+  check("check() 把后端那句人话原样透出来", (await dav.check()) === "目录可用，可以同步");
+  check("check() 打到 webdav_check", last().cmd === "webdav_check", last().cmd);
+
+  replies["webdav_get"] = '{"app":"todo-workbench"}';
+  const got = await dav.get("tasks.json");
+  check("get() 打到 webdav_get", last().cmd === "webdav_get", last().cmd);
+  check(
+    "get() 的参数就 name + cfg 两个",
+    Object.keys(last().args).sort().join(",") === "cfg,name",
+    Object.keys(last().args).join(","),
+  );
+  check("文件名按分片名组织", last().args.name === "tasks.json", last().args.name);
+  check("取回的内容原样交出去（解析是上层的事）", got === '{"app":"todo-workbench"}');
+  check(
+    "WebDAV 的 cfg 恰好四项，且不带 OneDrive 的字段",
+    Object.keys(last().args.cfg).sort().join(",") === "baseUrl,dir,password,username",
+    Object.keys(last().args.cfg).join(","),
+  );
+  check(
+    "cfg 的值来自设置，地址已去掉首尾空白",
+    last().args.cfg.baseUrl === "https://dav.example.com/dav",
+    `[${last().args.cfg.baseUrl}]`,
+  );
+  check("目录照原样传下去", last().args.cfg.dir === "待办工作台", last().args.cfg.dir);
+
+  replies["webdav_put"] = 123;
+  const written = await dav.put("tasks.json", "hello");
+  check("put() 打到 webdav_put", last().cmd === "webdav_put", last().cmd);
+  check("put() 把上传字节数交回来", written === 123, String(written));
+
+  replies["webdav_stat"] = { size: 42, modified: "2026-09-01T00:00:00Z" };
+  const ent = await dav.stat("tasks.json");
+  check("stat() 打到 webdav_stat", last().cmd === "webdav_stat", last().cmd);
+  check(
+    "stat() 只交出 size / modified（上层不关心远端文件长什么样）",
+    Object.keys(ent).sort().join(",") === "modified,size",
+    Object.keys(ent).join(","),
+  );
+  check("两个字段都透传", ent.size === 42 && ent.modified === "2026-09-01T00:00:00Z");
+
+  replies["webdav_stat"] = null;
+  check("云端没有这个文件时 stat() 返回 null（首次同步不是错误）", (await dav.stat("tasks.json")) === null);
+
+  /* ----------------------------- OneDrive ----------------------------- */
+
+  C.forgetOneDriveToken();
+  reset();
+  const odCfg = C.readSyncConfig({
+    [K.syncProvider]: "onedrive",
+    [K.onedriveClientId]: "client-abc",
+    [K.onedriveRefreshToken]: "rt-1",
+  });
+
+  replies["onedrive_refresh"] = { accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 };
+  const od = await C.openRemote(odCfg);
+  check("OneDrive 开句柄先换一次短期令牌", cmds() === "onedrive_refresh", cmds());
+  check(
+    "换令牌传的是 clientId + refreshToken，accessToken 传空（本来就是要换它）",
+    last().args.cfg.clientId === "client-abc" &&
+      last().args.cfg.refreshToken === "rt-1" &&
+      last().args.cfg.accessToken === "",
+    JSON.stringify(last().args.cfg),
+  );
+
+  reset();
+  replies["onedrive_get"] = "{}";
+  await od.get("orders.json");
+  check("get() 打到 onedrive_get 而不是 webdav_get", last().cmd === "onedrive_get", last().cmd);
+  check("分片名照旧是 xxx.json（两套协议的文件组织一致）", last().args.name === "orders.json", last().args.name);
+  check(
+    "OneDrive 的 cfg 恰好三项，且不带 WebDAV 的字段",
+    Object.keys(last().args.cfg).sort().join(",") === "accessToken,clientId,refreshToken",
+    Object.keys(last().args.cfg).join(","),
+  );
+  check("带上了刚换来的短期令牌", last().args.cfg.accessToken === "at-1", last().args.cfg.accessToken);
+  check("长期令牌也一起带下去（Rust 侧遇到 401 还能自己再换一次）", last().args.cfg.refreshToken === "rt-1");
+
+  // 令牌必须整轮复用：一轮同步最多 4 个分片，每个分片各刷一次既慢又容易被限流
+  reset();
+  const od2 = await C.openRemote(odCfg);
+  await od2.get("tasks.json");
+  check("第二次开句柄复用缓存令牌，不再多换一次", cmds() === "onedrive_get", cmds());
+
+  // 轮换：微软每次刷新都可能发一个新的 refresh_token，旧的随后作废。
+  // 不写回去的话这一轮照样跑得完，下一次点同步才报「授权已失效」——
+  // 而且报得像是用户的问题。所以这里钉住「换到新的必须落库」。
+  C.forgetOneDriveToken();
+  reset();
+  replies["onedrive_refresh"] = { accessToken: "at-2", refreshToken: "rt-2", expiresIn: 3600 };
+  await C.openRemote(odCfg);
+  check("清掉缓存后重新开句柄会再换一次令牌", cmds() === "onedrive_refresh", cmds());
+  check("新令牌写回了内存里的那份配置", odCfg.onedriveRefreshToken === "rt-2", odCfg.onedriveRefreshToken);
+  const stored = await repo.getAllSettings();
+  check(
+    "新令牌也落了库（否则下次启动会拿着那个已作废的）",
+    stored[K.onedriveRefreshToken] === "rt-2",
+    stored[K.onedriveRefreshToken],
+  );
+
+  reset();
+  replies["onedrive_put"] = 7;
+  replies["onedrive_stat"] = { size: 9, modified: "2026-09-02T00:00:00Z" };
+  replies["onedrive_check"] = { folderExists: true, folderPath: "Apps/待办工作台", message: "应用专属文件夹已就绪" };
+  const back = await od2.put("tasks.json", "x");
+  check("put() 打到 onedrive_put", last().cmd === "onedrive_put", last().cmd);
+  check("put() 也把字节数交回来", back === 7, String(back));
+  await od2.stat("tasks.json");
+  check("stat() 打到 onedrive_stat", last().cmd === "onedrive_stat", last().cmd);
+  check("check() 打到 onedrive_check 并透出后端的话", (await od2.check()) === "应用专属文件夹已就绪");
+
+  // 换了 Azure 应用（client_id 变了）之后，旧令牌不能再拿去用
+  C.forgetOneDriveToken();
+  reset();
+  replies["onedrive_refresh"] = { accessToken: "at-3", refreshToken: "rt-3", expiresIn: 3600 };
+  const other = C.readSyncConfig({
+    [K.syncProvider]: "onedrive",
+    [K.onedriveClientId]: "client-other",
+    [K.onedriveRefreshToken]: "rt-other",
+  });
+  await C.openRemote(other);
+  check("换了 client_id 后一定会重新换令牌（缓存不跨应用复用）", cmds() === "onedrive_refresh", cmds());
+  check(
+    "换的是新应用的凭据",
+    last().args.cfg.clientId === "client-other" && last().args.cfg.refreshToken === "rt-other",
+    JSON.stringify(last().args.cfg),
+  );
+
+  /* 收尾：把桩撤掉，让这个进程回到它启动时的样子 */
+  delete globalThis.window.__TAURI_INTERNALS__;
+  C.forgetOneDriveToken();
+  check("撤掉标记后又回到非桌面环境", D.isTauri() === false);
 }
 
 /* ---------- 汇总 ---------- */

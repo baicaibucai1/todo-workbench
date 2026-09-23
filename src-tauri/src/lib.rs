@@ -13,6 +13,7 @@ use tauri::Manager;
 
 mod attachments;
 mod db_tx;
+mod onedrive;
 mod webdav;
 
 /// 把打包进安装包的内置工具同步到用户数据目录。
@@ -174,6 +175,15 @@ pub fn run() {
             webdav::webdav_get,
             webdav::webdav_put,
             webdav::webdav_stat,
+            // OneDrive 同步的传输层。与 WebDAV 是**两套协议**：
+            // OneDrive 个人版没有 WebDAV，走的是 Microsoft Graph + OAuth。
+            // 登录（授权码 + PKCE）必须在这里做 —— 要开本地端口收回调。
+            onedrive::onedrive_sign_in,
+            onedrive::onedrive_refresh,
+            onedrive::onedrive_check,
+            onedrive::onedrive_get,
+            onedrive::onedrive_put,
+            onedrive::onedrive_stat,
         ])
         .setup(|app| {
             if let Err(e) = sync_builtin_tools(app.handle()) {

@@ -35,14 +35,67 @@ export const DEFAULT_BASE_URL = "https://dav.jianguoyun.com/dav";
 /** 分片的固定顺序。界面按它排，序列化也按它，两边不会各排各的 */
 export const ALL_SHARDS: SyncShardId[] = ["tasks", "orders", "gallery", "attachments"];
 
+/**
+ * 同步的后端。
+ *
+ * 这是**两套完全不同的协议**，不是同一套的两种填法：
+ *   - `webdav`   坚果云、群晖、Nextcloud —— 账号密码走 Basic Auth，
+ *                用 PROPFIND / MKCOL 建目录
+ *   - `onedrive` Microsoft Graph + OAuth 登录 —— **OneDrive 个人版没有 WebDAV**，
+ *                那套 d.docs.live.net 的映射靠应用密码，微软早废弃了
+ *
+ * 除了"传输"这一层，配置解析以上的所有东西（分片、合并、墓碑、设备名）
+ * 两个后端完全共用 —— 这正是当初把传输单独切一层的原因。
+ */
+export type SyncProvider = "webdav" | "onedrive";
+
+export const SYNC_PROVIDERS: ReadonlyArray<{ id: SyncProvider; label: string; hint: string }> = [
+  {
+    id: "webdav",
+    label: "坚果云 WebDAV",
+    hint: "群晖、Nextcloud、InfiniCLOUD 等任何 WebDAV 服务都填这里",
+  },
+  {
+    id: "onedrive",
+    label: "OneDrive",
+    hint: "走微软 Graph API。需要先在 Azure 注册一个免费应用，再点「连接 OneDrive」",
+  },
+];
+
+/**
+ * 解析后端标识。**未知值一律回落到 webdav** ——
+ * 老用户的设置里没有这个键，手改数据库也可能留下脏值，
+ * 而"回落到 webdav"对他们正是原来的行为（配置一个字节都不用改）。
+ */
+export function parseSyncProvider(raw: string | undefined): SyncProvider {
+  return raw === "onedrive" ? "onedrive" : "webdav";
+}
+
+export function providerLabel(id: SyncProvider): string {
+  return SYNC_PROVIDERS.find((p) => p.id === id)?.label ?? id;
+}
+
 export interface SyncConfig {
-  baseUrl: string;
-  username: string;
-  password: string;
-  dir: string;
+  provider: SyncProvider;
+  /** 要同步的分片。两种后端共用同一套分片 */
   shards: SyncShardId[];
   deviceId: string;
   deviceName: string;
+
+  /* ------------------------------ WebDAV ------------------------------ */
+  baseUrl: string;
+  username: string;
+  password: string;
+  /** 远程目录，相对 baseUrl。OneDrive 用不到它（固定是应用专属文件夹） */
+  dir: string;
+
+  /* ----------------------------- OneDrive ----------------------------- */
+  /** Azure 应用的客户端 ID。公共客户端的 client_id **不是密钥** */
+  onedriveClientId: string;
+  /** 长期令牌。与 syncPassword 同类：明文存本机、不参与同步 */
+  onedriveRefreshToken: string;
+  /** 已连接账号，仅用于界面显示 */
+  onedriveAccount: string;
 }
 
 /** 与 Rust 侧 webdav::DavConfig 一一对应（那边是 camelCase 反序列化） */
@@ -51,6 +104,13 @@ interface RustDavConfig {
   username: string;
   password: string;
   dir: string;
+}
+
+/** 与 Rust 侧 onedrive::OneDriveConfig 一一对应 */
+interface RustOneDriveConfig {
+  clientId: string;
+  refreshToken: string;
+  accessToken: string;
 }
 
 export interface ShardReport {
@@ -128,22 +188,43 @@ export function readSyncConfig(settings: Record<string, string>): SyncConfig {
   const stored = (settings[SETTINGS.syncDeviceId] ?? "").trim();
   const deviceId = stored || newDeviceId();
   return {
+    provider: parseSyncProvider(settings[SETTINGS.syncProvider]),
+    shards: parseShards(settings[SETTINGS.syncShards]),
+    deviceId,
+    deviceName:
+      (settings[SETTINGS.syncDeviceName] ?? "").trim() || `设备-${deviceId.slice(0, 4)}`,
     baseUrl: (settings[SETTINGS.syncBaseUrl] ?? "").trim() || DEFAULT_BASE_URL,
     username: (settings[SETTINGS.syncUsername] ?? "").trim(),
     password: settings[SETTINGS.syncPassword] ?? "",
     // 目录允许空串（直接放服务根目录），所以这里不填默认值 ——
     // 默认值在 DEFAULT_SETTINGS 里，用户清空就是清空
     dir: (settings[SETTINGS.syncDir] ?? "").trim(),
-    shards: parseShards(settings[SETTINGS.syncShards]),
-    deviceId,
-    deviceName:
-      (settings[SETTINGS.syncDeviceName] ?? "").trim() || `设备-${deviceId.slice(0, 4)}`,
+    onedriveClientId: (settings[SETTINGS.onedriveClientId] ?? "").trim(),
+    onedriveRefreshToken: settings[SETTINGS.onedriveRefreshToken] ?? "",
+    onedriveAccount: (settings[SETTINGS.onedriveAccount] ?? "").trim(),
   };
 }
 
-/** 账号密码填全了才算配好 */
+/**
+ * 算不算配好了。两种后端"配好"的门槛不一样 ——
+ * 用一个共用判断会让 OneDrive 用户被要求去填 WebDAV 的账号密码。
+ */
 export function isSyncConfigured(cfg: SyncConfig): boolean {
+  if (cfg.provider === "onedrive") {
+    // 有长期令牌就等于登录过了；client_id 是它成立的前提
+    return !!cfg.onedriveClientId && !!cfg.onedriveRefreshToken;
+  }
   return !!cfg.baseUrl && !!cfg.username && !!cfg.password;
+}
+
+/** 还没配好时该提示什么。缺的东西两个后端不同，不能共用一句 */
+export function missingConfigHint(cfg: SyncConfig): string {
+  if (cfg.provider === "onedrive") {
+    return cfg.onedriveClientId
+      ? "还没连接 OneDrive，先点「连接 OneDrive」完成一次授权"
+      : "先填 Azure 应用的客户端 ID，再点「连接 OneDrive」";
+  }
+  return "先填账号和应用密码";
 }
 
 /** 首次使用时把新生成的设备 id 落库，否则每次启动都会换一个身份 */
@@ -163,6 +244,14 @@ function davOf(cfg: SyncConfig): RustDavConfig {
   };
 }
 
+function onedriveOf(cfg: SyncConfig, accessToken: string): RustOneDriveConfig {
+  return {
+    clientId: cfg.onedriveClientId,
+    refreshToken: cfg.onedriveRefreshToken,
+    accessToken,
+  };
+}
+
 export function shardFileName(shard: SyncShardId): string {
   return `${shard}.json`;
 }
@@ -171,16 +260,152 @@ export function shardFileName(shard: SyncShardId): string {
 /* 传输                                                                */
 /* ------------------------------------------------------------------ */
 
-/** 验证账号并确保远程目录存在。成功返回一句给人看的话 */
+/** 远端一个文件的信息。两个后端字段对齐，上层不必区分来源 */
+export interface RemoteEntry {
+  size: number;
+  modified: string;
+}
+
+/**
+ * 一轮同步要用的传输句柄。
+ *
+ * 做成"先开句柄、再反复用"而不是四个散函数，是因为 **OneDrive 的短期令牌
+ * 得整轮共用**：每取一个分片都刷一次令牌，既慢又容易被限流。
+ * 开句柄时刷一次，之后整轮复用。
+ */
+export interface RemoteTarget {
+  /** 验通并确保远端目录可用。返回一句给人看的话 */
+  check(): Promise<string>;
+  get(name: string): Promise<string | null>;
+  put(name: string, text: string): Promise<number>;
+  stat(name: string): Promise<RemoteEntry | null>;
+}
+
+/**
+ * OneDrive 短期令牌的缓存。
+ *
+ * 放在模块作用域而**不落库**：它一小时后必然失效，落库只会多一份迟早要清的
+ * 脏数据；而且它比 refresh_token 更该少落盘 —— 短期令牌本身就是"用完即弃"的。
+ */
+let cachedToken: { token: string; expiresAt: number; forClient: string } | null = null;
+
+/** 微软给的有效期是 3600 秒。留一分钟余量，避免卡在过期那一瞬间 */
+function tokenTtlMs(expiresIn: number): number {
+  const secs = expiresIn > 0 ? expiresIn : 3600;
+  return Math.max(60_000, (secs - 60) * 1000);
+}
+
+async function onedriveAccessToken(cfg: SyncConfig): Promise<string> {
+  const now = Date.now();
+  if (cachedToken && cachedToken.forClient === cfg.onedriveClientId && cachedToken.expiresAt > now) {
+    return cachedToken.token;
+  }
+
+  const r = await invoke<{ accessToken: string; refreshToken: string; expiresIn: number }>(
+    "onedrive_refresh",
+    { cfg: onedriveOf(cfg, "") },
+  );
+
+  // ⚠️ 微软的 refresh_token 是**会滚动**的：每次刷新可能发一个新的，旧的随后失效。
+  // 不写回去的话，这一轮同步照样能跑完，下一次点同步才失败 —— 而且报的还是
+  // 「授权已失效」，看起来像用户的问题。
+  if (r.refreshToken && r.refreshToken !== cfg.onedriveRefreshToken) {
+    cfg.onedriveRefreshToken = r.refreshToken;
+    await setSettings({ [SETTINGS.onedriveRefreshToken]: r.refreshToken });
+  }
+
+  cachedToken = {
+    token: r.accessToken,
+    expiresAt: now + tokenTtlMs(r.expiresIn),
+    forClient: cfg.onedriveClientId,
+  };
+  return r.accessToken;
+}
+
+/** 清掉内存里的短期令牌。断开账号、重新登录时都要调 —— 否则下一次还会拿旧账号的去试 */
+export function forgetOneDriveToken(): void {
+  cachedToken = null;
+}
+
+/**
+ * 打开一个传输句柄。
+ *
+ * OneDrive 要先刷一次令牌，所以这一步必然是异步的；WebDAV 其实不必，
+ * 但接口统一成异步，上层就不用按后端起两套写法。
+ */
+export async function openRemote(cfg: SyncConfig): Promise<RemoteTarget> {
+  if (cfg.provider === "onedrive") {
+    const od = onedriveOf(cfg, await onedriveAccessToken(cfg));
+    return {
+      async check() {
+        const r = await invoke<{ folderExists: boolean; folderPath: string; message: string }>(
+          "onedrive_check",
+          { cfg: od },
+        );
+        return r.message;
+      },
+      get: (name) => invoke<string | null>("onedrive_get", { cfg: od, name }),
+      put: (name, text) => invoke<number>("onedrive_put", { cfg: od, name, text }),
+      async stat(name) {
+        const r = await invoke<RemoteEntry | null>("onedrive_stat", { cfg: od, name });
+        return r ? { size: r.size, modified: r.modified } : null;
+      },
+    };
+  }
+
+  const dav = davOf(cfg);
+  return {
+    async check() {
+      const r = await invoke<{ dirExists: boolean; message: string }>("webdav_check", { cfg: dav });
+      return r.message;
+    },
+    get: (name) => invoke<string | null>("webdav_get", { cfg: dav, name }),
+    put: (name, text) => invoke<number>("webdav_put", { cfg: dav, name, text }),
+    async stat(name) {
+      const r = await invoke<RemoteEntry | null>("webdav_stat", { cfg: dav, name });
+      return r ? { size: r.size, modified: r.modified } : null;
+    },
+  };
+}
+
+/** 验证账号 / OneDrive 授权，并确保远端目录存在。返回一句给人看的话 */
 export async function checkConnection(cfg: SyncConfig): Promise<string> {
   assertDesktop();
-  if (!isSyncConfigured(cfg)) {
-    throw new Error("先填账号和应用密码");
+  if (!isSyncConfigured(cfg)) throw new Error(missingConfigHint(cfg));
+  const remote = await openRemote(cfg);
+  return remote.check();
+}
+
+/**
+ * 走一遍 OneDrive 授权登录，成功后立刻把长期令牌落库。
+ *
+ * **这个调用会等几分钟**（开着浏览器等用户登录授权），调用方必须先把
+ * "正在等浏览器"的状态显示出来，否则界面看起来像卡死了。
+ */
+export async function signInOneDrive(cfg: SyncConfig): Promise<string> {
+  assertDesktop();
+  if (!cfg.onedriveClientId) {
+    throw new Error("先填 Azure 应用的客户端 ID，再点「连接 OneDrive」");
   }
-  const r = await invoke<{ dirExists: boolean; message: string }>("webdav_check", {
-    cfg: davOf(cfg),
+  const r = await invoke<{ refreshToken: string; account: string; message: string }>(
+    "onedrive_sign_in",
+    { cfg: onedriveOf(cfg, "") },
+  );
+  forgetOneDriveToken();
+  await setSettings({
+    [SETTINGS.onedriveRefreshToken]: r.refreshToken,
+    [SETTINGS.onedriveAccount]: r.account,
   });
   return r.message;
+}
+
+/** 断开 OneDrive：清掉本机的长期令牌与账号显示。云端那份数据**不动** —— 断开不等于删数据 */
+export async function signOutOneDrive(): Promise<void> {
+  forgetOneDriveToken();
+  await setSettings({
+    [SETTINGS.onedriveRefreshToken]: "",
+    [SETTINGS.onedriveAccount]: "",
+  });
 }
 
 function errText(e: unknown): string {
@@ -202,11 +427,16 @@ function errText(e: unknown): string {
 export async function runSync(cfg: SyncConfig): Promise<SyncReport> {
   assertDesktop();
   if (!isSyncConfigured(cfg)) {
-    throw new Error("先填账号和应用密码");
+    throw new Error(missingConfigHint(cfg));
   }
 
   const at = new Date().toISOString();
   const results: ShardReport[] = [];
+
+  // 句柄在一轮开始时开一次：OneDrive 的令牌只刷这一次，之后整轮复用。
+  // 开不出来（网络不通 / 授权失效）就整轮到此为止 —— 这时候没有一个分片有救，
+  // 让四个分片各报一遍同样的错只会把界面刷满，反而看不见真正的原因
+  const remote = await openRemote(cfg);
 
   for (const shard of cfg.shards) {
     const name = shardFileName(shard);
@@ -214,11 +444,8 @@ export async function runSync(cfg: SyncConfig): Promise<SyncReport> {
       // 1) 本地快照（含软删除的墓碑）
       const local = await exportShardPayload(shard);
 
-      // 2) 云端那份。404 返回 null，不是错误 —— 首次同步本来就没有
-      const raw = await invoke<string | null>("webdav_get", {
-        cfg: davOf(cfg),
-        name,
-      });
+      // 2) 云端那份。不存在时返回 null，不是错误 —— 首次同步本来就没有
+      const raw = await remote.get(name);
       const cloud = raw ? parseShard(raw, shard) : null;
 
       // 3) 合并
@@ -242,11 +469,7 @@ export async function runSync(cfg: SyncConfig): Promise<SyncReport> {
         deviceName: cfg.deviceName,
         payload: merged.payload,
       };
-      await invoke<number>("webdav_put", {
-        cfg: davOf(cfg),
-        name,
-        text: serializeShard(envelope),
-      });
+      await remote.put(name, serializeShard(envelope));
 
       results.push({
         shard,

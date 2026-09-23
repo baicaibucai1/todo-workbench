@@ -629,17 +629,16 @@ pub fn attachment_usage(app: AppHandle) -> Result<RepoUsage, String> {
 
 /// 用系统默认程序打开一个外部链接。
 ///
-/// 为什么不直接在界面里 `window.open`：Tauri 的 webview 默认不允许新开窗口，
-/// 点下去会**什么都不发生**（也不报错），表现得像按钮坏了。
-/// 附件里的链接类条目，点开就是它唯一的作用，这里必须真的打开。
-///
 /// 实现上刻意绕开 cmd：
 /// `cmd /C start "" <url>` 是最常见的写法，但 cmd 会解析 `&`、`|`、`^` 这些
 /// 元字符，而 `&` 在查询串里到处都是 —— 等于把用户贴的网址当命令执行。
 /// `url.dll,FileProtocolHandler` 没有 shell 参与，参数按 argv 原样传过去。
-#[tauri::command]
-pub fn open_external(url: String) -> Result<(), String> {
-    let parsed = reqwest::Url::parse(&url).map_err(|e| format!("网址不合法: {e}"))?;
+///
+/// 与 `open_external` 命令**分开成两个函数**，是因为 OneDrive 登录也要打开
+/// 浏览器（授权页必须由用户自己在真浏览器里过一遍，webview 里做不了）。
+/// 那边直接在 Rust 内部调这个函数，不必绕回前端再 invoke 一次。
+pub(crate) fn open_url(url: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| format!("网址不合法: {e}"))?;
     match parsed.scheme() {
         "http" | "https" => {}
         other => return Err(format!("拒绝打开 {other} 协议的链接")),
@@ -663,6 +662,16 @@ pub fn open_external(url: String) -> Result<(), String> {
             .map_err(|e| format!("打开失败: {e}"))?;
         Ok(())
     }
+}
+
+/// 界面里点开一个链接。
+///
+/// 为什么不直接在界面里 `window.open`：Tauri 的 webview 默认不允许新开窗口，
+/// 点下去会**什么都不发生**（也不报错），表现得像按钮坏了。
+/// 附件里的链接类条目，点开就是它唯一的作用，这里必须真的打开。
+#[tauri::command]
+pub fn open_external(url: String) -> Result<(), String> {
+    open_url(&url)
 }
 
 fn collect_usage(dir: &Path, files: &mut usize, bytes: &mut u64) {

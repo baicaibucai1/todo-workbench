@@ -69,7 +69,12 @@ pub struct DavEntry {
 /* 基础设施                                                              */
 /* ------------------------------------------------------------------ */
 
-fn build_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
+/// 建一个同步用的 HTTP 客户端。
+///
+/// `pub(crate)` 是因为 **OneDrive 那边也用它**（`onedrive.rs`）：两个后端要的
+/// 是同一套东西 —— 同一个 UA、同一个 crypto provider 兜底、同样不走系统代理。
+/// 各建一份的话，"代理那条坑"就得在两个地方各修一次。
+pub(crate) fn build_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
     // rustls 必须有一个已安装的 crypto provider 才能握手。
     // updater 插件启动时通常已经装好了，但命令不该依赖"别的插件先跑过"。
     if rustls::crypto::CryptoProvider::get_default().is_none() {
