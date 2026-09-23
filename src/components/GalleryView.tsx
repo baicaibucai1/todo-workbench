@@ -150,7 +150,7 @@ export default function GalleryView() {
     try {
       const rel = await deleteGalleryItem(item.id);
       // rel 非空表示"没有别人再引用这个内容了"，物理文件可以回收。
-      // 为 null 是正常情况（同一份字节被工单附件或另一条图库记录用着），
+      // 为 null 是正常情况（同一份字节被流程任务附件或另一条图库记录用着），
       // 这时只删记录、留文件 —— 绝不能想当然地把文件删掉。
       if (rel) await attachmentStore().remove(rel);
       if (previewId === item.id) setPreviewId(null);

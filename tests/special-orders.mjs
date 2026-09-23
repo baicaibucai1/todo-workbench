@@ -5,7 +5,7 @@
  * 它的每一条规则都有一条**容易悄悄坏掉**的边界 ——
  *
  *   1. 侧边栏有「特殊单号」入口、带未完结数量角标，标题真的是「特殊单号」
- *   2. 视图里只有特殊单号：待办取数为 0，普通工单也不进来（取数层挡掉，不是 CSS 藏）
+ *   2. 视图里只有特殊单号：待办取数为 0，普通流程任务也不进来（取数层挡掉，不是 CSS 藏）
  *   3. 它是**正规的记录界面**：搜索框（命中含相关信息字段）、状态/流程/时效分类、
  *      排序、统计条，而不是待办那套轻松样式
  *   4. 登记入口在头部；建单弹窗：快递单号必填、时效必填（先拦后建），
@@ -13,7 +13,7 @@
  *   5. 行上的时效胶囊是真的在算（逾期红 / 临期黄），不是写死的文案
  *   6. 详情里改时效、绑/删/复制相关信息（复制要真的进了剪贴板）
  *   7. 推进过程态后时效按时长重设（这是"时效挂在过程态上"的落点）
- *   8. 「工单」视图里仍然能看到它（专属入口是过滤器，不是围墙）
+ *   8. 「流程任务」视图里仍然能看到它（专属入口是过滤器，不是围墙）
  *
  * 用法：
  *   node tests/special-orders.mjs           # 复用当前演示库
@@ -102,13 +102,13 @@ check("标题是「特殊单号」", h1 === "特殊单号", `实际「${h1}」`)
 
 const orderRows = await page.locator("[data-order-id]").count();
 const taskRows = await page.locator("[data-task-id]").count();
-check("视图里有工单行", orderRows > 0, `${orderRows} 行`);
+check("视图里有流程任务行", orderRows > 0, `${orderRows} 行`);
 // 关键：待办是取数层挡掉的。若哪天 fetchTasks 落进 switch 的 default，
 // 这里会立刻变成"没有条件"，整张待办表都会倒进这个视图
 check("视图里没有待办行", taskRows === 0, `混进 ${taskRows} 行待办`);
 
 const mode = await page.locator("aside[data-detail-mode]").getAttribute("data-detail-mode");
-check("右侧详情处于工单模式", mode === "order", `实际「${mode}」`);
+check("右侧详情处于流程任务模式", mode === "order", `实际「${mode}」`);
 
 // 视图里每一行都该挂着时效胶囊（这类单子的核心信息）
 const dueCaps = await page.locator("[data-order-due]").count();
@@ -118,9 +118,9 @@ check("每一行都带时效标记", dueCaps > 0 && plainRows === 0, `${dueCaps}
 /* ---- 3. 正规记录界面：工具栏（搜索 / 分类 / 统计）与登记入口 ---- */
 
 console.log("\n3. 记录界面工具栏");
-// 这是**记录管理**界面，不是待办那种随手输入栏：不该再有「待办/工单」创建切换
-check("不出现「待办」创建入口", (await page.locator('[data-compose-tab="待办"]').count()) === 0);
-check("不出现「普通工单」创建入口", (await page.locator('[data-compose-tab="工单"]').count()) === 0);
+// 这是**记录管理**界面，不是待办那种随手输入栏：不该再有「待办/流程任务」创建切换
+check("不出现「待办」创建入口", (await page.locator('[data-compose-tab="task"]').count()) === 0);
+check("不出现「普通流程任务」创建入口", (await page.locator('[data-compose-tab="order"]').count()) === 0);
 check("没有待办式的底部输入栏", (await page.locator("[data-compose-input]").count()) === 0);
 // 搜索是"在这批记录里翻账"，命中范围含相关信息字段
 check("有搜索框", (await page.locator("[data-sp-search]").count()) === 1);
@@ -154,7 +154,7 @@ await page.waitForTimeout(600);
 const form = page.locator("[data-order-create]");
 check("登记按钮打开的是登记表单", (await form.count()) === 1);
 check("标题栏是「登记特殊单号」", (await form.innerText()).includes("登记特殊单号"));
-check("类型默认选中「特殊单号」", (await page.locator('[data-oc-kind="特殊单号"]').count()) === 1);
+check("类型默认选中「特殊单号」", (await page.locator('[data-oc-kind="special"]').count()) === 1);
 check("光标直接落在快递单号上（这类单子从号起）",
   await page.locator("[data-oc-no]").evaluate((el) => el === document.activeElement));
 check("没有重复问第二遍单号", (await page.locator("[data-oc-no]").count()) === 1);
@@ -431,19 +431,19 @@ await page.locator("[data-flow-editor] button[title='关闭']").first().click();
 await page.locator("[data-flow-editor]").first().waitFor({ state: "detached", timeout: 10000 }).catch(() => {});
 check("关闭后编辑器真的收起来了", (await page.locator("[data-flow-editor]").count()) === 0);
 
-/* ---- 9. 它同时还是工单 ---- */
+/* ---- 9. 它同时还是流程任务 ---- */
 
-console.log("\n9. 与「工单」视图的关系");
+console.log("\n9. 与「流程任务」视图的关系");
 await page.locator('aside [data-nav="orders"]').first().click();
 await page.waitForTimeout(900);
 const inOrders = await page
   .locator("[data-order-id]")
   .filter({ hasText: TRACK })
   .count();
-check("「工单」视图里也能看到这张特殊单号", inOrders === 1);
+check("「流程任务」视图里也能看到这张特殊单号", inOrders === 1);
 // 专属入口是"只看等不起的那些"的过滤器，不是一道围墙
 const ordersText = await page.locator("[data-bg-mode]").first().innerText();
-check("「工单」视图下仍有进行中分组", ordersText.includes("进行中"));
+check("「流程任务」视图下仍有进行中分组", ordersText.includes("进行中"));
 
 console.log("\n10. 出现在「我的一天」并自己进底部紧急区");
 await page.locator('aside [data-nav="myday"]').first().click();
@@ -455,8 +455,8 @@ const mydayHit = await page
 check("「我的一天」里看得到这张单", mydayHit === 1, `${mydayHit} 行`);
 check("它带着特殊单号标记",
   (await page.locator('[data-order-kind="special"]').filter({ hasText: TRACK }).count()) === 1);
-// 待办的领地只放行特殊单号这一类工单 —— 普通工单仍然被挡在外面
-check("「我的一天」里没有普通工单",
+// 待办的领地只放行特殊单号这一类流程任务 —— 普通流程任务仍然被挡在外面
+check("「我的一天」里没有普通流程任务",
   (await page.locator('[data-order-kind="normal"]').count()) === 0);
 const mydayText = await page.locator("[data-bg-mode]").first().innerText();
 check("「我的一天」里有「特殊单号」分组", mydayText.includes("特殊单号"));
@@ -928,6 +928,103 @@ check("刷新后查件渠道还是上次选的",
   await page.locator("[data-sp-track-channel]").inputValue());
 await page.locator("[data-sp-track-channel]").selectOption("kuaidi100");
 await page.waitForTimeout(800);
+
+/* ---- 18. 模块开关：把「特殊单号」整个关掉 ---- */
+
+console.log("\n18. 设置里可以把「特殊单号」关掉");
+// 上一节结束时视图设置面板还开着，先点别处收掉，免得挡住后面的点击
+if ((await page.locator("[data-sp-view-panel]").count()) > 0) {
+  await page.locator("h1").first().click();
+  await page.waitForTimeout(300);
+}
+
+await page.locator('aside [data-nav="settings"]').first().click();
+await page.waitForTimeout(700);
+await page.locator('[data-section="behavior"]').first().click();
+await page.waitForTimeout(500);
+
+const specialSwitch = page.locator('[data-switch="special-enabled"]');
+check("行为偏好里有「特殊单号」开关", (await specialSwitch.count()) === 1);
+const swBefore = await specialSwitch.getAttribute("aria-checked");
+check("默认是开着的（老用户不会突然少一个功能）", swBefore === "true", String(swBefore));
+
+await specialSwitch.click();
+await page.waitForTimeout(1000);
+check(
+  "关掉后侧边栏入口立刻消失",
+  (await page.locator('aside [data-nav="special"]').count()) === 0,
+);
+// 用户是在设置里按的这个开关，不能被踢回列表页 —— 那会让人以为点错了什么
+check("人还留在设置页里", (await page.locator('[data-section="behavior"]').count()) === 1);
+check("开关自己停在关的状态", (await specialSwitch.getAttribute("aria-checked")) === "false");
+
+// 这是个设置，要落库 —— 只活在内存里的话下次启动它又回来了
+await page.reload({ waitUntil: "networkidle" });
+await page.locator("aside").first().waitFor({ timeout: 20000 });
+await page.waitForTimeout(1000);
+check(
+  "刷新后入口仍然是消失的",
+  (await page.locator('aside [data-nav="special"]').count()) === 0,
+);
+
+// 关的是**入口与提醒**，不是数据：那批单子照旧躺在「流程任务」列表里
+await page.locator('aside [data-nav="orders"]').first().click();
+await page.waitForTimeout(1000);
+check(
+  "「流程任务」里这张特殊单号还在",
+  (await page.locator("[data-order-id]").filter({ hasText: TRACK }).count()) === 1,
+);
+const offH1 = (await page.locator("h1").first().innerText()).trim();
+check("视图标题已改名成「流程任务」", offH1 === "流程任务", `实际「${offH1}」`);
+
+// 「我的一天」不再单独开那一组，紧急区也不再收它 —— 那批单子"紧急"的来源就是时效
+await page.locator('aside [data-nav="myday"]').first().click();
+await page.waitForTimeout(1100);
+check(
+  "「我的一天」里不再出现特殊单号",
+  (await page.locator('[data-order-kind="special"]').count()) === 0,
+);
+const mydayOff = await page.locator("[data-bg-mode]").first().innerText();
+check("「我的一天」里也没有那一组的组头", !mydayOff.includes("特殊单号"));
+check(
+  "底部紧急区里不再有它",
+  (await page.locator("[data-urgent-item]").filter({ hasText: TRACK }).count()) === 0,
+);
+
+// 新建弹窗里不再提供这个类型（只剩一项可选的切换栏，不如整条收掉）
+await page.locator('[data-compose-tab="order"]').first().click();
+await page.waitForTimeout(400);
+await page.locator("[data-compose-input]").fill("关掉模块之后建的普通单");
+await page.locator("[data-compose-submit]").click();
+await page.waitForTimeout(900);
+check(
+  "新建弹窗里没有「特殊单号」这个类型",
+  (await page.locator('[data-oc-kind="special"]').count()) === 0,
+);
+// 顺带钉住另一半：只剩普通一种可选时，整条切换栏收掉，
+// 不留一个点了也没别处可去的 tab
+check("整条类型切换栏都收掉了", (await page.locator("[data-oc-kind]").count()) === 0);
+await page.locator("[data-oc-cancel]").click();
+await page.waitForTimeout(500);
+
+// 再打开：入口与整条路径都回来
+await page.locator('aside [data-nav="settings"]').first().click();
+await page.waitForTimeout(700);
+await page.locator('[data-section="behavior"]').first().click();
+await page.waitForTimeout(500);
+await page.locator('[data-switch="special-enabled"]').click();
+await page.waitForTimeout(1000);
+check(
+  "重新打开后侧边栏入口回来了",
+  (await page.locator('aside [data-nav="special"]').count()) === 1,
+);
+await page.locator('aside [data-nav="special"]').first().click();
+await page.waitForTimeout(1100);
+check(
+  "重新打开后那张单还在视图里",
+  (await page.locator("[data-order-id]").filter({ hasText: TRACK }).count()) === 1,
+);
+await shot("35-special-module-switch");
 
 await browser.close();
 

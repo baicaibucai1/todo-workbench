@@ -1,17 +1,17 @@
 /**
- * 工单专属视图 e2e（侧边栏「工单」入口）。
+ * 流程任务专属视图 e2e（侧边栏「流程任务」入口）。
  *
- * 工单平时混在「全部」「我的一天」里，但用户需要一个"只看手上的单子"的地方。
+ * 流程任务平时混在「全部」「我的一天」里，但用户需要一个"只看手上的单子"的地方。
  * 这里验证的是这个入口的**行为**，不只是"界面画出来了"：
  *
- *   1. 侧边栏有「工单」入口、带未完结数量角标，点进去标题真的是「工单」
- *   2. 视图里只有工单、没有待办（取数层把待办挡掉了，而不是 CSS 藏起来）
+ *   1. 侧边栏有「流程任务」入口、带未完结数量角标，点进去标题真的是「流程任务」
+ *   2. 视图里只有流程任务、没有待办（取数层把待办挡掉了，而不是 CSS 藏起来）
  *   3. 分「进行中 / 已完成」两组
- *   4. 右侧详情自动进工单模式，且与「默认展开第一条」同源
- *   5. 底部创建栏锁死在造工单 —— 在这里造一条待办是不会出现在当前列表里的，
+ *   4. 右侧详情自动进流程任务模式，且与「默认展开第一条」同源
+ *   5. 底部创建栏锁死在造流程任务 —— 在这里造一条待办是不会出现在当前列表里的，
  *      留着那个"待办"按钮就是假入口
- *   6. 推进到终态后，工单真的从「进行中」挪到「已完成」组
- *   7. 「全部」里工单继续混排（用户明确要求保留，不因为有了专属入口就改掉）
+ *   6. 推进到终态后，流程任务真的从「进行中」挪到「已完成」组
+ *   7. 「全部」里流程任务继续混排（用户明确要求保留，不因为有了专属入口就改掉）
  *
  * 用法：
  *   node tests/orders-view.mjs           # 复用当前演示库
@@ -68,7 +68,7 @@ await page.waitForTimeout(900);
 /* ---- 1. 侧边栏入口 ---- */
 
 const nav = page.locator('aside [data-nav="orders"]');
-check("侧边栏有「工单」入口", (await nav.count()) === 1);
+check("侧边栏有「流程任务」入口", (await nav.count()) === 1);
 const navText = (await nav.count()) ? (await nav.innerText()).trim() : "";
 check("入口带未完结数量角标", /\d/.test(navText), `实际文字 ${JSON.stringify(navText)}`);
 
@@ -78,28 +78,28 @@ await nav.click();
 await page.waitForTimeout(900);
 
 const h1 = (await page.locator("h1").first().innerText()).trim();
-check("标题是「工单」", h1 === "工单", `实际「${h1}」`);
+check("标题是「流程任务」", h1 === "流程任务", `实际「${h1}」`);
 
-// 只看工单。注意要读的是**行数**而不是"待办行不可见" ——
+// 只看流程任务。注意要读的是**行数**而不是"待办行不可见" ——
 // 取数层挡掉的话行数就是 0；如果只是 CSS 藏起来，行数还会骗人
 const orderRows = await page.locator("[data-order-id]").count();
 const taskRows = await page.locator("[data-task-id]").count();
-check("视图里有工单", orderRows > 0, `工单行 ${orderRows}`);
+check("视图里有流程任务", orderRows > 0, `流程任务行 ${orderRows}`);
 check("视图里没有待办行", taskRows === 0, `混进 ${taskRows} 行待办`);
 
 const listText = await page.locator("[data-bg-mode]").first().innerText();
 check("有「进行中」分组", listText.includes("进行中"));
 
-// 详情跟着进工单模式 —— 选中规则与列表排版共用 lib/rows.ts，
-// 若这里 mode 不是 order，说明"默认展开第一条"在工单视图下失效了
+// 详情跟着进流程任务模式 —— 选中规则与列表排版共用 lib/rows.ts，
+// 若这里 mode 不是 order，说明"默认展开第一条"在流程任务视图下失效了
 const mode = await page.locator("aside[data-detail-mode]").getAttribute("data-detail-mode");
-check("右侧详情处于工单模式", mode === "order", `实际「${mode}」`);
+check("右侧详情处于流程任务模式", mode === "order", `实际「${mode}」`);
 
-/* ---- 3. 创建栏锁死在造工单 ---- */
+/* ---- 3. 创建栏锁死在造流程任务 ---- */
 
-check("不出现「待办」创建入口", (await page.locator('[data-compose-tab="待办"]').count()) === 0);
+check("不出现「待办」创建入口", (await page.locator('[data-compose-tab="task"]').count()) === 0);
 const ph = await page.locator("[data-compose-input]").getAttribute("placeholder");
-check("输入框提示在造工单", /工单标题/.test(ph ?? ""), `实际「${ph}」`);
+check("输入框提示在造流程任务", /流程任务标题/.test(ph ?? ""), `实际「${ph}」`);
 
 /* ---- 4. 在这里建一张单，然后推进到终态 ---- */
 
@@ -107,9 +107,9 @@ await page.locator("[data-compose-input]").fill("验收流程的测试单");
 await page.locator("[data-compose-submit]").click();
 await page.waitForTimeout(600);
 
-// 工单改为全参数创建：底部回车只打开表单，不该直接落库
+// 流程任务改为全参数创建：底部回车只打开表单，不该直接落库
 const form = page.locator("[data-order-create]");
-check("回车打开的是新建工单表单，没有直接建单", (await form.count()) === 1);
+check("回车打开的是新建流程任务表单，没有直接建单", (await form.count()) === 1);
 check(
   "表单里带进了刚打的标题",
   ((await page.locator("[data-oc-title]").inputValue()) || "").includes("验收流程的测试单"),
@@ -127,7 +127,7 @@ await page.locator("[data-oc-submit]").click();
 await page.waitForTimeout(900);
 
 const newRow = page.locator("[data-order-id]").filter({ hasText: "验收流程的测试单" }).first();
-check("工单视图里能建工单", (await newRow.count()) === 1);
+check("流程任务视图里能建流程任务", (await newRow.count()) === 1);
 
 if ((await newRow.count()) === 1) {
   const rowsBefore = await page.locator("[data-order-id]").count();
@@ -141,7 +141,7 @@ if ((await newRow.count()) === 1) {
     advanced++;
     await page.waitForTimeout(700);
   }
-  check("工单能推进到终态", advanced > 0, `只推进了 ${advanced} 次`);
+  check("流程任务能推进到终态", advanced > 0, `只推进了 ${advanced} 次`);
 
   const stage = (await newRow.locator("[data-order-stage]").innerText()).trim();
   check("推进后处于终态「已完成」", stage === "已完成", `实际「${stage}」`);
@@ -158,22 +158,22 @@ if ((await newRow.count()) === 1) {
     totalAfter === rowsBefore, `推进前 ${rowsBefore} / 推进后 ${totalAfter}`);
 }
 
-/* ---- 5. 工单不进「我的一天」 ---- */
+/* ---- 5. 流程任务不进「我的一天」 ---- */
 
 await page.locator('aside [data-nav="myday"]').first().click();
 await page.waitForTimeout(800);
-// 特殊单号（带时效的工单）会进「我的一天」——那是"提醒"的前线；
-// 挡在外面的只有**普通**工单
-check("「我的一天」里没有普通工单",
+// 特殊单号（带时效的流程任务）会进「我的一天」——那是"提醒"的前线；
+// 挡在外面的只有**普通**流程任务
+check("「我的一天」里没有普通流程任务",
   (await page.locator('[data-order-kind="normal"]').count()) === 0);
 check("「我的一天」里待办还在", (await page.locator("[data-task-id]").count()) > 0);
 
-// 这里允许造工单，但**建出来不会出现在当前列表** —— 不说清楚用户会以为没建成
-await page.locator('[data-compose-tab="工单"]').first().click();
+// 这里允许造流程任务，但**建出来不会出现在当前列表** —— 不说清楚用户会以为没建成
+await page.locator('[data-compose-tab="order"]').first().click();
 await page.waitForTimeout(400);
 const composeHint = (await page.locator("[data-compose-hint]").innerText()) || "";
-check("「我的一天」里造工单会提示它不在当前列表", composeHint.includes("不进"), composeHint.trim());
-await page.locator('[data-compose-tab="待办"]').first().click();
+check("「我的一天」里造流程任务会提示它不在当前列表", composeHint.includes("不进"), composeHint.trim());
+await page.locator('[data-compose-tab="task"]').first().click();
 await page.waitForTimeout(300);
 
 /* ---- 6. 右侧面板可以拖宽，并且记住 ---- */
@@ -223,7 +223,7 @@ await page.locator('aside [data-nav="all"]').first().click();
 await page.waitForTimeout(800);
 const allOrders = await page.locator("[data-order-id]").count();
 const allTasks = await page.locator("[data-task-id]").count();
-check("「全部」里工单仍在混排", allOrders > 0, `${allOrders} 行`);
+check("「全部」里流程任务仍在混排", allOrders > 0, `${allOrders} 行`);
 check("「全部」里待办也还在", allTasks > 0, `${allTasks} 行`);
 
 await browser.close();

@@ -1,11 +1,11 @@
 {
   "version": "0.1.0",
-  "notes": "待办工作台 v0.1.0",
-  "pub_date": "2026-09-18T02:46:23.637Z",
+  "notes": "待办工作台 v0.1.0 —— 首个正式版：待办 / 流程任务 / 特殊单号 / 图库 / 四款内置工具，支持应用内自动更新。",
+  "pub_date": "2026-09-23T03:53:05.031Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQTgwMmUzZERHT0hIbVlZVzMxd016dlBYVytLNjJHNzVaQ2RkcTdtS2RFWVRTWFdSWXhQYnBuRkRZRVpZTnZiY2NTekpRUUFXeVZvL3ZkM1hLSkJ5US9PVEt2b3hiNFE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5Njk5NTMzCWZpbGU65b6F5Yqe5bel5L2c5Y+wXzAuMS4wX3g2NC1zZXR1cC5leGUKaGRjKzRvTWZMVHcxSGcwSTNzZisvMDdiR2xFZVpCYTVxUHFBLy8zTnZBWWhQZmRFYWRGdW9BT1NzbHdmRm96U1puUFBzVU1ETU1BNlZJalZJcHN6RGc9PQo=",
-      "url": "https://your-host.example.com/todo-workbench/%E5%BE%85%E5%8A%9E%E5%B7%A5%E4%BD%9C%E5%8F%B0_0.1.0_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQTgwMmUzZERHT0hKVzJtd1dzSmxKVTdMbWdrWXlLYk85aHd5MURqQUJ5b3BuaktsTzdHWUplQklBZzRnLzFjTm1qcnM4eFYwUW5nU3NnVEhta3EzTkZKd1Q3WVNWTVEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMTM1NTc2CWZpbGU65b6F5Yqe5bel5L2c5Y+wXzAuMS4wX3g2NC1zZXR1cC5leGUKdHR0QmhJSEQyam5xMXcwMEpNK25WMTVoN2JvN1pFOWtxSlJLVmppbFlXVHBmM0thaHVITExVSGt4VjNxUWRDSUFtZWtVUFFFSnl0bjY5c3FZVUJJQ3c9PQo=",
+      "url": "https://github.com/baicaibucai1/todo-workbench/releases/download/v0.1.0/%E5%BE%85%E5%8A%9E%E5%B7%A5%E4%BD%9C%E5%8F%B0_0.1.0_x64-setup.exe"
     }
   }
 }

@@ -47,6 +47,7 @@ import {
   DEFAULT_PROFILE,
   isThemeMode,
   parseDisabledTools,
+  parseSpecialEnabled,
   parseToolKeepState,
   parseUrgentMinutes,
   SETTINGS,
@@ -1033,7 +1034,7 @@ function DataSection({
         {confirmClear ? (
           <div className="rounded-lg border border-[#a32d2d]/30 bg-danger-soft p-3">
             <div className="text-[13px] text-danger">
-              将删除全部列表、任务、工单与配置，并清掉附件仓库里的文件，且无法撤销。确定继续？
+              将删除全部列表、任务、流程任务与配置，并清掉附件仓库里的文件，且无法撤销。确定继续？
             </div>
             <div className="mt-2.5 flex gap-2">
               <button
@@ -1081,6 +1082,7 @@ function BehaviorSection({
 }) {
   const startup = settings[SETTINGS.startupView] ?? "myday";
   const sidebarDefault = (settings[SETTINGS.sidebarOpen] ?? "1") !== "0";
+  const specialOn = parseSpecialEnabled(settings[SETTINGS.specialEnabled]);
   const reminderOn = (settings[SETTINGS.reminderEnabled] ?? "1") !== "0";
   const systemNotify = (settings[SETTINGS.reminderSystem] ?? "0") === "1";
   const snooze = settings[SETTINGS.reminderSnooze] ?? "10";
@@ -1217,12 +1219,12 @@ function BehaviorSection({
       <div className="mt-5">
         <SectionTitle
           title="紧急时间"
-          desc="剩下的时间不足这个值时，待办与工单会自动出现在侧边栏底部的「紧急」里。"
+          desc="剩下的时间不足这个值时，待办与流程任务会自动出现在侧边栏底部的「紧急」里。"
         />
         <Card>
           <FieldRow
             label="提前多久算紧急"
-            hint="待办看提醒时间或到期日，工单看当前步骤的时效或交付日"
+            hint="待办看提醒时间或到期日，流程任务看当前步骤的时效或交付日"
           >
             <select
               value={urgentCustomMode ? "custom" : String(urgentMinutes)}
@@ -1374,6 +1376,29 @@ function BehaviorSection({
               立即检查
             </button>
           </div>
+        </Card>
+      </div>
+
+      <div className="mt-5">
+        <SectionTitle
+          title="模块"
+          desc="关掉的功能会从界面上收起，已经存下的数据仍留在数据库里，随时可以再打开。"
+        />
+        <Card>
+          <FieldRow
+            label="特殊单号"
+            hint="以快递单号为起点、每一步带处理时效的那类记录。关掉后侧边栏入口、专属视图、创建时的类型选择、我的一天里那一组、以及时效提醒与紧急区都会停；已经建好的单子不受影响，仍留在「流程任务」列表里"
+          >
+            <Switch
+              on={specialOn}
+              onToggle={() =>
+                void saveSettings({
+                  [SETTINGS.specialEnabled]: specialOn ? "0" : "1",
+                })
+              }
+              testId="special-enabled"
+            />
+          </FieldRow>
         </Card>
       </div>
     </div>

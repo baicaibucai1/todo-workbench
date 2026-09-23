@@ -29,6 +29,7 @@ import {
   isStartupView,
   isThemeMode,
   parseDisabledTools,
+  parseSpecialEnabled,
   parseToolKeepState,
   SETTINGS,
   withDefaults,
@@ -85,9 +86,9 @@ function aliveAfterOpen(
 /**
  * 一条时效提醒。
  *
- * 带上 level 而不是只给工单：临期和逾期要说的话不一样
+ * 带上 level 而不是只给流程任务：临期和逾期要说的话不一样
  * （"还剩 20 分钟" vs "已经超时 40 分钟"），逾期那条也要更显眼。
- * dueAt 一起带上，卡片上就能直接算"还剩多久"，不必再去查一遍工单。
+ * dueAt 一起带上，卡片上就能直接算"还剩多久"，不必再去查一遍流程任务。
  */
 export interface OrderDueAlert {
   orderId: string;
@@ -179,12 +180,12 @@ interface State {
    */
   toolReloads: Record<string, number>;
 
-  /** 工单：流程模板、过程态、当前视图的工单、今日计划、当前工单的流转记录 */
+  /** 流程任务：流程模板、过程态、当前视图的流程任务、今日计划、当前流程任务的流转记录 */
   flows: WorkFlow[];
   stages: WorkStage[];
   orders: WorkOrder[];
   /**
-   * 紧急区的候选池：**跨视图**的未完成任务与未完结工单。
+   * 紧急区的候选池：**跨视图**的未完成任务与未完结流程任务。
    *
    * 单独存一份的原因与当初计划表一样：store.tasks / store.orders 只是
    * **当前视图**的数据，而紧急区要扫的是"所有还欠着的事"，
@@ -195,11 +196,11 @@ interface State {
   urgentOrders: WorkOrder[];
   woLogs: WoLog[];
 
-  /** 当前打开工单的附件（图片/视频/链接混排） */
+  /** 当前打开流程任务的附件（图片/视频/链接混排） */
   attachments: WoAttachment[];
   /**
-   * 每张工单的附件数量，列表行上显示「带 3 个附件」用。
-   * 单独存一份而不去数 attachments：那个只是"当前打开的那张工单"的。
+   * 每张流程任务的附件数量，列表行上显示「带 3 个附件」用。
+   * 单独存一份而不去数 attachments：那个只是"当前打开的那张流程任务"的。
    */
   woAttachmentCounts: Record<string, number>;
   /** 附件仓库占用，设置页显示 */
@@ -213,10 +214,10 @@ interface State {
   search: string;
   /** 当前打开的工具 id，null 表示显示待办模块 */
   activeToolId: string | null;
-  /** 当前在右侧详情面板中查看的任务 id，null 表示显示的是工单或空态 */
+  /** 当前在右侧详情面板中查看的任务 id，null 表示显示的是流程任务或空态 */
   activeTaskId: string | null;
   /**
-   * 当前在右侧详情面板中查看的工单 id。
+   * 当前在右侧详情面板中查看的流程任务 id。
    *
    * 与 activeTaskId 互斥（同一时刻只有一个非空）而不是合成一个
    * `{kind,id}` 对象：既有代码里 activeTaskId 被到处引用，
@@ -238,7 +239,7 @@ interface State {
   settingsOpen: boolean;
   /**
    * 流程编辑器是否打开，以及打开时聚焦哪套流程。
-   * 做成全局状态而不是挂在某个组件里：入口有两个（工单详情里「编辑流程」、
+   * 做成全局状态而不是挂在某个组件里：入口有两个（流程任务详情里「编辑流程」、
    * 底部创建器的齿轮），挂局部会让两处各渲染一份编辑器。
    */
   flowEditorOpen: boolean;
@@ -318,15 +319,15 @@ interface State {
   bustToolSchema: (id: string) => void;
   /** 打开/关闭右侧任务详情面板 */
   openTask: (id: string | null) => void;
-  /** 打开右侧工单详情面板 */
+  /** 打开右侧流程任务详情面板 */
   openOrder: (id: string | null) => void;
   /**
-   * 从紧急区（或其它跨视图的入口）打开一条待办/工单。
+   * 从紧急区（或其它跨视图的入口）打开一条待办/流程任务。
    *
    * 为什么不能直接用 openTask / openOrder：右侧详情只认**当前视图**里的数据
    * （shownTask 是从 store.tasks 里 find 出来的），而紧急区扫的是全库 ——
    * 点一条别的清单里的待办，详情会直接掉进空态，看着像点了没反应。
-   * 所以不在当前视图时先切到「全部」（待办与工单混排的那个视图）再选中。
+   * 所以不在当前视图时先切到「全部」（待办与流程任务混排的那个视图）再选中。
    */
   openUrgent: (kind: "task" | "order", id: string) => Promise<void>;
   /** 打开/关闭流程编辑器；传 flowId 表示聚焦到那套流程 */
@@ -338,18 +339,18 @@ interface State {
   setSearch: (q: string) => void;
   toggleSidebar: () => void;
 
-  /* ------------------------------ 工单 ------------------------------ */
+  /* ------------------------------ 流程任务 ------------------------------ */
   createOrder: (input: repo.NewWorkOrderInput) => Promise<string>;
   patchOrder: (id: string, patch: Partial<WorkOrder>) => Promise<void>;
   removeOrder: (id: string) => Promise<void>;
-  /** 推进过程态（会留痕，是工单区别于待办的核心动作） */
+  /** 推进过程态（会留痕，是流程任务区别于待办的核心动作） */
   advanceOrder: (woId: string, stageId: string, note?: string) => Promise<void>;
   toggleOrderImportant: (o: WorkOrder) => Promise<void>;
   /** 批量改标记类字段（记录视图的批量操作用），只刷新一次 */
   bulkPatchOrders: (ids: string[], patch: { important?: boolean }) => Promise<void>;
   loadWoLogs: (woId: string) => Promise<void>;
 
-  /** 当前详情工单绑定的相关信息（特殊单号：另一个快递单号、用户名…） */
+  /** 当前详情流程任务绑定的相关信息（特殊单号：另一个快递单号、用户名…） */
   woFields: WoField[];
   /**
    * 全部特殊单号的相关信息字段（按单分组用）。
@@ -376,7 +377,7 @@ interface State {
   reorderStage: (id: string, dir: -1 | 1) => Promise<void>;
 
   /* ------------------------------ 紧急区 ------------------------------ */
-  /** 重新拉取紧急区候选池（跨视图的未完成任务 + 未完结工单） */
+  /** 重新拉取紧急区候选池（跨视图的未完成任务 + 未完结流程任务） */
   loadUrgent: () => Promise<void>;
 
   /* ------------------------------ 附件 ------------------------------ */
@@ -462,8 +463,8 @@ export const useStore = create<State>((set, get) => ({
   init: async () => {
     await initDb();
     await repo.seedIfEmpty();
-    // 流程与示例工单分开种：老用户的库里已有清单，seedIfEmpty 会直接返回，
-    // 写在那里的话升级后就永远看不到工单功能。示例工单必须在流程之后，
+    // 流程与示例流程任务分开种：老用户的库里已有清单，seedIfEmpty 会直接返回，
+    // 写在那里的话升级后就永远看不到流程任务功能。示例流程任务必须在流程之后，
     // 否则它找不到可用的过程态。
     await repo.seedWorkOrderFlowsIfEmpty();
     await repo.seedDemoWorkOrdersIfEmpty();
@@ -526,8 +527,8 @@ export const useStore = create<State>((set, get) => ({
           includeDone: true,
         };
 
-    // 工单查询与任务共用视图语义（见 repo.fetchWorkOrders）。
-    // list 视图下工单不属于任何清单，会返回空数组 —— 这是有意的。
+    // 流程任务查询与任务共用视图语义（见 repo.fetchWorkOrders）。
+    // list 视图下流程任务不属于任何清单，会返回空数组 —— 这是有意的。
     const orderQuery: repo.OrderQuery = keyword
       ? { view: "all", search: keyword, includeDone: true }
       : { view: view === "list" ? "list" : view, includeDone: true };
@@ -546,7 +547,7 @@ export const useStore = create<State>((set, get) => ({
         repo.fetchAllWoFields(),
       ]);
     set({ lists, tasks, stepsByTask, flows, stages, orders, woAttachmentCounts, allWoFields });
-    // 紧急区扫的是全部待办与工单，跟当前视图无关，单独跑一次
+    // 紧急区扫的是全部待办与流程任务，跟当前视图无关，单独跑一次
     await get().loadUrgent();
 
     // 选中的对象已经不在当前列表里（被删了、或者切了视图）时补选第一条。
@@ -561,6 +562,15 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setView: async (view, listId) => {
+    // 「特殊单号」关掉之后这个视图就不存在了，必须拦一道 —— 进这个视图的路
+    // 不止侧边栏一条（时效提醒卡片的「查看」、以后的直达链接都会走到这里），
+    // 放行的话用户会落到一个永远空着的列表上，看着像数据丢了。
+    if (
+      view === "special" &&
+      !parseSpecialEnabled(get().settings[SETTINGS.specialEnabled])
+    ) {
+      view = "orders";
+    }
     set({
       view,
       activeListId: view === "list" ? (listId ?? null) : null,
@@ -651,10 +661,10 @@ export const useStore = create<State>((set, get) => ({
     });
   },
 
-  // 任务与工单的选中互斥：两个都非空会让右侧不知道该渲染哪个
+  // 任务与流程任务的选中互斥：两个都非空会让右侧不知道该渲染哪个
   openTask: (id) =>
-    // 附件的状态只服务于"当前打开的那张工单"。切到待办时一起清掉，
-    // 免得任务详情里留着上一条工单的附件。切换回同一张工单时组件会重新挂载、
+    // 附件的状态只服务于"当前打开的那张流程任务"。切到待办时一起清掉，
+    // 免得任务详情里留着上一条流程任务的附件。切换回同一张流程任务时组件会重新挂载、
     // 重新拉一次，不会因此显示不全。
     set({ activeTaskId: id, activeOrderId: null, detailClosedByUser: !id, attachments: [], woFields: [] }),
   openOrder: (id) => set({ activeOrderId: id, activeTaskId: null, detailClosedByUser: !id }),
@@ -694,7 +704,14 @@ export const useStore = create<State>((set, get) => ({
    */
   selectFirst: () => {
     const { tasks, orders, view } = get();
-    const first = firstVisibleRow(tasks, orders, view);
+    const first = firstVisibleRow(
+      tasks,
+      orders,
+      view,
+      // 与 TaskList 传给 groupRows 的是同一个开关，否则会出现
+      // 「列表里没有这一组、右侧却选中了组里第一条」的错位
+      parseSpecialEnabled(get().settings[SETTINGS.specialEnabled]),
+    );
     if (!first) {
       set({ activeTaskId: null, activeOrderId: null });
       return;
@@ -709,7 +726,7 @@ export const useStore = create<State>((set, get) => ({
   /**
    * 开关设置。
    *
-   * 刻意**不清掉**当前选中的任务/工单：右侧面板现在是常驻的，
+   * 刻意**不清掉**当前选中的任务/流程任务：右侧面板现在是常驻的，
    * 清掉的话每次关掉设置都会掉进空态，用户得重新点一遍原来那条。
    * 隐藏交给 TaskDetail 自己判断（settingsOpen 时不渲染），选中的状态留着。
    */
@@ -760,6 +777,29 @@ export const useStore = create<State>((set, get) => ({
           activeToolId,
           aliveToolIds: aliveAfterOpen({ ...s, enabledTools }, activeToolId, enabledTools),
         });
+      }
+
+      // 「特殊单号」被关掉时要立刻收摊，不能等下次启动 —— 开关就在设置里，
+      // 用户是盯着界面按的：
+      //   ① 当前视图正好停在它上面（那个视图已经没有内容）→ 换到「流程任务」
+      //   ② 已经弹出来的时效提醒卡片 → 一并收掉，留着等于开关没生效
+      // 条件是看 patch（这次到底改了哪项）而不是值，避免别的设置一保存就顺带跑这里。
+      if (SETTINGS.specialEnabled in patch) {
+        if (!parseSpecialEnabled(values[SETTINGS.specialEnabled])) {
+          // 只把视图换掉，**刻意不走 setView** —— setView 会顺手把设置页关掉，
+          // 而用户此刻正站在设置里按这个开关，被踢回列表页会让他以为点错了什么。
+          if (get().view === "special") {
+            set({
+              view: "orders",
+              activeListId: null,
+              activeTaskId: null,
+              activeOrderId: null,
+              detailClosedByUser: false,
+            });
+            void get().refresh();
+          }
+          if (get().orderDues.length) set({ orderDues: [] });
+        }
       }
     };
 
@@ -921,8 +961,12 @@ export const useStore = create<State>((set, get) => ({
 
     /* --------------------- 特殊单号的处理时效 --------------------- */
 
+    // 模块被关掉时整段跳过。注意位置：必须放在**任务提醒那一段之后** ——
+    // 上面那批待办提醒和这个开关无关，提前 return 会把它们一起吞掉。
+    if (!parseSpecialEnabled(get().settings[SETTINGS.specialEnabled])) return;
+
     // 与任务提醒共用同一个开关：用户关掉提醒是"别打扰我"，
-    // 不会期望工单那边还在弹。
+    // 不会期望流程任务那边还在弹。
     const soonMs = repo.DUE_SOON_MINUTES * 60_000;
     const alerts: OrderDueAlert[] = [];
     for (const o of await repo.fetchOrdersForDueReminder()) {
@@ -1018,7 +1062,7 @@ export const useStore = create<State>((set, get) => ({
     await get().refresh();
   },
 
-  /* ------------------------------ 工单 ------------------------------ */
+  /* ------------------------------ 流程任务 ------------------------------ */
 
   createOrder: async (input) => {
     const o = await repo.createWorkOrder(input);
@@ -1119,7 +1163,7 @@ export const useStore = create<State>((set, get) => ({
     }
 
     const woId = get().activeOrderId;
-    if (!woId) return fail("请先打开一张工单");
+    if (!woId) return fail("请先打开一张流程任务");
 
     const store = attachmentStore();
     const name = fileNameFromUrl(url);
@@ -1189,7 +1233,7 @@ export const useStore = create<State>((set, get) => ({
    */
   attachLocal: async () => {
     const woId = get().activeOrderId;
-    if (!woId) return { added: 0, failed: [{ name: "", reason: "请先打开一张工单" }] };
+    if (!woId) return { added: 0, failed: [{ name: "", reason: "请先打开一张流程任务" }] };
 
     let picked: PickedLocal;
     try {
@@ -1328,7 +1372,7 @@ export const useStore = create<State>((set, get) => ({
 
   /* --------------------------- 流程模板编辑 --------------------------- */
 
-  // 下面几个动作都走同一条套路：改库 → 刷新。流程改动会影响所有工单的
+  // 下面几个动作都走同一条套路：改库 → 刷新。流程改动会影响所有流程任务的
   // 过程态显示，局部改内存很容易和库里的实际状态脱节。
 
   addFlow: async (name) => {
@@ -1386,7 +1430,7 @@ export const useStore = create<State>((set, get) => ({
    * 放在组件里按 tick 重算（见 components/UrgentPanel.tsx）；
    * 而"哪些事存在"只在数据变化时变，跟着 refresh 走就够了。
    *
-   * 已经完成的待办、已完结的工单在这里就被过滤掉：
+   * 已经完成的待办、已完结的流程任务在这里就被过滤掉：
    * 它们不再"欠着"，混进来只会让紧急区的数字虚高。
    */
   loadUrgent: async () => {
@@ -1394,7 +1438,13 @@ export const useStore = create<State>((set, get) => ({
       repo.fetchTasks({ view: "all", includeDone: false }),
       repo.fetchWorkOrders({ view: "all", includeDone: false }),
     ]);
-    set({ urgentTasks: tasks, urgentOrders: orders.filter((o) => !o.closed) });
+    // 特殊单号关掉后，它的时效不该再往紧急区里冒 —— 这批单子之所以"紧急"，
+    // 来源就是处理时效，留着等于开关只关了一半。普通流程任务照旧参与。
+    const specialOn = parseSpecialEnabled(get().settings[SETTINGS.specialEnabled]);
+    set({
+      urgentTasks: tasks,
+      urgentOrders: orders.filter((o) => !o.closed && (specialOn || o.kind !== "special")),
+    });
   },
 
   addList: async (name) => {

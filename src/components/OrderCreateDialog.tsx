@@ -11,17 +11,18 @@ import {
 } from "lucide-react";
 import { useStore } from "../store";
 import { addDays, today, nextOrderNo } from "../lib/repo";
+import { SETTINGS, parseSpecialEnabled } from "../lib/settings";
 import { DUE_PRESETS, dueAtText } from "../lib/due";
 import { COURIERS, courierName, detectCourier } from "../lib/couriers";
 import type { WorkOrderKind } from "../types";
 import DateTimePicker from "./DateTimePicker";
 
 /**
- * 新建工单：一次把参数填全。
+ * 新建流程任务：一次把参数填全。
  *
  * 之前是「底部输入标题回车 → 建出一张只有标题的单 → 再回右侧详情补流程/日期/备注」，
  * 问题是那张半成品单**已经落库并出现在列表里**了 —— 手一抖回车，列表里就多一条
- * 得再点进去删的垃圾数据。开工单本来就不是一件"随手记一笔"的事，
+ * 得再点进去删的垃圾数据。开流程任务本来就不是一件"随手记一笔"的事，
  * 所以这里走弹窗：填完再建，取消就什么都不留。
  *
  * 单号留空仍会自动生成（WO-YYYYMMDD-NNN），填了就用填的。
@@ -47,9 +48,29 @@ export default function OrderCreateDialog({
   onClose: () => void;
   onCreated?: () => void;
 }) {
-  const { flows, stages, allWoFields, orders, createOrder, openFlowEditor, openOrder } = useStore();
+  const {
+    flows,
+    stages,
+    allWoFields,
+    orders,
+    createOrder,
+    openFlowEditor,
+    openOrder,
+    settings,
+  } = useStore();
 
-  const [kind, setKind] = useState<WorkOrderKind>(initialKind);
+  const specialOn = parseSpecialEnabled(settings[SETTINGS.specialEnabled]);
+
+  /**
+   * 关掉「特殊单号」后不该还能开出这类单子。
+   *
+   * initialKind 由调用方（从哪个视图点进来的）决定，关掉后那个视图本来就不该
+   * 存在，但这里仍要自己挡一道：一个过期的调用点、或者以后新加的入口，
+   * 就能绕过开关造出一张界面上再也看不见的单。
+   */
+  const [kind, setKind] = useState<WorkOrderKind>(
+    initialKind === "special" && !specialOn ? "normal" : initialKind,
+  );
   const [title, setTitle] = useState(initialTitle);
   const [no, setNo] = useState(initialNo);
   const [autoNo, setAutoNo] = useState("");
@@ -202,14 +223,14 @@ export default function OrderCreateDialog({
         return;
       }
       // 时效是这类单子的意义所在：没有时效，"等不起"就无从谈起，
-      // 它也就退化成了一张普通工单。宁可拦在这里，也不要悄悄建一张没时效的
+      // 它也就退化成了一张普通流程任务。宁可拦在这里，也不要悄悄建一张没时效的
       // ——那种单子不会提醒、排序也排在最后，等于白建。
       if (!stageDueAt) {
         setError("特殊单号必须填处理时效（到下一步之前还剩多久）");
         return;
       }
     } else if (!t) {
-      setError("工单标题不能为空");
+      setError("流程任务标题不能为空");
       return;
     }
 
@@ -267,7 +288,7 @@ export default function OrderCreateDialog({
             <ClipboardList size={15} className="text-[#378add]" />
           )}
           <span className="text-[14px] font-medium">
-            {isSpecial ? "登记特殊单号" : "新建工单"}
+            {isSpecial ? "登记特殊单号" : "新建流程任务"}
           </span>
           <div className="flex-1" />
           <button
@@ -299,24 +320,31 @@ export default function OrderCreateDialog({
         )}
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          {/* 类型：普通工单 / 特殊单号。跟着进入时的视图预选，
-              但仍然留在这里可切 —— 建错类型不用关掉重开一遍 */}
-          <div className="mb-3 flex items-center rounded-lg bg-chip p-0.5">
-            <KindTab
-              active={!isSpecial}
-              onClick={() => setKind("normal")}
-              icon={<ClipboardList size={12} />}
-              label="普通工单"
-              accent="#378add"
-            />
-            <KindTab
-              active={isSpecial}
-              onClick={() => setKind("special")}
-              icon={<Timer size={12} />}
-              label="特殊单号"
-              accent="#d85a30"
-            />
-          </div>
+          {/* 类型：普通流程任务 / 特殊单号。跟着进入时的视图预选，
+              但仍然留在这里可切 —— 建错类型不用关掉重开一遍。
+
+              模块关掉时整条切换栏收掉：只剩一项可选时，一个点了也不会有
+              别的结果的 tab，比没有它更让人困惑。 */}
+          {specialOn && (
+            <div className="mb-3 flex items-center rounded-lg bg-chip p-0.5">
+              <KindTab
+                active={!isSpecial}
+                onClick={() => setKind("normal")}
+                icon={<ClipboardList size={12} />}
+                label="普通流程任务"
+                kind="normal"
+                accent="#378add"
+              />
+              <KindTab
+                active={isSpecial}
+                onClick={() => setKind("special")}
+                icon={<Timer size={12} />}
+                label="特殊单号"
+                kind="special"
+                accent="#d85a30"
+              />
+            </div>
+          )}
 
           {/* 特殊单号的起点：快递单号。它就是这张单的单号，所以排在最前面 */}
           {isSpecial && (
@@ -675,7 +703,7 @@ export default function OrderCreateDialog({
               isSpecial ? "bg-[#d85a30]" : "bg-[#378add]"
             }`}
           >
-            {busy ? "创建中…" : isSpecial ? "登记单号" : "创建工单"}
+            {busy ? "创建中…" : isSpecial ? "登记单号" : "创建流程任务"}
           </button>
         </div>
       </form>
@@ -692,19 +720,27 @@ function KindTab({
   onClick,
   icon,
   label,
+  kind,
   accent,
 }: {
   active: boolean;
   onClick: () => void;
   icon: React.ReactNode;
   label: string;
+  /**
+   * 自动化验证用的稳定标识。
+   *
+   * 不拿 label 顶，理由同 TaskList 的 ComposeTab：界面文案是会变的
+   * （「工单」刚改成了「流程任务」），拿文案当选择器，等于每改一个字就弄红一批用例。
+   */
+  kind: WorkOrderKind;
   accent: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      data-oc-kind={label}
+      data-oc-kind={kind}
       className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] transition-colors ${
         active ? "bg-panel font-medium shadow-[0_1px_2px_rgba(0,0,0,0.06)]" : "text-fg-3 hover:text-fg-2"
       }`}

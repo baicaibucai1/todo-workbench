@@ -50,7 +50,7 @@ page.on("console", (m) => {
 page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
 
 const rows = () => page.locator("[data-task-id]");
-/** 待办 + 工单的合并行选择器：列表是混排的，「第一行」只有它能代表 */
+/** 待办 + 流程任务的合并行选择器：列表是混排的，「第一行」只有它能代表 */
 const allRows = () => page.locator("[data-task-id], [data-order-id]");
 const detail = () => page.locator("[data-task-detail]");
 const detailVisible = async () =>
@@ -62,7 +62,7 @@ const detailMode = async () => await detail().getAttribute("data-detail-mode");
  * 列表第一行是否处于选中态。
  *
  * 用 data-active 而不是比对标题来断言，是因为要跨两种渲染器（待办标题在 textarea 里、
- * 工单不是），高亮是唯一一处两边写法相同的信号。而"高亮的行 = 详情里那条"
+ * 流程任务不是），高亮是唯一一处两边写法相同的信号。而"高亮的行 = 详情里那条"
  * 正是这一步要守的不变式。
  *
  * 读 dataset 而不是 class：选中态现在是"整行浮起来"（圆角 + 投影 + 抬 1px），
@@ -74,7 +74,7 @@ const firstRowSelected = async () =>
 /**
  * 点某一行的标题区打开详情（避开行内的按钮）。
  *
- * 用合并选择器：混排列表里"第 0 行"可能是工单，而工单标题是 span、
+ * 用合并选择器：混排列表里"第 0 行"可能是流程任务，而流程任务标题是 span、
  * 待办标题是 div，所以两边的定位器都要给。
  */
 async function openRow(i = 0) {
@@ -107,7 +107,7 @@ check("初始默认选中列表第一行（高亮与详情同源）", await firs
 check("初始详情有内容（不是空态）", (await detailMode()) !== "empty", `mode=${await detailMode()}`);
 
 console.log("\n2. 点开一条待办，右侧出现任务详情");
-// 列表是待办与工单混排的，这里专门取一条**待办**（工单详情是另一套，见 preview.mjs）
+// 列表是待办与流程任务混排的，这里专门取一条**待办**（流程任务详情是另一套，见 preview.mjs）
 const firstTask = rows().first();
 const firstTitle = (await firstTask.locator("div.truncate").first().textContent()) || "";
 info("待办标题", firstTitle.trim());
@@ -309,8 +309,8 @@ console.log("\n8. 在详情里删除任务");
 await page.locator('aside [data-nav="all"]').click();
 await page.waitForTimeout(500);
 const beforeDelete = await rows().count();
-// 这条用例只测待办的删除，所以取第一条**待办**（混排列表的第一行可能是工单，
-// 工单详情里没有"删除此任务"）
+// 这条用例只测待办的删除，所以取第一条**待办**（混排列表的第一行可能是流程任务，
+// 流程任务详情里没有"删除此任务"）
 const victim = rows().first();
 const victimId = (await victim.getAttribute("data-task-id")) ?? "";
 await victim.locator("div.truncate").first().click();

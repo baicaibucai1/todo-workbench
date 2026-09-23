@@ -17,8 +17,8 @@ import { STAGE_COLORS } from "../lib/repo";
 /**
  * 流程编辑器。
  *
- * 「工单的流程和过程态可以自定义」这件事的落点。做成覆盖式弹层而不是新页面：
- * 用户点进来是为了改几步然后回去继续处理工单，不该丢掉主界面的上下文。
+ * 「流程任务的流程和过程态可以自定义」这件事的落点。做成覆盖式弹层而不是新页面：
+ * 用户点进来是为了改几步然后回去继续处理流程任务，不该丢掉主界面的上下文。
  *
  * 分成左右两栏，是因为这里的核心心智模型就是"流程是一套可复用的阶段序列"：
  * 左边挑流程，右边改它里面的步骤。如果做成一层平铺的列表，
@@ -84,7 +84,7 @@ export default function FlowEditor() {
         {/* 标题栏 */}
         <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-4">
           <Flag size={15} className="text-[#378add]" />
-          <span className="text-[14px] font-medium">工单流程</span>
+          <span className="text-[14px] font-medium">流程模板</span>
           <span className="rounded bg-chip px-1.5 py-px text-[10.5px] text-fg-dim">
             {flows.length} 套
           </span>
@@ -136,7 +136,7 @@ export default function FlowEditor() {
                     <span className="min-w-0 flex-1 truncate">{f.name}</span>
                     {f.isDefault && (
                       <span
-                        title="新建工单时默认选中这套"
+                        title="新建流程任务时默认选中这套"
                         className="shrink-0 rounded bg-[#e1f5ee] px-1.5 py-px text-[10px] text-[#0f6e56]"
                       >
                         默认
@@ -227,7 +227,7 @@ export default function FlowEditor() {
                     <button
                       onClick={() => void makeFlowDefault(flow.id)}
                       data-make-default=""
-                      title="设为新建工单时默认选择的流程"
+                      title="设为新建流程任务时默认选择的流程"
                       className="flex shrink-0 items-center gap-1 rounded px-2 py-1 text-[12px] text-fg-3 hover:bg-hover"
                     >
                       <Star size={12} />
@@ -245,7 +245,7 @@ export default function FlowEditor() {
                 </div>
 
                 <div className="px-4 pt-3 text-[11px] font-medium tracking-wide text-fg-dim">
-                  过程态序列（从上到下就是工单要走的顺序）
+                  过程态序列（从上到下就是流程任务要走的顺序）
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
@@ -289,10 +289,10 @@ export default function FlowEditor() {
                 </div>
 
                 <div className="shrink-0 border-t border-line px-4 py-2.5 text-[11.5px] leading-relaxed text-fg-dim">
-                  从上到下就是工单要走的顺序。<span className="text-fg-3">终态</span>
-                  的那一步走到即算工单完结，其余都只是途经；一套流程可以有多步终态
-                  （比如「已完成」和「已取消」）。被工单占用的步骤和流程删不掉 ——
-                  静默把工单挪走会让它的流转记录对不上。
+                  从上到下就是流程任务要走的顺序。<span className="text-fg-3">终态</span>
+                  的那一步走到即算流程任务完结，其余都只是途经；一套流程可以有多步终态
+                  （比如「已完成」和「已取消」）。被流程任务占用的步骤和流程删不掉 ——
+                  静默把流程任务挪走会让它的流转记录对不上。
                   <br />
                   <span className="text-fg-3">默认时效</span>
                   是这一步「给多久」：推进到这一步时会按它自动设好处理时效（到下一步之前），
@@ -418,7 +418,7 @@ function StageRow({
       <button
         onClick={onToggleTerminal}
         data-stage-terminal={isTerminal ? "1" : "0"}
-        title={isTerminal ? "终态：走到这里工单算完结" : "非终态：只是途经的一步"}
+        title={isTerminal ? "终态：走到这里流程任务算完结" : "非终态：只是途经的一步"}
         className={`flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] ${
           isTerminal ? "bg-[#e1f5ee] text-[#0f6e56]" : "text-fg-dim hover:bg-hover"
         }`}

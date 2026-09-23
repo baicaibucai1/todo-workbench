@@ -18,7 +18,7 @@
  *   node tests/preview.mjs              # 全部
  *   node tests/preview.mjs core         # 只抓待办视图与设置
  *   node tests/preview.mjs tool         # 只抓工具屏
- *   node tests/preview.mjs order        # 只抓工单/紧急区
+ *   node tests/preview.mjs order        # 只抓流程任务/紧急区
  *   node tests/preview.mjs --w=1440     # 自定义视口宽度
  */
 
@@ -54,7 +54,7 @@ const SCREENS = [
   { nav: "myday", file: "01-myday.png", kind: "view", title: "我的一天" },
   { nav: "important", file: "02-important.png", kind: "view", title: "重要" },
   { nav: "all", file: "04-all.png", kind: "view", title: "全部" },
-  { nav: "orders", file: "05-orders.png", kind: "view", title: "工单" },
+  { nav: "orders", file: "05-orders.png", kind: "view", title: "流程任务" },
   { nav: "special", file: "06-special.png", kind: "view", title: "特殊单号" },
   { nav: "gallery", file: "07-gallery.png", kind: "gallery", title: "图库" },
   { nav: "tool:image-crop", file: "11-tool-image-crop.png", kind: "tool", id: "image-crop", name: "图片裁剪" },
@@ -79,7 +79,7 @@ const SCREENS = [
  * 分组过滤。
  *
  * 支持两种写法：具体的导航键片段（如 `tool:ai-gen`），
- * 或者语义分组名（core = 待办视图与设置，tool = 工具，order = 工单与紧急区）。
+ * 或者语义分组名（core = 待办视图与设置，tool = 工具，order = 流程任务与紧急区）。
  * 只按下标片段过滤的话，想"只看待办那几屏"就得把 nav 名一个个列出来。
  */
 const GROUPS = {
@@ -260,11 +260,11 @@ if (!wantKinds || wantKinds.includes("view")) {
   }
 }
 
-/* ---------------- 工单与紧急区 ---------------- */
+/* ---------------- 流程任务与紧急区 ---------------- */
 /*
- * 这几屏没法靠导航键点到：工单混在列表里、流程编辑器是弹层、紧急区在侧边栏底部。
+ * 这几屏没法靠导航键点到：流程任务混在列表里、流程编辑器是弹层、紧急区在侧边栏底部。
  * 所以单独走一段交互式抓图，顺带核对每一步真的发生了
- * （比如"点开了工单详情"要能从 data-detail-mode 读出来，而不是靠截图猜）。
+ * （比如"点开了流程任务详情"要能从 data-detail-mode 读出来，而不是靠截图猜）。
  */
 if (!wantKinds || wantKinds.includes("order")) {
   const shot = async (name, label) => {
@@ -284,19 +284,19 @@ if (!wantKinds || wantKinds.includes("order")) {
     console.log(`  OK    ${name.padEnd(30)} ${size.padStart(7)} KB   ${label}`);
   };
 
-  // 回到「全部」，工单与待办都在这儿
+  // 回到「全部」，流程任务与待办都在这儿
   await page.locator('aside [data-nav="all"]').first().click();
   await page.waitForTimeout(800);
 
   const orderCount = await page.locator("[data-order-id]").count();
   if (orderCount === 0) {
-    problems.push("工单屏 — 「全部」视图里一行工单都没有（种子数据或混排渲染有问题）");
-    console.log("  WARN  工单屏：列表里没有工单行");
+    problems.push("流程任务屏 — 「全部」视图里一行流程任务都没有（种子数据或混排渲染有问题）");
+    console.log("  WARN  流程任务屏：列表里没有流程任务行");
   } else {
-    await shot("40-mixed-list.png", `工单待办混排（${orderCount} 行工单）`);
+    await shot("40-mixed-list.png", `流程任务待办混排（${orderCount} 行流程任务）`);
   }
 
-  // 新建工单：底部回车打开的是全参数表单（标题/单号/流程/过程态/日期/备注），
+  // 新建流程任务：底部回车打开的是全参数表单（标题/单号/流程/过程态/日期/备注），
   // 而不是回车就建一张只有标题的半成品单
   await page.locator('aside [data-nav="orders"]').first().click();
   await page.waitForTimeout(700);
@@ -305,9 +305,9 @@ if (!wantKinds || wantKinds.includes("order")) {
   await page.waitForTimeout(700);
   const ocForm = page.locator("[data-order-create]");
   if ((await ocForm.count()) === 0) {
-    problems.push("07-order-create.png — 新建工单表单没打开");
+    problems.push("07-order-create.png — 新建流程任务表单没打开");
   } else {
-    await shot("07-order-create.png", "新建工单表单（全参数一次填完）");
+    await shot("07-order-create.png", "新建流程任务表单（全参数一次填完）");
     await page.keyboard.press("Escape");
     await page.waitForTimeout(400);
   }
@@ -366,21 +366,21 @@ if (!wantKinds || wantKinds.includes("order")) {
     );
   }
 
-  // 打开一张工单的详情
+  // 打开一张流程任务的详情
   if (orderCount > 0) {
     await page.locator("[data-order-id]").first().click();
     await page.waitForTimeout(800);
     const mode = await page.locator("aside[data-detail-mode]").getAttribute("data-detail-mode");
     if (mode !== "order") {
-      problems.push(`42-order-detail.png — 点了工单行但详情面板处于「${mode}」模式`);
+      problems.push(`42-order-detail.png — 点了流程任务行但详情面板处于「${mode}」模式`);
     }
-    await shot("42-order-detail.png", `工单详情（mode=${mode}）`);
+    await shot("42-order-detail.png", `流程任务详情（mode=${mode}）`);
 
     // 附件区：先贴一个同源图片网址，抓"真的下载下来并渲染出来"的样子。
     // 用同源壁纸做素材：浏览器 demo 只能硬扛 CORS，跨域地址在这里下不下来。
     const attInput = page.locator("[data-attach-input]");
     if ((await attInput.count()) === 0) {
-      problems.push("50-attachments.png — 工单详情里没有附件区");
+      problems.push("50-attachments.png — 流程任务详情里没有附件区");
     } else {
       await attInput.fill(`${BASE}wallpapers/20260917.jpg`);
       await attInput.press("Enter");
@@ -414,7 +414,7 @@ if (!wantKinds || wantKinds.includes("order")) {
       await page.waitForTimeout(900);
       const logs = await page.locator("[data-wo-log]").count();
       if (logs < 2) problems.push(`43-order-advanced.png — 推进后流转记录只有 ${logs} 条`);
-      await shot("43-order-advanced.png", `推进过程态后（流转记录 ${logs} 条，工单 ${before?.slice(0, 8)}）`);
+      await shot("43-order-advanced.png", `推进过程态后（流转记录 ${logs} 条，流程任务 ${before?.slice(0, 8)}）`);
     } else {
       problems.push("43-order-advanced.png — 找不到可推进的按钮");
     }

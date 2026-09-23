@@ -93,7 +93,7 @@ export default function UrgentPanel() {
         {all.length === 0 ? (
           <div data-urgent-empty="" className="px-2 py-3 text-[11.5px] leading-relaxed text-fg-dim">
             接下来 <span className="text-fg-3">{humanDuration(minutes * 60_000)}</span>{" "}
-            内没有要到期的待办、子任务或工单。想更早收到提醒，到设置里把这个时间调长。
+            内没有要到期的待办、子任务或流程任务。想更早收到提醒，到设置里把这个时间调长。
           </div>
         ) : (
           <>
@@ -134,7 +134,7 @@ export default function UrgentPanel() {
   );
 }
 
-/** 工单当前过程态的名字；待办返回 undefined */
+/** 流程任务当前过程态的名字；待办返回 undefined */
 function stageNameOf(
   e: UrgentEntry,
   orders: Array<{ id: string; stageId: string }>,
@@ -200,7 +200,7 @@ function UrgentRow({
         active ? "bg-chip" : "hover:bg-hover"
       }`}
     >
-      {/* 类型标记：待办是圆、工单是方（带过程态颜色）、子任务是清单图标，
+      {/* 类型标记：待办是圆、流程任务是方（带过程态颜色）、子任务是清单图标，
           与主列表同一套视觉语言 —— 不用读字就能分开 */}
       {entry.kind === "order" ? (
         <span

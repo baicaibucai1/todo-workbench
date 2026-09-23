@@ -82,7 +82,7 @@ const tables = await db().select(
 ).catch(() => []);
 check("内存库不抛异常即可（无 sqlite_master 概念）", Array.isArray(tables));
 
-// 迁移 v8 把「特殊单号」做成了工单的子集：新增 core_wo_fields（自定义相关信息），
+// 迁移 v8 把「特殊单号」做成了流程任务的子集：新增 core_wo_fields（自定义相关信息），
 // 并在 core_work_orders / core_wo_stages 上加了 kind / stage_due_at / default_minutes。
 // COUNT 得出来就说明表真的存在 —— 比查 sqlite_master 更通用，两种驱动都适用。
 const woFieldRows = await db()
@@ -550,7 +550,7 @@ await repo.clearAllData();
 check("清空后任务为 0", (await repo.fetchTasks({ view: "all", includeDone: true })).length === 0);
 check("清空后配置为空", Object.keys(await repo.getAllSettings()).length === 0);
 
-/* ---------- 14~18. 工单 ---------- */
+/* ---------- 14~18. 流程任务 ---------- */
 /*
  * 这一段整体放在一个块作用域里。
  *
@@ -559,13 +559,13 @@ check("清空后配置为空", Object.keys(await repo.getAllSettings()).length =
  * 而 esbuild 一次只报一个。块作用域一次性把所有这类问题挡掉。
  */
 {
-/* ---------- 14. 工单：流程模板、过程态流转、时间语义 ---------- */
+/* ---------- 14. 流程任务：流程模板、过程态流转、时间语义 ---------- */
 
-section("14. 工单流程与过程态");
+section("14. 流程模板与过程态");
 
 // 这一段存在的意义不只是"功能对不对"：MemoryDb 是手写的迷你 SQL 引擎，
 // 它不支持 JOIN、子查询，也只认单个聚合函数（都会**静默返回空/0**）。
-// 工单查询最初就用了 JOIN，浏览器里表现为"工单列表永远空白"，而桌面端正常。
+// 流程任务查询最初就用了 JOIN，浏览器里表现为"流程任务列表永远空白"，而桌面端正常。
 // 所以这里必须在 memory 驱动上真跑一遍。
 await repo.clearAllData();
 await repo.seedWorkOrderFlowsIfEmpty();
@@ -573,7 +573,7 @@ await repo.seedWorkOrderFlowsIfEmpty();
 const flows0 = await repo.fetchFlows();
 check("种下三套流程", flows0.length === 3, `实际 ${flows0.length}`);
 check("有且只有一个默认流程", flows0.filter((f) => f.isDefault).length === 1);
-check("默认流程是「标准工单」", flows0.find((f) => f.isDefault)?.name === "标准工单");
+check("默认流程是「标准流程」", flows0.find((f) => f.isDefault)?.name === "标准流程");
 // 「特殊单号」那套是给带处理时效的单子用的：它的每一步都带着默认时长
 const spFlow0 = flows0.find((f) => f.name.includes("特殊单号"));
 check("种下了「特殊单号处理」流程", !!spFlow0);
@@ -611,10 +611,10 @@ check(
   new Set(stdStages.map((s) => s.color)).size === stdStages.length,
 );
 
-section("15. 工单的创建与过程态流转");
+section("15. 流程任务的创建与过程态流转");
 
 const wo = await repo.createWorkOrder({
-  title: "冒烟测试工单",
+  title: "冒烟测试流程任务",
   flowId: stdFlow.id,
   important: true,
 });
@@ -660,7 +660,7 @@ const openOrders = await repo.fetchWorkOrders({ view: "all" });
 check("includeDone=true 能拿到", allOrders.some((o) => o.id === wo.id));
 check("includeDone=false 会排除已完结的", openOrders.some((o) => o.id === wo.id));
 
-section("16. 工单与「我的一天」的边界");
+section("16. 流程任务与「我的一天」的边界");
 
 const woDay = repo.today();
 const todayOrder = await repo.createWorkOrder({
@@ -677,13 +677,13 @@ const futureOrder = await repo.createWorkOrder({
   startDate: repo.addDays(woDay, 7),
 });
 
-check("新建工单的 myDay 恒为 false", todayOrder.myDay === false);
+check("新建流程任务的 myDay 恒为 false", todayOrder.myDay === false);
 
 const myday = await repo.fetchWorkOrders({ view: "myday", includeDone: true });
-// 现在的边界是：**普通**工单不进「我的一天」，特殊单号进（它们是"今天在跟的、
+// 现在的边界是：**普通**流程任务不进「我的一天」，特殊单号进（它们是"今天在跟的、
 // 等不起的单"，必须出现在默认视图里）。本节此刻还没建特殊单号，所以是 0；
 // special 的放行在 23 节系统覆盖。
-check("普通工单一条都不进「我的一天」", myday.length === 0, `实际 ${myday.length} 条`);
+check("普通流程任务一条都不进「我的一天」", myday.length === 0, `实际 ${myday.length} 条`);
 
 // 今日计划候选池用的是 today：今天开始/今天要交的
 const todayPool = await repo.fetchWorkOrders({ view: "today", includeDone: true });
@@ -691,7 +691,7 @@ check("今天开始的进入 today 视图", todayPool.some((o) => o.id === today
 check("未来开始的不进 today 视图", !todayPool.some((o) => o.id === futureOrder.id));
 
 const inList = await repo.fetchWorkOrders({ view: "list", includeDone: true });
-check("清单视图不返回工单（工单不属于清单）", inList.length === 0);
+check("清单视图不返回流程任务（流程任务不属于清单）", inList.length === 0);
 
 section("17. 流程模板的可自定义性");
 
@@ -718,17 +718,17 @@ await repo.updateStage(newFlow.id ? afterAdd[1].id : "", { name: "改过名的�
 const stageRenamed = (await repo.fetchStages()).find((s) => s.id === afterAdd[1].id);
 check("阶段可改名", stageRenamed?.name === "改过名的终态");
 
-// 被工单占用的阶段不能删 —— 静默把工单挪走比报错更糟
+// 被流程任务占用的阶段不能删 —— 静默把流程任务挪走比报错更糟
 const blocked = await repo.deleteStage(stdStages[1].id);
-check("被工单占用的阶段删不掉", blocked.ok === false && !!blocked.reason, blocked.reason);
+check("被流程任务占用的阶段删不掉", blocked.ok === false && !!blocked.reason, blocked.reason);
 
 const freeStage = afterAdd[2].id;
 const freed = await repo.deleteStage(freeStage);
 check("没被占用的阶段可以删", freed.ok === true);
 
-// 有工单在用的流程不能删
+// 有流程任务在用的流程不能删
 const stdDel = await repo.deleteFlow(stdFlow.id);
-check("有工单在用的流程删不掉", stdDel.ok === false && !!stdDel.reason, stdDel.reason);
+check("有流程任务在用的流程删不掉", stdDel.ok === false && !!stdDel.reason, stdDel.reason);
 
 await repo.setDefaultFlow(newFlow.id);
 const defs = await repo.fetchFlows();
@@ -784,7 +784,7 @@ section("18. 紧急判定：什么时候算「快到点了」");
     taskDeadline(T("t", { remindAt: at(60 * MIN), dueDate: repo.addDays(repo.today(), 3) })).source === "remind");
   check("到期日更早时按到期日算",
     taskDeadline(T("t", { remindAt: at(3 * 24 * 60 * MIN), dueDate: repo.today() })).source === "due");
-  check("工单的步骤时效优先于交付日",
+  check("流程任务的步骤时效优先于交付日",
     orderDeadline(
       O("o", { stageDueAt: at(20 * MIN), dueDate: repo.addDays(repo.today(), 5) }),
     ).source === "stage");
@@ -848,7 +848,7 @@ section("18. 紧急判定：什么时候算「快到点了」");
 
   // 不进紧急区的四种情况
   check("已完成的待办不进紧急区", run([T("done", { remindAt: at(5 * MIN), done: true })], []).length === 0);
-  check("已完结的工单不进紧急区",
+  check("已完结的流程任务不进紧急区",
     run([], [O("closed", { stageDueAt: at(5 * MIN), closed: true })]).length === 0);
   check("软删除的不进紧急区",
     run([T("del", { remindAt: at(5 * MIN), deleted: true })], []).length === 0);
@@ -879,10 +879,10 @@ section("18. 紧急判定：什么时候算「快到点了」");
   const openTasks = await repo.fetchTasks({ view: "all", includeDone: false });
   check("候选池里没有已完成的待办", !openTasks.some((x) => x.id === doneTask.id));
   const openOrders = await repo.fetchWorkOrders({ view: "all", includeDone: false });
-  check("候选池里没有已完结的工单", openOrders.every((o) => !o.closed));
+  check("候选池里没有已完结的流程任务", openOrders.every((o) => !o.closed));
 
   await repo.clearAllData();
-  check("清空数据后工单为 0", (await repo.fetchWorkOrders({ view: "all", includeDone: true })).length === 0);
+  check("清空数据后流程任务为 0", (await repo.fetchWorkOrders({ view: "all", includeDone: true })).length === 0);
   check("清空数据后流程为 0", (await repo.fetchFlows()).length === 0);
   check("清空数据后紧急候选池为空",
     (await repo.fetchTasks({ view: "all", includeDone: false })).length === 0);
@@ -917,11 +917,11 @@ section("19. 列表排版与「默认展开第一条」同源");
     ...extra,
   });
 
-  // 「全部」按日期排：工单看开始日、待办看截止日，混在一起比
+  // 「全部」按日期排：流程任务看开始日、待办看截止日，混在一起比
   const tasks = [task("T-远", D(5)), task("T-近", D(1)), task("T-无", null)];
   const orders = [order("O-中", D(-1)), order("O-远", D(9))];
   let groups = groupRows(tasks, orders, "all");
-  check("「全部」把待办与工单混在一组", groups.sections.length === 1);
+  check("「全部」把待办与流程任务混在一组", groups.sections.length === 1);
   check("「全部」组内共 5 行", groups.sections[0].items.length === 5);
 
   const first = firstVisibleRow(tasks, orders, "all");
@@ -936,7 +936,7 @@ section("19. 列表排版与「默认展开第一条」同源");
       (rendered.kind === "order" ? rendered.order.id : rendered.task.id) ===
         (first.kind === "order" ? first.order.id : first.task.id));
 
-  // 已完成的待办与已完结的工单不进候选（它们在默认收起的「已完成」区里）
+  // 已完成的待办与已完结的流程任务不进候选（它们在默认收起的「已完成」区里）
   const allDone = firstVisibleRow(
     [task("T-完", D(1), { done: true })],
     [order("O-完", D(1), { closed: true })],
@@ -945,7 +945,7 @@ section("19. 列表排版与「默认展开第一条」同源");
   check("只剩已完成条目时没有候选（列表默认收起已完成区）", allDone === null);
 
   // 「我的一天」：特殊单号单独成组、按时效排、放在最上面（它们是提醒的前线）；
-  // 今日组按日期排，且只排非每日任务；普通工单被挡在外面（rows 层第二道闸）
+  // 今日组按日期排，且只排非每日任务；普通流程任务被挡在外面（rows 层第二道闸）
   const mdTasks = [task("T-每日", D(0), { repeat: "daily" }), task("T-今日", D(0))];
   const mdOrders = [
     order("O-特", D(-2), {
@@ -961,7 +961,7 @@ section("19. 列表排版与「默认展开第一条」同源");
 
   const mdGroups = groupRows(mdTasks, mdOrders, "myday");
   check("「我的一天」第一组就是特殊单号", mdGroups.sections[0]?.key === "special");
-  check("普通工单被挡在「我的一天」外（rows 层第二道闸）",
+  check("普通流程任务被挡在「我的一天」外（rows 层第二道闸）",
     mdGroups.sections
       .flatMap((s) => s.items)
       .every((r) => !(r.kind === "order" && r.order.kind !== "special")),
@@ -1033,9 +1033,9 @@ section("20. 背景（壁纸）设置");
   check("缓存可以清掉", (await wp.loadWallpapers()) !== null);
 }
 
-/* ---------- 21. 工单附件（本地仓库 + 链接） ---------- */
+/* ---------- 21. 流程任务附件（本地仓库 + 链接） ---------- */
 
-section("21. 工单附件");
+section("21. 流程任务附件");
 
 {
   const att = await import("../src/lib/attachments.ts");
@@ -1125,8 +1125,8 @@ section("21. 工单附件");
     hashA === "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", hashA);
 
   /* --- 数据层 --- */
-  const attOrder = await repo.createWorkOrder({ title: "带附件的工单", flowId: attFlow.id });
-  const otherOrder = await repo.createWorkOrder({ title: "另一张工单", flowId: attFlow.id });
+  const attOrder = await repo.createWorkOrder({ title: "带附件的流程任务", flowId: attFlow.id });
+  const otherOrder = await repo.createWorkOrder({ title: "另一张流程任务", flowId: attFlow.id });
 
   const imgA = await repo.createAttachment({
     woId: attOrder.id, kind: "image", title: "产品图.png",
@@ -1148,15 +1148,15 @@ section("21. 工单附件");
     attList.map((x) => x.title).join(","));
 
   const attCounts = await repo.attachmentCounts();
-  check("按工单统计附件数", attCounts[attOrder.id] === 2, JSON.stringify(attCounts));
-  check("没附件的工单不出现在统计里", attCounts[otherOrder.id] === undefined);
+  check("按流程任务统计附件数", attCounts[attOrder.id] === 2, JSON.stringify(attCounts));
+  check("没附件的流程任务不出现在统计里", attCounts[otherOrder.id] === undefined);
 
-  /* --- 去重：同一份内容被两张工单引用 --- */
+  /* --- 去重：同一份内容被两张流程任务引用 --- */
   const imgB = await repo.createAttachment({
     woId: otherOrder.id, kind: "image", title: "同一张图",
     relPath: "2026-09/abcd1234-产品图.png", mime: "image/png", size: 1234, hash: "hash-1",
   });
-  check("同一份内容被两张工单引用时引用计数为 2",
+  check("同一份内容被两张流程任务引用时引用计数为 2",
     (await repo.refCountByHash("hash-1")) === 2, String(await repo.refCountByHash("hash-1")));
 
   /* --- 删除时的文件回收判断（最容易写错、也最容易丢数据的一处） --- */
@@ -1206,7 +1206,7 @@ section("21. 工单附件");
     beforeDup !== afterDup && afterDup === "B,A", `${beforeDup} → ${afterDup}`);
 
   /* --- 认不出的 kind 必须安全降级 --- */
-  const weirdOrder = await repo.createWorkOrder({ title: "脏数据工单", flowId: attFlow.id });
+  const weirdOrder = await repo.createWorkOrder({ title: "脏数据流程任务", flowId: attFlow.id });
   await db().execute(
     `INSERT INTO core_wo_attachments
        (id, wo_id, kind, title, rel_path, source_url, mime, size_bytes, hash,
@@ -1232,24 +1232,24 @@ section("21. 工单附件");
   const afterImport = await titlesOf();
   check("导入后附件顺序与导出前一致", afterImport === beforeImport,
     `${beforeImport} → ${afterImport}`);
-  check("导入后附件仍挂在原工单上",
+  check("导入后附件仍挂在原流程任务上",
     (await repo.fetchAttachments(attOrder.id)).length === 2,
     String((await repo.fetchAttachments(attOrder.id)).length));
 }
 
-/* ---------- 22. 工单专属视图 ---------- */
+/* ---------- 22. 流程任务专属视图 ---------- */
 
-section("22. 工单专属视图（侧边栏「工单」入口）");
+section("22. 流程任务专属视图（侧边栏「流程任务」入口）");
 
 {
   // 自建流程，不依赖前面各节留下的状态（备份往返之后尤其不能信）
-  const ovFlow = await repo.createFlow("工单视图流程");
+  const ovFlow = await repo.createFlow("流程任务视图流程");
   const ovStages = (await repo.fetchStages())
     .filter((s) => s.flowId === ovFlow.id)
     .sort((a, b) => a.sortOrder - b.sortOrder);
 
-  const ovList = await repo.createList("工单视图列表");
-  await repo.createTask({ listId: ovList.id, title: "不该出现在工单视图的待办" });
+  const ovList = await repo.createList("流程任务视图列表");
+  await repo.createTask({ listId: ovList.id, title: "不该出现在流程任务视图的待办" });
 
   // 一开一关：关的那张要落到「已完成」组
   const openOv = await repo.createWorkOrder({
@@ -1264,11 +1264,11 @@ section("22. 工单专属视图（侧边栏「工单」入口）");
   });
   await repo.moveOrderToStage(closedOv.id, ovStages[1].id, "做完了");
 
-  // 取数层：orders 视图一张待办都不给，工单则全给（含已完结）
+  // 取数层：orders 视图一张待办都不给，流程任务则全给（含已完结）
   check("orders 视图下取不到任何待办",
     (await repo.fetchTasks({ view: "orders", includeDone: true })).length === 0);
   const ovOrders = await repo.fetchWorkOrders({ view: "orders", includeDone: true });
-  check("orders 视图取到全部工单（含已完结）",
+  check("orders 视图取到全部流程任务（含已完结）",
     ovOrders.some((o) => o.id === openOv.id) && ovOrders.some((o) => o.id === closedOv.id));
 
   // 分组：进行中 / 已完成 两组；done 折叠区必须为空，
@@ -1280,25 +1280,25 @@ section("22. 工单专属视图（侧边栏「工单」入口）");
   check("进行中组里没有已完结的单", ov.sections[0].items.every((r) => !r.order.closed));
   check("已完成组里全是已完结的单", ov.sections[1].items.every((r) => r.order.closed));
   check("done 折叠区为空（避免和「已完成」组重复）", ov.done.length === 0);
-  check("待办不进工单视图",
+  check("待办不进流程任务视图",
     ov.sections.every((s) => s.items.every((r) => r.kind === "order")));
 
   // 与「默认展开第一条」同源：firstVisibleRow 指向进行中的第一张，
   // 而不是已完成组里的某张 —— 详情面板展开错对象就是从这里漏的
   const ovFirst = firstVisibleRow([], ovOrders, "orders");
-  check("默认展开的是进行中的第一张工单",
+  check("默认展开的是进行中的第一张流程任务",
     ovFirst?.kind === "order" && !ovFirst.order.closed,
     ovFirst ? String(ovFirst.kind) : "null");
 
-  // 「全部」不受影响：工单继续混排（用户明确要求保留这个行为）
+  // 「全部」不受影响：流程任务继续混排（用户明确要求保留这个行为）
   const ovTasks = await repo.fetchTasks({ view: "all", includeDone: true });
   const ovAll = groupRows(ovTasks, ovOrders, "all");
   const ovAllRows = ovAll.sections.flatMap((s) => s.items);
   check("「全部」里待办仍在混排", ovAllRows.some((r) => r.kind === "task"));
-  check("「全部」里工单仍在混排", ovAllRows.some((r) => r.kind === "order"));
+  check("「全部」里流程任务仍在混排", ovAllRows.some((r) => r.kind === "order"));
 }
 
-/* ---------- 23. 特殊单号（带处理时效的一类工单） ---------- */
+/* ---------- 23. 特殊单号（带处理时效的一类流程任务） ---------- */
 
 section("23. 特殊单号：时效、相关信息与专属视图");
 
@@ -1368,7 +1368,7 @@ section("23. 特殊单号：时效、相关信息与专属视图");
   await repo.deleteWoField(spFields[1].id);
   check("删掉的信息不再出现", (await repo.fetchWoFields(spId)).length === 1);
 
-  // 搜索要能命中"绑上去的那个号"——用户手上拿到的往往是它，不是工单单号
+  // 搜索要能命中"绑上去的那个号"——用户手上拿到的往往是它，不是流程任务单号
   const byField = await repo.fetchWorkOrders({ view: "all", search: "YT0000000001" });
   check("按相关信息的值能搜到这张单", byField.some((o) => o.id === spId), `命中 ${byField.length} 张`);
   const byNo = await repo.fetchWorkOrders({ view: "all", search: "SF7712345678901" });
@@ -1377,22 +1377,22 @@ section("23. 特殊单号：时效、相关信息与专属视图");
   // 视图：special 只给特殊单号，别的视图不受影响
   const specials = await repo.fetchWorkOrders({ view: "special", includeDone: true });
   check("special 视图里全是特殊单号", specials.length > 0 && specials.every((o) => o.kind === "special"), `实际 ${specials.length} 张`);
-  // 「工单」视图不过滤 kind：特殊单号也是工单，用户进「工单」就是想看全部单子
+  // 「流程任务」视图不过滤 kind：特殊单号也是流程任务，用户进「流程任务」就是想看全部单子
   const orderView = await repo.fetchWorkOrders({ view: "orders", includeDone: true });
-  check("「工单」视图里普通工单和特殊单号都在",
+  check("「流程任务」视图里普通流程任务和特殊单号都在",
     orderView.some((o) => o.kind === "normal") && orderView.some((o) => o.kind === "special"));
   // 这是最容易漏的一处：fetchTasks 落到 switch 的 default 就等于"不加条件"，
   // 会把整个待办表倒进特殊单号视图
   check("special 视图取不到任何待办",
     (await repo.fetchTasks({ view: "special", includeDone: true })).length === 0);
-  check("「全部」里普通工单与特殊单号都在",
+  check("「全部」里普通流程任务与特殊单号都在",
     (await repo.fetchWorkOrders({ view: "all", includeDone: true })).filter((o) => o.kind === "special").length >= 1);
 
   // 角标：未完结的特殊单号数
   const cnt = await repo.fetchCounts();
   const openSpecial = (await repo.fetchWorkOrders({ view: "special" })).length;
   check("侧边栏角标 = 未完结的特殊单号数", cnt.special === openSpecial, `${cnt.special} vs ${openSpecial}`);
-  check("special 角标不混进普通工单", cnt.special < cnt.orders);
+  check("special 角标不混进普通流程任务", cnt.special < cnt.orders);
 
   // 时效档位：同一条代码路径给列表、详情、提醒三个地方用
   check("没设时效时是 none", dueMod.dueState({ ...spOrder, stageDueAt: null }) === "none");
@@ -1403,7 +1403,7 @@ section("23. 特殊单号：时效、相关信息与专属视图");
   check("时长说人话", dueMod.humanDuration(135 * 60_000) === "2 小时 15 分", dueMod.humanDuration(135 * 60_000));
 
   // 提醒队列：只挑未完结、有时效的
-  // 时效的生效依据是**流程那一步的默认时长**，不是单据类型 —— 普通工单落在
+  // 时效的生效依据是**流程那一步的默认时长**，不是单据类型 —— 普通流程任务落在
   // 配了默认时长的步骤上，一样会计时、一样会提醒（列表上也就必须看得见它）
   const plainFlow = await repo.createFlow("没有默认时效的流程");
   const plainId = (
@@ -1415,7 +1415,7 @@ section("23. 特殊单号：时效、相关信息与专属视图");
   ).id;
   const crossId = (
     await repo.createWorkOrder({
-      title: "普通工单落在配了默认时长的步骤上",
+      title: "普通流程任务落在配了默认时长的步骤上",
       flowId: spFlow.id,
       stageId: spTodo.id,
       startDate: repo.today(),
@@ -1490,11 +1490,11 @@ section("23. 特殊单号：时效、相关信息与专属视图");
   check("默认展开最急的那张特殊单号", spFirst?.kind === "order" && spFirst.order.id === spUrgent,
     spFirst ? String(spFirst.order.id) : "null");
 
-  /* --- 我的一天：特殊单号是唯一放行进来的工单 --- */
+  /* --- 我的一天：特殊单号是唯一放行进来的流程任务 --- */
   const mydayOrders = await repo.fetchWorkOrders({ view: "myday" });
   check("特殊单号出现在「我的一天」（数据层放行）",
     mydayOrders.some((o) => o.id === spUrgent) && mydayOrders.some((o) => o.id === spOpen));
-  check("普通工单仍然不进「我的一天」",
+  check("普通流程任务仍然不进「我的一天」",
     !mydayOrders.some((o) => o.id === plainId) && !mydayOrders.some((o) => o.id === crossId));
   check("已完结的特殊单号不进「我的一天」的进行组",
     !mydayOrders.some((o) => o.id === spId), `实际 ${mydayOrders.length} 张里含 spId？`);
@@ -1708,10 +1708,10 @@ section("24. 图库");
     (await galleryCount()) === beforeWrite + 3, String(await galleryCount()));
   check("重复删除返回 null（记录已不在了）", (await g.deleteGalleryItem(gChart.id)) === null);
 
-  // 最关键的一条：同一份字节同时被工单附件和图库引用时，删图库**不能删文件**
+  // 最关键的一条：同一份字节同时被流程任务附件和图库引用时，删图库**不能删文件**
   //
   // 注意路径的构成是 `<hash 前 8 位>-<名字>`，所以"同名 + 同内容"才指向同一个
-  // 文件（这正是「同一张图被加进两张工单，磁盘上只有一份」成立的条件）。
+  // 文件（这正是「同一张图被加进两张流程任务，磁盘上只有一份」成立的条件）。
   // 而**引用计数是按 hash 算的、且跨两张表** —— 下面刻意用相同的名字，
   // 好让路径也真的相同，把"按路径删就会误删"这条风险摆到台面上。
   const dupStore = await att.attachmentStore().putDataUrl("data:image/png;base64,SHARED", { name: "shared.png", maxBytes: 1e7 });
@@ -1728,7 +1728,7 @@ section("24. 图库");
     dupItem.relPath === dupStore.relPath, `${dupItem.relPath} vs ${dupStore.relPath}`);
   check("同名同内容 → 指纹一致", dupItem.hash === dupStore.hash);
   const dupRel = await g.deleteGalleryItem(dupItem.id);
-  check("还有别的引用时不返回待删文件（不能把工单的图删掉）", dupRel === null, String(dupRel));
+  check("还有别的引用时不返回待删文件（不能把流程任务的图删掉）", dupRel === null, String(dupRel));
   check("仓库文件确实还在", await att.attachmentStore().exists(dupStore.relPath));
 
   /* --- 备份 --- */

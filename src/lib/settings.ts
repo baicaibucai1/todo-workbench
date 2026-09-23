@@ -46,7 +46,7 @@ export const SETTINGS = {
   reminderSystem: "reminder.system",
   reminderSnooze: "reminder.snoozeMinutes",
   /**
-   * 紧急阈值（分钟）：剩余时间少于这个值的待办与工单，会出现在侧边栏底部的紧急区。
+   * 紧急阈值（分钟）：剩余时间少于这个值的待办与流程任务，会出现在侧边栏底部的紧急区。
    *
    * 做成可配置是因为"多近才算急"完全取决于手上是什么活儿：
    * 跟快递时效的人觉得 30 分钟就是火烧眉毛，排周计划的人觉得 2 天才算临近。
@@ -77,6 +77,15 @@ export const SETTINGS = {
    * 有人要一眼看到客户，有人要看到补发单号。写死几列等于所有人都要
    * 点开详情才能核对 —— 那这个记录表就白做了。
    */
+  /**
+   * 是否启用「特殊单号」模块。
+   *
+   * 关掉的是**入口与提醒**，不是数据：侧边栏入口、专属视图、创建弹窗里的类型切换、
+   * 「我的一天」里那一组、以及时效提醒与紧急区都会停；已经建好的单子仍留在
+   * 「流程任务」列表里，可以照常打开、推进、收尾，开关一打开就全回来。
+   * 默认启用 —— 关闭必须是显式动作，缺键不等于"用户不要它"。
+   */
+  specialEnabled: "special.enabled",
   specialColumns: "special.columns",
   /** 相关信息的复制格式（见 lib/special.ts 的 CopyTemplate） */
   specialCopyTemplate: "special.copyTemplate",
@@ -112,7 +121,7 @@ export const DEFAULT_PROFILE = {
  * （const 有暂时性死区，顺序反了启动就炸）。
  *
  * 详情面板：下限 280 是内容决定的 —— 再窄的话"开始与交付"那两行日期会挤成两行，
- * 工单的过程态进度条也会开始折行。上限 720 是布局决定的 ——
+ * 流程任务的过程态进度条也会开始折行。上限 720 是布局决定的 ——
  * 面板过宽会把中间的待办列表压到只剩一列字，主次就颠倒了。
  *
  * 侧边栏：下限 220 再窄就装不下"尺码表生成器"这种长清单名，
@@ -163,6 +172,7 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.urgentMinutes]: String(URGENT_MINUTES.default),
   [SETTINGS.toolKeepState]: "1",
   [SETTINGS.toolsDisabled]: "",
+  [SETTINGS.specialEnabled]: "1",
   [SETTINGS.specialColumns]: "[]",
   [SETTINGS.specialCopyTemplate]: "label-cn",
   [SETTINGS.specialDensity]: "comfortable",
@@ -254,6 +264,18 @@ export function parseToolKeepState(raw: string | undefined): boolean {
   return raw !== "0";
 }
 
+/**
+ * 「特殊单号」模块是否启用。
+ *
+ * 与 parseToolKeepState 同一条方向：**只有显式写了 "0" 才算关** ——
+ * 缺键、空串、手改数据库留下的脏值一律按默认（启用）处理。
+ * 方向不能反：反过来写的话，一次意外的脏值就会让用户那批记录从界面上
+ * 凭空消失，而他还不知道发生了什么。
+ */
+export function parseSpecialEnabled(raw: string | undefined): boolean {
+  return raw !== "0";
+}
+
 export function isThemeMode(v: string | undefined): v is ThemeMode {
   return v === "light" || v === "dark" || v === "system";
 }
@@ -292,7 +314,7 @@ export const STARTUP_VIEWS: Array<{ value: SmartView; label: string }> = [
   { value: "myday", label: "我的一天" },
   { value: "important", label: "重要" },
   { value: "all", label: "全部" },
-  { value: "orders", label: "工单" },
+  { value: "orders", label: "流程任务" },
   { value: "gallery", label: "图库" },
 ];
 

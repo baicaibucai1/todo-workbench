@@ -113,7 +113,7 @@ export default function App() {
       </div>
 
       <ReminderToast />
-      {/* 流程编辑器是全局弹层：入口有两个（工单详情、底部创建器），
+      {/* 流程编辑器是全局弹层：入口有两个（流程任务详情、底部创建器），
           挂在这里才能保证只有一份实例 */}
       <FlowEditor />
     </div>

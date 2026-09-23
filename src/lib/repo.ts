@@ -162,7 +162,7 @@ export interface TaskQuery {
    * myday / important / all / orders / special / list / gallery
    *
    * 其中 `orders` / `special` / `gallery` **都必然返回空数组** ——
-   * 它们不是"待办的某种筛选"（前两个是工单的视图，gallery 是独立模块）。
+   * 它们不是"待办的某种筛选"（前两个是流程任务的视图，gallery 是独立模块）。
    * 之所以还列在这里，是因为 store.refresh() 拿的是通用的 `SmartView | "list"`，
    * 它不分视图地调这个函数。类型上允许、运行时挡掉，比在每个调用点
    * 各判一次要可靠：**switch 落空 = 不加任何条件 = 把整库待办捞回来**。
@@ -187,12 +187,12 @@ export async function fetchTasks(q: TaskQuery): Promise<Task[]> {
       params.push(today());
       break;
     case "orders":
-      // 「工单」视图一张待办都不该有。
+      // 「流程任务」视图一张待办都不该有。
       // 这里必须显式返回空：switch 没有 default，未知视图会落到"不加条件"，
-      // 于是把全部待办捞回来 —— 表现就是「工单」页里混进一堆待办。
+      // 于是把全部待办捞回来 —— 表现就是「流程任务」页里混进一堆待办。
       return [];
     case "special":
-      // 同上：「特殊单号」也是工单的视图，待办一张都不该有。
+      // 同上：「特殊单号」也是流程任务的视图，待办一张都不该有。
       // 漏了这一句的后果不是"少了几条"，而是**整库的待办都会被捞进来** ——
       // switch 落空 = 不加任何条件。
       return [];
@@ -381,7 +381,7 @@ export async function rolloverDailyTasks(todayStr: string = today()): Promise<nu
 /**
  * 统计各视图的未完成数量，用于侧边栏角标。
  *
- * 必须把工单算进去：工单现在和待办混排在同一个视图里，
+ * 必须把流程任务算进去：流程任务现在和待办混排在同一个视图里，
  * 角标却只数待办的话，"全部"会显示 5 而列表里明明有 7 条 ——
  * 数字和眼前看到的对不上，比没有角标更让人困惑。
  */
@@ -389,9 +389,9 @@ export async function fetchCounts(): Promise<{
   myday: number;
   all: number;
   byList: Record<string, number>;
-  /** 未完结工单总数 */
+  /** 未完结流程任务总数 */
   orders: number;
-  /** 未完结的特殊单号数（工单里带处理时效的那一类） */
+  /** 未完结的特殊单号数（流程任务里带处理时效的那一类） */
   special: number;
   /** 图库条目总数 */
   gallery: number;
@@ -409,7 +409,7 @@ export async function fetchCounts(): Promise<{
       `SELECT list_id, COUNT(*) AS c FROM core_tasks
        WHERE deleted = 0 AND done = 0 GROUP BY list_id`,
     ),
-    // 工单的"是否完结"在 JS 里算：SQL 侧需要 join 阶段表 + 子查询，
+    // 流程任务的"是否完结"在 JS 里算：SQL 侧需要 join 阶段表 + 子查询，
     // 而 MemoryDb 两样都不支持（会静默算成 0）。
     db().select<{ stage_id: string; kind?: string }>(
       `SELECT stage_id, kind FROM core_work_orders WHERE deleted = 0`,
@@ -434,12 +434,12 @@ export async function fetchCounts(): Promise<{
     // 「我的一天」= 待办数 + 未完结特殊单号数。
     // 特殊单号现在就显示在「我的一天」里（见 fetchWorkOrders 的 myday 分支），
     // 角标必须把同一批单子算进去 —— 点进去对不上是最让人怀疑数据丢了的表现。
-    // 普通工单仍然不算：它们不在这个视图里。
+    // 普通流程任务仍然不算：它们不在这个视图里。
     myday: (myday[0]?.c ?? 0) + openSpecials,
     all: (all[0]?.c ?? 0) + openOrders.length,
     byList: map,
     orders: openOrders.length,
-    // 未完结的特殊单号数。和「工单」角标同一把尺子（都是"未完结"），
+    // 未完结的特殊单号数。和「流程任务」角标同一把尺子（都是"未完结"），
     // 不按"逾期/临期"再筛一道 —— 那会让角标数字在没有任何操作时自己跳，
     // 用户不知道它为什么变。
     special: openSpecials,
@@ -686,14 +686,14 @@ export async function setSettings(patch: Record<string, string>): Promise<void> 
   for (const [key, value] of Object.entries(patch)) await setSetting(key, value);
 }
 
-/* ============================ 工单 ============================ */
+/* ============================ 流程任务 ============================ */
 /*
- * 工单与待办的关系：**展示层混排，存储层各自独立**。
+ * 流程任务与待办的关系：**展示层混排，存储层各自独立**。
  *
  * 为什么不合并成一张表：待办是「一件事」（两种状态，做完就没了），
- * 工单是「一个流程」（单号 + 开始时间 + 沿自定义过程态前进 + 每步留痕）。
+ * 流程任务是「一个流程」（单号 + 开始时间 + 沿自定义过程态前进 + 每步留痕）。
  * 塞进同一张表意味着有一半的列对一半的行永远为空，而且之后每加一个
- * 工单特性，都要在待办代码里判断"这行到底是不是工单"。
+ * 流程任务特性，都要在待办代码里判断"这行到底是不是流程任务"。
  */
 
 /* ---------------------------- 流程模板 ---------------------------- */
@@ -746,7 +746,7 @@ export async function fetchStages(): Promise<WorkStage[]> {
 /**
  * 新建流程时自动带上两个阶段。
  *
- * 不给空流程：一个没有阶段的流程，工单建出来就没有"当前过程态"，
+ * 不给空流程：一个没有阶段的流程，流程任务建出来就没有"当前过程态"，
  * 界面得为这种半成品状态单独兜底。给「待处理 → 已完成」这种最小可用序列，
  * 用户想改再改，比丢一个空壳友好。
  */
@@ -793,10 +793,10 @@ export async function setDefaultFlow(id: string): Promise<void> {
 /**
  * 删除流程。
  *
- * 两道拦截，都是为了不产生"孤儿工单"：
- * 1. 最后一流程不能删 —— 否则新建工单没有流程可选
- * 2. 还有工单在用的流程不能删 —— 软删除流程会让那些工单的 flow_id 指向不存在的行，
- *    界面上表现为过程态凭空消失。要么先迁走工单，要么别删。
+ * 两道拦截，都是为了不产生"孤儿流程任务"：
+ * 1. 最后一流程不能删 —— 否则新建流程任务没有流程可选
+ * 2. 还有流程任务在用的流程不能删 —— 软删除流程会让那些流程任务的 flow_id 指向不存在的行，
+ *    界面上表现为过程态凭空消失。要么先迁走流程任务，要么别删。
  */
 export async function deleteFlow(id: string): Promise<{ ok: boolean; reason?: string }> {
   const flows = await fetchFlows();
@@ -807,7 +807,7 @@ export async function deleteFlow(id: string): Promise<{ ok: boolean; reason?: st
     [id],
   );
   if ((used[0]?.c ?? 0) > 0) {
-    return { ok: false, reason: `还有 ${used[0].c} 张工单在用这套流程，先改掉它们` };
+    return { ok: false, reason: `还有 ${used[0].c} 张流程任务在用这套流程，先改掉它们` };
   }
 
   const wasDefault = flows.find((f) => f.id === id)?.isDefault ?? false;
@@ -915,8 +915,8 @@ export async function updateStage(id: string, patch: Partial<WorkStage>): Promis
 /**
  * 删除阶段。
  *
- * 被工单占用时**拒绝**而不是"自动把工单挪到第一个阶段"：
- * 静默改变别人工单的过程态，比报个错让用户自己决定要糟得多。
+ * 被流程任务占用时**拒绝**而不是"自动把流程任务挪到第一个阶段"：
+ * 静默改变别人流程任务的过程态，比报个错让用户自己决定要糟得多。
  */
 export async function deleteStage(id: string): Promise<{ ok: boolean; reason?: string }> {
   const rows = await db().select<{ flow_id: string }>(
@@ -937,7 +937,7 @@ export async function deleteStage(id: string): Promise<{ ok: boolean; reason?: s
     [id],
   );
   if ((used[0]?.c ?? 0) > 0) {
-    return { ok: false, reason: `有 ${used[0].c} 张工单停在这一步，先把它们挪走` };
+    return { ok: false, reason: `有 ${used[0].c} 张流程任务停在这一步，先把它们挪走` };
   }
 
   await db().execute(`DELETE FROM core_wo_stages WHERE id = ?`, [id]);
@@ -967,7 +967,7 @@ export async function moveStage(id: string, dir: -1 | 1): Promise<void> {
   ]);
 }
 
-/* ---------------------------- 工单本体 ---------------------------- */
+/* ---------------------------- 流程任务本体 ---------------------------- */
 
 type RawOrder = {
   id: string;
@@ -995,7 +995,7 @@ type RawOrder = {
 
 const toOrder = (r: RawOrder): WorkOrder => ({
   id: r.id,
-  // 老行没有 kind（内存库的旧快照 / v8 之前的数据），一律当普通工单，
+  // 老行没有 kind（内存库的旧快照 / v8 之前的数据），一律当普通流程任务，
   // 而不是让它变成 undefined 一路漏到界面上
   kind: r.kind === "special" ? "special" : "normal",
   no: r.no,
@@ -1022,33 +1022,33 @@ const toOrder = (r: RawOrder): WorkOrder => ({
 
 export interface OrderQuery {
   /**
-   * 与待办视图一一对应；list 视图下工单不属于任何清单，返回空。
+   * 与待办视图一一对应；list 视图下流程任务不属于任何清单，返回空。
    *
-   * `today` 是给「今日计划」候选池用的：今天开始或今天要交的工单。
-   * 它不叫 myday 是因为**工单不允许进「我的一天」** —— 工单有自己的专属视图，
-   * 再让它按日期混进我的一天，等于绕开了这条规则（新建工单默认开始日期就是
+   * `today` 是给「今日计划」候选池用的：今天开始或今天要交的流程任务。
+   * 它不叫 myday 是因为**流程任务不允许进「我的一天」** —— 流程任务有自己的专属视图，
+   * 再让它按日期混进我的一天，等于绕开了这条规则（新建流程任务默认开始日期就是
    * 今天，那样每张新单都会自动出现在那儿）。
    */
   view: "myday" | "today" | "important" | "all" | "orders" | "special" | "list" | "gallery";
-  /** 是否包含已完结的工单 */
+  /** 是否包含已完结的流程任务 */
   includeDone?: boolean;
   search?: string;
 }
 
 /**
- * 按视图取工单。
+ * 按视图取流程任务。
  *
- * 时间语义（这是「工单也会根据时间出现在待办中」的落点）：
- * - myday   : 工单不参与，永远返回空（工单有专属视图，不能混进我的一天）
+ * 时间语义（这是「流程任务也会根据时间出现在待办中」的落点）：
+ * - myday   : 流程任务不参与，永远返回空（流程任务有专属视图，不能混进我的一天）
  * - today   : 今天开始或今天要交的（今日计划候选池用）
- * - orders  : 全部工单（含特殊单号 —— 它也是工单）
+ * - orders  : 全部流程任务（含特殊单号 —— 它也是流程任务）
  * - special : 只看特殊单号（kind = 'special'）
- * - list    : 工单不属于清单，永远返回空 —— 在某个清单里塞进工单会让人以为它能被归类
+ * - list    : 流程任务不属于清单，永远返回空 —— 在某个清单里塞进流程任务会让人以为它能被归类
  *
  * ⚠️ 这里**不能用 JOIN**：MemoryDb 的 SELECT 解析只认「FROM 单个裸表名」，
- * 带 JOIN 的语句匹配不上，会静默返回空数组 —— 表现为浏览器里工单列表永远是空的，
+ * 带 JOIN 的语句匹配不上，会静默返回空数组 —— 表现为浏览器里流程任务列表永远是空的，
  * 而桌面端（真 SQLite）一切正常，是最难查的一类不一致。
- * 所以 closed 分两步算：先查工单，再用阶段表在 JS 里标出来。
+ * 所以 closed 分两步算：先查流程任务，再用阶段表在 JS 里标出来。
  */
 export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
   if (q.view === "list") return [];
@@ -1059,12 +1059,12 @@ export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
 
   switch (q.view) {
     case "myday":
-      // 「我的一天」是待办的领地，**普通工单**不进（它们有自己的专属入口）。
+      // 「我的一天」是待办的领地，**普通流程任务**不进（它们有自己的专属入口）。
       // 唯一的例外是特殊单号：它就是"今天在跟的、等不起的单"，
       // 用户打开应用的第一眼（默认视图）必须看得到它 ——
       // 只靠右上角的提醒卡片，等于把最重要的信息藏在角落里。
       // 必须显式写条件而不是删掉这个分支：switch 没有 default，
-      // 落空就等于"不加条件"，会把全部工单捞回来。
+      // 落空就等于"不加条件"，会把全部流程任务捞回来。
       where.push("kind = 'special'");
       break;
     case "today":
@@ -1075,10 +1075,10 @@ export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
       where.push("important = 1");
       break;
     case "orders":
-      // 专属入口就看全部工单（进行中 / 已完结由 groupRows 再分两组）。
+      // 专属入口就看全部流程任务（进行中 / 已完结由 groupRows 再分两组）。
       // 写出来是为了别靠 switch 的"落空"凑巧生效 —— 那样以后加视图会顺手改坏这里。
       //
-      // 这里**不加 kind 条件**：特殊单号也是工单，用户进「工单」就是想看全部单子。
+      // 这里**不加 kind 条件**：特殊单号也是流程任务，用户进「流程任务」就是想看全部单子。
       // 它另有专属入口，但那是个"只看等不起的那些"的过滤器，不是一道围墙。
       break;
     case "special":
@@ -1086,8 +1086,8 @@ export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
       where.push("kind = 'special'");
       break;
     case "gallery":
-      // 图库与工单毫无关系，但 store.refresh() 会不分视图地调到这里。
-      // 同 myday：必须显式挡掉，落空 = 不加条件 = 把全部工单捞回来。
+      // 图库与流程任务毫无关系，但 store.refresh() 会不分视图地调到这里。
+      // 同 myday：必须显式挡掉，落空 = 不加条件 = 把全部流程任务捞回来。
       return [];
     case "all":
       break;
@@ -1098,7 +1098,7 @@ export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
     // 单号也要能搜到：用户手上拿到的往往是单号而不是标题
     const byText = "(title LIKE ? OR no LIKE ?)";
     // 绑定的相关信息也要能搜到 —— "这个快递单号是哪张单"问的就是这个，
-    // 而那个号码常常是绑上去的第二个单号，不是工单的单号。
+    // 而那个号码常常是绑上去的第二个单号，不是流程任务的单号。
     // 子查询 / JOIN / IN 在 MemoryDb 里都不成立（不报错，静默返回空），
     // 所以先单表查 core_wo_fields 拿到命中的 wo_id，再用一串 id = ? 拼回来。
     const hitIds = await searchWoFieldValueIds(like);
@@ -1123,12 +1123,12 @@ export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
   const orders = rows.map((r) => ({ ...toOrder(r), closed: terminal.has(r.stage_id) }));
 
   // includeDone 在内存里筛。用 SQL 做需要子查询（见上面的 JOIN 说明），
-  // 而工单数量是"一个人手上的活儿"，全量拉回来再筛完全无压力。
+  // 而流程任务数量是"一个人手上的活儿"，全量拉回来再筛完全无压力。
   return q.includeDone ? orders : orders.filter((o) => !o.closed);
 }
 
 /**
- * 搜「绑定的相关信息」命中了哪些工单。
+ * 搜「绑定的相关信息」命中了哪些流程任务。
  *
  * 单独一个函数是为了让 fetchWorkOrders 里那句"为什么不能用子查询"的说明
  * 旁边就是替代写法本身（两次单表查询 + JS 合并，两个驱动都成立）。
@@ -1146,7 +1146,7 @@ async function searchWoFieldValueIds(like: string): Promise<string[]> {
   return [...new Set(rows.map((r) => r.wo_id))].slice(0, FIELD_SEARCH_LIMIT);
 }
 
-/** 按 id 取单张工单。理由同 fetchTaskById。 */
+/** 按 id 取单张流程任务。理由同 fetchTaskById。 */
 export async function fetchOrderById(id: string): Promise<WorkOrder | null> {
   const rows = await db().select<RawOrder>(`SELECT * FROM core_work_orders WHERE id = ?`, [id]);
   const r = rows[0];
@@ -1167,7 +1167,7 @@ export interface NewWorkOrderInput {
   myDay?: boolean;
   startDate?: string | null;
   dueDate?: string | null;
-  /** 工单种类，默认普通工单。special = 特殊单号（带处理时效） */
+  /** 流程任务种类，默认普通流程任务。special = 特殊单号（带处理时效） */
   kind?: WorkOrderKind;
   /**
    * 快递商代号（见 lib/couriers.ts）。留空 = 以后按单号自动识别。
@@ -1219,7 +1219,7 @@ export async function createWorkOrder(input: NewWorkOrderInput): Promise<WorkOrd
     .filter((s) => s.flowId === input.flowId)
     .sort((a, b) => a.sortOrder - b.sortOrder);
 
-  // 没有阶段就没法开工单。宁可报错，也不要造一张 stage_id 指向空气的工单
+  // 没有阶段就没法开流程任务。宁可报错，也不要造一张 stage_id 指向空气的流程任务
   if (!flowStages.length) throw new Error("这套流程还没有任何过程态，先去编辑流程");
 
   const stageId = input.stageId ?? flowStages[0].id;
@@ -1249,7 +1249,7 @@ export async function createWorkOrder(input: NewWorkOrderInput): Promise<WorkOrd
     stageId,
     note: input.note ?? "",
     important: input.important ?? false,
-    // my_day 恒为 0：工单不允许加入「我的一天」。
+    // my_day 恒为 0：流程任务不允许加入「我的一天」。
     // 列还在（旧数据可能有 1），但写入路径已经封死。
     myDay: false,
     startDate: input.startDate ?? today(),
@@ -1289,12 +1289,12 @@ export async function createWorkOrder(input: NewWorkOrderInput): Promise<WorkOrd
     ],
   );
 
-  // 记一条"开工"留痕。工单的「完整开始」就是这里 ——
+  // 记一条"开工"留痕。流程任务的「完整开始」就是这里 ——
   // 少了它，流转记录的第一条会变成"从无到有"的某个中间态，看起来像丢了一步
   await db().execute(
     `INSERT INTO core_wo_logs (id, wo_id, from_stage, to_stage, at, note, seq)
      VALUES (?, ?, NULL, ?, ?, ?, 1)`,
-    [uid(), order.id, stageId, order.createdAt, "创建工单"],
+    [uid(), order.id, stageId, order.createdAt, "创建流程任务"],
   );
 
   // 建单时一起绑上的相关信息。空 label 与空 value 的行直接丢掉 ——
@@ -1342,10 +1342,10 @@ const ORDER_COLUMNS: Record<string, string> = {
 };
 
 /**
- * 改工单字段。
+ * 改流程任务字段。
  *
  * 注意这里**不负责**过程态流转 —— 直接 patch stageId 会绕过留痕，
- * 让 core_wo_logs 与工单实际状态对不上。要动过程态请用 moveOrderToStage。
+ * 让 core_wo_logs 与流程任务实际状态对不上。要动过程态请用 moveOrderToStage。
  */
 export async function updateWorkOrder(id: string, patch: Partial<WorkOrder>): Promise<void> {
   const sets: string[] = [];
@@ -1393,10 +1393,10 @@ export async function bulkPatchWorkOrders(
 }
 
 /**
- * 过程态流转。这是工单与待办最本质的区别：**每一次推进都留痕**。
+ * 过程态流转。这是流程任务与待办最本质的区别：**每一次推进都留痕**。
  *
  * 终态会顺手记 completed_at，退回非终态则清掉它 ——
- * 否则会出现"工单已经退回到处理中，却还带着完成时间"这种自相矛盾的数据。
+ * 否则会出现"流程任务已经退回到处理中，却还带着完成时间"这种自相矛盾的数据。
  *
  * 特殊单号的**时效在这里重设**：时效的语义是"到下一步之前还剩多久"，
  * 所以它是"当前这一步"的属性 —— 推进到新的一步，就按新步骤的默认时效重新起算。
@@ -1444,7 +1444,7 @@ export async function moveOrderToStage(
 }
 
 /**
- * 流转日志的下一个序号（每张工单内部自增）。
+ * 流转日志的下一个序号（每张流程任务内部自增）。
  *
  * 为什么不用时间戳排序：两条日志可能落在同一毫秒（我们自己建单后立刻推状态
  * 就会这样），此时 SQL 的排序是不确定的，时间线会乱。序号是唯一可靠的依据。
@@ -1477,7 +1477,7 @@ const toLog = (r: RawWoLog): WoLog => ({
 });
 
 /**
- * 取一张工单的流转记录，**最新的在最前**。
+ * 取一张流程任务的流转记录，**最新的在最前**。
  *
  * 按 seq 倒序而不是 at 倒序，理由见 nextLogSeq。
  * 界面直接把数组顺序渲染成时间线即可，不需要自己再排一遍。
@@ -1491,7 +1491,7 @@ export async function fetchWoLogs(woId: string): Promise<WoLog[]> {
 }
 
 export async function deleteWorkOrder(id: string): Promise<void> {
-  // 与任务一致：工单软删除，流转日志与绑定的相关信息硬删除（留着的只会是孤儿）。
+  // 与任务一致：流程任务软删除，流转日志与绑定的相关信息硬删除（留着的只会是孤儿）。
   // 绑定信息里有手机号、用户名这类东西，单子删了就该跟着走，
   // 而不是在库里留一堆没人认领的副本。
   await db().transaction([
@@ -1528,7 +1528,7 @@ const toField = (r: RawField): WoField => ({
   updatedAt: r.updated_at,
 });
 
-/** 一张工单绑定的全部信息，按用户排的顺序。 */
+/** 一张流程任务绑定的全部信息，按用户排的顺序。 */
 export async function fetchWoFields(woId: string): Promise<WoField[]> {
   const rows = await db().select<RawField>(
     `SELECT * FROM core_wo_fields WHERE wo_id = ? AND deleted = 0 ORDER BY sort_order ASC`,
@@ -1597,7 +1597,7 @@ export async function deleteWoField(id: string): Promise<void> {
   ]);
 }
 
-/** 全部绑定的相关信息（备份用，含各工单） */
+/** 全部绑定的相关信息（备份用，含各流程任务） */
 export async function fetchAllWoFields(): Promise<WoField[]> {
   const rows = await db().select<RawField>(`SELECT * FROM core_wo_fields WHERE deleted = 0`);
   return rows.map(toField);
@@ -1609,11 +1609,11 @@ export async function fetchAllWoFields(): Promise<WoField[]> {
 export const DUE_SOON_MINUTES = 30;
 
 /**
- * 扫出"该提醒时效"的未完结工单。
+ * 扫出"该提醒时效"的未完结流程任务。
  *
  * 与待办的提醒（core_tasks.remind_at）分开扫：那套是"这件事几点提醒我"，
  * 一套是一次性的；这套是"这一步还剩多久"，随流转不断重设。
- * 硬塞进同一列会让两套语义互相污染（比如工单推进时要记得清掉任务的提醒）。
+ * 硬塞进同一列会让两套语义互相污染（比如流程任务推进时要记得清掉任务的提醒）。
  *
  * 只挑未完结、且**当前档位还没提醒过**的：
  * 提醒队列是内存态、重启即空，靠队列去重会让每次启动都重弹一遍。
@@ -1643,7 +1643,7 @@ export async function markOrderDueNotified(id: string, level: "soon" | "overdue"
   );
 }
 
-/** 默认流程。没有默认（理论上不该发生）就退回第一套，保证新建工单总有流程可用。 */
+/** 默认流程。没有默认（理论上不该发生）就退回第一套，保证新建流程任务总有流程可用。 */
 export async function getDefaultFlow(): Promise<WorkFlow | null> {
   const flows = await fetchFlows();
   return flows.find((f) => f.isDefault) ?? flows[0] ?? null;
@@ -1654,7 +1654,7 @@ export async function getDefaultFlow(): Promise<WorkFlow | null> {
  *
  * 单独一个函数而不是塞进 seedIfEmpty：老用户的库里已经有清单了，
  * seedIfEmpty 会直接 return，新加的流程就永远种不进去 ——
- * 升级后打开发现"工单功能是空的"，是最容易漏掉的一类问题。
+ * 升级后打开发现"流程任务功能是空的"，是最容易漏掉的一类问题。
  */
 let flowSeedPromise: Promise<void> | null = null;
 
@@ -1676,7 +1676,7 @@ async function seedFlowsInner(): Promise<void> {
   // 做法：createFlow 只给「待处理 / 已完成」两步占位，这里把占位的终态删掉，
   // 再按顺序把整条链路建出来。比"先建完再用 moveStage 逐步交换位置"直白得多，
   // 也不会因为交换次数算错而把顺序摆歪。
-  const std = await createFlow("标准工单");
+  const std = await createFlow("标准流程");
   const initial = (await fetchStages())
     .filter((s) => s.flowId === std.id)
     .sort((a, b) => a.sortOrder - b.sortOrder);
@@ -1691,7 +1691,7 @@ async function seedFlowsInner(): Promise<void> {
   await createStage(std.id, "待验收", "#534ab7");
   await createStage(std.id, "已完成", "#1d9e75", true);
 
-  const after = await createFlow("售后工单");
+  const after = await createFlow("售后流程");
   const af = (await fetchStages())
     .filter((s) => s.flowId === after.id)
     .sort((a, b) => a.sortOrder - b.sortOrder);
@@ -1707,9 +1707,9 @@ async function seedFlowsInner(): Promise<void> {
   // 所以它必须能写在流程里，而不是散在代码里。
   // 没有预设时效的那一步（终态）推过去就是"未设时效"，不会硬塞一个假的。
   //
-  // 沿用标准工单那套写法：**先删掉占位的终态，再按顺序把整条链路建出来，
+  // 沿用标准流程那套写法：**先删掉占位的终态，再按顺序把整条链路建出来，
   // 最后补终态**。直接把终态留着再往后 append，终态就会卡在链路中间，
-  // 后面的步骤永远走不到（售后工单那套就是这么摆的，见上面的注释）。
+  // 后面的步骤永远走不到（售后流程那套就是这么摆的，见上面的注释）。
   const sp = await createFlow("特殊单号处理");
   const spInitial = (await fetchStages())
     .filter((s) => s.flowId === sp.id)
@@ -1726,11 +1726,11 @@ async function seedFlowsInner(): Promise<void> {
 }
 
 /**
- * 首次运行放两张示例工单。
+ * 首次运行放两张示例流程任务。
  *
- * 为什么要种子数据：空白的工单功能看不出「流程 / 过程态」到底长什么样，
+ * 为什么要种子数据：空白的流程任务功能看不出「流程 / 过程态」到底长什么样，
  * 而这两件东西正是它区别于待办的地方。有数据摆在那儿，用户一眼就懂。
- * 只在**一张工单都没有**时执行，用户删光后不会又被塞回来。
+ * 只在**一张流程任务都没有**时执行，用户删光后不会又被塞回来。
  */
 let demoOrderSeedPromise: Promise<void> | null = null;
 
@@ -1777,7 +1777,7 @@ async function seedDemoOrdersInner(): Promise<void> {
   if (stages[2]) await moveOrderToStage(b.id, stages[2].id, "已寄出替换件");
 
   // 一张特殊单号：让「时效」「绑定的相关信息」这两样第一次打开就有样子看 ——
-  // 它们正是特殊单号相对普通工单的全部差异。
+  // 它们正是特殊单号相对普通流程任务的全部差异。
   // 时效给 90 分钟：看得出"还剩多久"，又不会一进应用就是逾期的样子。
   const spFlow = (await fetchFlows()).find((f) => f.name === "特殊单号处理");
   if (spFlow) {
@@ -1792,7 +1792,7 @@ async function seedDemoOrdersInner(): Promise<void> {
       stageId: spStages[0]?.id,
       note: "客户要求补发，已拍照留证",
       stageDueAt: new Date(Date.now() + 90 * 60_000).toISOString(),
-      // 起点那个快递单号已经是工单的单号（no）了，这里绑的是**另外**的信息，
+      // 起点那个快递单号已经是流程任务的单号（no）了，这里绑的是**另外**的信息，
       // 免得同一个号码在库里存两份、改一处另一处还是旧的
       fields: [
         { label: "补发单号", value: "SF7788001122334" },
@@ -1805,7 +1805,7 @@ async function seedDemoOrdersInner(): Promise<void> {
 
 /* --------------------------- 备份与恢复 --------------------------- */
 /* ------------------------------------------------------------------ */
-/* 工单附件                                                            */
+/* 流程任务附件                                                            */
 /* ------------------------------------------------------------------ */
 
 interface RawAttachment {
@@ -1852,7 +1852,7 @@ function toAttachment(r: RawAttachment): WoAttachment {
   };
 }
 
-/** 一张工单的全部附件，按用户排的顺序 */
+/** 一张流程任务的全部附件，按用户排的顺序 */
 export async function fetchAttachments(woId: string): Promise<WoAttachment[]> {
   const rows = await db().select<RawAttachment>(
     `SELECT * FROM core_wo_attachments WHERE wo_id = ? AND deleted = 0
@@ -1967,9 +1967,9 @@ export async function updateAttachment(
  * 还有几张活着的记录引用这个内容。文件能不能删，看它。
  *
  * ⚠️ 必须**跨两张表**数，不能只看附件表。
- * 图库（v9）与工单附件共用同一个内容寻址仓库，同一份字节可以同时被
- * 「某张工单的附件」和「图库里的一张图」引用。只数附件表的话，
- * 删掉图库那条时会以为"没人用了"，把工单附件正指着的文件删掉 ——
+ * 图库（v9）与流程任务附件共用同一个内容寻址仓库，同一份字节可以同时被
+ * 「某张流程任务的附件」和「图库里的一张图」引用。只数附件表的话，
+ * 删掉图库那条时会以为"没人用了"，把流程任务附件正指着的文件删掉 ——
  * 表现是另一处突然变成"文件缺失"，而且找不到是谁干的。
  *
  * 两次独立单表查询再相加，不写 UNION/JOIN：内存库的 mini-SQL 不支持它们，
@@ -1990,8 +1990,8 @@ export async function refCountByHash(hash: string): Promise<number> {
 /**
  * 删除一条附件记录，返回"可以顺手删掉的仓库文件"（没有则 null）。
  *
- * **文件按内容寻址，不能想删就删**：同一张图可能被两张工单引用，
- * 直接删文件会把另一张工单的附件一起弄没。
+ * **文件按内容寻址，不能想删就删**：同一张图可能被两张流程任务引用，
+ * 直接删文件会把另一张流程任务的附件一起弄没。
  * 所以这里只负责判断引用计数，真正的删除交给调用方（它才有文件仓库的句柄）。
  * 数据库层不碰文件系统，文件层不碰数据库 —— 这条边界要守住。
  */
@@ -2010,7 +2010,7 @@ export async function deleteAttachment(id: string): Promise<string | null> {
   return live > 0 ? null : row.rel_path;
 }
 
-/** 在同一张工单内上下移动一位 */
+/** 在同一张流程任务内上下移动一位 */
 export async function moveAttachment(id: string, dir: -1 | 1): Promise<void> {
   const rows = await db().select<RawAttachment>(
     `SELECT * FROM core_wo_attachments WHERE id = ?`,
@@ -2042,7 +2042,7 @@ export async function moveAttachment(id: string, dir: -1 | 1): Promise<void> {
   );
 }
 
-/** 全部附件（备份用，含各工单） */
+/** 全部附件（备份用，含各流程任务） */
 export async function fetchAllAttachments(): Promise<WoAttachment[]> {
   const rows = await db().select<RawAttachment>(
     `SELECT * FROM core_wo_attachments ORDER BY wo_id ASC, sort_order ASC`,
@@ -2118,7 +2118,7 @@ export async function fetchAllGallery(): Promise<GalleryBackupItem[]> {
   }));
 }
 
-/** 某张工单的附件统计，工单列表上显示"带 3 个附件"用 */
+/** 某张流程任务的附件统计，流程任务列表上显示"带 3 个附件"用 */
 export async function attachmentCounts(): Promise<Record<string, number>> {
   const rows = await db().select<{ wo_id: string; c: number }>(
     `SELECT wo_id, COUNT(*) AS c FROM core_wo_attachments WHERE deleted = 0 GROUP BY wo_id`,
@@ -2164,7 +2164,7 @@ export interface BackupPayload {
    * 想连文件一起搬，手动拷这个目录即可。
    */
   attachments?: WoAttachment[];
-  /** v8 起新增：工单绑定的相关信息（特殊单号的另一个快递单号、用户名…） */
+  /** v8 起新增：流程任务绑定的相关信息（特殊单号的另一个快递单号、用户名…） */
   woFields?: WoField[];
   /**
    * v9 起新增：图库条目的**元数据**。
@@ -2247,7 +2247,7 @@ export async function importBackup(payload: BackupPayload): Promise<{
     { sql: `DELETE FROM core_tasks` },
     { sql: `DELETE FROM core_lists` },
     { sql: `DELETE FROM core_settings` },
-    // v6 的表也要清 —— 漏掉它们会导致「导入后旧工单还挂着」，且看起来像是导入失败
+    // v6 的表也要清 —— 漏掉它们会导致「导入后旧流程任务还挂着」，且看起来像是导入失败
     { sql: `DELETE FROM core_wo_logs` },
     { sql: `DELETE FROM core_work_orders` },
     { sql: `DELETE FROM core_wo_stages` },
@@ -2341,7 +2341,7 @@ export async function importBackup(payload: BackupPayload): Promise<{
     });
   }
 
-  // v6 的五张表。插入顺序必须是 流程 → 过程态 → 工单 → 流转日志，
+  // v6 的五张表。插入顺序必须是 流程 → 过程态 → 流程任务 → 流转日志，
   // 后者的外键指向前者；反过来会在有外键约束的库上报错，而浏览器内存库不报，
   // 于是"浏览器能导入、桌面导入失败"。
   for (const f of payload.flows ?? []) {
@@ -2387,7 +2387,7 @@ export async function importBackup(payload: BackupPayload): Promise<{
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params: [
         w.id,
-        // v8 之前的备份里没有 kind / 时效，缺失就是普通工单、没有时效。
+        // v8 之前的备份里没有 kind / 时效，缺失就是普通流程任务、没有时效。
         // 当"特殊单"补出来是错的 —— 那会凭空给老单子加上处理时限。
         w.kind === "special" ? "special" : "normal",
         w.no ?? "",
@@ -2429,7 +2429,7 @@ export async function importBackup(payload: BackupPayload): Promise<{
   // 不需要任何持久化。老备份里带的那批数据在这里被安静地丢弃 ——
   // 写回去只会留下一堆永远不会被读到的行。
 
-  // v7 的附件。放在最后：外键指向 core_work_orders，必须等工单都插完。
+  // v7 的附件。放在最后：外键指向 core_work_orders，必须等流程任务都插完。
   // sort_order 按数组下标重排，理由同 woLogs 的 seq —— 备份里的顺序
   // 就是用户排好的顺序，重排能顺带修掉历史数据里 sort_order 相同的情况。
   const attSeq = new Map<string, number>();

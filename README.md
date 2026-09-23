@@ -1,16 +1,16 @@
 # 待办工作台
 
 以 Microsoft To Do 为原型的 Windows 桌面应用，但定位不止于待办——
-它是一个**可扩展的工作台**：待办是核心模块，工单、特殊单号、图片工具等作为独立模块插入，
+它是一个**可扩展的工作台**：待办是核心模块，流程任务、特殊单号、图片工具等作为独立模块插入，
 全部共用同一个本地数据库。
 
 > 我们的生命都相当无序甚至是荒谬，也许这款应用能帮您从中构建部分的秩序。
 
 作者：**Sogapopo**
 
-> **当前状态：桌面版已打包成功，实机跑通。** 产出 **62.9 MB** 的 NSIS 安装包，
-> 采用 GNU 工具链（MSYS2 + MinGW-w64），**全程不需要管理员权限，
-> 也不需要 2–4 GB 的 Visual Studio**。
+> **当前版本：`v0.1.0`** —— [**下载安装包**](https://github.com/baicaibucai1/todo-workbench/releases/latest)
+> （62.9 MB，Windows x64）。桌面版已打包成功、实机跑通，采用 GNU 工具链
+> （MSYS2 + MinGW-w64），**全程不需要管理员权限，也不需要 2–4 GB 的 Visual Studio**。
 >
 > 体积的大头是**内置工具**（`tools/` 共 50.8 MB，其中图片工具的本地 AI 模型
 > `migan.js` + `ort-wasm.js` 占 49.6 MB）。宿主本身很轻——这些工具装不装、
@@ -22,13 +22,13 @@
 
 > 截图均为内置演示数据（浏览器演示库自动生成），非真实业务数据。
 
-| 我的一天 · 紧急区 + 常驻详情面板 | 全部 · 待办与工单混排 |
+| 我的一天 · 紧急区 + 常驻详情面板 | 全部 · 待办与流程任务混排 |
 | --- | --- |
 | ![我的一天](docs/screenshots/my-day.png) | ![全部](docs/screenshots/all-tasks.png) |
 
-| 工单视图 | 工单详情 · 过程态流转留痕 |
+| 流程任务视图 | 流程任务详情 · 过程态流转留痕 |
 | --- | --- |
-| ![工单](docs/screenshots/orders.png) | ![工单详情](docs/screenshots/order-detail.png) |
+| ![流程任务](docs/screenshots/orders.png) | ![流程任务详情](docs/screenshots/order-detail.png) |
 
 | 特殊单号 · 时效倒计时 | 图库 |
 | --- | --- |
@@ -67,14 +67,14 @@
 - **附件**：图片 / 文件拖进来即存，支持粘贴与灯箱预览
 - **选中行整行浮起**（圆角 + 投影），不是左侧一条色带
 
-### 工单与特殊单号
+### 流程任务与特殊单号
 
-- 工单与待办**分表存储，只在展示层混排**——不会因为看到一条工单而把待办的数据模型污染
-- 工单有**可定制流程**：过程态编辑走 `moveOrderToStage`，每次流转留痕
+- 流程任务与待办**分表存储，只在展示层混排**——不会因为看到一条流程任务而把待办的数据模型污染
+- 流程任务有**可定制流程**：过程态编辑走 `moveOrderToStage`，每次流转留痕
 - **特殊单号**以快递单号起算，时效 =「距下一步骤的剩余时间」，流程可定制，
   可绑定多个一键复制的关联信息字段
 - 逾期与临期各提醒一次，临近过期红色高亮
-- ⚠️ **工单永不进「我的一天」**——那是待办的地盘
+- ⚠️ **流程任务永不进「我的一天」**——那是待办的地盘
 
 ### 紧急区
 
@@ -83,7 +83,7 @@
 | 来源 | 取什么时间 |
 |---|---|
 | 待办 | 提醒时刻 / 到期日 |
-| 工单 | 步骤时效 / 交付日 |
+| 流程任务 | 步骤时效 / 交付日 |
 | 子任务 | 自己的 `due_at`（只认显式设了时刻的） |
 
 阈值（提前多久算「紧急」）在设置里调，不是写死的。
@@ -155,12 +155,12 @@ Electron 换来的是 Node 原生模块能力，而本项目的工具全部是�
 | 3 | `add_task_links` | 任务间关联 |
 | 4 | `add_special_orders_tool_schema` | 特殊单号（早期以工具形式承载） |
 | 5 | `add_tool_kv_store` | 工具私有 KV |
-| 6 | `add_work_orders` | 工单 |
-| 7 | `add_wo_attachments` | 工单附件 |
-| 8 | `add_special_orders_as_work_orders` | 特殊单号升格为工单的一类 |
+| 6 | `add_work_orders` | 流程任务 |
+| 7 | `add_wo_attachments` | 流程任务附件 |
+| 8 | `add_special_orders_as_work_orders` | 特殊单号升格为流程任务的一类 |
 | 9 | `add_gallery` | 图库 |
 | 10 | `add_tool_schema_ledger` | 工具 schema 台账 |
-| 11 | `add_wo_courier` | 工单的快递字段 |
+| 11 | `add_wo_courier` | 流程任务的快递字段 |
 | 12 | `add_step_due_at` | 子任务的到期时刻 |
 
 四条铁律：
@@ -245,9 +245,20 @@ CSS/JS 必须内联，相对引用不会跟着进来（原因见 `ToolHost` 里�
 
 ### 更新机制（两层）
 
-**第一层，应用本体升级。** `tauri-plugin-updater` + 签名 + 静态 `update.json`。
-⚠️ **签名密钥必须先生成并离线备份**——私钥丢失后，再也发不出能被老版本接受的更新。
-建议做成"后台静默下载 + 提示重启"，不做强制更新。
+**第一层，应用本体升级。** `tauri-plugin-updater` + Minisign 签名 + 静态 `update.json`。
+
+安装包与 `update.json` 一起挂在 **GitHub Releases**，客户端拉的是固定转发地址：
+
+```
+https://github.com/baicaibucai1/todo-workbench/releases/latest/download/update.json
+```
+
+`latest/download` 永远指向最新正式版，所以**发新版只需新建 Release，不用动客户端地址**。
+清单里带安装包的签名与下载地址，客户端验签通过才安装；`installMode = passive`
+即静默下载 + 提示重启，不做强制更新。
+
+⚠️ **签名私钥必须离线备份**（本机 `.tauri-key`）——私钥丢失后，
+再也发不出能被老版本接受的更新，用户只能手动重装。
 
 **第二层，工具与数据结构独立演进。** 工具目录放用户数据区（见上），
 数据库迁移版本化（见「迁移规范」）。
@@ -265,7 +276,7 @@ main/
       migrations.ts    版本化迁移定义（当前 v12）
       repo.ts          业务数据仓库
       rows.ts          列表分组与排序（"默认展开第一条"同源）
-      urgent.ts        紧急区取数（待办 / 工单 / 子任务三类来源）
+      urgent.ts        紧急区取数（待办 / 流程任务 / 子任务三类来源）
       tools.ts         工具扫描与校验
       toolBridge.ts    工具与宿主的受控通道
       toolStore.ts     工具私有表读写
@@ -284,15 +295,15 @@ main/
       Sidebar.tsx      侧边栏（智能视图 + 工具区 + 清单 + 紧急区）
       TaskList.tsx     任务列表主体
       TaskRow.tsx      单条待办（含展开子任务）
-      OrderRow.tsx     单条工单
+      OrderRow.tsx     单条流程任务
       TaskDetail.tsx   右侧常驻详情面板
-      OrderDetail.tsx  工单详情
+      OrderDetail.tsx  流程任务详情
       SpecialOrdersView.tsx  特殊单号专用视图
       GalleryView.tsx  图库
       Settings.tsx     设置（七个分区）
       UrgentPanel.tsx  紧急区
       ToolHost.tsx / ToolArea.tsx  工具容器与标签条
-      FlowEditor.tsx   工单流程编辑器
+      FlowEditor.tsx   流程模板编辑器
       ...
     store.ts           Zustand 全局状态
     types.ts          数据模型
@@ -306,7 +317,14 @@ main/
 
 ## 怎么启动
 
-### 最省事的方式：双击脚本
+### 只是想用：直接下载安装包
+
+到 [**Releases**](https://github.com/baicaibucai1/todo-workbench/releases/latest) 下载
+`待办工作台_x.y.z_x64-setup.exe`，双击安装 —— **不装 Node、不装 Rust、
+不需要管理员权限**（`installMode = currentUser`，装进用户目录），
+装完就是上面截图里的样子。之后应用会自己去 Releases 拉 `update.json` 检查新版本。
+
+### 想改代码：双击脚本
 
 | 脚本 | 用途 | 前置条件 |
 |---|---|---|
@@ -482,7 +500,7 @@ node tests/task-detail.mjs       # 也可以单跑某一个套件
 |---|---|---|
 | 类型检查 | 0 错误 | `npm run typecheck` |
 | 逻辑单测（smoke） | **519 项** | `npm run smoke` |
-| 浏览器 e2e | **17 套件 / 977 项** | `node tests/_run-all-e2e.mjs` |
+| 浏览器 e2e | **17 套件 / 992 项** | `node tests/_run-all-e2e.mjs` |
 
 e2e 用本机 Edge（与 Tauri 的 WebView2 同源），覆盖 17 个面：
 
@@ -498,7 +516,7 @@ placeholder-tools  占位工具
 ai-gen         AI 生成（多厂商切换 / 异步轮询 / 真实连通性）
 cross-origin-bridge  跨源工具桥（只在装出来的应用里能复现的那类断链）
 gallery / wallpapers / attachments  图库 / 壁纸 / 附件
-orders-view    工单视图
+orders-view    流程任务视图
 special-orders 特殊单号
 urgent         紧急区三类来源
 panel-resize   面板拖拽
@@ -544,7 +562,7 @@ npm run icons:check  # 校验生成的 PNG 结构、ICO 各帧、以及配置引
 - [x] **实机安装并跑通**：应用正常启动 + 工具目录同步 + SQLite 落盘
 - [x] 任务详情面板（子任务、备注、截止日期与提醒）
 - [x] 系统通知提醒（`notify.ts`；拿不到权限时用应用内提醒卡片兜底）
-- [x] 工单与特殊单号（可定制流程、过程态留痕、时效倒计时）
+- [x] 流程任务与特殊单号（可定制流程、过程态留痕、时效倒计时）
 - [x] 图库与附件
 - [x] 工具的数据表、互相调用、设置里的数据库浏览
 - [x] 侧边栏紧急区（三类来源统一聚合）

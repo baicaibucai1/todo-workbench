@@ -38,9 +38,9 @@ import AttachmentPanel from "./AttachmentPanel";
 import DateTimePicker from "./DateTimePicker";
 
 /**
- * 右侧工单详情。
+ * 右侧流程任务详情。
  *
- * 与待办详情最大的不同：待办是"交代清楚一件事"，工单是"交代清楚一个流程"。
+ * 与待办详情最大的不同：待办是"交代清楚一件事"，流程任务是"交代清楚一个流程"。
  * 所以这里的主角是**过程态进度条 + 流转记录**，其余字段都是配角。
  *
  * 所有修改直接落库，不做本地暂存（备注除外，它走防抖）。
@@ -98,7 +98,7 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
   const idRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // 只在切换到另一张工单时重置，同一张的刷新不该冲掉正在输入的内容
+    // 只在切换到另一张流程任务时重置，同一张的刷新不该冲掉正在输入的内容
     if (idRef.current !== order.id) {
       idRef.current = order.id;
       setNote(order.note);
@@ -160,7 +160,7 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
 
   /* ---------------- 处理时效 ---------------- */
 
-  // 普通工单一般没有时效；但只要它挂着时效（比如所属流程的步骤配了默认时长），
+  // 普通流程任务一般没有时效；但只要它挂着时效（比如所属流程的步骤配了默认时长），
   // 就得让它可见可改 —— 否则那段时间在详情里根本无从查看。
   const showStageDue = order.kind === "special" || !!order.stageDueAt;
   const ds = dueState(order);
@@ -294,7 +294,7 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
           )}
         </div>
 
-        {/* 过程态进度：工单的核心信息，摆在最前面 */}
+        {/* 过程态进度：流程任务的核心信息，摆在最前面 */}
         <div className="mt-3 px-4">
           <div className="flex items-center justify-between">
             <SectionLabel icon={<ClipboardList size={13} />} text="过程态" />
@@ -613,7 +613,7 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
         </div>
 
         {/* 快捷开关。
-            这里没有「添加到我的一天」：工单有专属视图，不进待办的「我的一天」，
+            这里没有「添加到我的一天」：流程任务有专属视图，不进待办的「我的一天」，
             摆一个点了没反应的开关（或者更糟：点了真加进去）都是错的设计。 */}
         <div className="mt-4 flex flex-col gap-1.5 px-4">
           <QuickToggle
@@ -733,7 +733,7 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
           className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-line bg-card py-2 text-[13px] text-danger hover:bg-danger-soft"
         >
           <Trash2 size={14} />
-          删除此工单
+          删除此流程任务
         </button>
       </div>
     </>

@@ -1,5 +1,5 @@
 /**
- * 工单附件验证（浏览器 demo）。
+ * 流程任务附件验证（浏览器 demo）。
  *
  * 关注点（每一条都对应一个真实会出错的环节）：
  *   1) 贴网址后**真的下载并落库**了 —— 不是只在界面上加了一行
@@ -153,7 +153,7 @@ async function openFirstOrder() {
 
 /* ------------------------------ 开场 ------------------------------ */
 
-console.log("\n0. 打开待办 → 选一张工单");
+console.log("\n0. 打开待办 → 选一张流程任务");
 await page.goto(BASE, { waitUntil: "load" });
 if (FRESH) {
   // 演示库是 localStorage 快照，不清干净的话上一次跑的附件会留在里面，
@@ -171,8 +171,8 @@ await page.waitForSelector("aside", { timeout: 20000 });
 await page.waitForTimeout(900);
 
 const orderId = await openFirstOrder();
-info("选中的工单", orderId);
-check("工单详情里出现了附件区", (await panel().count()) === 1);
+info("选中的流程任务", orderId);
+check("流程任务详情里出现了附件区", (await panel().count()) === 1);
 check("初始没有附件", (await items().count()) === 0, String(await items().count()));
 
 /* ------------------------------ 1. 非法输入 ------------------------------ */
@@ -296,12 +296,12 @@ const decoded2 = await decodedImages();
 // 3 张图：同一个网址贴了两次（两条记录、同一份文件）+ 本机选的一个
 check("三张图都能解码", decoded2.decoded === 3 && decoded2.broken === 0, JSON.stringify(decoded2));
 
-/* ------------------------------ 7. 工单行上的角标 ------------------------------ */
+/* ------------------------------ 7. 流程任务行上的角标 ------------------------------ */
 
-console.log("\n7. 列表行上能看到这张工单带着附件");
+console.log("\n7. 列表行上能看到这张流程任务带着附件");
 
 const badge = page.locator(`[data-order-id="${orderId}"] [data-order-attach-count]`);
-check("工单行出现了附件角标", (await badge.count()) === 1, String(await badge.count()));
+check("流程任务行出现了附件角标", (await badge.count()) === 1, String(await badge.count()));
 info("角标数字", await badge.getAttribute("data-order-attach-count"));
 check("角标数字与附件数一致",
   (await badge.getAttribute("data-order-attach-count")) === "4",

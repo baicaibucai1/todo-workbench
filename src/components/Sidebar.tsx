@@ -24,6 +24,7 @@ import {
   SETTINGS,
   SIDEBAR_WIDTH,
   parseSidebarWidth,
+  parseSpecialEnabled,
 } from "../lib/settings";
 import { useDragWidth } from "../lib/useDragWidth";
 
@@ -41,11 +42,11 @@ const SMART_ITEMS: Array<{
   { key: "myday", label: "我的一天", icon: Sun },
   { key: "important", label: "重要", icon: Star },
   { key: "all", label: "全部", icon: Inbox },
-  // 工单的专属入口。工单平时也混在「全部」里，但想"只看手上的单子"就有地方去了
-  { key: "orders", label: "工单", icon: ClipboardList },
-  // 特殊单号：工单里**带处理时效**的那一类（以快递单号为起点）。
-  // 它不是另一种记录，是工单的真子集 —— 所以这些单子同时照旧出现在「工单」里。
-  // 单独给个入口，是因为它们的价值就在"等不起"：在几十张工单里
+  // 流程任务的专属入口。流程任务平时也混在「全部」里，但想"只看手上的单子"就有地方去了
+  { key: "orders", label: "流程任务", icon: ClipboardList },
+  // 特殊单号：流程任务里**带处理时效**的那一类（以快递单号为起点）。
+  // 它不是另一种记录，是流程任务的真子集 —— 所以这些单子同时照旧出现在「流程任务」里。
+  // 单独给个入口，是因为它们的价值就在"等不起"：在几十张流程任务里
   // 翻哪一张快超时，是件很难受的事。
   { key: "special", label: "特殊单号", icon: Timer },
   // 图库**不**在这一组：前几项都是"待办的某种筛选"，它是独立素材库。
@@ -76,6 +77,14 @@ export default function Sidebar() {
     saveSettings,
   } = useStore();
 
+  /**
+   * 「特殊单号」模块开关。
+   *
+   * 关掉后入口整个消失（下面的 SMART_ITEMS 会把它滤掉）—— 但**只隐藏入口，
+   * 不动数据**：那批记录仍留在「流程任务」列表里，开关一打开就全回来。
+   */
+  const specialOn = parseSpecialEnabled(settings[SETTINGS.specialEnabled]);
+
   // 个人资料来自配置表，不再写死在界面上
   const profileName = settings[SETTINGS.profileName] ?? "";
   const profileEmail = settings[SETTINGS.profileEmail] ?? "";
@@ -85,7 +94,7 @@ export default function Sidebar() {
   const [counts, setCounts] = useState<{
     myday: number;
     all: number;
-    /** 未完结工单数，给「工单」入口当角标 */
+    /** 未完结流程任务数，给「流程任务」入口当角标 */
     orders: number;
     /** 未完结的特殊单号数，给「特殊单号」入口当角标 */
     special: number;
@@ -210,7 +219,9 @@ export default function Sidebar() {
 
       {/* 智能视图 + 清单 */}
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {SMART_ITEMS.map((item) => (
+        {/* 关掉「特殊单号」时把那一项滤掉。过滤只影响**入口**，
+            不影响里面已有的单子 —— 它们仍在「流程任务」列表里 */}
+        {SMART_ITEMS.filter((item) => specialOn || item.key !== "special").map((item) => (
           <NavRow
             key={item.key}
             navKey={item.key}
@@ -363,7 +374,7 @@ export default function Sidebar() {
         </>
       </div>
 
-      {/* 底部：紧急区 —— 快到点的待办与工单自动出现在这里，阈值在设置里调 */}
+      {/* 底部：紧急区 —— 快到点的待办与流程任务自动出现在这里，阈值在设置里调 */}
       <UrgentPanel />
 
       {/*

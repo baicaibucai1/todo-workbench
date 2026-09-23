@@ -89,7 +89,7 @@ if ((await handle.count()) > 0) {
 await nav("orders");
 await shot("orders");
 
-// 工单详情：进工单视图后默认就展开了第一条，这里把面板拖宽一点更像"详情"该有的样子
+// 流程任务详情：进流程任务视图后默认就展开了第一条，这里把面板拖宽一点更像"详情"该有的样子
 await shot("order-detail");
 
 await nav("special");

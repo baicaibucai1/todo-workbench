@@ -55,6 +55,6 @@ tests/.*.log
 tests/.smoke.bundle.mjs
 tests/.tsc.log
 
-# e2e 截图：跑测试时抓的界面图，里面有真实待办与工单数据，不进仓库
+# e2e 截图：跑测试时抓的界面图，里面有真实待办与流程任务数据，不进仓库
 shots/
 tests/.shots/

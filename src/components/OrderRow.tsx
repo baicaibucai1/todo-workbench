@@ -44,11 +44,11 @@ function shortDate(dateStr: string): string {
 }
 
 /**
- * 工单行。
+ * 流程任务行。
  *
  * 和待办行并排混在同一条列表里，所以**必须一眼能区分**：
- * 待办的圈是圆的，工单是圆角方块；待办没有色块，工单左边压着一条当前过程态的颜色。
- * 这两点比加一个「工单」文字标签有效得多 —— 扫一眼就能分开，不用读字。
+ * 待办的圈是圆的，流程任务是圆角方块；待办没有色块，流程任务左边压着一条当前过程态的颜色。
+ * 这两点比加一个「流程任务」文字标签有效得多 —— 扫一眼就能分开，不用读字。
  */
 export default function OrderRow({
   order,
@@ -73,7 +73,7 @@ export default function OrderRow({
     .filter((s) => s.flowId === order.flowId)
     .sort((a, b) => a.sortOrder - b.sortOrder);
   const idx = flowStages.findIndex((s) => s.id === order.stageId);
-  // 只允许"往前走一步"：工单的过程态是有向的，随手跳到任意一步会让留痕失去意义。
+  // 只允许"往前走一步"：流程任务的过程态是有向的，随手跳到任意一步会让留痕失去意义。
   // 要退回请到详情面板里选，那是个显式动作。
   const next = idx >= 0 ? flowStages[idx + 1] : undefined;
 
@@ -81,7 +81,7 @@ export default function OrderRow({
   const dueLabel = order.dueDate ? shortDate(order.dueDate) : null;
   const overdue = !!order.dueDate && order.dueDate < today() && !order.closed;
 
-  /** 特殊单号：带处理时效的那类。它和普通工单的区别全在下面那个时效胶囊上 */
+  /** 特殊单号：带处理时效的那类。它和普通流程任务的区别全在下面那个时效胶囊上 */
   const isSpecial = order.kind === "special";
   const dueSt = dueState(order);
   // ⚠️ 临期（soon）也是红的，不只是逾期 —— 用户对"红"的预期就是
@@ -160,7 +160,7 @@ export default function OrderRow({
         </div>
 
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-          {/* 当前过程态：这是工单行最该被看到的信息 */}
+          {/* 当前过程态：这是流程任务行最该被看到的信息 */}
           <span
             data-order-stage={stage?.name ?? ""}
             className="flex items-center gap-1 rounded px-1.5 py-px text-[11px] font-medium"
@@ -177,9 +177,9 @@ export default function OrderRow({
 
           {/* 处理时效：特殊单号的**核心信息**，紧跟在过程态后面。
               没设时效时也显示（灰的"未设时效"）—— 直接不显示的话，
-              这张单看起来就和普通工单一模一样，用户不会知道漏填了。
+              这张单看起来就和普通流程任务一模一样，用户不会知道漏填了。
 
-              普通工单也显示，只要它真的挂着时效：生效的是**流程那一步的默认时长**，
+              普通流程任务也显示，只要它真的挂着时效：生效的是**流程那一步的默认时长**，
               不是单据类型。既然它会计时、会提醒，列表上就必须看得见 ——
               否则会出现"提醒弹出来，可列表里找不到它凭什么提醒"。 */}
           {(isSpecial || !!order.stageDueAt) && (
@@ -233,7 +233,7 @@ export default function OrderRow({
       </div>
 
       <div className="flex shrink-0 items-center gap-0.5 pt-[1px]">
-        {/* 推进到下一步：工单最常用的动作，直接放在行上 */}
+        {/* 推进到下一步：流程任务最常用的动作，直接放在行上 */}
         {next && (
           <button
             // 推进会把这一步的时效按新步骤的默认值重设，所以直接写清楚
@@ -269,7 +269,7 @@ export default function OrderRow({
         </button>
 
         <button
-          title="删除工单"
+          title="删除流程任务"
           onClick={onDelete}
           className="grid size-7 place-items-center rounded text-fg-dim opacity-0 hover:bg-danger-soft hover:text-danger group-hover:opacity-100"
         >

@@ -144,7 +144,7 @@ export function parseSpecialDensity(raw: string | undefined): SpecialDensity {
 /* 导出                                                                */
 /* ------------------------------------------------------------------ */
 
-/** 导出的一行。视图层负责把工单摊平成这个形状，这里只管拼 CSV */
+/** 导出的一行。视图层负责把流程任务摊平成这个形状，这里只管拼 CSV */
 export interface SpecialExportRow {
   no: string;
   /** 快递商中文名（认不出时为空） */

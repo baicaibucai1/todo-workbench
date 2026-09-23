@@ -16,7 +16,7 @@ import type { WorkOrder } from "../types";
 /**
  * 时效状态。
  *
- * - none    这一步没设时效（普通工单，或推到了没默认时效的步骤）
+ * - none    这一步没设时效（普通流程任务，或推到了没默认时效的步骤）
  * - ok      还早
  * - soon    进入临期窗口（还剩 DUE_SOON_MINUTES 以内）
  * - overdue 已经过点

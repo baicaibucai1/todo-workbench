@@ -36,7 +36,7 @@ const REPEAT_OPTIONS: Array<{ value: Repeat; label: string }> = [
  *
  * 三种形态，共用一个容器：
  *   1. 待办详情（任务）
- *   2. 工单详情（工单）—— 内容在 OrderDetail.tsx
+ *   2. 流程任务详情（流程任务）—— 内容在 OrderDetail.tsx
  *   3. 空态 —— 用户手动关掉之后、或列表本来就是空的时候
  *
  * **面板在待办界面里始终展开**（默认 360px，左缘可拖，宽度记在设置里）。只有在工具或设置占满右半区时
@@ -112,7 +112,7 @@ export default function TaskDetail() {
   if (order) lastOrder.current = order;
   const shownOrder = order ?? lastOrder.current;
 
-  // 有工单就看工单，否则看任务。两个同时非空不会发生（openTask/openOrder 维持互斥），
+  // 有流程任务就看流程任务，否则看任务。两个同时非空不会发生（openTask/openOrder 维持互斥），
   // 这里给个确定的优先级，万一将来被破坏也不会渲染出两个详情。
   const mode: "order" | "task" | "empty" = order ? "order" : task ? "task" : "empty";
 
@@ -240,7 +240,7 @@ function EmptyDetail() {
       </div>
       <div className="text-[13px] text-fg-2">还没有选中任何条目</div>
       <div className="text-[12px] leading-relaxed text-fg-dim">
-        点左边列表里的待办或工单，它的详情会显示在这里。
+        点左边列表里的待办或流程任务，它的详情会显示在这里。
       </div>
     </div>
   );

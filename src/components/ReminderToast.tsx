@@ -6,7 +6,7 @@
  *
  * 这里挂着两种提醒，共用同一个"别打扰我"开关，但**动作不同**：
  * - 待办提醒：可以完成、可以推迟 N 分钟（remindAt 是可改的）
- * - 工单时效：只能"知道了"或去处理。时效没有"推迟 10 分钟"这回事 ——
+ * - 流程任务时效：只能"知道了"或去处理。时效没有"推迟 10 分钟"这回事 ——
  *   它由过程态决定，要改就改期或推进（见 OrderDetail）。所以两边的按钮长得不一样，
  *   这也是它们没有合并成一个队列的原因。
  */
@@ -34,7 +34,7 @@ export default function ReminderToast() {
   const snoozeMinutes = Number(settings[SETTINGS.reminderSnooze] ?? 10) || 10;
   const now = Date.now();
 
-  /** 从提醒卡跳到那张工单：先切到看得见它的视图，再选中它 */
+  /** 从提醒卡跳到那张流程任务：先切到看得见它的视图，再选中它 */
   const gotoOrder = async (orderId: string, kind: "normal" | "special") => {
     await setView(kind === "special" ? "special" : "orders");
     openOrder(orderId);

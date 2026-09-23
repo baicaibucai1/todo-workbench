@@ -5,7 +5,7 @@
  *   1. **紧不急是算出来的** —— 截止时刻不同的字段（提醒时间 / 到期日 / 步骤时效）
  *      要合并成同一把尺子，且取更早的那个；
  *   2. **阈值真的能调** —— 改完立刻生效、刷新后还在、脏值不会让整区空掉；
- *   3. **不欠的不出现** —— 已完成的待办、已完结的工单不许混进来。
+ *   3. **不欠的不出现** —— 已完成的待办、已完结的流程任务不许混进来。
  *
  * 顺带钉一件更基础的事：计划表已经下线，界面上不该再有任何"加入今日计划"的入口
  * （留着就是点了没反应的死按钮）。
@@ -153,9 +153,9 @@ info("紧急区", list.join(" | "));
 check("三十分钟后提醒的待办进来了", list.includes(`task:${ids.a}`));
 check("已超时的待办进来了", list.includes(`task:${ids.b}`));
 check("三天后的待办没进来", !list.includes(`task:${ids.c}`));
-check("步骤时效在窗口内的工单进来了", list.includes(`order:${ids.e}`));
-check("已完结的工单没进来", !list.includes(`order:${ids.f}`));
-check("没有时效、交付日也远的工单没进来", !list.includes(`order:${ids.g}`));
+check("步骤时效在窗口内的流程任务进来了", list.includes(`order:${ids.e}`));
+check("已完结的流程任务没进来", !list.includes(`order:${ids.f}`));
+check("没有时效、交付日也远的流程任务没进来", !list.includes(`order:${ids.g}`));
 
 const first = await items().first().getAttribute("data-urgent-item");
 check("逾期的排在最前", first === `task:${ids.b}`, String(first));
@@ -270,7 +270,7 @@ check("详情里正是点的那条", detailTitle.includes("已经超时四十分
 await page.locator(`[data-urgent-item="order:${ids.e}"]`).click();
 await page.waitForTimeout(700);
 const mode2 = await page.getAttribute("aside[data-detail-mode]", "data-detail-mode");
-check("点工单打开的是工单详情", mode2 === "order", String(mode2));
+check("点流程任务打开的是流程任务详情", mode2 === "order", String(mode2));
 
 /* ------------------------------ 6. 控制台 ------------------------------ */
 

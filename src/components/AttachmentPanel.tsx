@@ -25,12 +25,12 @@ import {
 } from "../lib/attachments";
 
 /**
- * 工单附件栏。
+ * 流程任务附件栏。
  *
  * 三条产品约定（决定了这里为什么长这样）：
  *
  * 1. **图片视频进本地仓库，文件与网址只存链接。**
- *    前者会被外链拔掉、图床限流、跨域拦，而工单里回头要反复看的正是这些图；
+ *    前者会被外链拔掉、图床限流、跨域拦，而流程任务里回头要反复看的正是这些图；
  *    后者（几百 MB 的安装包、在线文档）留链接比留副本合理。
  *    界限不由用户选，由**真实内容**决定 —— 贴一个地址进来，
  *    是图片/视频就下载，不是就自动降级成链接并说明原因。
@@ -61,7 +61,7 @@ export default function AttachmentPanel({ orderId }: { orderId: string }) {
   const [lightbox, setLightbox] = useState<WoAttachment | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // 换工单时清掉上一条提示 —— 留着会让新工单看起来像是刚出过错
+  // 换流程任务时清掉上一条提示 —— 留着会让新流程任务看起来像是刚出过错
   useEffect(() => {
     setMessage(null);
     setDraft("");

@@ -56,9 +56,9 @@ import type { SpecialExportRow } from "../lib/special";
  * 翻历史单、核对某个绑定的号码、按流程或时效切出一小批来看，
  * 是一个面向**记录**的界面，不是面向"今天做点什么"的界面。
  *
- * 数据层完全不另起炉灶：特殊单号就是 kind='special' 的工单
- * （见 types.ts 的说明），这个视图只是工单数据的一个正规化呈现。
- * "推送到工单中"的语义由共用的数据层天然保证。
+ * 数据层完全不另起炉灶：特殊单号就是 kind='special' 的流程任务
+ * （见 types.ts 的说明），这个视图只是流程任务数据的一个正规化呈现。
+ * "推送到流程任务中"的语义由共用的数据层天然保证。
  *
  * e2e 锚点约定（tests/special-orders.mjs 依赖）：
  *   行 data-order-id / data-order-kind / data-order-stage
@@ -242,7 +242,7 @@ export default function SpecialOrdersView() {
 
   // 第二道闸：数据层（fetchWorkOrders 的 special 分支）已经只放行 kind='special'，
   // 这里再显式过滤一次 —— 全局搜索态、或未来哪个调用方传错，都不该让
-  // 普通工单混进这张记录表（和 rows.ts 里 myday 的纪律同源）。
+  // 普通流程任务混进这张记录表（和 rows.ts 里 myday 的纪律同源）。
   const specials = useMemo(() => orders.filter((o) => o.kind === "special"), [orders]);
 
   /** 按单分组的字段（含 label/value，搜索、自定义列、导出都要用） */
@@ -607,7 +607,7 @@ export default function SpecialOrdersView() {
         <div className="min-w-0">
           <h1 className="text-[20px] font-semibold leading-tight text-fg">特殊单号</h1>
           <p className="mt-0.5 text-[12px] text-fg-dim">
-            以快递单号为起点的时效记录 · 推进、留痕与提醒走工单体系
+            以快递单号为起点的时效记录 · 推进、留痕与提醒走流程任务体系
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">

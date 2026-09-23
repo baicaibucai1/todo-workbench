@@ -21,7 +21,7 @@ import OrderCreateDialog from "./OrderCreateDialog";
 import SpecialOrdersView from "./SpecialOrdersView";
 import { groupRows, type Row as RowsRow } from "../lib/rows";
 import type { WorkOrderKind } from "../types";
-import { SETTINGS } from "../lib/settings";
+import { SETTINGS, parseSpecialEnabled } from "../lib/settings";
 import {
   SCRIM,
   isScrimLevel,
@@ -48,13 +48,13 @@ const VIEW_META: Record<
     accent: "#534ab7",
     bg: "linear-gradient(135deg, #443c9a 0%, #7a72cc 50%, #a79fe0 100%)",
   },
-  // 工单沿用界面里一贯的蓝色（创建栏、行内标记都是 #378add）
+  // 流程任务沿用界面里一贯的蓝色（创建栏、行内标记都是 #378add）
   orders: {
     icon: ClipboardList,
     accent: "#378add",
     bg: "linear-gradient(135deg, #1f4e8c 0%, #378add 50%, #7fb3e3 100%)",
   },
-  // 特殊单号：橙色。它是"等不起的单子"，在色板上要和工单的蓝、
+  // 特殊单号：橙色。它是"等不起的单子"，在色板上要和流程任务的蓝、
   // 重要的琥珀都拉开距离 —— 侧边栏里这几个入口是并排的，撞色就等于没颜色
   special: {
     icon: Timer,
@@ -112,10 +112,10 @@ export default function TaskList() {
 
   const [draft, setDraft] = useState("");
   const [draftDaily, setDraftDaily] = useState(false);
-  /** 底部创建器当前在造什么：待办还是工单 */
+  /** 底部创建器当前在造什么：待办还是流程任务 */
   const [compose, setCompose] = useState<"task" | "order">("task");
   /**
-   * 新建工单弹窗。null = 不弹；字符串 = 弹出来并把标题预填成它。
+   * 新建流程任务弹窗。null = 不弹；字符串 = 弹出来并把标题预填成它。
    *
    * 用"预填标题"而不是只存一个布尔量：用户在底部输入框里打的字不该白打，
    * 回车只是把那句话带进表单，而不是丢掉重新填。
@@ -139,20 +139,28 @@ export default function TaskList() {
    */
   const [failedWallpaper, setFailedWallpaper] = useState<string | null>(null);
 
-  /** 「工单」视图只装工单 */
+  /** 「流程任务」视图只装流程任务 */
   const ordersOnly = view === "orders";
-  /** 「特殊单号」视图只装特殊单号（工单里带处理时效的那一类） */
-  const specialOnly = view === "special";
   /**
-   * 这两个视图都是"只装工单"的，创建栏在这里只能造工单。
+   * 「特殊单号」模块开关。
    *
-   * 在「工单」视图里造一条待办是不会出现在当前列表里的，那个
+   * specialOnly 把它一起算进去了：关掉后这个视图、这条创建路径、底部输入框
+   * 的"装快递单号"语义全都一起失效 —— 少算一处，就会出现"入口没了但视图还活着"
+   * 这种半关状态。记录本身仍在「流程任务」列表里（见 lib/settings.ts）。
+   */
+  const specialOn = parseSpecialEnabled(settings[SETTINGS.specialEnabled]);
+  /** 「特殊单号」视图只装特殊单号（流程任务里带处理时效的那一类） */
+  const specialOnly = view === "special" && specialOn;
+  /**
+   * 这两个视图都是"只装流程任务"的，创建栏在这里只能造流程任务。
+   *
+   * 在「流程任务」视图里造一条待办是不会出现在当前列表里的，那个
    * "输完回车却什么都没发生"的表现比不给入口糟糕得多（踩过一次）。
    */
   const orderView = ordersOnly || specialOnly;
   /**
-   * 创建栏实际在造什么。工单视图下锁死成"造工单" ——
-   * 在这里造一条待办是不会出现在当前列表里的（工单视图不取待办），
+   * 创建栏实际在造什么。流程任务视图下锁死成"造流程任务" ——
+   * 在这里造一条待办是不会出现在当前列表里的（流程任务视图不取待办），
    * 那个"输完回车却什么都没发生"的表现比不给入口糟糕得多。
    */
   const composeKind: "task" | "order" = orderView ? "order" : compose;
@@ -177,7 +185,7 @@ export default function TaskList() {
         myday: "我的一天",
         important: "重要",
         all: "全部",
-        orders: "工单",
+        orders: "流程任务",
         special: "特殊单号",
       } as Record<string, string>
     )[view] ?? "任务";
@@ -191,8 +199,8 @@ export default function TaskList() {
   // 分组排序全部交给 lib/rows.ts —— store 选第一条时用的是同一份，
   // 保证「高亮的行」和「右侧展开的详情」永远指同一条记录
   const grouped = useMemo(
-    () => groupRows(tasks, orders, view),
-    [tasks, orders, view],
+    () => groupRows(tasks, orders, view, specialOn),
+    [tasks, orders, view, specialOn],
   );
 
   const submit = async () => {
@@ -203,7 +211,7 @@ export default function TaskList() {
       setDraftDaily(false);
       return;
     }
-    // 工单不在这里直接建：只填标题的话，建出来的是一张只有标题的半成品，
+    // 流程任务不在这里直接建：只填标题的话，建出来的是一张只有标题的半成品，
     // 还得回详情补流程/日期/备注。改成把标题带进完整表单一次填完。
     setOrderFormKind(specialOnly ? "special" : "normal");
     setOrderFormTitle(draft);
@@ -215,7 +223,7 @@ export default function TaskList() {
 
   // 特殊单号：正规的记录管理界面（搜索/分类/表格），不套用待办的轻松样式。
   // 它本质是"这批数据的管理台"，不是"今天做点什么"的清单 ——
-  // 数据层完全共用（kind='special' 的工单），只是呈现不同。
+  // 数据层完全共用（kind='special' 的流程任务），只是呈现不同。
   //
   // 全局搜索时仍走下面的通用结果列表：搜索是跨视图的"找到它"，
   // 记录视图自带的检索框才是"在这批单里翻账"，两回事。
@@ -385,7 +393,7 @@ export default function TaskList() {
               {specialOnly
                 ? "还没有特殊单号"
                 : ordersOnly
-                  ? "还没有工单"
+                  ? "还没有流程任务"
                   : isMyDay
                     ? "今天还没有安排"
                     : "这个列表还没有任务"}
@@ -394,15 +402,15 @@ export default function TaskList() {
               {specialOnly
                 ? "在下方输入框建第一张：以快递单号为起点，每一步都带处理时效，超时会提醒"
                 : ordersOnly
-                  ? "在下方输入框建第一张工单；它会按所选流程一步步走，每走一步都留痕"
+                  ? "在下方输入框建第一张流程任务；它会按所选流程一步步走，每走一步都留痕"
                   : isMyDay
-                    ? "在下方输入框添加待办，或切到「工单」建一张要走流程的单子"
+                    ? "在下方输入框添加待办，或切到「流程任务」建一张要走流程的单子"
                     : "在下方输入框添加第一条任务；其他列表里的任务不会显示在这里"}
             </p>
           </div>
         )}
 
-        {/* 已完成折叠区：待办已完成 + 工单已完结混在一起 */}
+        {/* 已完成折叠区：待办已完成 + 流程任务已完结混在一起 */}
         {grouped.done.length > 0 && (
           <div className="mt-4">
             <button
@@ -424,11 +432,11 @@ export default function TaskList() {
         )}
       </div>
 
-      {/* 底部创建栏：待办与工单共用一块，靠左侧开关切换在造什么 */}
+      {/* 底部创建栏：待办与流程任务共用一块，靠左侧开关切换在造什么 */}
       <div className="shrink-0 px-6 pb-5">
         <div className="rounded-lg bg-card px-4 py-3 shadow-[0_2px_8px_rgba(0,0,0,0.15)]">
           <div className="flex items-center gap-3">
-            {/* 待办 / 工单 切换。工单视图下不给切换 —— 这里只可能造工单，
+            {/* 待办 / 流程任务 切换。流程任务视图下不给切换 —— 这里只可能造流程任务，
                 摆一个"待办"按钮在这里是假入口（造完不会出现在当前列表） */}
             {orderView ? (
               <span
@@ -436,7 +444,7 @@ export default function TaskList() {
                 style={{ background: specialOnly ? "#d85a30" : "#378add" }}
               >
                 {specialOnly ? <Timer size={12} /> : <ClipboardList size={12} />}
-                {specialOnly ? "特殊单号" : "工单"}
+                {specialOnly ? "特殊单号" : "流程任务"}
               </span>
             ) : (
               <div className="flex shrink-0 items-center rounded-md bg-chip p-0.5">
@@ -445,13 +453,15 @@ export default function TaskList() {
                   onClick={() => setCompose("task")}
                   icon={<Circle size={12} />}
                   label="待办"
+                  tabKey="task"
                   accent={accent}
                 />
                 <ComposeTab
                   active={composeKind === "order"}
                   onClick={() => setCompose("order")}
                   icon={<ClipboardList size={12} />}
-                  label="工单"
+                  label="流程任务"
+                  tabKey="order"
                   accent="#378add"
                 />
               </div>
@@ -470,7 +480,7 @@ export default function TaskList() {
                 composeKind === "order"
                   ? specialOnly
                     ? "快递单号，回车填写时效与相关信息"
-                    : "工单标题，回车填写完整信息"
+                    : "流程任务标题，回车填写完整信息"
                   : draftDaily
                     ? "添加每日任务"
                     : "添加任务"
@@ -503,24 +513,24 @@ export default function TaskList() {
                   background: composeKind === "order" ? (specialOnly ? "#d85a30" : "#378add") : accent,
                 }}
               >
-                {composeKind === "order" ? (specialOnly ? "登记单号" : "创建工单") : "添加"}
+                {composeKind === "order" ? (specialOnly ? "登记单号" : "创建流程任务") : "添加"}
               </button>
             )}
           </div>
 
-          {/* 工单的流程 / 过程态 / 日期 / 备注都在弹窗里一次填完。
+          {/* 流程任务的流程 / 过程态 / 日期 / 备注都在弹窗里一次填完。
               这里不再摆第二份同样的选项 —— 两处都能改同一批参数，
               只会让人不确定到底以哪边为准。 */}
           {composeKind === "order" && (
             <div className="mt-2 flex items-center gap-2 border-t border-line pt-2">
-              {/* 「我的一天」里要额外说一句：工单建出来**不会**出现在当前列表，
-                  不说的话用户会以为没建成（和"在工单视图里造待办"是同一类坑） */}
+              {/* 「我的一天」里要额外说一句：流程任务建出来**不会**出现在当前列表，
+                  不说的话用户会以为没建成（和"在流程任务视图里造待办"是同一类坑） */}
               <span data-compose-hint="" className="min-w-0 flex-1 text-[11.5px] text-fg-dim">
                 {isMyDay
-                  ? "工单不进「我的一天」，建好后在侧边栏「工单」里看"
+                  ? "流程任务不进「我的一天」，建好后在侧边栏「流程任务」里看"
                   : specialOnly
                     ? "回车或点「登记单号」，弹窗里填时效与相关信息；时效是到下一步之前的时间"
-                    : "回车或点「创建工单」，弹窗里一次填完流程、过程态、日期与备注"}
+                    : "回车或点「创建流程任务」，弹窗里一次填完流程、过程态、日期与备注"}
               </span>
               <button
                 // 这里必须给一个**真实的 flowId**：openFlowEditor 的开关语义是
@@ -540,7 +550,7 @@ export default function TaskList() {
         </div>
       </div>
 
-      {/* 新建工单弹窗。挂在最外层而不是创建栏里：它是整屏居中的浮层，
+      {/* 新建流程任务弹窗。挂在最外层而不是创建栏里：它是整屏居中的浮层，
           塞进底部那一行的布局里会被父级的 overflow 裁掉 */}
       {orderFormTitle !== null && (
         <OrderCreateDialog
@@ -561,24 +571,32 @@ export default function TaskList() {
   );
 }
 
-/** 创建器左上角的「待办 / 工单」切换按钮 */
+/** 创建器左上角的「待办 / 流程任务」切换按钮 */
 function ComposeTab({
   active,
   onClick,
   icon,
   label,
+  tabKey,
   accent,
 }: {
   active: boolean;
   onClick: () => void;
   icon: React.ReactNode;
   label: string;
+  /**
+   * 自动化验证用的稳定标识。
+   *
+   * 不拿 label 顶：界面文案是会被改的（「工单」刚改成了「流程任务」），
+   * 用文案当选择器，等于每改一个字就顺手弄红一批用例。
+   */
+  tabKey: "task" | "order";
   accent: string;
 }) {
   return (
     <button
       onClick={onClick}
-      data-compose-tab={label}
+      data-compose-tab={tabKey}
       className={`flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium transition-colors ${
         active ? "text-white" : "text-fg-dim hover:text-fg-2"
       }`}
@@ -604,7 +622,7 @@ function PlusCircle({ accent }: { accent: string }) {
   );
 }
 
-/** 工单版的输入框前缀标记：圆角方块，和待办的圆形成对照 */
+/** 流程任务版的输入框前缀标记：圆角方块，和待办的圆形成对照 */
 function OrderMark() {
   return (
     <span className="grid size-[22px] shrink-0 place-items-center rounded-[6px] border-[1.5px] border-[#378add]">
