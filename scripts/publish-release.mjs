@@ -49,6 +49,13 @@ const NOTES = (() => {
 })();
 
 const say = (...a) => console.log(...a);
+/** 该停下手看看、但不至于中断流程的问题 */
+function warn(msg, hint) {
+  console.error("");
+  console.error("[!] " + msg);
+  if (hint) console.error("    " + hint);
+  console.error("");
+}
 function die(msg, hint) {
   console.error("");
   console.error("[x] " + msg);
@@ -352,6 +359,33 @@ if (DRY) {
  */
 const token = await getToken();
 const [owner, repo] = slug.split("/");
+
+/*
+ * 发布前先确认「代码已经推上去了」。
+ *
+ * 为什么这条不能省：GitHub 建 Release 时会**就地**拿远端默认分支的 HEAD 去打
+ * tag。如果这时候代码还没推，tag 就钉在上一版提交上 —— 结果是资产是新的、
+ * 代码是旧的，而 `v0.2.0` 这个 tag 点进去看到的是 v0.1.0 的源码。
+ * 2026-09-24 就是这么出的，事后还得单独把 tag 挪回来（git/refs PATCH）。
+ *
+ * 只是警告、不阻断：CI 里 HEAD 本来就可能和远端不一致（比如 detached），
+ * 拦下来反而误事。但人肉发版时看到这行就该先去 push。
+ */
+try {
+  const headSha = (await runCollect("git", ["rev-parse", "HEAD"], {})).trim();
+  const meta = await api("GET", `/repos/${owner}/${repo}`, null, token);
+  const branch = meta.json?.default_branch || "main";
+  const ref = await api("GET", `/repos/${owner}/${repo}/git/ref/heads/${branch}`, null, token);
+  const remoteSha = ref.json?.object?.sha || "";
+  if (headSha && remoteSha && headSha !== remoteSha) {
+    warn(
+      `本地 HEAD（${headSha.slice(0, 7)}）和远端 ${branch}（${remoteSha.slice(0, 7)}）不是同一个提交。`,
+      "现在建的 tag 会钉在远端的旧提交上 —— 先 git push，再来发版。",
+    );
+  }
+} catch {
+  /* 拿不到就不判断：没有 git 或者查不到远端都不该让发版失败 */
+}
 
 let rel = await api("GET", `/repos/${owner}/${repo}/releases/tags/${tag}`, null, token);
 if (rel.status === 200) {
