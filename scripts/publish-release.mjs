@@ -344,7 +344,13 @@ if (DRY) {
 }
 
 /* —— 4) 建 / 复用 Release —— */
-const token = getToken();
+/*
+ * ⚠️ 这里必须 await。getToken() 为了绕开沙箱里 spawnSync 的 EBUSY 改成了
+ * async，漏了 await 的话 token 是个 Promise，请求头就变成
+ * `Bearer [object Promise]` —— 服务器回「Bad credentials」，看起来像是令牌
+ * 失效，实际上令牌是好的。401 时先怀疑这里，别急着去重新授权。
+ */
+const token = await getToken();
 const [owner, repo] = slug.split("/");
 
 let rel = await api("GET", `/repos/${owner}/${repo}/releases/tags/${tag}`, null, token);

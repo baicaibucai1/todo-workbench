@@ -1,7 +1,7 @@
 {
   "version": "0.2.0",
   "notes": "**安装包从 62.9 MB 降到 7.3 MB。** 差的那 50 MB 几乎全是图片工具里那份本地 AI 模型（ONNX Runtime + MI-GAN，base64 分片塞在 `.js` 里）。为一个大多数人用不上的能力，让每一个用户、每一次增量更新都多下载几十兆 —— 这买卖不划算。",
-  "pub_date": "2026-09-24T04:12:14.150Z",
+  "pub_date": "2026-09-24T06:02:28.923Z",
   "platforms": {
     "windows-x86_64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQTgwMmUzZERHT0pEU3R6Tzk3ZEh2N2FoNitOWFlQZ2VPREtvaVBYbWxSeTJzMUlOMFlsSTN5RG9mM0MyWHdQTlBaRWE4YWVFRStQYnkvOVBNLzVkMEMxNTNLUHBySlFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjIxNjM0CWZpbGU65b6F5Yqe5bel5L2c5Y+wXzAuMi4wX3g2NC1zZXR1cC5leGUKSWlESFdXT0tydSs3QW5KTy9adGZHSTFPbmQvdVlCdFpYTUExR3FDbjdHTmlNUHppUjZlV2czUlIxb1NiWlF0TnphcnRDZkt2Y1JuVFRHZXpBOGc0Qmc9PQo=",
