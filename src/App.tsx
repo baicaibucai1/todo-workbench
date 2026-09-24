@@ -18,6 +18,7 @@ export default function App() {
   const {
     ready,
     init,
+    initError,
     activeToolId,
     enabledTools,
     settingsOpen,
@@ -28,7 +29,14 @@ export default function App() {
   } = useStore();
 
   useEffect(() => {
-    void init();
+    // ⚠️ 必须接住 rejection：初始化失败的锅大多是迁移 / 数据库，
+    // 不接的话界面永远停在"正在初始化工作台…"，一行报错都没有
+    // （0.2.0 实机白屏事件）。错误进 initError，由下面的渲染分支说出来。
+    init().catch((e: unknown) => {
+      useStore.setState({
+        initError: e instanceof Error ? e.message : String(e),
+      });
+    });
   }, [init]);
 
   // 「跟随系统」要能跟着 Windows 的深浅色设置实时变，不能只在启动时算一次
@@ -64,6 +72,21 @@ export default function App() {
    * 两边不会漂移（各写一遍 find 迟早变成一边显示空白、一边显示待办）。
    */
   const toolVisible = !!pickActiveTool(enabledTools, activeToolId) && !settingsOpen;
+
+  if (initError) {
+    return (
+      <div className="grid h-full place-items-center bg-surface px-6 text-center">
+        <div className="max-w-[560px]">
+          <div className="mb-2 text-[15px] text-fg">初始化失败了</div>
+          <div className="break-all text-[13px] text-fg-dim">{initError}</div>
+          <div className="mt-3 text-[12px] text-fg-dim">
+            数据库迁移或读取出了问题，数据都还在。把上面这段文字发给开发者，
+            比截图白屏有用得多。
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!ready) {
     return (

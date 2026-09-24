@@ -8,14 +8,17 @@
 
 作者：**Sogapopo**
 
-> **当前版本：`v0.2.0`** —— [**下载安装包**](https://github.com/baicaibucai1/todo-workbench/releases/latest)
+> **当前版本：`v0.2.1`** —— [**下载安装包**](https://github.com/baicaibucai1/todo-workbench/releases/latest)
 > （**7.3 MB**，Windows x64）。桌面版已打包成功、实机跑通，采用 GNU 工具链
 > （MSYS2 + MinGW-w64），**全程不需要管理员权限，也不需要 2–4 GB 的 Visual Studio**。
 >
 > **安装包里不再附带任何工具。** 上一版是 62.9 MB，其中 50.8 MB 是图片工具那份本地
 > AI 模型 —— 为一个多半用不上的能力，让每个用户、每次更新都多下几十兆。现在工具作为
-> Release 上的一份**独立资产**（`todo-workbench-tools_0.2.0.zip`，29.6 MB）提供：
+> Release 上的一份**独立资产**（`todo-workbench-tools_0.2.1.zip`，29.6 MB）提供：
 > 想要就下载解压，不想装就一个都不占。宿主本体因此回到 7 MB 量级。
+>
+> v0.2.1 修复了一个会让**全新数据库**卡死在「正在初始化工作台」的迁移缺陷
+> （v16 回填历史对话时，空表触发的 SQL 聚合陷阱）；装了 0.2.0 的请更新。
 
 ---
 
@@ -53,10 +56,6 @@
 | 随手记 | AI 生成（多厂商可切） |
 | --- | --- |
 | ![随手记](docs/screenshots/tool-scratchpad.png) | ![AI 生成](docs/screenshots/tool-ai-gen.png) |
-
-| 五子棋（人机 / 双人对战，战绩落本机库） |
-| --- |
-| ![五子棋](docs/screenshots/tool-gomoku.png) |
 
 ---
 
@@ -130,12 +129,14 @@
 `tool_<id>_*` 前缀，跨工具调用走 `tools.list/open/send` 这类意图队列，
 iframe 加载完成之后才投递（否则消息发给一个还不存在的窗口，静默丢掉）。
 
-内置工具里有一份**标准的活样本**：五子棋（`tools/gomoku/`）是按《单 HTML 工具
-编写标准》交付的 —— 单个自包含 HTML、只走 postMessage、战绩写自己的私有表、
-深浅色跟随宿主。它不只是个小游戏：`npm run gomoku:test` 里有一段会把那份标准的
-硬规则**逐条当成断言**跑一遍（自包含 / 无外部引用 / data-* 齐备 / 响应宿主主题 /
-破坏性操作要二次确认）。标准写在文档里会漂，钉在测试上才不会 —— 以后写新工具，
-把那几个路径换掉就能直接复用那一段。
+仓库里有一份《单 HTML 工具编写标准》的**活样本**：五子棋（`tools/gomoku/`），
+单文件自包含 HTML、只走 postMessage、战绩写自己的私有表、深浅色跟随宿主。
+它是当时为了验证"AI 助手能不能按标准自己写出工具"而生成的**开发样本**，
+不随安装包与工具包分发（`pack-tools.mjs` 的 EXCLUDE 里排着）；它的价值在
+`npm run gomoku:test` —— 那 59 项断言把标准的硬规则**逐条钉死**
+（自包含 / 无外部引用 / data-* 齐备 / 响应宿主主题 / 破坏性操作要二次确认）。
+标准写在文档里会漂，钉在测试上才不会 —— 以后写新工具，把那几个路径换掉
+就能直接复用那一段。
 
 ### AI 助手（内置 Agent）
 
@@ -534,8 +535,9 @@ main/
       ...
     store.ts           Zustand 全局状态
     types.ts          数据模型
-  tools/              内置工具（**不随安装包**：打成工具包单独发布）
-    image-crop/  size-chart/  scratchpad/  ai-gen/  gomoku/
+  tools/              工具源（**不随安装包**：打成工具包单独发布）
+    image-crop/  size-chart/  scratchpad/  ai-gen/
+    gomoku/           编写标准的活样本（开发用，不进工具包）
   release-assets/     发版资产（工具包 zip；生成物，不进 git）
   tests/              单测与 e2e
   src-tauri/          Rust 端：插件注册、内置工具同步（只在开发时同步源码里的 tools/）、打包配置

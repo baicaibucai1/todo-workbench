@@ -39,6 +39,16 @@ const ROOT = path.resolve(__dirname, "..");
 const TOOLS = path.join(ROOT, "tools");
 const OUT_DIR = path.join(ROOT, "release-assets");
 
+/**
+ * 不随工具包分发的目录。
+ *
+ * gomoku 是《单 HTML 工具编写标准》的**仓库样本**——当时为了验证"AI 能不能
+ * 自己写出合格的工具"而生成，tests/gomoku-unit.mjs 那 59 项契约断言拿它当
+ * 夹具。它是给写工具的人看的参考物，不是交付给用户的产品，所以留仓库、
+ * 不进 zip。哪天真想把它变成正式工具，从这行里删掉 id 就行。
+ */
+const EXCLUDE = new Set(["gomoku"]);
+
 const argv = process.argv.slice(2);
 const CHECK = argv.includes("--check");
 const QUIET = argv.includes("--quiet");
@@ -107,6 +117,7 @@ function inspectTools() {
   const ids = fs
     .readdirSync(TOOLS, { withFileTypes: true })
     .filter((e) => e.isDirectory())
+    .filter((e) => !EXCLUDE.has(e.name))
     .map((e) => e.name)
     .sort();
 

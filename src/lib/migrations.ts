@@ -581,6 +581,13 @@ export const migrations: Migration[] = [
     // 用户打开助手会看到一份空的历史，而他那些记录明明还在库里 ——
     // 那是最糟的一种"数据没丢，但看起来丢了"。
     // 回填写成 INSERT ... SELECT 一体：迁移是纯 SQL，中间没有 JS 参与的余地；
+    //
+    // ⚠️ 过滤空表必须用 HAVING COUNT(*) > 0，**不能用 WHERE EXISTS**：
+    // 不带 GROUP BY 的聚合 SELECT 无论 WHERE 是什么都返回一行
+    // （全 NULL），空表时这一行照样插进去，撞上 created_at 的 NOT NULL ——
+    // 迁移当场失败回滚，user_version 永远停在 15，应用每次启动都卡在
+    // 初始化（2026-09-24 实机 0.2.0 白屏就是这个）。助手从没说过话的库，
+    // 恰恰是最普遍的那一种。
     // 表本来就空时 SELECT 不产生行，正好什么都不做。
     //
     // ⚠️ 这条迁移让 memory 库第一次用上 ALTER：db.ts 的 MemoryDb 必须支持它，
@@ -604,7 +611,7 @@ export const migrations: Migration[] = [
       INSERT INTO core_agent_chats (id, title, created_at, updated_at)
         SELECT 'chat-legacy', '之前的对话', MIN(created_at), MAX(created_at)
         FROM core_agent_messages
-        WHERE EXISTS (SELECT 1 FROM core_agent_messages);
+        HAVING COUNT(*) > 0;
 
       UPDATE core_agent_messages SET chat_id = 'chat-legacy' WHERE chat_id = '';
     `,

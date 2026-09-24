@@ -302,6 +302,14 @@ interface State {
   dismissOrderDue: (orderId: string) => Promise<void>;
 
   init: () => Promise<void>;
+  /**
+   * 初始化失败的原因（迁移炸了 / 数据库打不开之类）。
+   *
+   * 为什么要单独存：App 里 init 是 fire-and-forget，失败时若没有这个字段，
+   * 界面就永远停在"正在初始化工作台…"—— 白屏卡死连一句报错都没有
+   * （0.2.0 实机就是这么个死法，v16 迁移失败 + 无兜底，双重叠加）。
+   */
+  initError: string | null;
   refresh: () => Promise<void>;
   loadSettings: () => Promise<void>;
   saveSettings: (patch: Record<string, string>) => Promise<void>;
@@ -482,6 +490,7 @@ export const useStore = create<State>((set, get) => ({
   sidebarOpen: true,
   settingsOpen: false,
   agentOpen: false,
+  initError: null,
   settingsSection: null,
   flowEditorOpen: false,
   flowEditorFlowId: null,
