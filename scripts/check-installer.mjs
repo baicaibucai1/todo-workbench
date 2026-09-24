@@ -205,15 +205,21 @@ if (!bundlesTools) {
   if (fs.existsSync(zipPath)) {
     // zip 的文件名在中央目录里是明文，搜二进制就够 ——
     // 不必为了数条目去把几十兆解一遍
-    const zipBuf = fs.readFileSync(zipPath);
-    const absent = diskTools.filter(
-      (t) => zipBuf.indexOf(Buffer.from(`tools/${t}/manifest.json`, 'utf8')) === -1,
-    );
-    check(
-      `工具包 ${zipName} 含全部 ${diskTools.length} 个工具`,
-      absent.length === 0,
-      absent.length ? `缺：${absent.join(', ')}` : `${(zipBuf.length / 1048576).toFixed(1)} MB`,
-    );
+      const zipBuf = fs.readFileSync(zipPath);
+      // zip 里该有的 = 磁盘工具 - pack-tools.mjs 的 EXCLUDE。
+      // 两份清单必须同步：pack 那边排除谁（gomoku 是开发样本，不随包），
+      // 这边的期望就得跟着排除 —— 否则每次打包都被自己人拦一道
+      // （0.2.1 就是这么红过一回）。
+      const packExcluded = ['gomoku'];
+      const expected = diskTools.filter((t) => !packExcluded.includes(t));
+      const absent = expected.filter(
+        (t) => zipBuf.indexOf(Buffer.from(`tools/${t}/manifest.json`, 'utf8')) === -1,
+      );
+      check(
+        `工具包 ${zipName} 含全部 ${expected.length} 个工具`,
+        absent.length === 0,
+        absent.length ? `缺：${absent.join(', ')}` : `${(zipBuf.length / 1048576).toFixed(1)} MB`,
+      );
   } else {
     check(
       `存在工具包资产 ${zipName}`,
