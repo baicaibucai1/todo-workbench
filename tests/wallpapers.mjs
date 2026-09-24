@@ -201,10 +201,11 @@ if (!fs.existsSync(SRC)) {
         // 而是某次被打断的构建留下的半成品（或绕开 build-desktop.mjs
         // 直接跑了 cargo / tauri build）。把成因写进失败信息里，
         // 免得下次照着"壁纸"去查一个跟壁纸无关的问题。
-        if (
-          buf.indexOf(Buffer.from("wallpapers/", "utf8")) === -1 &&
-          buf.indexOf(Buffer.from("tools/", "utf8")) === -1
-        ) {
+        //
+        // ⚠️ 判据只能是 wallpapers/：**不能用 tools/** ——
+        // 0.2.0 起工具不再随包（改成 Release 上的一份独立 zip），
+        // 正常的产物里本来就该搜不到它，拿它当判据会永远误报。
+        if (buf.indexOf(Buffer.from("wallpapers/", "utf8")) === -1) {
           info(
             "提示",
             "exe 里一个随包资源键都没有 —— 多半是中断的构建留下的产物，完整打包一次再看",

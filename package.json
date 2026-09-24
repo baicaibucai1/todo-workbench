@@ -1,7 +1,7 @@
 {
   "name": "todo-workbench",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "待办工作台 - 以 Microsoft To Do 为原型的可扩展桌面工作台",
   "scripts": {
@@ -9,7 +9,10 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "smoke": "esbuild tests/smoke.mjs --bundle --platform=node --format=esm --target=node22 --outfile=tests/.smoke.bundle.mjs --external:jsdom --log-level=warning && node tests/.smoke.bundle.mjs",
-  "sync:test": "esbuild tests/sync.mjs --bundle --platform=node --format=esm --target=node22 --outfile=tests/.sync.bundle.mjs --external:jsdom --log-level=warning && node tests/.sync.bundle.mjs",
+    "sync:test": "esbuild tests/sync.mjs --bundle --platform=node --format=esm --target=node22 --outfile=tests/.sync.bundle.mjs --external:jsdom --log-level=warning && node tests/.sync.bundle.mjs",
+    "agent:test": "esbuild tests/agent-unit.mjs --bundle --platform=node --format=esm --target=node22 --outfile=tests/.agent-unit.bundle.mjs --external:jsdom --log-level=warning && node tests/.agent-unit.bundle.mjs",
+    "agent:author": "node scripts/agent-author.mjs",
+    "gomoku:test": "node tests/gomoku-unit.mjs",
     "typecheck": "tsc -b --pretty false",
     "icons": "node scripts/gen-icons.mjs",
     "icons:check": "node tests/icons.mjs",

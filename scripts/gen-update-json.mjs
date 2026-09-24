@@ -51,9 +51,33 @@ if (!fs.existsSync(BUNDLE_DIR)) {
   process.exit(1);
 }
 
-// NSIS 产物形如：待办工作台_0.1.0_x64-setup.exe，签名在同名 .sig 文件里
+// NSIS 产物形如：待办工作台_0.1.0_x64-setup.exe（发布脚本会改成 ASCII 的
+// todo-workbench_<版本>_x64-setup.exe），签名在同名 .sig 文件里。
 const files = fs.readdirSync(BUNDLE_DIR);
-const installer = files.find((f) => f.endsWith("-setup.exe"));
+const exes = files.filter((f) => f.endsWith("-setup.exe"));
+
+/*
+ * ⚠️ 必须**按版本认人**，不能"抓到哪个算哪个"。
+ *
+ * 产物目录是长期累积的：上一次发布留下的 `todo-workbench_0.1.0_x64-setup.exe`
+ * 一直躺在这儿，而 readdir 的顺序恰好让它排在 0.2.0 前面 —— 于是更新清单会
+ * 指向**上一版**的安装包，签名也是上一版那个，而生成过程一句警告都没有。
+ *
+ * 后果是最难查的那一种：老客户端欢天喜地"升级"完，版本号还停在旧版，
+ * 客户端这边不报错（签名是配得上那个包的），服务端看清单也看不出毛病。
+ */
+const wantInstaller = `todo-workbench_${version}_x64-setup.exe`;
+let installer = exes.includes(wantInstaller) ? wantInstaller : null;
+
+if (!installer && exes.length) {
+  // 退而求其次：取最新改动的那个，并且**必须喊出来** ——
+  // 走到这里说明发布脚本的改名步骤没跑，得让人当场知道，而不是事后猜。
+  installer = exes
+    .map((f) => ({ f, mt: fs.statSync(path.join(BUNDLE_DIR, f)).mtimeMs }))
+    .sort((a, b) => b.mt - a.mt)[0].f;
+  console.error(`⚠️ 没找到本该存在的 ${wantInstaller}，改用最近产物 ${installer}`);
+  console.error(`   这通常意味着没跑 node scripts/publish-release.mjs 的改名步骤。`);
+}
 
 if (!installer) {
   console.error(`在 ${BUNDLE_DIR} 里没找到 -setup.exe 安装包`);

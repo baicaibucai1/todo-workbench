@@ -5,6 +5,8 @@ import TaskDetail from "./components/TaskDetail";
 import ToolArea from "./components/ToolArea";
 import Settings from "./components/Settings";
 import GalleryView from "./components/GalleryView";
+import AgentBall from "./components/AgentBall";
+import AgentWindow from "./components/AgentWindow";
 import ReminderToast from "./components/ReminderToast";
 import FlowEditor from "./components/FlowEditor";
 import { useStore } from "./store";
@@ -111,6 +113,15 @@ export default function App() {
         {/* 详情面板常驻渲染，靠宽度收放做滑入/滑出；开不展开由它自己判断 */}
         <TaskDetail />
       </div>
+
+      {/*
+        AI 助手：入口是一颗能拖动的悬浮球，窗口盖在主界面上（居中，见
+        AgentWindow 的说明）。两者挂在这一层（和提醒弹窗同级）而不是塞进
+        某一栏里 —— 侧栏收起、切视图、开设置都不该把它弄丢，
+        而且它**不属于任何一栏**：侧栏里已经没有助手这一项了，球是唯一入口。
+      */}
+      <AgentBall />
+      <AgentWindow />
 
       <ReminderToast />
       {/* 流程编辑器是全局弹层：入口有两个（流程任务详情、底部创建器），

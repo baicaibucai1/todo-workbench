@@ -101,7 +101,12 @@ export default function TaskDetail() {
   // 而且它有自己的全屏预览。留一个 360px 的空详情面板在那儿，
   // 既挤掉一格图（网格按 auto-fill 排，少 360px 就少一整列），
   // 又让用户以为"这些图也能扔进详情里"。
-  const visible = !activeToolId && !settingsOpen && view !== "gallery";
+  //
+  // AI 助手也挡掉，理由最直接：它旁边一条待办都没有（取数层对 agent 返回空），
+  // 面板里只可能显示"上一次看过的那条"（shownTask 是兜底值）——
+  // 一个和当前界面毫无关系的任务详情挂在对话旁边，纯属误导。
+  const visible =
+    !activeToolId && !settingsOpen && view !== "gallery" && view !== "agent";
 
   // 收起（让位）时选中的对象已经不该再显示，但动画还没播完，留一份内容给它滑
   const lastTask = useRef<Task | null>(null);

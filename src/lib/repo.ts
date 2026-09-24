@@ -8,6 +8,7 @@
 import { db, type Param } from "./db";
 import { toolTable } from "./tools";
 import { CURRENT_SCHEMA_VERSION } from "./migrations";
+import type { AgentAction } from "./agent/types";
 import type {
   AttachmentKind,
   PlanItem,
@@ -168,15 +169,15 @@ export async function deleteList(id: string): Promise<void> {
 
 export interface TaskQuery {
   /**
-   * myday / important / all / orders / special / list / gallery
+   * myday / important / all / orders / special / list / gallery / agent
    *
-   * 其中 `orders` / `special` / `gallery` **都必然返回空数组** ——
-   * 它们不是"待办的某种筛选"（前两个是流程任务的视图，gallery 是独立模块）。
-   * 之所以还列在这里，是因为 store.refresh() 拿的是通用的 `SmartView | "list"`，
-   * 它不分视图地调这个函数。类型上允许、运行时挡掉，比在每个调用点
-   * 各判一次要可靠：**switch 落空 = 不加任何条件 = 把整库待办捞回来**。
+   * 其中 `orders` / `special` / `gallery` / `agent` **都必然返回空数组** ——
+   * 它们不是"待办的某种筛选"（前两个是流程任务的视图，gallery 是独立模块，
+   * agent 是 AI 助手）。之所以还列在这里，是因为 store.refresh() 拿的是通用的
+   * `SmartView | "list"`，它不分视图地调这个函数。类型上允许、运行时挡掉，
+   * 比在每个调用点各判一次要可靠：**switch 落空 = 不加任何条件 = 把整库待办捞回来**。
    */
-  view: "myday" | "important" | "all" | "orders" | "special" | "list" | "gallery";
+  view: "myday" | "important" | "all" | "orders" | "special" | "list" | "gallery" | "agent";
   listId?: string;
   /** 是否包含已完成 */
   includeDone?: boolean;
@@ -213,6 +214,12 @@ export async function fetchTasks(q: TaskQuery): Promise<Task[]> {
       // 它出现在这个函数的调用点上只有一个原因：store.refresh() 不分视图地
       // 调了一次 fetchTasks。这里必须显式返回空，否则图库视图会打印出
       // 一整屏待办（同样是"落空 = 不加条件"）。
+      return [];
+    case "agent":
+      // AI 助手视图：同图库 —— 助手界面上一条待办都不该出现。
+      // 落空同样等于"不加条件"，会把整库待办捞到 store.tasks 里，
+      // 于是助手旁边那条详情面板就有东西可选了（它已经被显式挡住，
+      // 但取数这一层也不能漏：界面迟早会有别的地方读 tasks）。
       return [];
     case "important":
       where.push("important = 1");
@@ -1076,7 +1083,7 @@ export interface OrderQuery {
    * 再让它按日期混进我的一天，等于绕开了这条规则（新建流程任务默认开始日期就是
    * 今天，那样每张新单都会自动出现在那儿）。
    */
-  view: "myday" | "today" | "important" | "all" | "orders" | "special" | "list" | "gallery";
+  view: "myday" | "today" | "important" | "all" | "orders" | "special" | "list" | "gallery" | "agent";
   /** 是否包含已完结的流程任务 */
   includeDone?: boolean;
   search?: string;
@@ -1138,6 +1145,9 @@ export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
     case "gallery":
       // 图库与流程任务毫无关系，但 store.refresh() 会不分视图地调到这里。
       // 同 myday：必须显式挡掉，落空 = 不加条件 = 把全部流程任务捞回来。
+      return [];
+    case "agent":
+      // AI 助手视图：同 gallery，一条流程任务都不该出现。
       return [];
     case "all":
       break;
@@ -2670,7 +2680,248 @@ export async function clearAllData(): Promise<void> {
     // 所以"哪些文件真的没人用了"只能在清库**之前**算出来，
     // 由 store.ts 的 clearAll 统一处理（它才拿得到文件仓库的句柄）。
     { sql: `DELETE FROM core_gallery_items` },
+    // AI 助手的对话记录也算核心数据：它里面可能留着用户交代过的业务背景
+    // （客户名、单号规则），"清空全部数据"若绕开它就等于没清干净。
+    // 消息与会话两张表都要清 —— 只清消息会留下一堆空的历史条目。
+    // 注意**工具目录里已经装好的工具不受影响** —— 那是文件系统的事，
+    // 数据层碰不到，也不该碰。
+    { sql: `DELETE FROM core_agent_messages` },
+    { sql: `DELETE FROM core_agent_chats` },
   ]);
+}
+
+/* --------------------------- AI 助手的会话与对话记录 --------------------------- */
+
+/**
+ * 一段对话（会话）。
+ *
+ * `messageCount` 与 `preview` 不是表里的列，而是读的时候现算的：
+ * 历史列表要回答"这是哪一段"（preview）和"它有多长"（count），
+ * 存成列就意味着每次写消息都要更新它 —— 那是两个真相来源，
+ * 迟早会有一个说谎（删掉了消息但 count 没减，历史里就一直显示"12 条"）。
+ */
+export interface AgentChatRow {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  /** 最后一条消息的摘要（"你：…" / "助手：…"），用于分辨两段都还没起名字的对话 */
+  preview: string;
+}
+
+/**
+ * 读会话列表（最近动过的在最前面）。
+ *
+ * ⚠️ 两次单表查询 + 在 JS 里合并，**刻意不用 JOIN / 子查询**：
+ * 内存库（浏览器 demo）不支持它们，而它是**静默**返回空数组的 ——
+ * 真机上好好的、demo 里历史一直空着，这种 bug 没人能一眼看出来。
+ * 消息不分页（见下面 fetchAgentMessages 的说明），所以这里全量取三个列
+ * 再分组，量级是几十到几百行，比每个会话各查一次（N+1）更省。
+ */
+export async function fetchAgentChats(): Promise<AgentChatRow[]> {
+  const chats = await db().select<{
+    id: string;
+    title: string;
+    created_at: string;
+    updated_at: string;
+  }>(`SELECT * FROM core_agent_chats ORDER BY updated_at DESC`);
+
+  const msgs = await db().select<{ chat_id: string; role: string; content: string }>(
+    `SELECT chat_id, role, content FROM core_agent_messages ORDER BY seq ASC`,
+  );
+
+  const stat = new Map<string, { n: number; preview: string }>();
+  for (const m of msgs) {
+    const key = m.chat_id ?? "";
+    const cur = stat.get(key) ?? { n: 0, preview: "" };
+    cur.n++;
+    // 顺序遍历 + 直接覆盖 = 最后一条留在 preview 里（不用再排序一次）
+    cur.preview = chatPreview(m.role, m.content);
+    stat.set(key, cur);
+  }
+
+  return chats.map((c) => {
+    const s = stat.get(c.id) ?? { n: 0, preview: "" };
+    return {
+      id: c.id,
+      title: c.title ?? "",
+      createdAt: c.created_at,
+      updatedAt: c.updated_at,
+      messageCount: s.n,
+      preview: s.preview,
+    };
+  });
+}
+
+/**
+ * 列表第二行的那句话。空内容也要给人一个交代，不能是一条空白。
+ *
+ * 导出它是为了让 runtime 在"刚发了一条消息"时能就地更新列表项 ——
+ * 那段文字必须和重新读库算出来的**一模一样**，否则列表会在
+ * "刚发完"和"刷新之后"显示两种样子。
+ */
+export function chatPreview(role: string, content: string): string {
+  const who = role === "user" ? "你" : "助手";
+  const body = (content ?? "").replace(/\s+/g, " ").trim();
+  return body ? `${who}：${body.slice(0, 40)}` : `${who}：（没有文字）`;
+}
+
+/**
+ * 全库最大的消息序号。
+ *
+ * 消息的 seq 是**跨会话单调**的（见 runtime 的 nextSeq 说明）。切到很久以前
+ * 的那段对话时，只在当前消息上取 max 会得到一个偏小的值 —— 下一条新消息的
+ * seq 就会插到老消息中间去。所以这个值要从**整张表**上取。
+ */
+export async function maxAgentSeq(): Promise<number> {
+  const rows = await db().select<{ n: number | null }>(
+    `SELECT MAX(seq) AS n FROM core_agent_messages`,
+  );
+  const n = Number(rows[0]?.n ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** 新建一个会话。id / 时间由调用方给 —— 与消息同理，都在 runtime 里统一生成 */
+export async function createAgentChat(chat: {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}): Promise<void> {
+  await db().execute(
+    `INSERT INTO core_agent_chats (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`,
+    [chat.id, chat.title, chat.createdAt, chat.updatedAt],
+  );
+}
+
+/** 改标题（首条消息自动命名、或用户在历史里改） */
+export async function renameAgentChat(id: string, title: string): Promise<void> {
+  await db().execute(`UPDATE core_agent_chats SET title = ? WHERE id = ?`, [title, id]);
+}
+
+/**
+ * 把这个会话顶到最前面。
+ *
+ * 单独一个函数而不是并进 appendAgentMessage：新消息落库和"会话有动静了"
+ * 是两件事，而后者失败（会话行已经不在了）不该让消息写不进去 ——
+ * 消息是用户真正在乎的东西，会话列表的位置只是个排序。
+ */
+export async function touchAgentChat(id: string, updatedAt: string): Promise<void> {
+  await db().execute(`UPDATE core_agent_chats SET updated_at = ? WHERE id = ?`, [updatedAt, id]);
+}
+
+/** 删一段对话（连同它的消息）。返回删掉了几条消息，用于界面提示 */
+export async function deleteAgentChat(id: string): Promise<number> {
+  const rows = await db().select<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM core_agent_messages WHERE chat_id = ?`,
+    [id],
+  );
+  const n = Number(rows[0]?.n ?? 0);
+  await db().execute(`DELETE FROM core_agent_messages WHERE chat_id = ?`, [id]);
+  await db().execute(`DELETE FROM core_agent_chats WHERE id = ?`, [id]);
+  return n;
+}
+
+/**
+ * 一条对话消息。
+ *
+ * `actions` 是助手这一轮**真做过的事**（装了哪个工具、建了哪几条日程、
+ * 被权限挡住了哪一次）。它必须落库：只留一段助手自己写的文本，
+ * 用户就没法分辨"它说它建好了"和"它真的建好了"—— 而那正是这类功能
+ * 最需要被检验的地方（见 migrations 的 v15）。
+ */
+export interface AgentMessageRow {
+  id: string;
+  /** 属于哪一段对话（见 migrations 的 v16） */
+  chatId: string;
+  role: "user" | "assistant";
+  content: string;
+  actions: AgentAction[];
+  /** 这一轮失败的说明（网络、密钥、限流…）。空串表示没出错 */
+  error: string;
+  /** 排序用。毫秒时间戳，同一毫秒内连写两条也不会打乱顺序 */
+  seq: number;
+  createdAt: string;
+}
+
+/**
+ * 读某一段对话的消息（按时间正序）。
+ *
+ * 不分页：一段对话是"一屏一屏翻"的东西，量级是几十到几百条。
+ * 真要长到几千条，该做的是提醒用户开一段新对话，而不是给这个函数加游标。
+ */
+export async function fetchAgentMessages(chatId: string): Promise<AgentMessageRow[]> {
+  const rows = await db().select<{
+    id: string;
+    chat_id: string;
+    role: string;
+    content: string;
+    actions: string;
+    error: string;
+    seq: number;
+    created_at: string;
+  }>(`SELECT * FROM core_agent_messages WHERE chat_id = ? ORDER BY seq ASC`, [chatId]);
+  return rows.map((r) => ({
+    id: r.id,
+    chatId: r.chat_id ?? "",
+    role: r.role === "user" ? "user" : "assistant",
+    content: r.content ?? "",
+    actions: parseActions(r.actions),
+    error: r.error ?? "",
+    seq: Number(r.seq) || 0,
+    createdAt: r.created_at,
+  }));
+}
+
+/**
+ * 解析 actions 列。
+ *
+ * **坏数据一律当空数组**，不让它把整个对话读崩：这一列的写入方只有一个
+ * （助手运行时自己），真出现畸形值多半是手改过库，那时"少显示几张卡片"
+ * 比"助手界面整个打不开"好得多。
+ */
+function parseActions(raw: string | null | undefined): AgentAction[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as AgentAction[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 追加一条消息。id / seq / createdAt 由调用方给 —— 见 runtime 里的连号说明 */
+export async function appendAgentMessage(msg: AgentMessageRow): Promise<void> {
+  await db().execute(
+    `INSERT INTO core_agent_messages (id, chat_id, role, content, actions, error, seq, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      msg.id,
+      msg.chatId,
+      msg.role,
+      msg.content,
+      JSON.stringify(msg.actions ?? []),
+      msg.error ?? "",
+      msg.seq,
+      msg.createdAt,
+    ],
+  );
+}
+
+/**
+ * 清空**全部**对话记录（所有会话一起删）。返回删掉了几条消息。
+ *
+ * 与「新对话」分开：这里是真的删数据，入口只在设置里、且必须两段式确认。
+ * 两者混用一个函数是旧版的做法 —— 结果是想留个念想的人不敢点「新对话」，
+ * 因为他不知道按下去会不会把上一段抹掉。
+ */
+export async function clearAgentMessages(): Promise<number> {
+  const rows = await db().select<{ n: number }>(`SELECT COUNT(*) AS n FROM core_agent_messages`);
+  const n = Number(rows[0]?.n ?? 0);
+  await db().execute(`DELETE FROM core_agent_messages`);
+  await db().execute(`DELETE FROM core_agent_chats`);
+  return n;
 }
 
 /* --------------------------- 工具数据隔离演示 --------------------------- */

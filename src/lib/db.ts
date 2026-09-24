@@ -114,6 +114,33 @@ class MemoryDb implements Db {
       return 0;
     }
 
+    /**
+     * ALTER TABLE ... ADD COLUMN —— 必须给**已有的行**补上这个列。
+     *
+     * 不加这个分支时它会落到函数末尾的 `return 0`（看起来执行成功），后果是
+     * 老数据永远缺这一列：v16 给 core_agent_messages 加 chat_id 就是活例子 ——
+     * 老快照里的消息拿不到 chat_id，读会话时被 `WHERE chat_id = ?` 静默过滤掉，
+     * 用户看到的是"对话记录凭空消失"。而真 SQLite 那边是好的，
+     * 于是同一个 bug 只在浏览器 demo 里出现 —— 最难查的那种。
+     *
+     * 只实现 ADD COLUMN：RENAME / DROP COLUMN 目前没有迁移在用，
+     * 与其猜语义，不如让落到末尾时保持"静默成功"的现状（真要用了再补）。
+     */
+    const alter = /^ALTER\s+TABLE\s+(\w+)\s+ADD\s+(?:COLUMN\s+)?(\w+)\s+(.+)$/i.exec(s);
+    if (alter) {
+      const [, tableName, col, decl] = alter;
+      const dflt = /\bDEFAULT\s+('(?:[^']|'')*'|\S+)/i.exec(decl);
+      const value = dflt ? this.literal(dflt[1]) : null;
+      // 用 table() 而不是查 existing：ALTER 先于 INSERT 跑（迁移就是这么写的），
+      // 表可能还不存在 —— 那就建一张空的，等 INSERT 时列自然会带上。
+      const target = this.table(tableName);
+      for (const row of target.rows) {
+        // 已经有这个列的（比如从新快照恢复的）不动它，别把已有值覆盖成默认值
+        if (!(col in row)) row[col] = value;
+      }
+      return 0;
+    }
+
     // DROP TABLE —— 必须真删，不能"认了这条语句但什么都不做"。
     //
     // 不加这个分支时，DROP 会落到函数末尾的 `return 0`（看起来执行成功），
@@ -303,16 +330,48 @@ class MemoryDb implements Db {
     return true;
   }
 
-  /** 极简 SELECT：支持 WHERE / GROUP BY / ORDER BY / LIMIT，以及常见聚合函数 */
+  /** 极简 SELECT：支持 WHERE / GROUP BY / ORDER BY / LIMIT / OFFSET，以及常见聚合函数 */
   private query<T>(sql: string, params: Param[] = []): T[] {
-    const s = sql.trim().replace(/;$/, "");
+    let s = sql.trim().replace(/;$/, "");
+
+    /*
+     * LIMIT / OFFSET 先摘下来再解析主语句 —— 不能交给主正则，两个原因都是踩过的：
+     *
+     *   1. 主正则里 `ORDER BY\s+(.+?)` 是非贪婪的，配上 LIMIT 组之后它会
+     *      **把 `LIMIT 200 OFFSET 0` 整个吞进排序表达式**，分页悄悄失效；
+     *   2. 语句里**没有 ORDER BY** 时，`(.+?)` 没法消化掉 `OFFSET n`，
+     *      正则整个失配 → 下面直接 `return []`，也就是
+     *      **行明明在，却一行都读不回来，而且不报错**。
+     *      （2026-09-23：五子棋工具的「清空战绩」先 row.select 取要删的行，
+     *      它没带 orderBy，于是永远读到空、一条也删不掉，界面还显示"已清空"。）
+     *
+     * 它们永远在语句末尾、顺序固定（LIMIT 在 OFFSET 前），从后往前摘最省事。
+     */
+    let limit: number | null = null;
+    let offset = 0;
+    const offM = /\s+OFFSET\s+(\d+)\s*$/i.exec(s);
+    if (offM) {
+      offset = Number(offM[1]);
+      s = s.slice(0, offM.index);
+    }
+    const limM = /\s+LIMIT\s+(\d+)\s*$/i.exec(s);
+    if (limM) {
+      limit = Number(limM[1]);
+      s = s.slice(0, limM.index);
+    }
 
     const m =
-      /^SELECT\s+(.+?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+?))?(?:\s+GROUP\s+BY\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?$/is.exec(
+      /^SELECT\s+(.+?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+?))?(?:\s+GROUP\s+BY\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?$/is.exec(
         s,
       );
     if (!m) return [];
-    const [, colsRaw, tableName, whereRaw, groupRaw, orderRaw, limitRaw] = m;
+    const [, colsRaw, tableName, whereRaw, groupRaw, orderRaw] = m;
+
+    /** 分页只在这一处做 —— 两条出口（GROUP BY 早退 / 正常结尾）都得走到 */
+    const page = (list: Row[]): Row[] => {
+      if (limit === null) return offset > 0 ? list.slice(offset) : list;
+      return list.slice(offset, offset + limit);
+    };
 
     let rows = [...this.table(tableName).rows];
     if (whereRaw) rows = rows.filter((r) => this.match(r, whereRaw, params));
@@ -351,7 +410,7 @@ class MemoryDb implements Db {
       }
       rows = out;
       // 分组后 ORDER BY 已在聚合结果上处理，这里直接返回避免列名对不上
-      return rows as unknown as T[];
+      return page(rows) as unknown as T[];
     }
 
     if (orderRaw) {
@@ -371,7 +430,7 @@ class MemoryDb implements Db {
       });
     }
 
-    if (limitRaw) rows = rows.slice(0, Number(limitRaw));
+    rows = page(rows);
 
     // COUNT(*) 聚合成单行结果
     const countMatch = /^COUNT\(\*\)(?:\s+AS\s+(\w+))?$/i.exec(colsRaw.trim());

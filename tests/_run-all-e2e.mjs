@@ -3,9 +3,10 @@
  * 这些脚本都要 dev server 在 localhost:1420 上（已起）。
  * 逐个跑，不并发 —— 它们共用同一个 dev server 与 localStorage，并发会互相踩。
  *
- * ⚠️ 这里只收**需要浏览器**的套件。不依赖浏览器的两套走 npm 脚本：
+ * ⚠️ 这里只收**需要浏览器**的套件。不依赖浏览器的三套走 npm 脚本：
  *   npm run smoke       —— 数据层 / 仓库 / 工具隔离
  *   npm run sync:test   —— 同步的合并算法与写回（含 MemoryDb 往返）
+ *   npm run agent:test  —— AI 助手的动作协议、权限门、流式解析（含 MemoryDb 往返）
  * 漏跑它们不会让这一轮变红，所以改完数据层记得单独跑一次。
  */
 import { spawnSync } from "node:child_process";
@@ -24,6 +25,9 @@ const SUITES = [
   // 工具自己的数据表与互相调用；依赖 tool-browser 之后仍在同一份 localStorage 上跑，
   // 但结尾会自己清掉 namespace，所以放在 tool-browser 之后无副作用
   ["tool-database.mjs", []],
+  // 五子棋：既验"工具在工作台里真的能玩"，也验它有没有守住 tool-authoring
+  // 那份契约（自包含 / data-* / 响应主题）。它只往自己的表里写战绩，不动别人。
+  ["gomoku.mjs", []],
   ["image-crop-ai.mjs", []],
   ["placeholder-tools.mjs", []],
   ["ai-gen.mjs", []],
@@ -37,6 +41,14 @@ const SUITES = [
   ["special-orders.mjs", ["--fresh"]],
   ["urgent.mjs", ["--fresh"]],
   ["panel-resize.mjs", ["--fresh"]],
+  // AI 助手：用 page.route 拦掉对话端点、喂自己拼的 SSE 分片，所以不连任何模型。
+  // 它开头会清一次 localStorage、结尾再清一次，所以放在最后 —— 不打扰别人。
+  // **它验不到"真把工具写进磁盘"**（那要桌面版的 fs），见套件头注释。
+  ["agent.mjs", []],
+  // 助手的入口与容器：悬浮球的拖动/落点持久化、窗口形态（靠右停靠而不是
+  // 铺满整屏的模态）、以及多会话（新建=新开一段而不是清空、切换、两段式删除）。
+  // 同样拦掉模型端点，同样自己清库。
+  ["agent-ball.mjs", []],
 ];
 
 const rows = [];

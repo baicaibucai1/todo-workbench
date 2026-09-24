@@ -166,6 +166,65 @@ export const SETTINGS = {
   onedriveRefreshToken: "onedrive.refreshToken",
   /** 已连接账号（邮箱）。只用于界面显示"已连接为 xxx" */
   onedriveAccount: "onedrive.account",
+
+  /* ---------------------------- AI 助手 ---------------------------- */
+
+  /**
+   * 助手用哪家的对话接口（见 lib/agent/providers.ts 的 AGENT_PROVIDERS）。
+   *
+   * 和同步那边同一个道理：这个键决定"下面哪些字段有意义、请求打到哪个主机"。
+   * 未知值会被 agentProvider() 收拢到 custom（**不是**回落到第一家）——
+   * 回落到别家意味着把 API Key 发到一个用户没配过的主机。
+   */
+  agentProvider: "agent.provider",
+  /** 接口根地址。留空则用服务商的默认地址 */
+  agentBaseUrl: "agent.baseUrl",
+  /**
+   * API Key。
+   *
+   * ⚠️ 与同步密码、OneDrive 的 refresh_token 同一个待遇：**明文存在本机
+   * SQLite 里**（理由见 syncPassword 那条）。区别是它通常还有额度上限、
+   * 且可以随时在服务商后台吊销，所以风险比网盘令牌低一点 ——
+   * 但界面上仍然要写清楚它没被加密。
+   */
+  agentApiKey: "agent.apiKey",
+  /** 模型名。允许自由填写，见 providers 的 editableModel */
+  agentModel: "agent.model",
+  /**
+   * 三项权限，各是一个 "1"/"0"。
+   *
+   * 默认全开：一个不能干活的内置助手只是一个更贵的输入框。但**默认开不等于
+   * 不能关** —— 能改你文件系统的东西，必须有一个明确的刹车（见 lib/agent/actions.ts 的 gate）。
+   */
+  agentPermWriteTools: "agent.perm.writeTools",
+  agentPermSchedules: "agent.perm.schedules",
+  agentPermDatabase: "agent.perm.database",
+  /**
+   * 助手悬浮球的落点（`"x,y"`，以视口左上角为原点的像素）。
+   *
+   * 存成设置而不是组件内部 state：位置是"我习惯把它扔在哪儿"这类偏好，
+   * 每次启动都弹回右下角的话，把它拖开就等于白拖一次。
+   * **松手才落库** —— 拖动过程中每移一像素写一次库，是拿磁盘 I/O
+   * 换一个没人看得见的中间态。
+   *
+   * 空串 = 用默认落点（右下角），见 lib/agent/ball.ts。
+   */
+  agentBallPos: "agent.ballPos",
+  /**
+   * 助手**窗口**上次在哪儿（左上角坐标，字符串 "x,y"）。
+   *
+   * 和球同理：位置是习惯，每次打开都回到同一点的话，把它挪开等于白挪一次。
+   * 窗口尤其如此 —— 它盖在主界面上，压住哪一块取决于当时在看什么，
+   * 这个位置只能由用户决定。空串 = 首次打开，落到左下角（见 windowGeom.ts）。
+   */
+  agentWindowPos: "agent.windowPos",
+  /**
+   * 上次在看哪一段对话。
+   *
+   * 存它是因为助手属于"我上次说到一半"的地方：重启后如果回到第一段历史，
+   * 而刚才那段被顶到列表下面，用户的第一反应是"它把我的对话弄丢了"。
+   */
+  agentCurrentChat: "agent.currentChat",
 } as const;
 
 /** 头像可选色，与列表色板同源，避免两套颜色语言 */
@@ -259,6 +318,20 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.onedriveClientId]: "",
   [SETTINGS.onedriveRefreshToken]: "",
   [SETTINGS.onedriveAccount]: "",
+  // 助手默认指向 Agnes（工作台里已经接入的那家），模型选 Agent 向的那个；
+  // Key 留空 → 界面停在"还没配好"的状态里，明确告诉用户缺什么
+  [SETTINGS.agentProvider]: "agnes",
+  [SETTINGS.agentBaseUrl]: "",
+  [SETTINGS.agentApiKey]: "",
+  [SETTINGS.agentModel]: "agnes-3.0-flash",
+  // 三项权限默认全开，见 SETTINGS 里的说明
+  [SETTINGS.agentPermWriteTools]: "1",
+  [SETTINGS.agentPermSchedules]: "1",
+  [SETTINGS.agentPermDatabase]: "1",
+  // 空串 = 悬浮球用默认落点（右下角）；当前会话空串 = 载入时选最近动过的那段
+  [SETTINGS.agentBallPos]: "",
+  [SETTINGS.agentWindowPos]: "",
+  [SETTINGS.agentCurrentChat]: "",
 };
 
 /**
@@ -282,6 +355,23 @@ export function parseDetailWidth(raw: string | undefined): number {
 
 export function parseSidebarWidth(raw: string | undefined): number {
   return clampWidth(raw, SIDEBAR_WIDTH);
+}
+
+/**
+ * 助手悬浮球的落点（`"x,y"`）→ 坐标，读不出来给 null。
+ *
+ * 为什么只解析、不夹视口边界：**只有拿得到当前视口的人才知道边界是多少**。
+ * 一个被拖到 2200 的 x，在 2560 的显示器上是合法的、在 1366 的笔记本上
+ * 已经在视口外（球会渲染到看不见的地方）。夹取交给拿得到 window 的那一层
+ * （lib/agent/ball.ts 的 clampBallPos）。
+ */
+export function parseBallPos(raw: string | undefined): { x: number; y: number } | null {
+  const m = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(raw ?? "");
+  if (!m) return null;
+  const x = Number(m[1]);
+  const y = Number(m[2]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
 }
 
 /**
@@ -398,8 +488,59 @@ export const STARTUP_VIEWS: Array<{ value: SmartView; label: string }> = [
   { value: "all", label: "全部" },
   { value: "orders", label: "流程任务" },
   { value: "gallery", label: "图库" },
+  // AI 助手也能作为启动视图：习惯一进来就让它排今天的人有这个需求，
+  // 而且它和别的视图没有互斥关系（都能随时切走）
+  { value: "agent", label: "AI 助手" },
 ];
 
 export function isStartupView(v: string | undefined): v is SmartView {
   return STARTUP_VIEWS.some((x) => x.value === v);
+}
+
+/* ------------------------------------------------------------------ */
+/* AI 助手的配置与权限                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 读助手配置。
+ *
+ * 只做"取出与去空白"，**不做校验**（地址合不合法、模型名对不对都不在这里判）。
+ * 判断交给 lib/agent/providers.ts 的 agentConfigProblems —— 那里才知道
+ * 每一家的默认地址是什么、缺哪一项该怎么补。
+ */
+export function readAgentConfig(settings: Record<string, string>): {
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+} {
+  return {
+    provider: (settings[SETTINGS.agentProvider] ?? "").trim() || "agnes",
+    // 地址与 Key 都去空白：从文档里复制粘贴最容易带上首尾空格，
+    // 而带上空格的 Key 会得到一个 401，报错里完全看不出原因
+    baseUrl: (settings[SETTINGS.agentBaseUrl] ?? "").trim(),
+    apiKey: (settings[SETTINGS.agentApiKey] ?? "").trim(),
+    model: (settings[SETTINGS.agentModel] ?? "").trim(),
+  };
+}
+
+/**
+ * 读权限。
+ *
+ * 与其它布尔开关同一条方向：**只有显式写了 "0" 才算关**。
+ * 缺键、空串、手改数据库留下的脏值一律按"开"处理 ——
+ * 反过来写的话，一次意外的脏值会静默阉掉助手的动手能力，
+ * 而用户只会看到它一直在说"我没有权限"，找不出为什么。
+ */
+export function parseAgentPermissions(settings: Record<string, string>): {
+  writeTools: boolean;
+  schedules: boolean;
+  database: boolean;
+} {
+  const on = (key: string) => settings[key] !== "0";
+  return {
+    writeTools: on(SETTINGS.agentPermWriteTools),
+    schedules: on(SETTINGS.agentPermSchedules),
+    database: on(SETTINGS.agentPermDatabase),
+  };
 }

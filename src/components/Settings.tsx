@@ -8,7 +8,7 @@
  * 不摆放那种"存了但不知道有没有用"的开关。
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   X,
   UserRound,
@@ -41,6 +41,12 @@ import {
   Link2,
   LogOut,
   Table2,
+  Bot,
+  Plug,
+  ShieldCheck,
+  Eraser,
+  KeyRound,
+  BookOpen,
 } from "lucide-react";
 import { useStore } from "../store";
 import * as repo from "../lib/repo";
@@ -49,15 +55,18 @@ import {
   AVATAR_COLORS,
   DEFAULT_PROFILE,
   isThemeMode,
+  parseAgentPermissions,
   parseDisabledTools,
   parseSpecialEnabled,
   parseToolKeepState,
   parseUrgentMinutes,
+  readAgentConfig,
   SETTINGS,
   STARTUP_VIEWS,
   toggleDisabledTool,
   URGENT_MINUTES,
   URGENT_PRESETS,
+  withDefaults,
   type ThemeMode,
 } from "../lib/settings";
 import {
@@ -123,11 +132,23 @@ import {
   type SyncReport,
 } from "../lib/syncClient";
 import { SHARD_LABELS, type SyncShardId } from "../lib/sync";
+import { SKILLS } from "../lib/agent/skills";
+import {
+  AGENT_PROVIDERS,
+  agentConfigProblems,
+  agentProvider,
+  chatEndpoint,
+} from "../lib/agent/providers";
+import { chat } from "../lib/agent/client";
+import * as agentRuntime from "../lib/agent/runtime";
 
 const NAV = [
   { key: "profile", label: "个人资料", icon: UserRound },
   { key: "appearance", label: "外观", icon: Palette },
   { key: "tools", label: "工具", icon: Package },
+  // AI 助手紧挨着「工具」：它最主要的一件事就是写工具、给工具绑数据表，
+  // 放在一起，用户找"怎么让它干活"时不用在两个分区之间来回跳
+  { key: "ai", label: "AI 助手", icon: Bot },
   { key: "database", label: "数据库", icon: Database },
   { key: "data", label: "数据与备份", icon: Save },
   { key: "sync", label: "同步", icon: Cloud },
@@ -137,10 +158,27 @@ const NAV = [
 
 type SectionKey = (typeof NAV)[number]["key"];
 
+/** 深链过来的分区名要校验：store 里那一格是 string，不能直接当 key 用 */
+function isSectionKey(v: string | null | undefined): v is SectionKey {
+  return !!v && NAV.some((n) => n.key === v);
+}
+
 interface Flash {
   tone: "ok" | "err";
   text: string;
 }
+
+/**
+ * 工具包的下载地址。
+ *
+ * 0.2.0 起安装包本体不带工具（工具里那份 50MB 的抠图模型不该摊到每一次更新上），
+ * 工具改成 Release 里的另一份 zip 资产。所以"桌面版第一次打开没有工具"是
+ * 设计好的样子，界面必须把下一步说清楚 —— 不然用户看到的就是一个空的面板。
+ *
+ * 不用 <a href>：Tauri 的 webview 里点外链不会跳浏览器（还没接 opener 插件），
+ * 一个点了没反应的链接比一行明明白白的地址更糟。
+ */
+const TOOLS_PACK_URL = "https://github.com/baicaibucai1/todo-workbench/releases/latest";
 
 export default function Settings() {
   const {
@@ -153,9 +191,24 @@ export default function Settings() {
     loadSettings,
     repoUsage,
     refreshRepoUsage,
+    settingsSection,
   } = useStore();
 
-  const [section, setSection] = useState<SectionKey>("profile");
+  /**
+   * 当前分区。
+   *
+   * 初值取自 settingsSection —— 它是 store 里的**一次性落点**：
+   * 助手说"去设置 → AI 助手里配"时能把人直接送到那一页，而不是丢他
+   * 在八个分区里自己找。从侧边栏正常进设置时它是 null，于是回到个人资料。
+   */
+  const [section, setSection] = useState<SectionKey>(() =>
+    isSectionKey(settingsSection) ? settingsSection : "profile",
+  );
+
+  // 设置页开着的时候也要能跟着跳（比如助手把用户引过来之后又指了另一处）
+  useEffect(() => {
+    if (isSectionKey(settingsSection)) setSection(settingsSection);
+  }, [settingsSection]);
   const [flash, setFlash] = useState<Flash | null>(null);
   const [stats, setStats] = useState<{ lists: number; tasks: number; done: number } | null>(
     null,
@@ -332,6 +385,9 @@ export default function Settings() {
             <AppearanceSection settings={settings} saveSettings={saveSettings} />
           )}
           {section === "tools" && <ToolsSection settings={settings} saveSettings={saveSettings} say={say} />}
+          {section === "ai" && (
+            <AgentSection settings={settings} saveSettings={saveSettings} say={say} />
+          )}
           {section === "database" && <DatabaseSection say={say} />}
           {section === "data" && (
             <DataSection
@@ -1623,13 +1679,13 @@ function ToolsSection({
     if (!pending) return;
     setBusy("__import");
     try {
-      const m = await installFromHtml({ html: pending.html, ...input });
+      const { manifest } = await installFromHtml({ html: pending.html, ...input });
       setPending(null);
       await reloadTools();
       // 装完直接打开 —— 对"我导入的东西到底行不行"最直观的回答。
       // 不打开的话用户还得自己在侧边栏里找一遍，而那一刻的迟疑最伤信任。
-      openTool(m.id);
-      say(`已安装「${m.name}」`);
+      openTool(manifest.id);
+      say(`已安装「${manifest.name}」`);
     } catch (err) {
       say(`安装失败：${errText(err)}`, "err");
     } finally {
@@ -1672,7 +1728,42 @@ function ToolsSection({
         />
         <Card>
           {tools.length === 0 && (
-            <div className="text-[13px] text-fg-dim">工具目录里一个工具都没有。</div>
+            <div className="text-[13px] leading-relaxed text-fg-dim">
+              {canManage ? (
+                <>
+                  <div>
+                    桌面版本体不自带工具 —— 工具们作为 Release 上的一份独立资产发布，
+                    谁想要谁下载，不必为了一个用不上的模型多下几十兆。
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span
+                      className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-fg-3"
+                      title={TOOLS_PACK_URL}
+                    >
+                      {TOOLS_PACK_URL}
+                    </span>
+                    <button
+                      onClick={() => {
+                        void navigator.clipboard.writeText(TOOLS_PACK_URL);
+                        say("下载地址已复制");
+                      }}
+                      data-act="copy-tools-pack-url"
+                      className="grid size-7 shrink-0 place-items-center rounded-md border border-line bg-card text-fg-dim hover:bg-hover"
+                      title="复制下载地址"
+                    >
+                      <Copy size={13} />
+                    </button>
+                  </div>
+                  <div className="mt-2">
+                    下载解压后，把里面的 <span className="font-mono text-[11.5px]">tools</span>{" "}
+                    整个文件夹放进下面那行「工具目录」里；也可以跳过这一步 —— 让悬浮球里的助手
+                    直接给你写一个工具，它会自己装好。
+                  </div>
+                </>
+              ) : (
+                "浏览器演示模式只能试用内置工具，安装与卸载请在桌面版里操作。"
+              )}
+            </div>
           )}
           {tools.map((tool, i) => (
             <div key={tool.id}>
@@ -2441,6 +2532,398 @@ function SyncShardLine({ r }: { r: ShardReport }) {
 }
 
 /* -------------------------------- 通用零件 -------------------------------- */
+
+/* ------------------------------ 分区：AI 助手 ------------------------------ */
+
+/**
+ * 三项权限。
+ *
+ * 每一项都必须写清"它具体能碰到什么"——「写工具」这三个字对用户来说
+ * 太抽象了，而它实际意味着"能在你的磁盘上建目录、写文件"。
+ * 关掉时的文案也要一致（见 lib/agent/actions.ts 的 gate，两边说的必须是同一句话）。
+ */
+const PERM_ROWS = [
+  {
+    key: "writeTools",
+    setting: SETTINGS.agentPermWriteTools,
+    label: "写工具",
+    desc: "按标准写出单 HTML 工具，装进工具目录（会在这台机器上建文件）",
+  },
+  {
+    key: "schedules",
+    setting: SETTINGS.agentPermSchedules,
+    label: "建日程",
+    desc: "往待办里写条目与子任务（会改数据库里的日程）",
+  },
+  {
+    key: "database",
+    setting: SETTINGS.agentPermDatabase,
+    label: "绑数据表",
+    desc: "改写某个工具 manifest 里的表声明（会改那个工具的文件）",
+  },
+] as const;
+
+type PermKey = (typeof PERM_ROWS)[number]["key"];
+
+function AgentSection({
+  settings,
+  saveSettings,
+  say,
+}: {
+  settings: Record<string, string>;
+  saveSettings: (patch: Record<string, string>) => Promise<void>;
+  say: (text: string, tone?: Flash["tone"]) => void;
+}) {
+  const cfg = readAgentConfig(withDefaults(settings));
+  const provider = agentProvider(cfg.provider);
+  const problems = agentConfigProblems(cfg);
+  const desktop = isTauri();
+
+  const [busy, setBusy] = useState<"test" | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  // 订阅运行时的对话状态只为显示条数 —— 清空之后要能立刻看到 0 条，
+  // 否则用户按完按钮不确定到底清掉没有
+  const agentState = useSyncExternalStore(
+    agentRuntime.subscribe,
+    agentRuntime.getState,
+    agentRuntime.getState,
+  );
+
+  const commit = (key: string) => (v: string) => {
+    void saveSettings({ [key]: v });
+  };
+
+  /**
+   * 换服务商。
+   *
+   * 模型名跟着换成新家的默认值 —— 沿用它上一家填的模型名几乎必然 404，
+   * 而这会在用户点了"测试连接"之后才暴露出来。地址**刻意不动**：
+   * 自定义地址是用户手填的，来回切一次就丢掉太亏。
+   */
+  const pickProvider = (id: string) => {
+    if (id === cfg.provider) return;
+    const next = agentProvider(id);
+    void saveSettings({
+      [SETTINGS.agentProvider]: id,
+      [SETTINGS.agentModel]: next.defaultModel || cfg.model,
+    });
+  };
+
+  const togglePerm = (key: PermKey, on: boolean) => {
+    const row = PERM_ROWS.find((r) => r.key === key)!;
+    void saveSettings({ [row.setting]: on ? "1" : "0" });
+  };
+
+  /**
+   * 测试连接。
+   *
+   * 真发一次对话请求，而不是只 ping 一下地址 —— 地址能通但 Key 不对、
+   * 或者模型名不存在，是三个**完全不同**的错，只有真发一次才区分得出来
+   * （错误文案由 providers.ts 按状态码给出）。
+   */
+  const doTest = async () => {
+    setBusy("test");
+    try {
+      const r = await chat(cfg, {
+        messages: [{ role: "user", content: "只回两个字：收到" }],
+        tools: [],
+      });
+      const t = (r.text ?? "").trim().replace(/\s+/g, " ").slice(0, 30);
+      say(t ? `连接成功，它回了一句：${t}` : "连接成功（模型回了空内容，但接口是通的）");
+    } catch (e) {
+      say(e instanceof Error ? e.message : String(e), "err");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /**
+   * 清空**全部**历史（所有会话）。
+   *
+   * ⚠️ 它与对话界面右上角那颗「新对话」是两回事：那颗只是新开一段，
+   * 旧的都留在右侧历史里（2026-09-23 的多会话改造）。这里才是真删 ——
+   * 所以入口只在设置里，而且必须两段式确认。
+   */
+  const doClear = async () => {
+    const n = await agentRuntime.clearAllChats();
+    setConfirmClear(false);
+    say(n ? `已清空 ${n} 条对话记录` : "对话记录本来就是空的");
+  };
+
+  return (
+    <div className="max-w-[560px]">
+      <SectionTitle
+        title="AI 助手"
+        desc="工作台内置的助手：能对话、能按单 HTML 工具的标准写出工具并装进来、能把日程记到待办里，也能给工具绑定数据表。它用的是 OpenAI 兼容接口，Key 只存在本机。"
+      />
+
+      {!desktop && (
+        <div className="mb-3 flex items-start gap-2 rounded-lg border border-[#a32d2d]/30 bg-danger-soft px-3 py-2.5">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-danger" />
+          <div className="text-[12px] leading-relaxed text-danger">
+            浏览器演示模式：可以对话（接口允许跨源的话），但装工具、绑数据表这类要写文件的事做不到。
+            助手会如实告诉你，并把生成好的源码留在动作卡上让你复制走。
+          </div>
+        </div>
+      )}
+
+      {/* 服务商 */}
+      <div className="mb-4">
+        <div className="mb-2 text-[13px] font-medium text-fg">用哪家的模型</div>
+        <div className="flex flex-wrap gap-2">
+          {AGENT_PROVIDERS.map((p) => {
+            const on = cfg.provider === p.id;
+            return (
+              <button
+                key={p.id}
+                onClick={() => pickProvider(p.id)}
+                aria-pressed={on}
+                data-agent-provider={p.id}
+                data-on={on ? "1" : "0"}
+                className={`max-w-[260px] rounded-lg border px-3 py-2 text-left ${
+                  on ? "border-accent bg-card" : "border-line bg-card hover:bg-hover"
+                }`}
+              >
+                <span className="block text-[13px] text-fg-2">{p.name}</span>
+                <span className="mt-0.5 block text-[11.5px] leading-relaxed text-fg-dim">{p.desc}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <Card>
+        <div className="space-y-3">
+          {/* 地址：预设下拉 + 手填。自建网关与 OpenAI 官方都靠这一格 */}
+          <label className="block">
+            <span className="mb-1 block text-[12px] text-fg-dim">接口地址（Base URL）</span>
+            <div className="flex gap-2">
+              <input
+                value={cfg.baseUrl}
+                placeholder={provider.defaultBase || "https://你的网关/v1"}
+                data-field="agent-base-url"
+                onChange={(e) => void saveSettings({ [SETTINGS.agentBaseUrl]: e.target.value })}
+                className="min-w-0 flex-1 rounded-lg border border-line bg-card px-3 py-2 text-[13px] text-fg-2 outline-none focus:border-accent"
+              />
+              {provider.basePresets.length > 0 && (
+                <select
+                  value=""
+                  data-agent-base-preset=""
+                  onChange={(e) => {
+                    if (e.target.value) void saveSettings({ [SETTINGS.agentBaseUrl]: e.target.value });
+                  }}
+                  className="shrink-0 rounded-lg border border-line bg-card px-2 py-2 text-[12.5px] text-fg-3 outline-none"
+                >
+                  <option value="">常用地址…</option>
+                  {provider.basePresets.map((b) => (
+                    <option key={b.value} value={b.value}>
+                      {b.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <span className="mt-1 block text-[11.5px] leading-relaxed text-fg-dim">
+              留空就用 {provider.name} 的默认地址{provider.defaultBase ? `（${provider.defaultBase}）` : ""}。
+              把完整端点整条粘进来也能用。
+            </span>
+          </label>
+
+          <ModelField
+            value={cfg.model}
+            placeholder={provider.defaultModel || "填模型名，如 gpt-4o-mini"}
+            models={provider.models}
+            onCommit={commit(SETTINGS.agentModel)}
+          />
+
+          <TextField
+            label="API Key"
+            value={cfg.apiKey}
+            type="password"
+            placeholder="sk-…"
+            onCommit={commit(SETTINGS.agentApiKey)}
+            testId="agent-key"
+            hint="只存在本机数据库的 core_settings 里，请求直接从这里发到服务商，不经过任何中转。"
+          />
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
+            <ActionButton
+              icon={<Plug size={14} />}
+              label={busy === "test" ? "测试中…" : "测试连接"}
+              onClick={() => void doTest()}
+              disabled={busy !== null || problems.length > 0}
+              data-agent-test
+            />
+            <span className="min-w-0 flex-1 text-[11.5px] leading-relaxed text-fg-dim">
+              {problems.length
+                ? problems.join("；")
+                : `会向 ${chatEndpoint(cfg)} 真发一次短对话`}
+            </span>
+          </div>
+          {problems.length === 0 && (
+            <p className="text-[11.5px] leading-relaxed text-fg-dim">
+              申请地址见{" "}
+              <a
+                href={provider.docs}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent underline"
+              >
+                {provider.name} 文档
+              </a>
+              。
+            </p>
+          )}
+        </div>
+      </Card>
+
+      {/* 权限 */}
+      <div className="mt-6">
+        <div className="mb-2 flex items-center gap-1.5 text-[13px] font-medium text-fg">
+          <ShieldCheck size={14} className="text-fg-dim" />
+          它被允许做的事
+        </div>
+        <Card>
+          <div className="space-y-3">
+            {PERM_ROWS.map((row) => (
+              <FieldRow
+                key={row.key}
+                label={row.label}
+                hint={row.desc}
+              >
+                <Switch
+                  on={parseAgentPermissions(withDefaults(settings))[row.key]}
+                  onToggle={() =>
+                    togglePerm(row.key, !parseAgentPermissions(withDefaults(settings))[row.key])
+                  }
+                  testId={`agent-perm-${row.key}`}
+                />
+              </FieldRow>
+            ))}
+          </div>
+          <p className="mt-3 border-t border-line pt-3 text-[11.5px] leading-relaxed text-fg-dim">
+            关掉之后助手不会绕过它，也不会假装做完 —— 它会告诉你哪一项关了、去哪儿开，
+            然后等你打开。这三项默认都是开的：一个不能干活的助手就只是个更贵的输入框。
+          </p>
+        </Card>
+      </div>
+
+      {/* 技能 */}
+      <div className="mt-6">
+        <div className="mb-2 flex items-center gap-1.5 text-[13px] font-medium text-fg">
+          <BookOpen size={14} className="text-fg-dim" />
+          它会照着做的标准
+        </div>
+        <Card>
+          {SKILLS.map((s, i) => (
+            <div
+              key={s.id}
+              data-agent-skill-row={s.id}
+              className={i ? "mt-2.5 border-t border-line pt-2.5" : ""}
+            >
+              <div className="text-[12.5px] text-fg-2">{s.title}</div>
+              <div className="mt-0.5 text-[11.5px] leading-relaxed text-fg-dim">
+                {s.rules.length} 条硬规则 · {s.summary}
+              </div>
+            </div>
+          ))}
+          <p className="mt-3 border-t border-line pt-3 text-[11.5px] leading-relaxed text-fg-dim">
+            这些标准打包在程序里，和工具的运行机制是同一份约定（不是一份会过期的说明）。
+            每条技能还有一份全文，助手真要动手写工具时会自己去取；全文在对话界面右上角的「技能」里能看到。
+          </p>
+        </Card>
+      </div>
+
+      {/* 对话记录 */}
+      <div className="mt-6">
+        <div className="mb-2 flex items-center gap-1.5 text-[13px] font-medium text-fg">
+          <Eraser size={14} className="text-fg-dim" />
+          对话记录
+        </div>
+        <Card>
+          <div className="flex flex-wrap items-center gap-2">
+            <ActionButton
+              icon={confirmClear ? <Check size={14} /> : <Eraser size={14} />}
+              label={confirmClear ? "确认清空" : "清空对话"}
+              onClick={() => (confirmClear ? void doClear() : setConfirmClear(true))}
+              data-agent-clear
+              data-agent-clear-confirm={confirmClear ? "1" : "0"}
+            />
+            <span className="text-[11.5px] leading-relaxed text-fg-dim">
+              当前共 {agentState.chats.length} 段对话、{agentState.messages.length} 条消息，存在本机数据库（
+              <code className="font-mono">core_agent_chats</code> /{" "}
+              <code className="font-mono">core_agent_messages</code>）。
+              这里是<b className="font-medium">真删全部</b>——对话界面里那颗「新对话」只是新开一段，
+              旧的会留在右侧历史里。清空不影响任何待办或工具。
+            </span>
+          </div>
+        </Card>
+      </div>
+
+      <div className="mt-4 flex items-start gap-2 rounded-lg border border-line bg-card px-3 py-2.5">
+        <KeyRound size={13} className="mt-0.5 shrink-0 text-fg-dim" />
+        <div className="text-[11.5px] leading-relaxed text-fg-dim">
+          助手能看到待办与清单（读得到你手上有什么），但<b className="font-medium">碰不到流程任务</b>，
+          也没有直接执行 SQL 的通道 —— 工具的私有数据只能由那个工具自己经宿主通道访问。
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 模型名：下拉里给推荐值，但**始终允许手填** —— 新模型发布总比这里更新得快 */
+function ModelField({
+  value,
+  placeholder,
+  models,
+  onCommit,
+}: {
+  value: string;
+  placeholder?: string;
+  models: Array<{ id: string; label: string }>;
+  onCommit: (v: string) => void;
+}) {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  const listId = "agent-model-options";
+
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[12px] text-fg-dim">模型</span>
+      <input
+        list={models.length ? listId : undefined}
+        value={v}
+        placeholder={placeholder}
+        data-field="agent-model"
+        onChange={(e) => setV(e.target.value)}
+        onBlur={() => {
+          if (v !== value) onCommit(v.trim());
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            setV(value);
+            e.currentTarget.blur();
+          }
+        }}
+        className="w-full rounded-lg border border-line bg-card px-3 py-2 text-[13px] text-fg-2 outline-none focus:border-accent"
+      />
+      {models.length > 0 && (
+        <datalist id={listId}>
+          {models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </datalist>
+      )}
+      <span className="mt-1 block text-[11.5px] leading-relaxed text-fg-dim">
+        可以从下拉里挑，也可以直接填。写工具是它的主力活，选一个编程向的模型效果差别很明显。
+      </span>
+    </label>
+  );
+}
 
 function SectionTitle({ title, desc }: { title: string; desc?: string }) {
   return (

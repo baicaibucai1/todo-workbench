@@ -512,6 +512,103 @@ export const migrations: Migration[] = [
       ALTER TABLE core_task_links ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    // 内置 AI 助手的对话记录（v15）。
+    //
+    // 为什么要落库而不是只放内存：助手是"要替你干活"的那个角色，
+    // 一次对话里交代的背景（"我们做电商，单号都以 SF 开头"、"这个工具的表要三列"）
+    // 一旦重启就没了，下次得从头讲一遍 —— 那它就不像一个助手，像一个每次失忆的表单。
+    //
+    // 为什么存 core_ 而不是工具私有表：**助手是宿主的一部分**，它要碰 core_tasks
+    // （建日程）和工具目录（写工具），这两件事在工具沙箱里都做不到
+    // （工具在物理上碰不到 core_*，见 toolBridge 的文件头）。
+    // 所以它不是 tools/ai-agent，而是和「特殊单号」同一种东西：一个原生视图。
+    //
+    // 为什么只有一个会话（没有 thread 表）：需求是"基本的对话"。
+    // 多会话要配一套切换/重命名/删除的界面，而那些界面在没有搜索与分享之前
+    // 只是把"我上次说了什么"变得更难找。一个会话 + 一颗「新对话」按钮足够，
+    // 真想留下什么，用户自己会写进待办或工具里 —— 那才是这个应用里
+    // 有长期价值的东西。
+    //
+    // ⚠️ 上面这段结论**已被 v16 推翻**（见文件末尾的 add_agent_chats）。
+    // 留在这里是因为它记录了当时的判断依据，而推翻它的理由恰好是那句
+    // 判断的前提不成立：会话不会一直少，而"新对话 = 删掉旧的"会让用户
+    // 不敢开新对话 —— 一个让人不敢用的按钮，就不该存在。
+    //
+    // actions 存 JSON 数组：助手每一轮做过什么（装了哪个工具、建了哪几条日程）
+    // 必须能回放。只存一段文本的话，"它说它建了"和"它真建了"就分不出来了，
+    // 而那正是这类功能最该被检验的地方。
+    //
+    // seq 用**毫秒时间戳**而不是行号：排序要跨越"同一毫秒内连写两条"这种情形，
+    // 而这段代码里确实会（一条助手消息 + 紧随其后的动作结果）。用 rowid 不可行 ——
+    // 内存库没有这个概念。
+    version: 15,
+    name: "add_agent_messages",
+    sql: `
+      CREATE TABLE IF NOT EXISTS core_agent_messages (
+        id         TEXT PRIMARY KEY,
+        role       TEXT NOT NULL,
+        content    TEXT NOT NULL DEFAULT '',
+        actions    TEXT NOT NULL DEFAULT '[]',
+        error      TEXT NOT NULL DEFAULT '',
+        seq        INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_core_agent_seq ON core_agent_messages(seq);
+    `,
+  },
+  {
+    // 助手的多会话（v16）。
+    //
+    // v15 的注释里写过"一个会话 + 一颗新对话按钮足够"，理由是"多会话界面在
+    // 没有搜索与分享之前，只是把'我上次说了什么'变得更难找"。用下来这句话
+    // 只在**会话很少**时成立：天天用的人会自然按话题分开（今天在调工具、
+    // 昨天在建流程），而旧的「新对话」是把上一段**删掉** —— 那等于让人在一块
+    // 不断被擦掉的黑板上干活，想回头看一眼昨天那版工具的参数，已经没了。
+    //
+    // 所以 v16 把"清空"拆成两件事：
+    //   · 「新对话」= 开一段新的，旧的留在历史里（对话界面右上角）
+    //   · 「清空对话」= 显式删，仍然两段式确认（设置 → AI 助手）
+    // 会话要有标题，否则历史列表里全是"3 天前"这种分辨不出内容的项。标题不额外
+    // 占用户操作：第一次说话时取那句话的前几个字（见 runtime 的 autoTitle）。
+    //
+    // chat_id 用 ALTER 追加而不是重建表：core_agent_messages 里已经有真实对话，
+    // 重建就得搬数据，而"搬数据"在内存库（浏览器 demo）上没有对应能力 ——
+    // 那份实现只认 CREATE / ALTER / INSERT / UPDATE / DELETE 这几样。
+    //
+    // 老消息（chat_id 为空）归到一条「之前的对话」。不这么做的话，升级后
+    // 用户打开助手会看到一份空的历史，而他那些记录明明还在库里 ——
+    // 那是最糟的一种"数据没丢，但看起来丢了"。
+    // 回填写成 INSERT ... SELECT 一体：迁移是纯 SQL，中间没有 JS 参与的余地；
+    // 表本来就空时 SELECT 不产生行，正好什么都不做。
+    //
+    // ⚠️ 这条迁移让 memory 库第一次用上 ALTER：db.ts 的 MemoryDb 必须支持它，
+    // 否则老快照里的行拿不到 chat_id，读会话时会被静默过滤掉（见 PITFALLS 五十七）。
+    version: 16,
+    name: "add_agent_chats",
+    sql: `
+      CREATE TABLE IF NOT EXISTS core_agent_chats (
+        id         TEXT PRIMARY KEY,
+        title      TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_core_agent_chats_updated ON core_agent_chats(updated_at);
+
+      ALTER TABLE core_agent_messages ADD COLUMN chat_id TEXT NOT NULL DEFAULT '';
+
+      CREATE INDEX IF NOT EXISTS idx_core_agent_msg_chat ON core_agent_messages(chat_id);
+
+      INSERT INTO core_agent_chats (id, title, created_at, updated_at)
+        SELECT 'chat-legacy', '之前的对话', MIN(created_at), MAX(created_at)
+        FROM core_agent_messages
+        WHERE EXISTS (SELECT 1 FROM core_agent_messages);
+
+      UPDATE core_agent_messages SET chat_id = 'chat-legacy' WHERE chat_id = '';
+    `,
+  },
 ];
 
 /** 当前代码期望的 schema 版本 */

@@ -31,7 +31,7 @@
  */
 
 import { isTauri } from "./db";
-import { loadBundledTools } from "./tools";
+import { loadBundledTools, validateManifest } from "./tools";
 import { validateToolSchema } from "./toolSchema";
 import type { ToolManifest } from "../types";
 
@@ -132,10 +132,17 @@ export function buildManifest(input: {
   version?: string;
   entry?: string;
   /**
-   * 数据表声明。导入界面暂不暴露这个字段（还没设计出不给用户添堵的填法），
-   * 但**格式与目录型工具完全一致**，所以将来补 UI 只需要动调用方这一处。
+   * 数据表声明。
+   *
+   * 导入界面仍然不暴露这个字段（还没设计出不给用户添堵的填法），
+   * 但**它现在有真实的调用方**：内置 AI 助手的 install_tool / bind_database
+   * 会带着一份 schema 进来 —— 那正是"不给用户添堵的填法"：
+   * 用户说"我要记加班时长"，助手把表和界面一起写出来。
    */
   schema?: ToolManifest["schema"];
+  /** 作者。默认「导入」；AI 助手造的工具记「AI 助手」，出处要能查 */
+  author?: string;
+  dbVersion?: number;
 }): ToolManifest {
   const schema = validateToolSchema(input.id.trim(), input.schema);
   return {
@@ -145,8 +152,8 @@ export function buildManifest(input: {
     description: input.description?.trim() || undefined,
     icon: input.icon?.trim() || "package",
     entry: input.entry ?? "index.html",
-    dbVersion: 1,
-    author: "导入",
+    dbVersion: Math.max(1, Math.floor(input.dbVersion ?? 1)),
+    author: input.author?.trim() || "导入",
     source: "user",
     // 校验不通过就整份丢掉：宁可"这个工具没有表"，也不要一个半截可用的 schema
     ...(schema ? { schema } : {}),
@@ -183,6 +190,10 @@ async function copyTree(from: string, to: string): Promise<number> {
  * 都必须是自包含的**：内联的 CSS/JS、或 data: URI。相对路径引用
  * （`src="helper.js"`）不会跟着进来 —— 桌面端工具经 asset 协议加载，
  * 相对引用本来也会被解析到站点根（见 ToolHost 里那段警告）。
+ *
+ * `overwrite` 是给内置 AI 助手用的：用户说"把那个工具改一下"时，
+ * 它要能就地更新。**默认不开** —— 界面上手动导入时覆盖是不可逆的，
+ * 而用户点「安装」时心里想的是"装一个新的"。
  */
 export async function installFromHtml(input: {
   html: string;
@@ -190,7 +201,12 @@ export async function installFromHtml(input: {
   name: string;
   description?: string;
   icon?: string;
-}): Promise<ToolManifest> {
+  /** 数据表声明。校验不过会被丢掉（调用方要自查，见 lib/agent/actions.ts） */
+  schema?: ToolManifest["schema"];
+  author?: string;
+  /** 已存在同名工具时覆盖它。默认 false（报错而不是覆盖） */
+  overwrite?: boolean;
+}): Promise<{ manifest: ToolManifest; replaced: boolean }> {
   if (!canInstallTools()) throw new Error("浏览器演示模式无法安装工具，请在桌面版里操作");
 
   const html = input.html ?? "";
@@ -202,30 +218,102 @@ export async function installFromHtml(input: {
     throw new Error("这看起来不是一个 HTML 文件（里面没有 <html> 或 <body>）");
   }
 
-  const manifest = buildManifest(input);
-  const bad = checkToolId(manifest.id);
-  if (bad) throw new Error(bad);
-
   const fs = await import("@tauri-apps/plugin-fs");
   const { join } = await import("@tauri-apps/api/path");
-  const dir = await toolDir(manifest.id);
+  const dir = await toolDir(input.id.trim());
 
-  // 目录已存在就停手。这里**不做覆盖**：用户数据区里可能躺着同一 id 的
-  // 老工具（甚至是本地改过的内置工具副本），覆盖是不可逆的。
-  if (await fs.exists(dir)) {
-    throw new Error(`已经存在 id 为「${manifest.id}」的工具目录，换个 id 或先卸载它`);
+  // 目录已存在：默认停手。用户数据区里可能躺着同一 id 的老工具
+  // （甚至是本地改过的内置工具副本），覆盖是不可逆的。
+  const exists = await fs.exists(dir);
+  let replaced = false;
+  if (exists) {
+    if (!input.overwrite) {
+      throw new Error(
+        `已经存在 id 为「${input.id.trim()}」的工具目录，换个 id 或先卸载它`,
+      );
+    }
+    replaced = true;
   }
+
+  // 覆盖时 dbVersion 要算准：宿主按它决定要不要重跑建表。
+  //   · 新声明和旧声明一样 → 保持原版本号（不重跑，避免无谓的 DDL）
+  //   · 声明变了（或从无到有）→ +1（重跑 DDL；已存在的表不会被改列，
+  //     这点写在 skills/data-binding 里，界面上也会提示）
+  const prev = exists ? await readInstalledManifest(input.id.trim()) : null;
+  let dbVersion = 1;
+  if (prev?.schema) {
+    const changed = JSON.stringify(prev.schema) !== JSON.stringify(input.schema ?? null);
+    dbVersion = changed ? prev.dbVersion + 1 : prev.dbVersion;
+  }
+
+  const manifest = buildManifest({ ...input, dbVersion });
+
+  const bad = checkToolId(manifest.id, replaced ? [] : []);
+  if (bad) throw new Error(bad);
 
   const { root } = await paths();
   await fs.mkdir(root, { recursive: true });
   await fs.mkdir(dir, { recursive: true });
   await fs.writeTextFile(await join(dir, "index.html"), html);
-  await fs.writeTextFile(
-    await join(dir, "manifest.json"),
-    `${JSON.stringify(manifest, null, 2)}\n`,
-  );
+  await fs.writeTextFile(await join(dir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
-  return manifest;
+  return { manifest, replaced };
+}
+
+/* ---------------------------- 磁盘上的 manifest ---------------------------- */
+
+/**
+ * 读用户数据区里某个工具的 manifest.json。
+ *
+ * 存在的理由：**注册表里的 manifest 是扫描时的快照**，而"给工具绑数据表"
+ * 要改的是磁盘上的那份 —— 改写必须以磁盘现状为基准，否则会把扫描之后
+ * 别人（或另一个会话）写的改动覆盖掉。
+ *
+ * 读不到就是 null，不抛错：工具不存在、manifest 坏了、没权限，对调用方
+ * 来说都是"这份用不了"，由它决定怎么说话。
+ */
+export async function readInstalledManifest(id: string): Promise<ToolManifest | null> {
+  try {
+    const fs = await import("@tauri-apps/plugin-fs");
+    const { join } = await import("@tauri-apps/api/path");
+    const file = await join(await toolDir(id), "manifest.json");
+    if (!(await fs.exists(file))) return null;
+    return validateManifest(JSON.parse(await fs.readTextFile(file)));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 改写用户数据区里某个工具的 manifest.json。
+ *
+ * 只给「绑定数据表」用（见 lib/agent/actions.ts），所以它守着两条：
+ *   1. 工具必须已经存在（不新建目录 —— 新建是 installFromHtml 的事）
+ *   2. **只改 schema 与 dbVersion**，其余字段原样保留（用户自己改过的名字、
+ *      说明、版本号都得留着；整份重写等于把他的修改抹平）
+ */
+export async function writeToolSchema(
+  id: string,
+  schema: ToolManifest["schema"],
+): Promise<ToolManifest> {
+  if (!canInstallTools()) throw new Error("浏览器演示模式无法改写工具文件，请在桌面版里操作");
+
+  const prev = await readInstalledManifest(id);
+  if (!prev) throw new Error(`工具目录里没有「${id}」的 manifest.json`);
+
+  const next: ToolManifest = {
+    ...prev,
+    ...(schema ? { schema } : {}),
+    dbVersion: schema ? (prev.schema ? prev.dbVersion + 1 : 1) : prev.dbVersion,
+  };
+
+  const fs = await import("@tauri-apps/plugin-fs");
+  const { join } = await import("@tauri-apps/api/path");
+  await fs.writeTextFile(
+    await join(await toolDir(id), "manifest.json"),
+    `${JSON.stringify(next, null, 2)}\n`,
+  );
+  return next;
 }
 
 /* ---------------------------- 卸载记录 ---------------------------- */

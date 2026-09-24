@@ -238,6 +238,27 @@ interface State {
   /** 设置界面是否打开 */
   settingsOpen: boolean;
   /**
+   * AI 助手的窗口是否打开。
+   *
+   * 助手从"一个平级视图"改成了**悬浮窗口**（2026-09-23 用户要求：一个能拖动的
+   * 悬浮球，点开是窗口，右侧挂历史对话）。所以它不再占 `view` 那个位置 ——
+   * `view` 回答的是"中间那一栏显示什么"，而助手现在是**盖在上面的一层**，
+   * 两者可以同时存在：用户能一边翻着待办一边问它问题。
+   *
+   * 窗口关掉不等于打断：状态仍在 lib/agent/runtime.ts 的模块级 store 里，
+   * 关掉窗口之后那一轮照样跑完（这也是当初把它做成视图的理由，
+   * 换成浮层之后那条理由依然成立，只是入口形态变了）。
+   */
+  agentOpen: boolean;
+  /**
+   * 打开设置时落在哪个分区（见 openSettings）。
+   *
+   * 存在的理由很具体：助手没配好时会说"去「设置 → AI 助手」里配"，
+   * 如果那句话点不开、用户还得自己在八个分区里找，那这句提示等于没说。
+   * 它是一条**一次性**落点：正常从侧边栏进设置、或关掉设置时都会清成 null。
+   */
+  settingsSection: string | null;
+  /**
    * 流程编辑器是否打开，以及打开时聚焦哪套流程。
    * 做成全局状态而不是挂在某个组件里：入口有两个（流程任务详情里「编辑流程」、
    * 底部创建器的齿轮），挂局部会让两处各渲染一份编辑器。
@@ -284,8 +305,17 @@ interface State {
   refresh: () => Promise<void>;
   loadSettings: () => Promise<void>;
   saveSettings: (patch: Record<string, string>) => Promise<void>;
-  openSettings: (open: boolean) => void;
+  /** 打开设置。第二个参数是**一次性**的分区落点，见 settingsSection */
+  openSettings: (open: boolean, section?: string) => void;
   setView: (view: ViewKey, listId?: string) => Promise<void>;
+  /**
+   * 开关助手窗口。两个入口走这里：悬浮球、Esc（侧栏那一项 2026-09-23 去掉了）。
+   * 只改开关，不碰当前那段对话 —— 关掉窗口再打开，用户应该回到原处。
+   * 打开时顺手收起设置页（实现里有说明：两者都是盖住主界面的大块界面）。
+   */
+  openAgent: () => void;
+  closeAgent: () => void;
+  toggleAgent: () => void;
   openTool: (id: string | null) => void;
   /**
    * 由**别的工具**发起的打开：除了切到那个工具，还要把一份数据交给它。
@@ -451,6 +481,8 @@ export const useStore = create<State>((set, get) => ({
   detailClosedByUser: false,
   sidebarOpen: true,
   settingsOpen: false,
+  agentOpen: false,
+  settingsSection: null,
   flowEditorOpen: false,
   flowEditorFlowId: null,
   settings: {},
@@ -477,6 +509,14 @@ export const useStore = create<State>((set, get) => ({
     const theme = settings[SETTINGS.theme];
     const enabledTools = filterEnabled(tools, parseDisabledTools(settings[SETTINGS.toolsDisabled]));
 
+    /**
+     * 「AI 助手」在 2026-09-23 从"平级视图"变成了**浮层**（见 agentOpen 的说明）。
+     * 把它设成启动视图的人想要的仍然是"一进来就能问它"，所以这里打开窗口，
+     * 而 `view` 落到它后面的那一层 —— 中间那栏必须有内容，不能空着。
+     */
+    const startup = settings[SETTINGS.startupView];
+    const startupAgent = startup === "agent";
+
     set({
       dbInfo: dbInfo(),
       tools,
@@ -486,9 +526,8 @@ export const useStore = create<State>((set, get) => ({
       settings,
       // 配置决定初始形态：侧边栏是否展开、进来先看哪个视图
       sidebarOpen: settings[SETTINGS.sidebarOpen] !== "0",
-      view: isStartupView(settings[SETTINGS.startupView])
-        ? (settings[SETTINGS.startupView] as SmartView)
-        : "myday",
+      view: !startupAgent && isStartupView(startup) ? (startup as SmartView) : "myday",
+      agentOpen: startupAgent,
     });
     applyTheme(isThemeMode(theme) ? theme : "light");
 
@@ -562,6 +601,13 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setView: async (view, listId) => {
+    // 「AI 助手」不再是视图组里的一员，它现在是浮层。还按旧语义调它的地方
+    // （启动视图、以后的直达入口）一律落到"打开窗口"上 —— 放行的话中间那栏
+    // 会切到一个没有对应界面的分支，用户看到一片空白，还以为数据没了。
+    if (view === "agent") {
+      get().openAgent();
+      return;
+    }
     // 「特殊单号」关掉之后这个视图就不存在了，必须拦一道 —— 进这个视图的路
     // 不止侧边栏一条（时效提醒卡片的「查看」、以后的直达链接都会走到这里），
     // 放行的话用户会落到一个永远空着的列表上，看着像数据丢了。
@@ -730,7 +776,35 @@ export const useStore = create<State>((set, get) => ({
    * 清掉的话每次关掉设置都会掉进空态，用户得重新点一遍原来那条。
    * 隐藏交给 TaskDetail 自己判断（settingsOpen 时不渲染），选中的状态留着。
    */
-  openSettings: (open) => set({ settingsOpen: open }),
+  openSettings: (open, section) =>
+    set({
+      settingsOpen: open,
+      settingsSection: open ? (section ?? null) : null,
+      /**
+       * 打开设置时把助手窗口收起来。
+       *
+       * 窗口是**盖在主界面上**的一层，留着的话用户点进设置就被自己的窗口挡着。
+       * 而"去设置"这个动作本身就意味着要离开助手（去配 Key、去改权限），
+       * 所以这里收起来是顺手的 —— 关设置的时候不动它，别把用户已经关了的
+       * 窗口又"恢复"出来。
+       */
+      ...(open ? { agentOpen: false } : {}),
+    }),
+
+  /**
+   * 打开助手窗口。
+   *
+   * 顺手把设置页收起来：两者都是**盖在主界面上的大块界面**，同时开着谁也
+   * 看不清谁（窗口居正中，正好压住设置页的中间那几栏）。而"打开助手"
+   * 这个动作本身就意味着用户已经决定要跟它说话了 —— 配好 Key 之后
+   * 点球，就该直接进对话，而不是让他先自己关掉设置。
+   *
+   * 入口只有球（2026-09-23 起侧栏那一项去掉了），所以这个动作的发起者
+   * 只可能是 AgentBall —— setView("agent") 仍留着重定向到这里的兜底。
+   */
+  openAgent: () => set({ agentOpen: true, settingsOpen: false, settingsSection: null }),
+  closeAgent: () => set({ agentOpen: false }),
+  toggleAgent: () => (get().agentOpen ? get().closeAgent() : get().openAgent()),
 
   loadSettings: async () => {
     const settings = withDefaults(await repo.getAllSettings());

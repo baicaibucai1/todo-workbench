@@ -5,44 +5,50 @@ import fs from "node:fs";
 import path from "node:path";
 
 /**
- * 把 tools/ 目录当作静态资源随构建产出。
+ * 保证构建产物里**没有** tools/。
  *
- * 为什么需要它：工具是「运行时可插拔」的 —— 宿主只按 manifest 契约去读文件，
- * 不认识里面是什么内容，所以工具目录不参与打包，必须原样搬运。
+ * 0.2.0 之前这里是反向的：把整个 tools/ 复制进 dist，再由 Tauri 把 dist 嵌进
+ * exe。工具里有一份 50 MB 的抠图模型（image-crop/ai），于是每一个用户、每一次
+ * 增量更新，都要为一个他可能压根不用的工具下载几十兆。
  *
- * 开发时其实不需要这个插件：tools/ 就在工程根目录下，
- * dev server 会把它当静态资源直接服务，工具能被真实嵌入。
- * 这里只补上构建这一步，让 `vite preview` 和部署出去的精简 demo 也能用。
+ * 改成的样子：
+ *   · 安装包（含 exe 里的 dist）一个工具都不带
+ *   · 工具单独打成 zip，挂在同一个 Release 上（scripts/pack-tools.mjs），
+ *     想要的用户下载解压到 %APPDATA%\…\tools 即可，或者让内置助手现写一个
+ *
+ * 这里做的是**删而不是不管**：dist/ 常常是复用的（打包脚本只在源码变新时才重建），
+ * 一次过去构建的 dist/tools 会安静地躺在那儿、跟着下一次打包重新进 exe。
+ * 显式删掉它，"不带工具"就不会因为目录里有什么残留而失效。
+ *
+ * 开发时不受影响：tools/ 在工程根目录下，dev server 本来就把它当静态资源服务，
+ * 浏览器演示模式依旧能真正打开每个工具。
  */
-function workbenchTools(): Plugin {
+function stripBundledTools(): Plugin {
   // 从 config root 推导，避免依赖启动时的 CWD
-  let toolsDir = "";
   let outDir = "";
 
   return {
-    name: "workbench-tools",
+    name: "workbench-no-bundled-tools",
     apply: "build",
     configResolved(config) {
-      toolsDir = path.resolve(config.root, "tools");
       outDir = path.resolve(config.root, config.build.outDir);
     },
     closeBundle() {
-      if (!fs.existsSync(toolsDir)) return;
       const dest = path.join(outDir, "tools");
-      fs.rmSync(dest, { recursive: true, force: true });
-      fs.cpSync(toolsDir, dest, { recursive: true });
+      if (!fs.existsSync(dest)) return;
       const count = fs.readdirSync(dest).filter((n) =>
         fs.statSync(path.join(dest, n)).isDirectory(),
       ).length;
+      fs.rmSync(dest, { recursive: true, force: true });
       console.log(
-        `  \x1b[2m→\x1b[0m tools/ \x1b[2m已复制 ${count} 个工具到\x1b[0m ${path.relative(process.cwd(), dest)}`,
+        `  \x1b[2m→\x1b[0m tools/ \x1b[2m已从产物中移除 ${count} 个工具（工具改为 Release 上的独立资产）\x1b[0m`,
       );
     },
   };
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), workbenchTools()],
+  plugins: [react(), tailwindcss(), stripBundledTools()],
   clearScreen: false,
   server: {
     port: 1420,

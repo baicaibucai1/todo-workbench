@@ -144,7 +144,9 @@ function distIsStale() {
     }
   };
   // `public` 必须在列表里：壁纸就是放这儿的，漏了它就漏了整个静态资源目录。
-  for (const d of ['src', 'tools', 'public']) {
+  // `tools` **故意不在**列表里：0.2.0 起工具不进 dist（vite 插件会在构建末把它删掉），
+  // 改一个工具只影响那份单独的工具包 zip，不需要重建前端。
+  for (const d of ['src', 'public']) {
     const p = path.join(ROOT, d);
     if (fs.existsSync(p)) walk(p);
   }
@@ -295,6 +297,26 @@ async function main() {
   }
 
   say(`打包成功，耗时 ${seconds}s。`);
+
+  // ---- 工具包（Release 上的独立资产） ----
+  //
+  // 安装包里已经没有工具了，用户想要就得有一份能下的东西。
+  // 它必须跟这次的安装包**同版本、同批发布** —— 所以在这里就地生成，
+  // 而不是等到发版时才发现 Release 缺了一半交付物。
+  // （这一步只打包 release-assets/ 下那个 zip，不参与 exe 构建。）
+  const pack = await runStreamed(
+    '生成工具包（Release 上的独立资产）',
+    process.execPath,
+    [path.join(__dirname, 'pack-tools.mjs')],
+    env,
+  );
+  logs.push(pack.captured);
+  if (pack.code !== 0) {
+    fail(
+      '工具包生成失败。',
+      '工具不随安装包分发，缺了它用户就没有任何办法拿到内置工具。跑 node scripts/pack-tools.mjs 看详情。',
+    );
+  }
 
   // ---- 装完能不能用 ----
   // 「打包成功」只说明 NSIS 生成出来了，不代表安装目录里有该有的东西。

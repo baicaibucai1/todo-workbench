@@ -176,6 +176,12 @@ export function groupRows(
     return { sections: [], done: [] };
   }
 
+  // AI 助手：同图库 —— 助手界面上一条待办都不该出现。
+  // 少这一句不会报错，只会让助手视图旁边冒出一整屏任务，看着像串台了。
+  if (view === "agent") {
+    return { sections: [], done: [] };
+  }
+
   const all: Row[] = [
     ...activeTasks.map((task) => ({ kind: "task" as const, task })),
     ...openOrders.map((order) => ({ kind: "order" as const, order })),

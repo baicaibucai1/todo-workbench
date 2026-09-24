@@ -12,9 +12,11 @@
  *    v0.1.0 时就是这么栽的。所以统一改名成 `todo-workbench_<版本>_x64-setup.exe`
  *    再传。
  *
- * 2. **三样东西必须一起换。**
- *    安装包、`.sig` 签名、`update.json`。漏了签名，老版本验签失败拒绝更新；
- *    update.json 没覆盖旧的，客户端会一直以为已是最新。这个脚本保证同批上传。
+ * 2. **四样东西必须一起换。**
+ *    安装包、`.sig` 签名、`update.json`、**工具包 zip**。漏了签名，老版本验签
+ *    失败拒绝更新；update.json 没覆盖旧的，客户端会一直以为已是最新；工具包
+ *    漏了，新装的用户打开就是一个没有工具的程序（0.2.0 起安装包不带工具，
+ *    那份 zip 是他能拿到内置工具的唯一途径）。这个脚本保证同批上传。
  *
  * 3. **本机 git 协议不通**（github.com:443 → `Empty reply from server`），
  *    但 api.github.com / uploads.github.com 可达，因此全程走 REST API。
@@ -30,7 +32,7 @@
  *   node scripts/publish-release.mjs --dry              # 只打印计划，不发
  */
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import https from "node:https";
 import path from "node:path";
@@ -56,14 +58,62 @@ function die(msg, hint) {
 
 /* ------------------------------ 凭据与 API ------------------------------ */
 
-function getToken() {
-  const r = spawnSync("git", ["credential", "fill"], {
-    input: "protocol=https\nhost=github.com\n\n",
-    encoding: "utf8",
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    timeout: 30000,
+/**
+ * 跑一条外部命令，收集它打出来的东西。
+ *
+ * ⚠️ **这里刻意不用 `execFileSync` / `spawnSync`** —— 在本机环境（沙箱）里它们会
+ * 直接以 `spawnSync git EBUSY` 崩掉，而异步的 `spawn` 一切正常。
+ * 这个差别很有迷惑性：同一个 `git remote get-url origin`，在终端里敲得好好的，
+ * 放进脚本就 EBUSY，很容易往"凭据""网络"那边去查。
+ * 所以本项目里凡是「跑个子命令拿结果」的位置都统一走这个函数。
+ */
+function runCollect(cmd, args, opts = {}) {
+  const { input, ...spawnOpts } = opts;
+  return new Promise((resolve, reject) => {
+    const p = spawn(cmd, args, { windowsHide: true, ...spawnOpts });
+    let out = "";
+    let err = "";
+    p.stdout?.on("data", (d) => (out += d));
+    p.stderr?.on("data", (d) => (err += d));
+    p.on("error", reject);
+    p.on("close", (code) => {
+      if (code === 0) resolve(out);
+      else reject(new Error(`${path.basename(cmd)} ${args.join(" ")} 退出码 ${code}${err ? `\n${err.trim()}` : ""}`));
+    });
+    if (input != null) p.stdin.end(input);
   });
-  const pw = ((r.stdout || "").match(/^password=(.*)$/m) || [])[1] || "";
+}
+
+/**
+ * 取 GitHub 令牌。
+ *
+ * 两条路，环境变量优先：
+ *   `GH_TOKEN` / `GITHUB_TOKEN` —— 显式给。CI 里用这个，也方便临时换一个令牌，
+ *     不必去动 Windows 凭据管理器里那条。
+ *   否则去 Git Credential Manager 问本机存的那个。
+ *
+ * 401 的两种成因要分清楚：**网络不通**和**令牌无效**症状完全不同 ——
+ * 前者是连不上（本机代理会挡 git 协议，报 `server closed abruptly`），
+ * 后者是服务器回了 `{"message":"Bad credentials"}`（说明网络是好的）。
+ * 看到 401 就先去 GitHub 确认这个令牌还在、且勾了 `repo` 权限，别去查网络。
+ */
+async function getToken() {
+  const fromEnv = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  if (fromEnv && fromEnv.trim()) {
+    say("  令牌来源：环境变量 GH_TOKEN");
+    return fromEnv.trim();
+  }
+
+  let out = "";
+  try {
+    out = await runCollect("git", ["credential", "fill"], {
+      input: "protocol=https\nhost=github.com\n\n",
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+  } catch (e) {
+    die("没能向 Git Credential Manager 取凭据。", String(e?.message ?? e));
+  }
+  const pw = ((out || "").match(/^password=(.*)$/m) || [])[1] || "";
   if (!pw) die("没取到令牌：Git Credential Manager 里没有 github.com 的凭据。");
   return pw;
 }
@@ -139,7 +189,12 @@ const conf = JSON.parse(fs.readFileSync(path.join(ROOT, "src-tauri", "tauri.conf
 const version = conf.version;
 const tag = `v${version}`;
 
-const remote = execFileSync("git", ["remote", "get-url", "origin"], { cwd: ROOT, encoding: "utf8" }).trim();
+let remote = "";
+try {
+  remote = (await runCollect("git", ["remote", "get-url", "origin"], { cwd: ROOT })).trim();
+} catch (e) {
+  die("读不到 origin 地址。", String(e?.message ?? e));
+}
 const m = remote.match(/github\.com[/:]([^/]+)\/(.+?)(?:\.git)?$/);
 if (!m) die(`看不懂 origin 地址：${remote}`);
 const slug = `${m[1]}/${m[2]}`;
@@ -184,15 +239,25 @@ const park = (rel) => {
 
 if (newest !== wantExe) {
   say(`产物改名：${newest} → ${wantExe}`);
-  park(wantExe);
-  park(wantSig);
-  // 同名 .sig 必须跟着走，否则签名与包对不上号
+
+  /*
+   * ⚠️ 顺序不能乱。**签名必须先于安装包改名**，而且 `park()` 只能用在
+   * 「目标位置」上 —— 用在源文件上会把待改名的那个文件先挪走，
+   * 下面那句 `existsSync(srcSig)` 立刻变成 false，签名就再也不会被带上。
+   *
+   * 这个 bug 的实际表现相当绕：安装包改好了名、一路走到最后才发现
+   * 「缺少签名文件」，而真正的作案点是几十行之前那次多余的 park，
+   * 产物目录里只剩一个 `<原名>.sig.stale-<时间戳>` 让人摸不着头脑。
+   */
   const srcSig = `${newest}.sig`;
-  if (fs.existsSync(path.join(bundleDir, srcSig))) park(srcSig);
-  fs.renameSync(path.join(bundleDir, newest), path.join(bundleDir, wantExe));
-  if (fs.existsSync(path.join(bundleDir, srcSig))) {
-    fs.renameSync(path.join(bundleDir, srcSig), path.join(bundleDir, wantSig));
+  const srcSigPath = path.join(bundleDir, srcSig);
+  if (fs.existsSync(srcSigPath)) {
+    park(wantSig); // 上一轮留下来的同名旧签名 → 挪开，别让 rename 撞车
+    fs.renameSync(srcSigPath, path.join(bundleDir, wantSig));
   }
+
+  park(wantExe);
+  fs.renameSync(path.join(bundleDir, newest), path.join(bundleDir, wantExe));
 }
 
 const exePath = path.join(bundleDir, wantExe);
@@ -201,22 +266,73 @@ if (!fs.existsSync(sigPath)) {
   die(`缺少签名文件 ${wantSig}`, "更新包必须签名，否则已安装的旧版本会拒绝安装。重新打包。");
 }
 
+/* —— 3.5) 工具包 —— */
+/*
+ * 0.2.0 起安装包不带任何工具，这份 zip 就成了用户拿到内置工具（图片裁剪、尺码表、
+ * 随手记、AI 生成、五子棋）的唯一途径。它跟安装包必须是**同一次发布**：
+ * 少传一次，用户下载到的就是一个打开什么工具都没有的程序 —— 而界面再怎么说
+ * 清楚，也比不上 Release 上真的有那份文件。
+ *
+ * 所以这里缺了就直接停下来，而不是降级成"提示一下继续"。
+ */
+const toolsZipName = `todo-workbench-tools_${version}.zip`;
+const toolsZip = path.join(ROOT, "release-assets", toolsZipName);
+if (!fs.existsSync(toolsZip)) {
+  die(
+    `缺工具包 ${path.relative(ROOT, toolsZip)}`,
+    "安装包不再携带工具，这份 zip 就是用户的唯一来源 —— 跑 node scripts/pack-tools.mjs 生成它。",
+  );
+}
+
 /* —— 3) 生成 update.json —— */
 const updateJson = path.join(ROOT, "update.json");
-const notes = NOTES && fs.existsSync(NOTES)
-  ? fs.readFileSync(NOTES, "utf8").split("\n")[0].trim()
-  : `待办工作台 ${tag}`;
+/*
+ * update.json 里那句 notes 是**给用户看的**（更新对话框里就它一句话）。
+ * 以前取的是 notes 文件的第一行 —— 而 Markdown 的第一行通常是 `# 标题`，
+ * 于是用户看到的是「# 待办工作台 v0.2.0」这种将文件内容当场外泄的怪句子。
+ * 这里取**第一个真正的正文段落**：跳过标题与分隔线，一直连到空行为止。
+ */
+function firstParagraph(md, max = 160) {
+  let out = "";
+  let started = false;
+  for (const raw of md.split("\n")) {
+    const line = raw.trim();
+    if (!line) {
+      if (started) break;
+      continue; // 正文之前的标题 / 分隔线：跳过
+    }
+    if (!started) {
+      // ⚠️ `-` / `*` 后面必须有空格才算列表项：只认符号本身的话，
+      // 「**安装包从 62.9 MB 降到 7.3 MB。**」这种以加粗开头的正文会被当成
+      // 无序列表跳过去，摘要就莫名其妙从段落中间开始。
+      if (/^(#{1,6}\s|[-*+]\s|>{1,}\s|```|\||-{3,}$|={3,}$)/.test(line)) continue;
+      started = true;
+    }
+    // 只在「两边都是西文」时才补空格：中文之间的空格是多余的，
+    // 而英文单词粘连又是另一种难看
+    const glue = /[A-Za-z0-9]$/.test(out) && /^[A-Za-z0-9]/.test(line) ? " " : "";
+    out += glue + line;
+    if (out.length >= max) break;
+  }
+  return out.slice(0, max).trim();
+}
+const notesFile = NOTES && fs.existsSync(NOTES) ? fs.readFileSync(NOTES, "utf8") : "";
+const notes = firstParagraph(notesFile) || `待办工作台 ${tag}`;
 const baseUrl = `https://github.com/${slug}/releases/download/${tag}`;
 
 say("");
 say("生成 update.json …");
-execFileSync(process.execPath, [path.join(__dirname, "gen-update-json.mjs"), version, baseUrl], {
-  cwd: ROOT,
-  stdio: "inherit",
-  env: { ...process.env, RELEASE_NOTES: notes },
-});
+try {
+  await runCollect(process.execPath, [path.join(__dirname, "gen-update-json.mjs"), version, baseUrl], {
+    cwd: ROOT,
+    stdio: "inherit",
+    env: { ...process.env, RELEASE_NOTES: notes },
+  });
+} catch (e) {
+  die("生成 update.json 失败。", String(e?.message ?? e));
+}
 
-const assets = [exePath, sigPath, updateJson];
+const assets = [exePath, sigPath, toolsZip, updateJson];
 say("");
 say("待上传：");
 for (const a of assets) say(`  ${path.basename(a)}  (${(fs.statSync(a).size / 1024 / 1024).toFixed(2)} MB)`);
@@ -295,8 +411,18 @@ if (r2.status !== 206 && r2.status !== 200) die(`安装包地址下不动：HTTP
 const head = Buffer.from(await r2.arrayBuffer());
 if (head[0] !== 0x4d || head[1] !== 0x5a) die("下载到的不是 PE 可执行文件（前两字节应为 MZ）");
 
+// 工具包：匿名能不能下、是不是个真 zip（前两字节 PK）。
+// 这条看着多余，但它防的是最尴尬的一种发布 —— 主程序装上了，
+// 用户照着设置里的地址去下载工具包，结果 404。
+const zipUrl = `https://github.com/${slug}/releases/download/${tag}/${toolsZipName}`;
+const r3 = await fetch(zipUrl, { redirect: "follow", headers: { Range: "bytes=0-1" } });
+if (r3.status !== 206 && r3.status !== 200) die(`工具包地址下不动：HTTP ${r3.status}`, zipUrl);
+const zipHead = Buffer.from(await r3.arrayBuffer());
+if (zipHead[0] !== 0x50 || zipHead[1] !== 0x4b) die("下载到的不是 zip（前两字节应为 PK）");
+
 say(`  update.json  → ${latestUrl}`);
 say(`  安装包       → ${dlUrl}`);
-say(`  签名与清单一致、下载内容可执行 ✓`);
+say(`  工具包       → ${zipUrl}`);
+say(`  签名与清单一致、两份资产都可下载 ✓`);
 say("");
 say("发布完成：" + rel.json.html_url);

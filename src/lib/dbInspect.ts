@@ -23,8 +23,14 @@ import { db, dbInfo } from "./db";
 import { toolPrefix } from "./tools";
 import type { ToolManifest } from "../types";
 
-/** 核心表的中文名。没登记的表直接显示表名 —— 显示错名字比不显示更糟 */
-const CORE_TABLE_LABELS: Record<string, string> = {
+/**
+ * 核心表的中文名。没登记的表直接显示表名 —— 显示错名字比不显示更糟。
+ *
+ * 导出它只有一个用途：让测试能断言"新加的表有没有登记中文名"。
+ * 漏登记不会报错，只会在设置 → 数据库里显示一行 core_xxx_messages，
+ * 属于那种自己不会喊出来的疏漏。
+ */
+export const CORE_TABLE_LABELS: Record<string, string> = {
   core_tasks: "待办任务",
   core_lists: "清单",
   core_steps: "任务子任务",
@@ -40,6 +46,8 @@ const CORE_TABLE_LABELS: Record<string, string> = {
   core_gallery_items: "图库",
   core_tool_kv: "工具配置",
   core_tool_schema: "工具表版本台账",
+  core_agent_messages: "AI 助手对话",
+  core_agent_chats: "AI 助手会话",
 };
 
 export interface TableStat {

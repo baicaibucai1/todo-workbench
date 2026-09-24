@@ -1,11 +1,11 @@
 {
-  "version": "0.1.0",
-  "notes": "待办工作台 v0.1.0 —— 首个正式版：待办 / 流程任务 / 特殊单号 / 图库 / 四款内置工具，支持应用内自动更新。",
-  "pub_date": "2026-09-23T04:00:12.950Z",
+  "version": "0.2.0",
+  "notes": "**安装包从 62.9 MB 降到 7.3 MB。** 差的那 50 MB 几乎全是图片工具里那份本地 AI 模型（ONNX Runtime + MI-GAN，base64 分片塞在 `.js` 里）。为一个大多数人用不上的能力，让每一个用户、每一次增量更新都多下载几十兆 —— 这买卖不划算。",
+  "pub_date": "2026-09-24T04:12:14.150Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQTgwMmUzZERHT0hKVzJtd1dzSmxKVTdMbWdrWXlLYk85aHd5MURqQUJ5b3BuaktsTzdHWUplQklBZzRnLzFjTm1qcnM4eFYwUW5nU3NnVEhta3EzTkZKd1Q3WVNWTVEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMTM1NTc2CWZpbGU65b6F5Yqe5bel5L2c5Y+wXzAuMS4wX3g2NC1zZXR1cC5leGUKdHR0QmhJSEQyam5xMXcwMEpNK25WMTVoN2JvN1pFOWtxSlJLVmppbFlXVHBmM0thaHVITExVSGt4VjNxUWRDSUFtZWtVUFFFSnl0bjY5c3FZVUJJQ3c9PQo=",
-      "url": "https://github.com/baicaibucai1/todo-workbench/releases/download/v0.1.0/todo-workbench_0.1.0_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQTgwMmUzZERHT0pEU3R6Tzk3ZEh2N2FoNitOWFlQZ2VPREtvaVBYbWxSeTJzMUlOMFlsSTN5RG9mM0MyWHdQTlBaRWE4YWVFRStQYnkvOVBNLzVkMEMxNTNLUHBySlFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjIxNjM0CWZpbGU65b6F5Yqe5bel5L2c5Y+wXzAuMi4wX3g2NC1zZXR1cC5leGUKSWlESFdXT0tydSs3QW5KTy9adGZHSTFPbmQvdVlCdFpYTUExR3FDbjdHTmlNUHppUjZlV2czUlIxb1NiWlF0TnphcnRDZkt2Y1JuVFRHZXpBOGc0Qmc9PQo=",
+      "url": "https://github.com/baicaibucai1/todo-workbench/releases/download/v0.2.0/todo-workbench_0.2.0_x64-setup.exe"
     }
   }
 }

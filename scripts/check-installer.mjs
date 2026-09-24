@@ -157,10 +157,71 @@ const diskTools = fs.existsSync(toolsDir)
       .sort()
   : [];
 
+/*
+ * 工具随不随包，由配置决定，校验跟着配置走，而不是写死一边。
+ *
+ * 0.2.0 起是「不随包」：安装包只发程序本体，工具单独打成 zip 挂在同一个
+ * Release 上。哪天又把 `../tools/**\/*` 加回 bundle.resources，这里的判据
+ * 会自动翻回「每个工具、每个附属文件都必须在安装清单里」——不用记得改脚本，
+ * 而「记得改」的那类约定通常都会忘。
+ */
+const conf = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+  } catch (e) {
+    check('读取 tauri.conf.json', false, String(e?.message ?? e));
+    return {};
+  }
+})();
+const resources = Array.isArray(conf.bundle?.resources) ? conf.bundle.resources : [];
+const bundlesTools = resources.some((r) => /tools/i.test(String(r)));
+const version = String(conf.version || '0.0.0');
+
+/** 安装清单里那些「工具文件」条目 */
+const toolEntries = installFiles.filter((f) => /^_up_\/tools\//i.test(f.target));
+
 console.log('');
-console.log('--- 1. 工具是否全部进了安装包 ---');
+console.log('--- 1. 工具是否随包 ---');
+info('bundle.resources', resources.length ? resources.join(' , ') : '(空)');
 info('磁盘上的工具', `${diskTools.length} 个：${diskTools.join(', ')}`);
 info('安装清单条目', `${installFiles.filter((f) => !f.temp).length} 项`);
+
+if (!bundlesTools) {
+  /*
+   * 不随包时要守的三件事，一件比一件靠外：
+   *   ① 安装清单里没有 tools 文件 —— 这是 NSIS 实际会写什么；
+   *   ② bundle.resources 里没有 tools 条目 —— 这是 ① 之所以成立的原因；
+   *   ③ 工具包 zip 存在且含全部工具 —— 这是「工具改由谁交付」。
+   * 少验任何一条，都会得到一次"看着合格、实际缺一半"的发布。
+   */
+  check(
+    '安装包里没有工具文件',
+    toolEntries.length === 0,
+    toolEntries.length ? `清单里还留着 ${toolEntries.length} 条 tools 资源` : '0 条',
+  );
+
+  const zipName = `todo-workbench-tools_${version}.zip`;
+  const zipPath = path.join(ROOT, 'release-assets', zipName);
+  if (fs.existsSync(zipPath)) {
+    // zip 的文件名在中央目录里是明文，搜二进制就够 ——
+    // 不必为了数条目去把几十兆解一遍
+    const zipBuf = fs.readFileSync(zipPath);
+    const absent = diskTools.filter(
+      (t) => zipBuf.indexOf(Buffer.from(`tools/${t}/manifest.json`, 'utf8')) === -1,
+    );
+    check(
+      `工具包 ${zipName} 含全部 ${diskTools.length} 个工具`,
+      absent.length === 0,
+      absent.length ? `缺：${absent.join(', ')}` : `${(zipBuf.length / 1048576).toFixed(1)} MB`,
+    );
+  } else {
+    check(
+      `存在工具包资产 ${zipName}`,
+      false,
+      '工具不随包，就必须有这份独立资产供用户下载 —— 跑 node scripts/pack-tools.mjs',
+    );
+  }
+} else {
 
 const targetSet = new Set(installFiles.map((f) => f.target.toLowerCase()));
 
@@ -238,6 +299,8 @@ for (const f of installFiles) {
   }
 }
 
+} // end: bundlesTools
+
 /* ------------------------------------------------------------------ */
 /* 4. 主程序与运行时依赖                                                */
 /* ------------------------------------------------------------------ */
@@ -272,7 +335,14 @@ console.log('');
 console.log('--- 3. 自动更新产物 ---');
 
 const upCount = installFiles.filter((f) => /^_up_\//i.test(f.target)).length;
-check('安装清单里有 _up_ 资源（`..` 的编码形式）', upCount > 0, `${upCount} 项`);
+// 严格一点：路径里带 `..` 的资源会被编成 _up_，那**必须**能在清单里数出来；
+// 而不带 `..` 的资源（现在的 WebView2Loader.dll）压根不会走这条编码，
+// 那时清单里出现 _up_ 反而说明混进了不该有的东西 —— 所以两个方向都要验。
+if (resources.some((r) => /\.\./.test(String(r)))) {
+  check('安装清单里有 _up_ 资源（`..` 的编码形式）', upCount > 0, `${upCount} 项`);
+} else {
+  check('没有出现多余的 _up_ 资源', upCount === 0, `${upCount} 项`);
+}
 
 const bundleDir = path.join(ROOT, 'src-tauri', 'target', 'x86_64-pc-windows-gnu', 'release', 'bundle');
 let nsisPkg = null;
@@ -359,19 +429,14 @@ check(
 console.log('');
 console.log('--- 5. 运行时路径契约 ---');
 
-let conf = {};
-try {
-  conf = JSON.parse(fs.readFileSync(path.join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8'));
-} catch (e) {
-  check('读取 tauri.conf.json', false, String(e?.message ?? e));
-}
+/* conf 已在第 1 节读取过（同一份配置，不必读两遍） */
 const security = conf.app?.security ?? {};
 const assetProto = security.assetProtocol ?? {};
 const scopeList = Array.isArray(assetProto.scope) ? assetProto.scope : [];
 
 check('assetProtocol 已启用', assetProto.enable === true);
 
-const toolRels = installFiles.filter((f) => /\/tools\//i.test(f.target)).map((f) => f.target);
+const toolRels = toolEntries.map((f) => f.target);
 if (toolRels.length) {
   info('工具在资源根下的相对路径', `${toolRels.length} 条，例如 ${toolRels[0]}`);
 }
@@ -391,14 +456,25 @@ function scopeCovers(entry, rel) {
   return new RegExp(pattern, 'i').test(rel);
 }
 
-const uncovered = toolRels.filter((rel) => !scopeList.some((s) => scopeCovers(s, rel)));
-check(
-  'assetProtocol.scope 覆盖每一个工具文件',
-  toolRels.length > 0 && uncovered.length === 0,
-  uncovered.length
-    ? `有 ${uncovered.length} 条没被放行，例如 ${uncovered[0]}；现有 scope: ${scopeList.join(' , ')}`
-    : scopeList.join(' , '),
-);
+// 工具不随包时，安装清单里自然没有 tools 条目可以比对；
+// 但**用户数据区**那条路必须照样放行 —— 下载的工具包就落在这儿，
+// 助手写的工具也装在这儿。漏了它的表现是"工具装上了，iframe 一直白屏"。
+if (bundlesTools) {
+  const uncovered = toolRels.filter((rel) => !scopeList.some((s) => scopeCovers(s, rel)));
+  check(
+    'assetProtocol.scope 覆盖每一个工具文件',
+    toolRels.length > 0 && uncovered.length === 0,
+    uncovered.length
+      ? `有 ${uncovered.length} 条没被放行，例如 ${uncovered[0]}；现有 scope: ${scopeList.join(' , ')}`
+      : scopeList.join(' , '),
+  );
+} else {
+  check(
+    'assetProtocol.scope 放行用户数据区的工具目录（下载解压的工具、助手写的工具都在那儿）',
+    scopeList.some((s) => /\$APPDATA\/tools/i.test(String(s))),
+    scopeList.join(' , ') || '(未设置)',
+  );
+}
 
 /** 拆 CSP 成指令表 */
 function cspDirectives(text) {

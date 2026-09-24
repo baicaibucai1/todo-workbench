@@ -2,6 +2,9 @@
 node_modules/
 dist/
 target/
+# 工具包 zip —— 由 scripts/pack-tools.mjs 生成，作为独立资产挂在 Release 上。
+# 不进仓库的理由与 tools/*/ai/ 一样：体积大且是生成物（约 30 MB 压缩包）。
+release-assets/
 
 # 工具的大体积附属资源 —— 由 scripts/sync-tools.mjs 从源目录搬运过来，
 # 不是仓库里的源码：tools/image-crop/ai/ 约 50MB（ONNX Runtime + MI-GAN 模型，
@@ -54,6 +57,7 @@ probe-result.txt
 tests/.*.log
 tests/.smoke.bundle.mjs
 tests/.sync.bundle.mjs
+tests/.agent-unit.bundle.mjs
 tests/.tsc.log
 
 # e2e 截图：跑测试时抓的界面图，里面有真实待办与流程任务数据，不进仓库

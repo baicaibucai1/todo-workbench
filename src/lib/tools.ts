@@ -9,12 +9,29 @@
  *
  * manifest.json 结构见 types.ts 的 ToolManifest。
  *
- * 扫描顺序（后面的覆盖前面的同名工具，便于用户覆盖内置工具）：
- *   1. 应用包内 <resources>/tools/     —— 随安装包分发的内置工具
- *   2. 用户数据区 <appDataDir>/tools/  —— 用户自己丢进去的工具
+ * 装载永远是**两次扫描**：只认磁盘上真实存在的工具目录
+ *
+ *   1. 用户数据区 <appDataDir>/tools/  —— 用户解压进去的、或自己丢进去的工具
+ *   2. 安装包内 <resources>/tools/     —— 随安装包分发的内置工具
+ *      （0.2.0 起**默认一个都没有**：安装包不再携带工具，见文末。）
  *
  * 关键设计：工具目录放在用户数据区而不是安装包内，
  * 这样新增工具不需要重新打包发版 —— 这正是"可更新"的一部分。
+ *
+ * ------------------------------------------------------------------
+ * 安装包为什么不带工具了
+ * ------------------------------------------------------------------
+ * tools/ 里有 50 MB 的抠图模型（image-crop/ai，base64 分片塞在 .js 里）。
+ * 把它写进 bundle.resources，每一个用户的每一次增量更新，都要为他可能根本
+ * 用不到的那个工具下载几十兆 —— 而"工具可插拔"这件事本来就要求宿主不关心
+ * 工具是从哪来的，放不进安装包从来不影响它能不能用。
+ *
+ * 所以 0.2.0 起：安装包本体不含任何工具文件，工具单独打成 zip 挂在同一份
+ * Release 上（scripts/pack-tools.mjs），想要就下载解压；或者让内置助手现写一个。
+ *
+ * 由此带来一条硬约束，见 loadTools：**桌面端绝不能拿 BUILTIN_TOOLS 兜底**。
+ * 否则新装的桌面版会列出五个点开就是"找不到入口"的工具 —— 侧边栏里看着有，
+ * 实际打不开，比直接显示一个空列表糟糕得多。
  */
 
 import { isTauri } from "./db";
@@ -104,6 +121,35 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     entry: "index.html",
     dbVersion: 1,
     author: "内置",
+  },
+  {
+    // 它是**按 tool-authoring 契约交付的一份样本**：单个自包含 HTML、只走
+    // postMessage、战绩写自己的私有表（records → tool_gomoku_records）。
+    // tests/gomoku.mjs 里有一段会逐条核对它有没有守那份契约 ——
+    // 标准写在文档里会漂，钉在测试上才不会。
+    id: "gomoku",
+    name: "五子棋",
+    version: "1.0.0",
+    description:
+      "15×15 的人机五子棋：你执黑先手，电脑会攻也会堵；每局结束自动把胜负与手数记进自己的数据表，战绩可清空",
+    icon: "hash",
+    entry: "index.html",
+    dbVersion: 1,
+    author: "内置",
+    schema: {
+      tables: [
+        {
+          name: "records",
+          columns: [
+            { name: "id", type: "text", pk: true },
+            { name: "result", type: "text" },
+            { name: "moves", type: "integer" },
+            { name: "created_at", type: "text" },
+          ],
+          indexes: [{ columns: ["created_at"] }],
+        },
+      ],
+    },
   },
 ];
 
@@ -216,7 +262,10 @@ async function scanTauriTools(): Promise<{ bundled: ToolManifest[]; user: ToolMa
     const dir = await join(await appDataDir(), "tools");
     // 用户数据区里那些**不在安装包中**的，才是用户自己的工具
     user.push(...(await scanToolsDir(dir)).filter((t) => !bundledIds.has(t.id)));
-    if (user.length) registryLocation = dir;
+    // 工具目录的位置**无条件记下来**：哪怕现在一个工具都没有。
+    // 它只在"某个工具的入口文件找不到"时显示给用户，那种场合说成
+    // 「浏览器模式的清单」纯属指错方向 —— 他会去源码里找，而该看的是这个目录。
+    registryLocation = dir;
   } catch {
     // appData 取不到就算了，不影响内置工具
   }
@@ -230,19 +279,29 @@ async function scanTauriTools(): Promise<{ bundled: ToolManifest[]; user: ToolMa
 
 /**
  * 扫描并注册全部工具。
- * 用户数据区的工具会覆盖同 id 的内置工具，方便本地调试和替换。
+ *
+ * 桌面端**只认磁盘上真实存在的工具** —— 这里刻意不再用 BUILTIN_TOOLS 兜底。
+ * 那一手兜底原先是给"资源目录扫不出来"留的退路，但 0.2.0 起「扫不出 Tools 的
+ * 内置工具」是**正常状态**而不是故障，再拿清单补上去，就成了给用户看五个
+ * 打不开的入口（详见文件头）。
+ *
+ * 浏览器模式反过来：那份清单是它唯一的来源，而且它是真能用的 —— tools/ 就在
+ * 工程根目录，dev server 直接把它当静态资源服务。
  */
 export async function loadTools(): Promise<ToolManifest[]> {
+  if (!isTauri()) {
+    registry = BUILTIN_TOOLS.map((t) => ({ ...t, source: "bundled" as const }));
+    registryLocation = "内置清单（浏览器模式）";
+    return registry;
+  }
+
   const merged = new Map<string, ToolManifest>();
 
-  // 1. 硬编码清单兜底（浏览器模式唯一来源；桌面端扫描失败时也有得用）
-  for (const t of BUILTIN_TOOLS) merged.set(t.id, { ...t, source: "bundled" });
-
-  // 2. 安装包内的工具（真实文件，以磁盘为准）
+  // 1. 安装包内的工具（现在通常是空的一组）
   const { bundled, user } = await scanTauriTools();
   for (const t of bundled) merged.set(t.id, t);
 
-  // 3. 用户数据区的工具（优先级最高，可覆盖同 id 内置工具）
+  // 2. 用户数据区的工具（优先级最高，可覆盖同 id 的内置工具）
   for (const t of user) merged.set(t.id, t);
 
   registry = [...merged.values()];
@@ -258,13 +317,18 @@ export function listTools(): ToolManifest[] {
  *
  * 存在的理由只有一个：内置工具被卸载之后就从注册表消失了，设置页也就
  * 再也列不出它，用户没有入口把它装回来。所以"可重装清单"必须另取一份。
- * 浏览器模式下没有安装包，退化成内置清单（那份就是这里的"安装包"）。
+ *
+ * 桌面端**照实返回**，扫不到就是空数组：安装包现在已经不带工具，「安装包里
+ * 有什么」这个问题常常的答案就是「没有」。以前在这里补 BUILTIN_TOOLS，会让设置页
+ * 摆出五个「重新安装」按钮，而点下去必然是 reinstallBundledTool 的一句
+ * 「安装包里找不到这个工具的文件」—— 一个注定报错的按钮比没有按钮更糟。
+ *
+ * 浏览器模式没有安装包，退化成内置清单（那份就是这里的"安装包"）。
  */
 export async function loadBundledTools(): Promise<ToolManifest[]> {
   if (!isTauri()) return BUILTIN_TOOLS.map((t) => ({ ...t, source: "bundled" as const }));
   const { bundled } = await scanTauriTools();
-  // 资源目录都扫不到时，至少保住硬编码清单，别让设置页显示"没有可安装的工具"
-  return bundled.length > 0 ? bundled : BUILTIN_TOOLS.map((t) => ({ ...t, source: "bundled" as const }));
+  return bundled;
 }
 
 export function getTool(id: string): ToolManifest | undefined {

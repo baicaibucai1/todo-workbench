@@ -136,9 +136,24 @@ const stage = (id, flowId, name, over = {}) => ({
 /* A. 纯合并算法                                                         */
 /* ==================================================================== */
 
-section("1. 迁移：v14 是当前版本，且加的是同步需要的时间戳与墓碑");
+section(`1. 迁移：v${CURRENT_SCHEMA_VERSION} 是当前版本，v14 加的是同步需要的时间戳与墓碑`);
 {
-  check("CURRENT_SCHEMA_VERSION 为 14", CURRENT_SCHEMA_VERSION === 14, `实际 v${CURRENT_SCHEMA_VERSION}`);
+  /*
+   * ⚠️ 别把这个版本号写死成数字。
+   *
+   * 它就红过一次：多会话那条迁移把 schema 顶到 v16，而这里还写着 15，
+   * 于是"同步没事"这么大的一块跟着一个无关的版本号一起变红 ——
+   * 看名字只会以为同步坏了。
+   *
+   * 「现在的版本是多少」本来就该从代码里取，测试要守的是另一件事：
+   * **版本只能往上走**（倒退意味着有人删了已发布的迁移）。
+   */
+  check("迁移数组的末项就是当前版本", migrations[migrations.length - 1].version === CURRENT_SCHEMA_VERSION);
+  check(
+    "当前版本不低于 v16（已发布的迁移不能被悄悄删掉）",
+    CURRENT_SCHEMA_VERSION >= 16,
+    `实际 v${CURRENT_SCHEMA_VERSION}`,
+  );
   const v14 = migrations.find((m) => m.version === 14);
   check("存在 v14 迁移", !!v14, String(v14?.name));
   const sql = (v14?.sql ?? "").replace(/\s+/g, " ");
@@ -557,12 +572,13 @@ section("14. 相对时间显示");
 /* B. 数据库往返                                                         */
 /* ==================================================================== */
 
-section("15. 数据库：迁移到 v14，且同步用的列能写进去");
+section(`15. 数据库：迁移到最新版（v${CURRENT_SCHEMA_VERSION}），且同步用的列能写进去`);
 {
   resetDemoDb();
   const info = await initDb();
   check("驱动是内存库", info.driver === "memory", info.driver);
-  check("schema 到 v14", info.schemaVersion === 14, `实际 v${info.schemaVersion}`);
+  // 跟 CURRENT_SCHEMA_VERSION 比，不跟写死的数字比（理由见第 1 节那条注释）
+  check("schema 到了最新版", info.schemaVersion === CURRENT_SCHEMA_VERSION, `实际 v${info.schemaVersion}`);
 }
 
 // 跨小节复用的 id：第 16/17/19 节要用**同一条记录**验证"关联复活"和"附件没被牵连"，
