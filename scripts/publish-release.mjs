@@ -125,22 +125,38 @@ async function getToken() {
   return pw;
 }
 
-function api(method, p, body, token) {
+/**
+ * @param opts.hostname  默认 api.github.com（uploads.github.com 另走一处）
+ * @param opts.accept    默认 GitHub JSON；取资产字节时传 application/octet-stream
+ * @param opts.anon      true = **不带 Authorization**（匿名，用来验证"用户能不能下到"）
+ * @param opts.raw       true = 把响应当 Buffer 一并返回（二进制资产要用）
+ */
+function api(method, p, body, token, opts = {}) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
     const req = https.request(
       {
-        hostname: "api.github.com",
+        hostname: opts.hostname || "api.github.com",
         path: p,
         method,
         headers: {
           "User-Agent": "todo-workbench-publish",
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${token}`,
+          Accept: opts.accept || "application/vnd.github+json",
+          ...(opts.anon ? {} : { Authorization: `Bearer ${token}` }),
           ...(data ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) } : {}),
         },
       },
       (res) => {
+        /*
+         * 二进制资产必须按 **Buffer 收集**：`buf += c` 那种字符串累加会把
+         * zip / exe 当 utf8 转一遍，字节全毁，而它看起来仍然"取到了东西"。
+         */
+        if (opts.raw) {
+          const chunks = [];
+          res.on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+          res.on("end", () => resolve({ status: res.statusCode, json: null, bytes: Buffer.concat(chunks) }));
+          return;
+        }
         let buf = "";
         res.on("data", (c) => (buf += c));
         res.on("end", () => {
@@ -440,24 +456,104 @@ for (const abs of assets) {
 /* —— 6) 匿名验证（不带凭据） —— */
 say("");
 say("匿名验证（用户的角度）…");
+
+/**
+ * 匿名取一份资产的前几个字节。
+ *
+ * ------------------------------------------------------------------
+ * 为什么要有 `viaApi` 这条退路
+ * ------------------------------------------------------------------
+ * 首选当然是 github.com 那个**用户真正会点**的地址 —— 验的就是它。
+ * 但本机（以及不少受限网络）连不上 github.com，连得上 api.github.com：
+ * 2026-09-26 发 v0.2.5 时，四份资产都已上传成功，这一步却以
+ * `TypeError: fetch failed / ECONNRESET` 把整个脚本带崩了，
+ * 于是"发布成功"看起来像"发布失败"。
+ *
+ * 所以：github.com 取不到时**降级**到 API 的资产端点（不带 Authorization，
+ * 同样是匿名），验的是同一份字节；并把"没验到真地址"这件事明确说出来，
+ * 不假装验过。
+ */
+async function anonPeek(url) {
+  try {
+    const r = await fetch(url, { redirect: "follow", headers: { Range: "bytes=0-1" } });
+    if (r.status === 200 || r.status === 206) {
+      return { ok: true, bytes: Buffer.from(await r.arrayBuffer()), via: "github.com" };
+    }
+    return { ok: false, status: r.status, bytes: Buffer.alloc(0), via: "github.com" };
+  } catch (e) {
+    return { ok: false, status: 0, err: e instanceof Error ? e.message : String(e), bytes: Buffer.alloc(0), via: "github.com" };
+  }
+}
+
+/** 降级通道：按资产名从 API 取（不带凭据，仍然算匿名） */
+async function anonPeekViaApi(assetName) {
+  try {
+    const rel2 = await api("GET", `/repos/${owner}/${repo}/releases/tags/${tag}`, null, token);
+    const hit = (rel2.json?.assets || []).find((a) => a.name === assetName);
+    if (!hit) return { ok: false, status: 404, bytes: Buffer.alloc(0), via: "api" };
+    const r = await api("GET", `/repos/${owner}/${repo}/releases/assets/${hit.id}`, null, token, {
+      accept: "application/octet-stream",
+      anon: true,
+      raw: true,
+    });
+    return { ok: r.status === 200, bytes: r.bytes || Buffer.alloc(0), via: "api" };
+  } catch (e) {
+    return { ok: false, status: 0, err: e instanceof Error ? e.message : String(e), bytes: Buffer.alloc(0), via: "api" };
+  }
+}
+
 const latestUrl = `https://github.com/${slug}/releases/latest/download/update.json`;
-const r1 = await fetch(latestUrl, { redirect: "follow" });
-if (r1.status !== 200) die(`latest/download/update.json 返回 HTTP ${r1.status}`);
-const manifest = await r1.json();
+const zipUrl = `https://github.com/${slug}/releases/download/${tag}/${toolsZipName}`;
+
+let manifest;
+try {
+  const r1 = await fetch(latestUrl, { redirect: "follow" });
+  if (r1.status !== 200) throw new Error(`HTTP ${r1.status}`);
+  manifest = await r1.json();
+} catch (e) {
+  // github.com 不可达 → 从 API 匿名读同一份清单
+  const rel2 = await api("GET", `/repos/${owner}/${repo}/releases/latest`, null, token);
+  const hit = (rel2.json?.assets || []).find((a) => a.name === "update.json");
+  if (!hit) die(`匿名验证失败：github.com 取不到（${e.message}），API 上也没有 update.json`);
+  const raw = await api("GET", `/repos/${owner}/${repo}/releases/assets/${hit.id}`, null, token, {
+    hostname: "api.github.com",
+    accept: "application/octet-stream",
+  });
+  manifest = JSON.parse(raw.raw || "{}");
+  warn(
+    `github.com 在本机不可达（${e.message}），清单改用 API 匿名读取 —— 验的是同一份文件，但没有验到用户实际会点的那个域名。`,
+    "换一台能连 github.com 的机器再跑一次 `releases/latest/download/update.json` 更保险。",
+  );
+}
 if (manifest.version !== version) die(`update.json 里版本是 ${manifest.version}，期望 ${version}`);
 const dlUrl = manifest.platforms?.["windows-x86_64"]?.url || "";
-const r2 = await fetch(dlUrl, { redirect: "follow", headers: { Range: "bytes=0-1" } });
-if (r2.status !== 206 && r2.status !== 200) die(`安装包地址下不动：HTTP ${r2.status}`, dlUrl);
-const head = Buffer.from(await r2.arrayBuffer());
+
+// 安装包：匿名能不能下、是不是个真 PE（前两字节 MZ）
+let peek = await anonPeek(dlUrl);
+if (!peek.ok) {
+  const alt = await anonPeekViaApi(`todo-workbench_${version}_x64-setup.exe`);
+  if (alt.ok) {
+    peek = alt;
+    warn(`安装包没走通 github.com（${peek.status || peek.err}），改用 API 匿名取到同一份字节。`);
+  }
+}
+if (!peek.ok) die(`安装包地址下不动：HTTP ${peek.status} ${peek.err ?? ""}`, dlUrl);
+const head = peek.bytes;
 if (head[0] !== 0x4d || head[1] !== 0x5a) die("下载到的不是 PE 可执行文件（前两字节应为 MZ）");
 
 // 工具包：匿名能不能下、是不是个真 zip（前两字节 PK）。
 // 这条看着多余，但它防的是最尴尬的一种发布 —— 主程序装上了，
 // 用户照着设置里的地址去下载工具包，结果 404。
-const zipUrl = `https://github.com/${slug}/releases/download/${tag}/${toolsZipName}`;
-const r3 = await fetch(zipUrl, { redirect: "follow", headers: { Range: "bytes=0-1" } });
-if (r3.status !== 206 && r3.status !== 200) die(`工具包地址下不动：HTTP ${r3.status}`, zipUrl);
-const zipHead = Buffer.from(await r3.arrayBuffer());
+let zipPeek = await anonPeek(zipUrl);
+if (!zipPeek.ok) {
+  const alt = await anonPeekViaApi(toolsZipName);
+  if (alt.ok) {
+    zipPeek = alt;
+    warn(`工具包没走通 github.com（${zipPeek.status || zipPeek.err}），改用 API 匿名取到同一份字节。`);
+  }
+}
+if (!zipPeek.ok) die(`工具包地址下不动：HTTP ${zipPeek.status} ${zipPeek.err ?? ""}`, zipUrl);
+const zipHead = zipPeek.bytes;
 if (zipHead[0] !== 0x50 || zipHead[1] !== 0x4b) die("下载到的不是 zip（前两字节应为 PK）");
 
 say(`  update.json  → ${latestUrl}`);

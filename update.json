@@ -1,11 +1,11 @@
 {
-  "version": "0.2.1",
-  "notes": "**修复了一个会让全新数据库卡死在「正在初始化工作台」的问题** —— 如果你装了v0.2.0 后一直白屏，这一版就是解药。",
-  "pub_date": "2026-09-24T07:11:32.135Z",
+  "version": "0.2.5",
+  "notes": "助手写工具不再卡在半路上了：模块能即插即用、它有了自己的工作区、能自己记规矩，而卡住它六轮的两个坑（输出被掐断、通行证对不上）都在这一版修掉了。",
+  "pub_date": "2026-09-26T09:27:07.001Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQTgwMmUzZERHT0VFMkc3Nm9wQzZSMUtSVVlLNGROcmNQdFdEemFSbGRkSlM4UVR4ekVJSGkzdnRRL20rQWh1anZsL0tDYittck1zR3dydmg2RXBWVlR2ZEhoVlkrUkFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjMzMjg4CWZpbGU65b6F5Yqe5bel5L2c5Y+wXzAuMi4xX3g2NC1zZXR1cC5leGUKejMyekx0NjlLT0NwbW5QOEQvTTQ0TzVMdWxrL0tvN1dSUHZOYkJKVzdmcHNnem9YSE91Ry9iaktJV0Jpd0psZFlCZUV2MTl6MFlVQVJMNHMwVGQwRFE9PQo=",
-      "url": "https://github.com/baicaibucai1/todo-workbench/releases/download/v0.2.1/todo-workbench_0.2.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQTgwMmUzZERHT05MTXl6TG5RQVRLb0hqSWFGQnBmVFFKWEVWaUhhVXpjeUhuRmNYTVlWOWlCNkYxZytaSnFTNzFJNHE5YldYQmo4cGJ2a0haL1A1VUhBSy9aWGVCYWdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNDEzMTE5CWZpbGU65b6F5Yqe5bel5L2c5Y+wXzAuMi41X3g2NC1zZXR1cC5leGUKcURtczRXY01wazgxY1IrelhHaTZjdU5teTVleUtGSTdUK3FtVml0UUxqcDEzYkZTWHMzR3A3UG1hcXdINEp4Y0VvdWNQUDYxUTQ1QllVbytxNVhJQnc9PQo=",
+      "url": "https://github.com/baicaibucai1/todo-workbench/releases/download/v0.2.5/todo-workbench_0.2.5_x64-setup.exe"
     }
   }
 }
