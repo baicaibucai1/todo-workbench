@@ -897,6 +897,18 @@ node tests/_run-all-e2e.mjs      # 全量，21 个套件一次跑完
 node tests/task-detail.mjs       # 也可以单跑某一个套件
 ```
 
+工作区堆了生成物想收一收：
+
+```bash
+node scripts/clean.mjs            # 只报告，不动手
+node scripts/clean.mjs --yes      # 删掉 dist / .setup-tmp / shots / 各种日志
+node scripts/clean.mjs --yes --deep   # 连 src-tauri/target 一起删（下次打包要重编 3–5 分钟）
+node scripts/clean.mjs --yes --old    # 顺带清掉 release-assets 里的旧版本包
+```
+
+它**默认只报告**，而且要显式 `--yes` 才动手；`.tauri-key`（更新签名私钥）、
+`node_modules/`、`tools/*/ai/`（本地模型副本）、`release-assets/` 当前版本一律不碰。
+
 ### 测试现状
 
 | 层 | 规模 | 命令 |

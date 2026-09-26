@@ -6,6 +6,11 @@ target/
 # 不进仓库的理由与 tools/*/ai/ 一样：体积大且是生成物（约 30 MB 压缩包）。
 release-assets/
 
+# 更新清单 —— 由 scripts/publish-release.mjs 每次发版生成（版本号 + 下载 URL + 签名），
+# 是**发布产物**不是源码。留在本地给发布脚本与回滚参考，不进仓库
+# （曾经误入版本控制，2026-09-26 摘除）。
+update.json
+
 # 工具的大体积附属资源 —— 由 scripts/sync-tools.mjs 从源目录搬运过来，
 # 不是仓库里的源码：tools/image-crop/ai/ 约 50MB（ONNX Runtime + MI-GAN 模型，
 # 全部 base64 塞进 .js 用 script 标签加载，为的是绕开 file:// 下的 fetch 限制）。
