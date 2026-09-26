@@ -1,0 +1,102 @@
+<!doctype html>
+<!--
+  e2e 夹具：一个**注入组件**的最小样本。
+
+  它不是产品的一部分（不住 tools/，那里每个目录都会进工具包 zip），
+  只用于验证「工具能嵌进宿主界面」这条链路：
+    · 收到 tool:context 后知道自己在哪条待办上（ctx.inject.taskId）
+    · 调 task.get 读那一条，把标题显示出来
+  它同时是 read_skill component-inject 那份契约的活样本 ——
+  契约里写的每一条，这里都做了一遍。
+-->
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <title>注入夹具</title>
+    <style>
+      :root { color-scheme: light; --fg: #2c2a26; --dim: #8a8578; --line: #e6e2d8; --card: #fff; }
+      html[data-theme="dark"] { color-scheme: dark; --fg: #e6e2d8; --dim: #8a8578; --line: #3a3730; --card: #23211d; }
+      body { margin: 0; padding: 10px; font: 13px/1.6 system-ui, sans-serif; color: var(--fg); background: var(--card); }
+      .row { display: flex; gap: 6px; align-items: baseline; }
+      .k { color: var(--dim); font-size: 11.5px; }
+      .v { font-weight: 600; }
+      .err { color: #c0392b; }
+    </style>
+  </head>
+  <body data-bind-state="booting">
+    <div class="row"><span class="k">挂载位置</span><span class="v" id="kind">（等上下文）</span></div>
+    <div class="row"><span class="k">这条待办</span><span class="v" id="title">（等上下文）</span></div>
+    <div class="row"><span class="k">taskId</span><span class="v" id="tid">—</span></div>
+    <div class="err" id="err" hidden></div>
+
+    <script>
+      (function () {
+        "use strict";
+        var TOOL_SOURCE = "workbench-tool";
+        var HOST_SOURCE = "workbench-host";
+        var seq = 0;
+        var waiting = new Map();
+        var ctx = null;
+
+        function call(op, payload) {
+          var id = "r" + ++seq;
+          return new Promise(function (resolve, reject) {
+            waiting.set(id, { resolve: resolve, reject: reject });
+            parent.postMessage(
+              { source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} },
+              "*"
+            );
+            setTimeout(function () {
+              if (waiting.delete(id)) reject(new Error("宿主没有回应（" + op + "）"));
+            }, 10000);
+          }).then(function (res) {
+            if (!res.ok) throw new Error(String(res.error || "宿主拒绝了这次请求"));
+            return res.data;
+          });
+        }
+
+        function say(id, text) {
+          document.getElementById(id).textContent = text;
+        }
+
+        async function load() {
+          var t = await call("task.get", {});
+          say("title", t.title || "（无标题）");
+          say("tid", t.id);
+          document.body.dataset.bindState = "bound";
+        }
+
+        window.addEventListener("message", function (e) {
+          var m = e.data;
+          if (!m || m.source !== HOST_SOURCE) return;
+          if (m.type === "tool:response") {
+            var w = waiting.get(m.id);
+            if (w) {
+              waiting.delete(m.id);
+              w.resolve({ ok: m.ok, data: m.data, error: m.error });
+            }
+            return;
+          }
+          if (m.type === "tool:context") {
+            ctx = m.data;
+            if (ctx) {
+              document.documentElement.dataset.theme = ctx.theme || "light";
+              say("kind", ctx.inject ? ctx.inject.kind : "（整页工具）");
+              if (ctx.inject) {
+                say("tid", ctx.inject.taskId);
+                document.body.dataset.injectKind = ctx.inject.kind;
+                document.body.dataset.injectTask = ctx.inject.taskId;
+                load().catch(function (err) {
+                  document.body.dataset.bindState = "error";
+                  var box = document.getElementById("err");
+                  box.hidden = false;
+                  box.textContent = String(err.message || err);
+                });
+              }
+            }
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

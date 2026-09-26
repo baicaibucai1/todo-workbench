@@ -207,10 +207,10 @@ if (!bundlesTools) {
     // 不必为了数条目去把几十兆解一遍
       const zipBuf = fs.readFileSync(zipPath);
       // zip 里该有的 = 磁盘工具 - pack-tools.mjs 的 EXCLUDE。
-      // 两份清单必须同步：pack 那边排除谁（gomoku 是开发样本，不随包），
-      // 这边的期望就得跟着排除 —— 否则每次打包都被自己人拦一道
-      // （0.2.1 就是这么红过一回）。
-      const packExcluded = ['gomoku'];
+      // 两份清单必须同步，否则每次打包都被自己人拦一道（0.2.1 就是这么红过一回）。
+      // 现在两边都是空的：tools/ 下每个目录都该随包（五子棋那份样本已经搬去
+      // tests/fixtures/gomoku/，不在 tools/ 里了）。
+      const packExcluded = [];
       const expected = diskTools.filter((t) => !packExcluded.includes(t));
       const absent = expected.filter(
         (t) => zipBuf.indexOf(Buffer.from(`tools/${t}/manifest.json`, 'utf8')) === -1,

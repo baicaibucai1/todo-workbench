@@ -1,5 +1,17 @@
 /**
- * 五子棋工具的 Node 侧验证（不需要浏览器，不需要 dev server）。
+ * tool-authoring 契约活样本（五子棋）的 Node 侧验证 —— 不需要浏览器，不需要 dev server。
+ *
+ * ------------------------------------------------------------------
+ * 它现在是**测试夹具，不是产品里的工具**
+ * ------------------------------------------------------------------
+ * 五子棋当初是为了验证「AI 能不能自己写出合格的工具」而生成的样本，从来不是
+ * 要随产品分发的功能。2026-09-24 把它从 tools/gomoku/ 搬到了
+ * tests/fixtures/gomoku/ —— tools/ 下的每一个目录都会被打包进工具 zip、
+ * 也会出现在用户的设置页里，一份开发样本放在那儿，等于让每个用户都看到
+ * 一个他没要过的东西。
+ *
+ * 搬走之后它**仍然要跑**：契约得有一份真东西钉着，否则标准只是文档。
+ * 所以这个套件保留，只是它验的样品现在明确住在测试目录里。
  *
  * ------------------------------------------------------------------
  * 这个套件验的是什么
@@ -16,27 +28,29 @@
  *   B. **工具逻辑本身**（第 3~8 段）。用 jsdom 把 index.html 跑起来，
  *      再手写一个"只说 toolBridge 那套 op"的迷你宿主，于是能真的：
  *      切模式、落子、看 AI 应手、连成五子、把战绩写进一张内存表、再清空。
- *      这比浏览器 e2e 快得多，也能方便地测边界（比如"落库失败时界面要说
+ *      这比在真工作台里跑快得多，也能方便地测边界（比如"落库失败时界面要说
  *      人话"这条，浏览器里很难造）。
  *
  * ------------------------------------------------------------------
  * 这个套件**验不到**什么
  * ------------------------------------------------------------------
  * 验不到它在**真的工作台**里被 iframe 装载、宿主真的为它建了
- * tool_gomoku_records 表、主题真的从宿主传下来。那些在 tests/gomoku.mjs
- * （浏览器 e2e）里验。两边一起才算完整。
+ * tool_gomoku_records 表。样本已经不进产品，工作台里不再有它可装载 ——
+ * 那部分（原 tests/gomoku.mjs 浏览器 e2e）随之撤掉：留着只会是一个
+ * 永远找不到入口的红套件。
  *
  * 用法：node tests/gomoku-unit.mjs
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire("C:/AI_Production/Tools/main/");
 const { JSDOM } = require("jsdom");
 
-const HTML_FILE = "tools/gomoku/index.html";
-const MANIFEST_FILE = "tools/gomoku/manifest.json";
+const HTML_FILE = "tests/fixtures/gomoku/index.html";
+const MANIFEST_FILE = "tests/fixtures/gomoku/manifest.json";
 const SKILL_FILE = "src/lib/agent/skills.ts";
 const REGISTRY_FILE = "src/lib/tools.ts";
 
@@ -133,11 +147,16 @@ check("records 有且只有一个主键", tab.columns.filter((c) => c.pk).length
 check("列类型只用 text/integer/real",
   tab.columns.every((c) => ["text", "integer", "real"].includes(c.type)));
 
+// 方向是**反的**：它是测试夹具，不该出现在产品里。
+// tools/ 下每多一个目录，工具包 zip 就多一份、用户设置页就多一行；
+// BUILTIN_TOOLS 则是浏览器模式的清单（同时也是"随产品分发了什么"的声明）。
+// 所以这里断言的是"两处都没有它" —— 一旦有人手滑把样本拷回 tools/，
+// 或者为了跑测试把它登记回清单，这个套件会立刻红。
 const registry = fs.readFileSync(REGISTRY_FILE, "utf8");
-check("src/lib/tools.ts 的 BUILTIN_TOOLS 里登记了它",
-  new RegExp(`id:\\s*"${manifest.id}"`).test(registry));
-check("tools.ts 里的 schema 与 manifest 同源（表名一致）",
-  new RegExp(`name:\\s*"${tab.name}"`).test(registry));
+check("src/lib/tools.ts 的 BUILTIN_TOOLS 里没有它（夹具不进产品）",
+  !new RegExp(`id:\\s*"${manifest.id}"`).test(registry));
+check("tools/ 下没有这个目录（否则会被打进工具包 zip）",
+  !fs.existsSync(path.join("tools", manifest.id)));
 
 const skills = fs.readFileSync(SKILL_FILE, "utf8");
 check("技能包里写着这个自包含契约（规则与代码同源）",

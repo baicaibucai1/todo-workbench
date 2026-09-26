@@ -230,7 +230,7 @@ export default function GalleryView() {
             onClick={() => void importLocal()}
             disabled={busy}
             data-gallery-import=""
-            className="flex items-center gap-1.5 rounded-md bg-[#378add] px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-50"
           >
             <Plus size={13} />
             导入图片 / 视频
@@ -264,7 +264,7 @@ export default function GalleryView() {
           ))}
 
           <div className="flex-1" />
-          <div className="flex h-7 min-w-[180px] items-center gap-1.5 rounded-md border border-line bg-card px-2 focus-within:border-[#378add]">
+          <div className="flex h-7 min-w-[180px] items-center gap-1.5 rounded-md border border-line bg-card px-2 focus-within:border-primary">
             <Search size={12} className="shrink-0 text-fg-dim" />
             <input
               value={localSearch}
@@ -529,7 +529,7 @@ function Card({
               if (e.key === "Enter") e.currentTarget.blur();
               if (e.key === "Escape") setEditing(false);
             }}
-            className="w-full rounded border border-[#378add] bg-card px-1 py-0.5 text-[12px] outline-none"
+            className="w-full rounded border border-primary bg-card px-1 py-0.5 text-[12px] outline-none"
           />
         ) : (
           <p className="truncate text-[12px] text-fg-2" title={item.title}>
@@ -684,7 +684,7 @@ function Lightbox({
                       }
                       if (e.key === "Escape") setEditing(false);
                     }}
-                    className="min-w-0 flex-1 rounded border border-[#378add] bg-card px-1.5 py-1 outline-none"
+                    className="min-w-0 flex-1 rounded border border-primary bg-card px-1.5 py-1 outline-none"
                   />
                   <button
                     onClick={() => {

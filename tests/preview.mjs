@@ -24,6 +24,7 @@
 
 import { createRequire } from "node:module";
 import fs from "node:fs";
+import { enableModule } from "./_enable-module.mjs";
 import path from "node:path";
 import { pngDataUrl } from "./png.mjs";
 
@@ -124,6 +125,20 @@ if (FRESH) {
 // MemoryDb 建表 + 种子数据是异步的，等侧边栏渲染出来再动
 await page.locator("aside").first().waitFor({ timeout: 15000 });
 await page.waitForTimeout(900);
+
+// 特殊单号与图库都是**选装模块**（默认关），侧边栏里默认没有它们的入口。
+// 要截哪一屏就得先打开哪个 —— 否则那一屏会安静地截成「流程任务」或一片空白，
+// 而文件名还写着 special / gallery，是那种看不出错的错。
+const wanted = new Set(
+  SCREENS.filter((s) => !skip(s))
+    .map((s) => (s.nav === "special" || s.nav === "gallery" ? s.nav : null))
+    .filter(Boolean),
+);
+for (const m of wanted) {
+  await enableModule(page, m);
+  console.log(`已启用选装模块：${m}`);
+}
+if (wanted.size) console.log("");
 
 /** 这一屏「确实切过去了」吗？返回 null 表示没问题，否则返回原因 */
 async function verify(s) {

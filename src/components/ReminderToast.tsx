@@ -158,7 +158,7 @@ export default function ReminderToast() {
                 void dismissReminder(task.id);
               }}
               data-act="reminder-done"
-              className="flex flex-1 items-center justify-center gap-1 rounded-md bg-[#378add] px-2 py-1.5 text-[12.5px] text-white hover:opacity-90"
+              className="flex flex-1 items-center justify-center gap-1 rounded-md bg-primary px-2 py-1.5 text-[12.5px] text-white hover:opacity-90"
             >
               <Check size={13} />
               完成

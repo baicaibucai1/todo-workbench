@@ -79,6 +79,33 @@ if (FRESH) {
 }
 await page.waitForTimeout(900);
 
+/* ---- 0. 它是选装模块：先去设置里启用 ---- */
+
+console.log("\n0. 选装模块：默认不带，先启用");
+// 2026-09-24 起「特殊单号」是选装模块：新装的库默认关，侧边栏里根本没有入口。
+// 所以这个套件必须**先把它打开**才能测后面的东西 —— 少这一段，下面每一节
+// 都会红在"入口不存在"上，看上去像功能全崩了，其实是没人去按那个开关。
+check(
+  "默认状态侧边栏没有「特殊单号」入口",
+  (await page.locator('aside [data-nav="special"]').count()) === 0,
+);
+await page.locator('aside [data-nav="settings"]').first().click();
+await page.waitForTimeout(700);
+await page.locator('[data-section="behavior"]').first().click();
+await page.waitForTimeout(500);
+const optIn = page.locator('[data-switch="special-enabled"]');
+check("设置 → 行为里有「特殊单号」开关", (await optIn.count()) === 1);
+check("开关默认停在关（选装）", (await optIn.getAttribute("aria-checked")) === "false");
+await optIn.click();
+await page.waitForTimeout(1000);
+check(
+  "打开后侧边栏入口立刻出现",
+  (await page.locator('aside [data-nav="special"]').count()) === 1,
+);
+// 回到列表：设置页不关掉的话后面的截图与点击都会被挡
+await page.locator('aside [data-nav="myday"]').first().click();
+await page.waitForTimeout(700);
+
 /* ---- 1. 入口 ---- */
 
 console.log("\n1. 侧边栏入口");
@@ -949,7 +976,9 @@ await page.waitForTimeout(500);
 const specialSwitch = page.locator('[data-switch="special-enabled"]');
 check("行为偏好里有「特殊单号」开关", (await specialSwitch.count()) === 1);
 const swBefore = await specialSwitch.getAttribute("aria-checked");
-check("默认是开着的（老用户不会突然少一个功能）", swBefore === "true", String(swBefore));
+// 不是"默认开着"，是**本套件开头把它打开了**（见第 0 节）—— 它是选装模块，
+// 新库默认关；老库由迁移 special_orders_opt_in 按"有没有建过单号"回填。
+check("此刻是开着的（套件开头已启用）", swBefore === "true", String(swBefore));
 
 await specialSwitch.click();
 await page.waitForTimeout(1000);

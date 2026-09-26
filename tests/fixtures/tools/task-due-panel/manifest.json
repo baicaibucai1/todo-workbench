@@ -1,0 +1,21 @@
+{
+  "id": "task-due-panel",
+  "name": "任务截止",
+  "version": "1.0.0",
+  "description": "在待办详情面板底部显示当前待办的标题、截止日期和剩余/逾期天数",
+  "icon": "calendar",
+  "entry": "index.html",
+  "dbVersion": 1,
+  "author": "AI 助手",
+  "source": "user",
+  "capabilities": [
+    "task"
+  ],
+  "injects": [
+    {
+      "kind": "detailSection",
+      "label": "任务截止",
+      "height": 140
+    }
+  ]
+}

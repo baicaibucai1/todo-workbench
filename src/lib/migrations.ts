@@ -616,6 +616,95 @@ export const migrations: Migration[] = [
       UPDATE core_agent_messages SET chat_id = 'chat-legacy' WHERE chat_id = '';
     `,
   },
+  {
+    // 「模块变选装」的回填（v17）：特殊单号与图库从"内置就有"改成"想要再开"。
+    //
+    // ⚠️ 本条**没有随任何 Release 发布过**（上一个发布的版本还停在 v16），
+    // 所以它是在就地修正而不是追加一条 —— 已发布的迁移才永远不许改，
+    // 没发布的就地改干净，好过让每个用户的库多跑一道无意义的搬家。
+    //
+    // ============================ 为什么要回填 ============================
+    // 默认值只能管到"新建的库"。已经用了一段时间的库里可能躺着几十张单子、
+    // 上百张图 —— 默认值一改，那些人的入口、提醒、紧急区会在升级后**一起
+    // 消失**，而他们什么都没做。功能收起来是一句话的事，
+    // 让用户以为数据丢了是另一回事。
+    //
+    // 两个 WHERE 条件缺一不可：
+    //   · 键已存在 → 用户自己按过那个开关（开过或关过），迁移不能替他改主意；
+    //   · 库里没有对应数据 → 他从没用过，按新的默认（关）就对了。
+    //
+    // ============================ 顺带把开关的键搬一次家 ============================
+    // 以前每个模块各起一个键（`special.enabled`），现在统一成 `ext.<id>.enabled`
+    // （见 lib/extensions/registry.ts）。用户的老值要跟着走 —— 他自己按过的
+    // 那个开关，不能因为宿主改了内部命名就被当成"没按过"。
+    //
+    // ⚠️ 别把回填写成聚合 SELECT（`SELECT MAX(...) FROM ...`）：无 GROUP BY 的
+    // 聚合**恒返回一行**，空表也会插入一条，撞上 NOT NULL 就是启动即崩
+    // （v16 踩过一次，见 PITFALLS 七十三）。EXISTS 没有这个毛病。
+    version: 17,
+    name: "modules_opt_in",
+    sql: `
+      UPDATE core_settings SET key = 'ext.special.enabled'
+        WHERE key = 'special.enabled'
+          AND NOT EXISTS (
+            SELECT 1 FROM core_settings WHERE key = 'ext.special.enabled'
+          );
+      DELETE FROM core_settings WHERE key = 'special.enabled';
+
+      INSERT INTO core_settings (key, value)
+        SELECT 'ext.special.enabled', '1'
+        WHERE NOT EXISTS (SELECT 1 FROM core_settings WHERE key = 'ext.special.enabled')
+          AND EXISTS (
+            SELECT 1 FROM core_work_orders WHERE kind = 'special' AND deleted = 0
+          );
+
+      INSERT INTO core_settings (key, value)
+        SELECT 'ext.gallery.enabled', '1'
+        WHERE NOT EXISTS (SELECT 1 FROM core_settings WHERE key = 'ext.gallery.enabled')
+          AND EXISTS (SELECT 1 FROM core_gallery_items);
+    `,
+  },
+
+  {
+    /*
+     * v18：**助手自己写的技能**。
+     *
+     * ============================ 为什么它必须落库 ============================
+     * 内置那几份技能是**代码**（skills.ts），改它们要重新发版。而助手在干活
+     * 时会积累一批"这个项目/这个人特有的规矩"—— 比如"截图一律放工作区
+     * 的 shots/ 下"、"写工具前先看 tests/fixtures/tools/panel-demo"。
+     * 这些规矩只有它自己会总结出来说，也只有它自己每次都要用。
+     *
+     * 落在对话里等于没有：下一轮就没了。落库之后它能像内置技能一样被
+     * read_skill 取回、被常驻注入一部分 —— 这才叫"学会"。
+     *
+     * ============================ 为什么不是写进 core_settings ============================
+     * 技能是**一条记录**（有标题、有若干条规则、有全文），不是"一个值"。
+     * 塞进 settings 只能存成一个大 JSON 字符串，于是列表、按 id 取、
+     * 删掉某一条都要把整块读出来再拆 —— 那是拿键值表当表用。
+     *
+     * ============================ source 这一列 ============================
+     * 内置（builtin）与助手新增（agent）分开放：界面要能说清"哪几条是它自己
+     * 加的"，用户才谈得上删。混在一起的话，删错了就把写工具的标准删了，
+     * 而那是最难排查的一类坏（助手开始写出装不上的工具，没人知道为什么）。
+     */
+    version: 18,
+    name: "agent_skills",
+    sql: `
+      CREATE TABLE IF NOT EXISTS core_agent_skills (
+        id         TEXT PRIMARY KEY,
+        title      TEXT NOT NULL DEFAULT '',
+        summary    TEXT NOT NULL DEFAULT '',
+        rules      TEXT NOT NULL DEFAULT '[]',
+        body       TEXT NOT NULL DEFAULT '',
+        source     TEXT NOT NULL DEFAULT 'agent',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_core_agent_skills_source ON core_agent_skills(source);
+    `,
+  },
 ];
 
 /** 当前代码期望的 schema 版本 */

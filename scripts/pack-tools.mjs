@@ -40,14 +40,20 @@ const TOOLS = path.join(ROOT, "tools");
 const OUT_DIR = path.join(ROOT, "release-assets");
 
 /**
- * 不随工具包分发的目录。
+ * 不随工具包分发的目录 —— 现在是空的，机制留着。
  *
- * gomoku 是《单 HTML 工具编写标准》的**仓库样本**——当时为了验证"AI 能不能
- * 自己写出合格的工具"而生成，tests/gomoku-unit.mjs 那 59 项契约断言拿它当
- * 夹具。它是给写工具的人看的参考物，不是交付给用户的产品，所以留仓库、
- * 不进 zip。哪天真想把它变成正式工具，从这行里删掉 id 就行。
+ * 判据只有一条：**tools/ 下每个目录都会出现在用户的设置页里、会被打进 zip**，
+ * 所以不是交付给用户的东西就别放进来。
+ *
+ * 五子棋原来占着这个位置：它是《单 HTML 工具编写标准》的活样本，为了验证
+ * "AI 能不能自己写出合格的工具"而生成。既然它不住在 tools/ 了（2026-09-24
+ * 搬到 tests/fixtures/gomoku/，契约断言仍由 tests/gomoku-unit.mjs 跑），
+ * 这里自然就空了 —— 靠目录位置隔开，比靠一份排除清单可靠。
+ *
+ * 哪天又要往 tools/ 塞一份只给开发看的样本，记得同步
+ * scripts/check-installer.mjs 的 packExcluded。
  */
-const EXCLUDE = new Set(["gomoku"]);
+const EXCLUDE = new Set();
 
 const argv = process.argv.slice(2);
 const CHECK = argv.includes("--check");

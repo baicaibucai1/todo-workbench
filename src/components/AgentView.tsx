@@ -43,16 +43,25 @@ import {
   MessageSquarePlus,
   Settings2,
   ShieldAlert,
+  Trash2,
   Sparkles,
   Square,
   Wrench,
   BookOpen,
+  ExternalLink,
   X,
 } from "lucide-react";
 import { useStore } from "../store";
 import * as runtime from "../lib/agent/runtime";
-import { SKILLS } from "../lib/agent/skills";
-import { agentConfigProblems, agentProvider } from "../lib/agent/providers";
+import { allSkills, refreshSkills } from "../lib/agent/skills";
+import { RichText } from "./RichText";
+import * as repo from "../lib/repo";
+import {
+  agentConfigProblems,
+  agentProvider,
+  recommendedProvider,
+} from "../lib/agent/providers";
+import { openExternal } from "../lib/attachments";
 import { actionLabel } from "../lib/agent/actions";
 import { parseAgentPermissions, readAgentConfig, withDefaults } from "../lib/settings";
 import type { AgentAction, AgentAsk, AgentMessage } from "../lib/agent/types";
@@ -187,7 +196,7 @@ export default function AgentView({ onClose }: { onClose?: () => void }) {
           className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-fg-3 hover:bg-hover"
         >
           <BookOpen size={14} />
-          技能（{SKILLS.length}）
+          技能（{allSkills().length}）
         </button>
         {hasContent && (
           /*
@@ -230,7 +239,13 @@ export default function AgentView({ onClose }: { onClose?: () => void }) {
       {/* 消息流 */}
       <div ref={scroller} data-agent-messages="" className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         <div className="mx-auto max-w-[720px]">
-          {!configured && <ConfigGate problems={problems} onOpen={() => openSettings(true, "ai")} />}
+          {!configured && (
+            <ConfigGate
+              problems={problems}
+              onOpen={() => openSettings(true, "ai")}
+              providerId={cfg.provider}
+            />
+          )}
 
           {configured && !hasContent && !state.busy && <Welcome onPick={sendNow} />}
 
@@ -507,7 +522,29 @@ function AskCard({ ask }: { ask: AgentAsk }) {
 /* 未配置 / 空对话                                                     */
 /* ------------------------------------------------------------------ */
 
-function ConfigGate({ problems, onOpen }: { problems: string[]; onOpen: () => void }) {
+/**
+ * 没配 API Key 时的门槛卡。
+ *
+ * 它与设置页那张引导卡说同一件事、**用同一份数据**（providers.ts 的
+ * recommendedProvider），因为"我该去哪儿弄一把 Key"这个问题在任何一处的
+ * 答案都该是一样的 —— 两处说法不一致只会让人更糊涂。
+ *
+ * 这里是大多数人第一次意识到"要用还得先接一家"的地方，所以把注册按钮
+ * 直接摆在这儿，而不是让人先跑到设置页去找。
+ */
+function ConfigGate({
+  problems,
+  onOpen,
+  providerId,
+}: {
+  problems: string[];
+  onOpen: () => void;
+  providerId: string;
+}) {
+  const provider = agentProvider(providerId);
+  const rec = recommendedProvider();
+  // 人家已经选好了别家，就别再把人往回拽
+  const showSignup = !!rec.signup && rec.id === provider.id;
   return (
     <div
       data-agent-gate=""
@@ -520,7 +557,10 @@ function ConfigGate({ problems, onOpen }: { problems: string[]; onOpen: () => vo
       <p className="mt-1.5 text-[12.5px] leading-relaxed text-fg-2">
         助手要调用一家对话接口才能说话。它用的是 OpenAI 兼容的接口，所以 Agnes、阿里云百炼、
         DeepSeek、自建网关都能接；Key 只存在本机，对话记录也只存在本机。
-        缺的那几项在下面的按钮里点进去补（<b className="font-medium">设置 → AI 助手</b>）。
+        {showSignup
+          ? `手上还没有 Key 的话，注册 ${rec.name} 就能拿到，不用绑卡。`
+          : `你现在选的是${provider.name}。`}
+        下面缺的那几项，点「去设置里配」直接落到<b className="font-medium">设置 → AI 助手</b>那一页。
       </p>
       <ul className="mt-2 space-y-0.5">
         {problems.map((p) => (
@@ -530,14 +570,26 @@ function ConfigGate({ problems, onOpen }: { problems: string[]; onOpen: () => vo
           </li>
         ))}
       </ul>
-      <button
-        onClick={onOpen}
-        data-agent-goto-settings=""
-        className="mt-3 flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] text-white hover:opacity-90"
-      >
-        <Settings2 size={14} />
-        去设置里配
-      </button>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          onClick={onOpen}
+          data-agent-goto-settings=""
+          className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] text-white hover:opacity-90"
+        >
+          <Settings2 size={14} />
+          去设置里配
+        </button>
+        {showSignup && rec.signup && (
+          <button
+            onClick={() => void openExternal(rec.signup!)}
+            data-agent-signup={rec.signup}
+            className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12.5px] text-fg-2 hover:bg-hover"
+          >
+            注册 {rec.name} 拿 Key
+            <ExternalLink size={12} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -721,6 +773,15 @@ function argsForDisplay(action: AgentAction): Record<string, unknown> {
  */
 function SkillDrawer({ onClose }: { onClose: () => void }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  const [version, setVersion] = useState(0);
+
+  /** 删掉一条助手自己存的技能，然后让列表与常驻索引一起跟上 */
+  const deleteSkillAndRefresh = async (id: string) => {
+    await repo.deleteAgentSkill(id);
+    await refreshSkills();
+    setVersion((v) => v + 1);
+  };
+  void version;
   return (
     <div className="fixed inset-0 z-40 flex justify-end" data-agent-skills="">
       <div className="absolute inset-0 bg-black/25" onClick={onClose} />
@@ -742,27 +803,49 @@ function SkillDrawer({ onClose }: { onClose: () => void }) {
             下面的规则是硬约束（违反了工具就装不进去、或者装进去打不开），
             所以它们**每一轮都在助手的上下文里**；每条技能还有一份全文，它动手前会自己取。
           </p>
-          {SKILLS.map((s) => {
+          {allSkills().map((s) => {
             const open = openId === s.id;
+            const mine = s.source === "agent";
             return (
               <div
                 key={s.id}
                 data-agent-skill={s.id}
+                data-source={mine ? "agent" : "builtin"}
                 className="mb-2 rounded-xl border border-line bg-card px-3.5 py-3"
               >
-                <button
-                  onClick={() => setOpenId(open ? null : s.id)}
-                  className="flex w-full items-start gap-2 text-left"
-                >
-                  <ChevronRight
-                    size={14}
-                    className={`mt-0.5 shrink-0 text-fg-dim transition-transform ${open ? "rotate-90" : ""}`}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[13px] font-medium text-fg">{s.title}</span>
-                    <span className="mt-0.5 block text-[11.5px] leading-relaxed text-fg-dim">{s.summary}</span>
-                  </span>
-                </button>
+                <div className="flex w-full items-start gap-2">
+                  <button
+                    onClick={() => setOpenId(open ? null : s.id)}
+                    className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                  >
+                    <ChevronRight
+                      size={14}
+                      className={`mt-0.5 shrink-0 text-fg-dim transition-transform ${open ? "rotate-90" : ""}`}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-medium text-fg">{s.title}</span>
+                      <span className="mt-0.5 block text-[11.5px] leading-relaxed text-fg-dim">{s.summary}</span>
+                    </span>
+                  </button>
+                  {/*
+                    只让自己写的那几条可删。
+                    内置那几份是"怎么写工具才装得上"的标准 —— 删了之后
+                    助手会开始写出装不上的工具，而没人会把这两件事联系起来。
+                  */}
+                  {mine && (
+                    <button
+                      onClick={() => void deleteSkillAndRefresh(s.id)}
+                      data-agent-skill-delete={s.id}
+                      title="删掉这一条（只有它自己写的能删）"
+                      className="grid size-7 shrink-0 place-items-center rounded-md text-fg-dim hover:bg-hover hover:text-danger"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+                {mine && (
+                  <div className="ml-5 mt-1 text-[11px] text-accent">它自己记下的 · 可删</div>
+                )}
                 <ul className="mt-2 ml-5 list-disc space-y-0.5">
                   {s.rules.map((r) => (
                     <li key={r} className="text-[12px] leading-relaxed text-fg-3">
@@ -794,152 +877,4 @@ function SkillDrawer({ onClose }: { onClose: () => void }) {
       </div>
     </div>
   );
-}
-
-/* ------------------------------------------------------------------ */
-/* 极简 Markdown 渲染                                                  */
-/* ------------------------------------------------------------------ */
-
-/**
- * 只认四种东西：围栏代码块、标题、列表、**粗体** 与 `行内代码`。
- *
- * 为什么不上一个 Markdown 库：这里渲染的是**模型输出**，而完整的 Markdown
- * 允许内联 HTML —— 那意味着要引 sanitizer，而"给一个会读你本机文件的东西
- * 加一条 HTML 注入通道"这件事，收益（表格好看一点）和代价完全不成比例。
- * 这里全部走 React 元素，不碰 dangerouslySetInnerHTML。
- */
-type Block = { kind: "code"; lang: string; body: string } | { kind: "text"; lines: string[] };
-
-function parseBlocks(text: string): Block[] {
-  const out: Block[] = [];
-  const re = /```([a-zA-Z0-9-]*)[ \t]*\n([\s\S]*?)```/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
-    if (m.index > last) out.push({ kind: "text", lines: text.slice(last, m.index).split("\n") });
-    out.push({ kind: "code", lang: m[1] ?? "", body: (m[2] ?? "").replace(/\n$/, "") });
-    last = m.index + m[0].length;
-  }
-  // 未闭合的围栏留在正文里当普通文本 —— 宁可少美化一处，也不能把模型的话吞掉
-  if (last < text.length) out.push({ kind: "text", lines: text.slice(last).split("\n") });
-  return out.filter((b) => b.kind === "code" || b.lines.some((l) => l.trim()));
-}
-
-function RichText({ text }: { text: string }) {
-  const blocks = useMemo(() => parseBlocks(text), [text]);
-  return (
-    <div className="space-y-2 text-[13px] leading-relaxed text-fg-2">
-      {blocks.map((b, i) =>
-        b.kind === "code" ? (
-          <pre
-            key={i}
-            className="max-h-[360px] overflow-auto rounded-lg bg-surface px-2.5 py-2 font-mono text-[11.5px] leading-relaxed text-fg-3"
-          >
-            {b.body}
-          </pre>
-        ) : (
-          <TextBlock key={i} lines={b.lines} />
-        ),
-      )}
-    </div>
-  );
-}
-
-function TextBlock({ lines }: { lines: string[] }) {
-  const out: React.ReactNode[] = [];
-  let i = 0;
-  let k = 0;
-  while (i < lines.length) {
-    const t = lines[i].trim();
-    if (!t) {
-      i++;
-      continue;
-    }
-
-    const h = /^(#{1,4})\s+(.*)$/.exec(t);
-    if (h) {
-      out.push(
-        <div key={k++} className="pt-0.5 font-medium text-fg">
-          {inline(h[2])}
-        </div>,
-      );
-      i++;
-      continue;
-    }
-
-    if (/^\s*[-*•]\s+/.test(lines[i])) {
-      const items: string[] = [];
-      while (i < lines.length && /^\s*[-*•]\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^\s*[-*•]\s+/, ""));
-        i++;
-      }
-      out.push(
-        <ul key={k++} className="ml-4 list-disc space-y-0.5">
-          {items.map((it, n) => (
-            <li key={n}>{inline(it)}</li>
-          ))}
-        </ul>,
-      );
-      continue;
-    }
-
-    if (/^\d+[.、)]\s+/.test(t)) {
-      const items: string[] = [];
-      while (i < lines.length && /^\d+[.、)]\s+/.test(lines[i].trim())) {
-        items.push(lines[i].trim().replace(/^\d+[.、)]\s+/, ""));
-        i++;
-      }
-      out.push(
-        <ol key={k++} className="ml-4 list-decimal space-y-0.5">
-          {items.map((it, n) => (
-            <li key={n}>{inline(it)}</li>
-          ))}
-        </ol>,
-      );
-      continue;
-    }
-
-    const para: string[] = [];
-    while (
-      i < lines.length &&
-      lines[i].trim() &&
-      !/^(#{1,4})\s/.test(lines[i].trim()) &&
-      !/^\s*[-*•]\s+/.test(lines[i]) &&
-      !/^\d+[.、)]\s+/.test(lines[i].trim())
-    ) {
-      para.push(lines[i].trim());
-      i++;
-    }
-    out.push(<p key={k++}>{inline(para.join(" "))}</p>);
-  }
-  return <>{out}</>;
-}
-
-/** 行内：**粗体** 与 `代码`。两个都只走 React 元素，不解析 HTML */
-function inline(s: string): React.ReactNode {
-  const parts: React.ReactNode[] = [];
-  const re = /(\*\*[^*\n]+\*\*|`[^`\n]+`)/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  let k = 0;
-  while ((m = re.exec(s))) {
-    if (m.index > last) parts.push(s.slice(last, m.index));
-    const tok = m[0];
-    if (tok.startsWith("**")) {
-      parts.push(
-        <b key={k++} className="font-medium text-fg">
-          {tok.slice(2, -2)}
-        </b>,
-      );
-    } else {
-      parts.push(
-        <code key={k++} className="rounded bg-chip px-1 py-px font-mono text-[11.5px] text-fg-3">
-          {tok.slice(1, -1)}
-        </code>,
-      );
-    }
-    last = m.index + tok.length;
-  }
-  if (last < s.length) parts.push(s.slice(last));
-  return parts;
 }

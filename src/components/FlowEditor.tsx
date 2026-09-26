@@ -83,7 +83,7 @@ export default function FlowEditor() {
       >
         {/* 标题栏 */}
         <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-4">
-          <Flag size={15} className="text-[#378add]" />
+          <Flag size={15} className="text-primary" />
           <span className="text-[14px] font-medium">流程模板</span>
           <span className="rounded bg-chip px-1.5 py-px text-[10.5px] text-fg-dim">
             {flows.length} 套
@@ -148,7 +148,7 @@ export default function FlowEditor() {
               })}
 
               {addingFlow ? (
-                <div className="mt-1 flex items-center gap-1.5 rounded-md border border-[#378add] bg-card px-2 py-1">
+                <div className="mt-1 flex items-center gap-1.5 rounded-md border border-primary bg-card px-2 py-1">
                   <input
                     autoFocus
                     value={newFlow}
@@ -207,7 +207,7 @@ export default function FlowEditor() {
                         if (e.key === "Enter") e.currentTarget.blur();
                         if (e.key === "Escape") setEditingName(false);
                       }}
-                      className="min-w-0 flex-1 rounded border border-[#378add] bg-card px-1.5 py-0.5 text-[13.5px] outline-none"
+                      className="min-w-0 flex-1 rounded border border-primary bg-card px-1.5 py-0.5 text-[13.5px] outline-none"
                     />
                   ) : (
                     <button

@@ -48,6 +48,7 @@ export const CORE_TABLE_LABELS: Record<string, string> = {
   core_tool_schema: "工具表版本台账",
   core_agent_messages: "AI 助手对话",
   core_agent_chats: "AI 助手会话",
+  core_agent_skills: "AI 助手自己写的技能",
 };
 
 export interface TableStat {

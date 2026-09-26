@@ -21,13 +21,15 @@ import OrderCreateDialog from "./OrderCreateDialog";
 import SpecialOrdersView from "./SpecialOrdersView";
 import { groupRows, type Row as RowsRow } from "../lib/rows";
 import type { WorkOrderKind } from "../types";
-import { SETTINGS, parseSpecialEnabled } from "../lib/settings";
+import { SETTINGS } from "../lib/settings";
+import { isEnabled } from "../lib/extensions/registry";
 import {
   SCRIM,
+  formatBackground,
   isScrimLevel,
   parseBackground,
-  wallpaperUrl,
 } from "../lib/wallpapers";
+import { useWallpaperUrl } from "../lib/useWallpaperUrl";
 
 const VIEW_META: Record<
   string,
@@ -48,7 +50,11 @@ const VIEW_META: Record<
     accent: "#534ab7",
     bg: "linear-gradient(135deg, #443c9a 0%, #7a72cc 50%, #a79fe0 100%)",
   },
-  // 流程任务沿用界面里一贯的蓝色（创建栏、行内标记都是 #378add）
+  /*
+   * 流程任务这一格**故意写死蓝色**：它跟上面几个视图一样是"视图身份色"，
+   * 不是主题色。改主题色时按钮、选中态跟着换，但侧边栏里流程任务这一项还是蓝的
+   * —— 否则换一套配色，各视图的标志色就全糊在一起了。
+   */
   orders: {
     icon: ClipboardList,
     accent: "#378add",
@@ -148,7 +154,7 @@ export default function TaskList() {
    * 的"装快递单号"语义全都一起失效 —— 少算一处，就会出现"入口没了但视图还活着"
    * 这种半关状态。记录本身仍在「流程任务」列表里（见 lib/settings.ts）。
    */
-  const specialOn = parseSpecialEnabled(settings[SETTINGS.specialEnabled]);
+  const specialOn = isEnabled(settings, "special");
   /** 「特殊单号」视图只装特殊单号（流程任务里带处理时效的那一类） */
   const specialOnly = view === "special" && specialOn;
   /**
@@ -168,9 +174,18 @@ export default function TaskList() {
   const meta = VIEW_META[view] ?? VIEW_META.list;
   const HeaderIcon = meta.icon;
 
-  // 背景：默认跟随视图渐变，选了壁纸就铺图 + 遮罩
+  /*
+   * 背景：默认跟随视图渐变，选了壁纸就铺图 + 遮罩。
+   *
+   * 壁纸有两种来源（内置必应图 / 用户自己传的），地址解析走 useWallpaperUrl：
+   * 自定义那张要异步向仓库要，这里只关心"最后有没有拿到一个地址"。
+   * failedWallpaper 记的是**整条背景值**（image:xx 或 custom:xx），
+   * 因为两种都可能加载不出来。
+   */
   const bg = parseBackground(settings[SETTINGS.background]);
-  const bgWallpaper = bg.kind === "image" && bg.file !== failedWallpaper ? bg : null;
+  const bgKey = formatBackground(bg);
+  const wallpaperSrc = useWallpaperUrl(settings[SETTINGS.background]);
+  const bgWallpaper = bg.kind !== "auto" && wallpaperSrc !== null && bgKey !== failedWallpaper ? bg : null;
   const scrimRaw = settings[SETTINGS.bgScrim];
   const scrim = SCRIM[isScrimLevel(scrimRaw) ? scrimRaw : "medium"];
 
@@ -284,8 +299,8 @@ export default function TaskList() {
       style={{ background: meta.bg }}
       // 背景状态写进 dataset：截图看不出"壁纸其实没加载成功"，
       // 自动化得有个确定的读法
-      data-bg-mode={bgWallpaper ? "image" : "auto"}
-      data-bg-file={bgWallpaper?.file ?? ""}
+      data-bg-mode={bgWallpaper ? bgWallpaper.kind : "auto"}
+      data-bg-file={bgWallpaper?.kind === "image" ? bgWallpaper.file : (bgWallpaper?.path ?? "")}
     >
       {/* 壁纸层。放 -z-10 而不是做成普通子元素：
           绝对定位的元素会盖在普通流的兄弟节点之上（绘制顺序上"定位元素"晚于"块级元素"），
@@ -293,13 +308,13 @@ export default function TaskList() {
       {bgWallpaper && (
         <div className="pointer-events-none absolute inset-0 -z-10" aria-hidden>
           <img
-            src={wallpaperUrl(bgWallpaper.file)}
+            src={wallpaperSrc ?? ""}
             alt=""
-            data-bg-image={bgWallpaper.file}
+            data-bg-image={bgWallpaper.kind === "image" ? bgWallpaper.file : bgWallpaper.path}
             className="size-full object-cover"
-            // 图片缺失（比如换了机器没同步 public/wallpapers）时退回视图渐变，
-            // 而不是留一块加载失败的空白
-            onError={() => setFailedWallpaper(bgWallpaper.file)}
+            // 图片缺失（换了机器没同步 public/wallpapers、或者自己传的那张
+            // 被手动删了）时退回视图渐变，而不是留一块加载失败的空白
+            onError={() => setFailedWallpaper(bgKey)}
           />
           <div className="absolute inset-0" style={{ background: `rgba(0,0,0,${scrim.base})` }} />
           <div
@@ -441,7 +456,7 @@ export default function TaskList() {
             {orderView ? (
               <span
                 className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium text-white"
-                style={{ background: specialOnly ? "#d85a30" : "#378add" }}
+                style={{ background: specialOnly ? "#d85a30" : "var(--color-primary)" }}
               >
                 {specialOnly ? <Timer size={12} /> : <ClipboardList size={12} />}
                 {specialOnly ? "特殊单号" : "流程任务"}
@@ -462,7 +477,7 @@ export default function TaskList() {
                   icon={<ClipboardList size={12} />}
                   label="流程任务"
                   tabKey="order"
-                  accent="#378add"
+                  accent="var(--color-primary)"
                 />
               </div>
             )}
@@ -510,7 +525,7 @@ export default function TaskList() {
                 data-compose-submit=""
                 className="shrink-0 rounded-md px-2.5 py-1 text-[12px] font-medium text-white"
                 style={{
-                  background: composeKind === "order" ? (specialOnly ? "#d85a30" : "#378add") : accent,
+                  background: composeKind === "order" ? (specialOnly ? "#d85a30" : "var(--color-primary)") : accent,
                 }}
               >
                 {composeKind === "order" ? (specialOnly ? "登记单号" : "创建流程任务") : "添加"}
@@ -625,8 +640,8 @@ function PlusCircle({ accent }: { accent: string }) {
 /** 流程任务版的输入框前缀标记：圆角方块，和待办的圆形成对照 */
 function OrderMark() {
   return (
-    <span className="grid size-[22px] shrink-0 place-items-center rounded-[6px] border-[1.5px] border-[#378add]">
-      <span className="block size-[8px] rounded-[2px] bg-[#378add]" />
+    <span className="grid size-[22px] shrink-0 place-items-center rounded-[6px] border-[1.5px] border-primary">
+      <span className="block size-[8px] rounded-[2px] bg-primary" />
     </span>
   );
 }

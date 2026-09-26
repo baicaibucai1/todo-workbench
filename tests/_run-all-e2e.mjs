@@ -25,9 +25,9 @@ const SUITES = [
   // 工具自己的数据表与互相调用；依赖 tool-browser 之后仍在同一份 localStorage 上跑，
   // 但结尾会自己清掉 namespace，所以放在 tool-browser 之后无副作用
   ["tool-database.mjs", []],
-  // 五子棋：既验"工具在工作台里真的能玩"，也验它有没有守住 tool-authoring
-  // 那份契约（自包含 / data-* / 响应主题）。它只往自己的表里写战绩，不动别人。
-  ["gomoku.mjs", []],
+  // 这里**没有** gomoku.mjs：五子棋是编写标准的测试夹具
+  // （tests/fixtures/gomoku/），不进产品也就没有"它在工作台里被装载"可验；
+  // 契约那部分不需要浏览器，走 npm run gomoku:test（tests/gomoku-unit.mjs）。
   ["image-crop-ai.mjs", []],
   ["placeholder-tools.mjs", []],
   ["ai-gen.mjs", []],
@@ -49,6 +49,10 @@ const SUITES = [
   // 铺满整屏的模态）、以及多会话（新建=新开一段而不是清空、切换、两段式删除）。
   // 同样拦掉模型端点，同样自己清库。
   ["agent-ball.mjs", []],
+  // 助手的沙箱与注入组件：真在 iframe 里跑一遍候选源码（这件事 jsdom 验不了），
+  // 验"没票不许装"那道门，以及工具嵌进待办详情后能不能读到那一条。
+  // 它自清本地库，且要跑好几次沙箱（每次约 300ms），所以排在最后。
+  ["agent-sandbox.mjs", []],
 ];
 
 const rows = [];

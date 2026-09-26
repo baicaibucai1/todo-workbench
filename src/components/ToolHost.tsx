@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { registerLiveTool, unregisterLiveTool } from "../lib/agent/toolRuntime";
 import {
   FolderOpen,
   RefreshCw,
@@ -152,6 +153,9 @@ export default function ToolFrame({ tool, active }: { tool: ToolManifest; active
         await useStore.getState().openToolWithIntent(id, data, tool.id);
       },
       peers: () => peersRef.current(),
+      // 能力门要现取设置：用户在设置里打开图库之后，已经挂着的工具
+      // 应当**立刻**能用上，而不是等重启
+      getSettings: () => useStore.getState().settings,
     }),
     [tool.id],
   );
@@ -169,7 +173,15 @@ export default function ToolFrame({ tool, active }: { tool: ToolManifest; active
       attributeFilter: ["data-theme"],
     });
 
+    /*
+     * 登记"这个工具现在活着"，好让助手的 call_tool 找得到它。
+     * 只登记**已打开**的：为此去后台偷偷起一个 iframe 是另一回事
+     * （不可见、不可控），所以没打开就是没打开，action 会照实说。
+     */
+    registerLiveTool(tool.id, () => frameRef.current, tool.commands ?? []);
+
     return () => {
+      unregisterLiveTool(tool.id);
       bridge.detach();
       observer.disconnect();
       bridgeRef.current = null;
@@ -470,7 +482,7 @@ window.addEventListener("message", (e) => {
           <button
             onClick={() => void runDemo()}
             disabled={busy}
-            className="flex items-center gap-1.5 rounded-md bg-[#378add] px-3 py-1.5 text-[13px] text-white disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[13px] text-white disabled:opacity-50"
           >
             <RefreshCw size={13} className={busy ? "animate-spin" : ""} />
             {busy ? "执行中…" : "建表并写入示例订单"}

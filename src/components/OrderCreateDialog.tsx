@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useStore } from "../store";
 import { addDays, today } from "../lib/repo";
-import { SETTINGS, parseSpecialEnabled } from "../lib/settings";
+import { isEnabled } from "../lib/extensions/registry";
 import { DUE_PRESETS, dueAtText } from "../lib/due";
 import { COURIERS, courierName, detectCourier } from "../lib/couriers";
 import type { WorkOrderKind } from "../types";
@@ -61,7 +61,7 @@ export default function OrderCreateDialog({
     settings,
   } = useStore();
 
-  const specialOn = parseSpecialEnabled(settings[SETTINGS.specialEnabled]);
+  const specialOn = isEnabled(settings, "special");
 
   /**
    * 关掉「特殊单号」后不该还能开出这类单子。
@@ -280,7 +280,7 @@ export default function OrderCreateDialog({
           {isSpecial ? (
             <Timer size={15} className="text-[#d85a30]" />
           ) : (
-            <ClipboardList size={15} className="text-[#378add]" />
+            <ClipboardList size={15} className="text-primary" />
           )}
           <span className="text-[14px] font-medium">
             {isSpecial ? "登记特殊单号" : "新建流程任务"}
@@ -328,7 +328,7 @@ export default function OrderCreateDialog({
                 icon={<ClipboardList size={12} />}
                 label="普通流程任务"
                 kind="normal"
-                accent="#378add"
+                accent="var(--color-primary)"
               />
               <KindTab
                 active={isSpecial}
@@ -430,7 +430,7 @@ export default function OrderCreateDialog({
               onChange={(e) => setTitle(e.target.value)}
               data-oc-title=""
               placeholder={isSpecial ? "留空就用快递单号当标题" : "这张单要解决什么"}
-              className="w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13.5px] text-fg outline-none placeholder:text-fg-dim focus:border-[#378add]"
+              className="w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13.5px] text-fg outline-none placeholder:text-fg-dim focus:border-primary"
             />
           </Field>
 
@@ -446,7 +446,7 @@ export default function OrderCreateDialog({
                 data-oc-desc=""
                 rows={2}
                 placeholder="这件事要办什么（可选；标题写不下的放这里）"
-                className="mt-1.5 w-full resize-none rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim focus:border-[#378add]"
+                className="mt-1.5 w-full resize-none rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim focus:border-primary"
               />
             </Field>
           )}
@@ -462,7 +462,7 @@ export default function OrderCreateDialog({
                     setStageId("");
                   }}
                   data-oc-flow=""
-                  className="w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
+                  className="w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-fg-2 outline-none focus:border-primary"
                 >
                   {flows.length === 0 && <option value="">（还没有流程）</option>}
                   {flows.map((f) => (
@@ -479,7 +479,7 @@ export default function OrderCreateDialog({
                   value={effectiveStageId}
                   onChange={(e) => setStageId(e.target.value)}
                   data-oc-stage=""
-                  className="w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
+                  className="w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-fg-2 outline-none focus:border-primary"
                 >
                   {flowStages.length === 0 && <option value="">（这套流程没有过程态）</option>}
                   {flowStages.map((s) => (
@@ -643,7 +643,7 @@ export default function OrderCreateDialog({
               data-oc-note=""
               rows={3}
               placeholder="补充信息（可选）"
-              className="mt-1.5 w-full resize-none rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim focus:border-[#378add]"
+              className="mt-1.5 w-full resize-none rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim focus:border-primary"
             />
           </Field>
 
@@ -699,7 +699,7 @@ export default function OrderCreateDialog({
             disabled={busy}
             data-oc-submit=""
             className={`rounded-lg px-3.5 py-1.5 text-[13px] font-medium text-white disabled:opacity-50 ${
-              isSpecial ? "bg-[#d85a30]" : "bg-[#378add]"
+              isSpecial ? "bg-[#d85a30]" : "bg-primary"
             }`}
           >
             {busy ? "创建中…" : isSpecial ? "登记单号" : "创建流程任务"}
@@ -789,7 +789,7 @@ function DateInput({
         type="button"
         onClick={() => onChange(t)}
         className={`rounded px-1.5 py-0.5 text-[12px] ${
-          value === t ? "bg-[#378add] text-white" : "text-fg-3 hover:bg-hover"
+          value === t ? "bg-primary text-white" : "text-fg-3 hover:bg-hover"
         }`}
       >
         今天
@@ -798,7 +798,7 @@ function DateInput({
         type="button"
         onClick={() => onChange(addDays(t, 1))}
         className={`rounded px-1.5 py-0.5 text-[12px] ${
-          value === addDays(t, 1) ? "bg-[#378add] text-white" : "text-fg-3 hover:bg-hover"
+          value === addDays(t, 1) ? "bg-primary text-white" : "text-fg-3 hover:bg-hover"
         }`}
       >
         明天

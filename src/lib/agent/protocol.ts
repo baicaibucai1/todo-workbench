@@ -140,7 +140,7 @@ export const AGENT_TOOLS: AgentToolSpec[] = [
     label: "查阅技能",
     description:
       "取一份技能全文。写工具、绑数据表、算日期之前必须先取对应的那一份再照做。" +
-      `可用的 id：${SKILLS.map((s) => s.id).join(" / ")}`,
+      `内置的 id：${SKILLS.map((s) => s.id).join(" / ")}；你自己用 add_skill 存的也能这样取回来。`,
     parameters: S({
       type: "object",
       properties: {
@@ -151,6 +151,226 @@ export const AGENT_TOOLS: AgentToolSpec[] = [
         }),
       },
       required: ["id"],
+    }),
+  },
+  {
+    /*
+     * 让助手自己**写一条技能**。
+     *
+     * 理由：它在这个项目里干活会撞上一批"只有这里才成立"的规矩
+     * （哪些目录该放什么、这个用户偏好什么样的报告格式、某类工具踩过什么坑）。
+     * 这些规矩它自己总结最好，可如果不落盘，下一次对话就全忘了 ——
+     * 于是同一个坑反复踩，用户反复纠正同一件事。
+     *
+     * 门槛：**必须写清"违反了会怎样"**（rules 的每条），否则这条技能
+     * 在常驻索引里只是一句正确的废话，跟没写一样。这条约束由 actions.ts
+     * 拦，不靠提示词。
+     */
+    name: "add_skill",
+    label: "记一条技能",
+    description:
+      "把自己总结出来的一条规矩存成技能，以后每轮对话都能用上（下次不会忘）。" +
+      "适合存：这个项目的特有约定、某类任务的标准流程、踩过的坑。" +
+      "id 只能用小写字母数字与连字符；rules 每条必须写清「违反了会怎样」；" +
+      "body 是全文（可以写详细步骤与示例），由 read_skill 按需取回。" +
+      "同一个 id 再写一次就是改（覆盖）。",
+    parameters: S({
+      type: "object",
+      properties: {
+        id: S({ type: "string", description: "英文 id，如 workspace-conventions" }),
+        title: S({ type: "string", description: "标题，如「工作区约定」" }),
+        summary: S({ type: "string", description: "一句话说明它管什么" }),
+        rules: S({
+          type: "array",
+          items: { type: "string" },
+          description: "常驻注入的硬规则，每条一句话且必须带「违反了会怎样」",
+        }),
+        body: S({ type: "string", description: "全文：详细步骤、示例、为什么" }),
+      },
+      required: ["id", "title", "summary", "rules", "body"],
+    }),
+  },
+  {
+    name: "delete_skill",
+    label: "删一条技能",
+    description:
+      "删掉自己以前存的一条技能（只能删自己写的那几条，内置的标准删不掉）。" +
+      "规矩过时了就删，别让它一直占着常驻索引 —— 那会挤掉真正重要的规则。",
+    parameters: S({
+      type: "object",
+      properties: {
+        id: S({ type: "string", description: "要删的技能 id" }),
+      },
+      required: ["id"],
+    }),
+    /* 删除是"重要变动"：走宿主侧的确认门（见 actions.describeConfirm） */
+  },
+
+  {
+    /*
+     * 让一个**正在打开**的工具去干一件事（"开始一个 25 分钟专注"、"清零"）。
+     *
+     * 与 tool_data 的分工：那条改的是**数据**，这条驱动的是**工具本身**。
+     * 让计时器开始计时不能靠改它表里的数字（工具自己的状态机并不知道），
+     * 所以要有这条通道 —— 宿主把命令转交给工具，工具干完把结果回来。
+     *
+     * 两个前提都会先被检查清楚（不是发过去才知道）：工具得开着、
+     * 而且它得**声明过**这个命令（manifest.commands）。
+     */
+    name: "call_tool",
+    label: "让工具干一件事",
+    description:
+      "给一个**已经打开**的工具发一条命令，让它自己去做那件事（开始计时、清零、刷新…）。" +
+      "工具必须先在 manifest 里声明过这个命令；没打开就先调 open_tool。" +
+      "想知道一个工具接受哪些命令，看 read_tool 返回的 manifest.commands。",
+    parameters: S({
+      type: "object",
+      properties: {
+        tool_id: S({ type: "string", description: "工具 id" }),
+        command: S({ type: "string", description: "命令名，如 start" }),
+        params: S({ type: "object", description: "命令参数（可选，由工具自己定义）" }),
+      },
+      required: ["tool_id", "command"],
+    }),
+  },
+  {
+    /*
+     * 卸载工具。
+     *
+     * 走确认门（describeConfirm）：工具目录一删，用户自己改过的那份源码
+     * 也一起没了，而他可能只是想让助手"先别用它"。
+     * 数据**不跟着删** —— 与界面里卸载的语义一致（设置 → 数据库可清理）。
+     */
+    name: "uninstall_tool",
+    label: "卸载工具",
+    permission: "writeTools",
+    needsDesktop: true,
+    description:
+      "卸载一个已安装的工具（删掉它的目录）。**它的私有数据会留着**，重新装回来还能接着用。" +
+      "需要用户确认。想更新一个工具请用 install_tool 带 overwrite，别先卸再装。",
+    parameters: S({
+      type: "object",
+      properties: {
+        id: S({ type: "string", description: "工具 id（先用 list_tools 确认）" }),
+        reason: S({ type: "string", description: "为什么卸（显示在确认卡上）" }),
+      },
+      required: ["id"],
+    }),
+  },
+  {
+    name: "reinstall_tool",
+    label: "恢复出厂工具",
+    permission: "writeTools",
+    needsDesktop: true,
+    description:
+      "把随安装包分发的那个内置工具恢复成出厂版本（只对这些工具有效）。" +
+      "用户把一个内置工具改坏了、又想回到原始版本时用。",
+    parameters: S({
+      type: "object",
+      properties: { id: S({ type: "string", description: "内置工具的 id" }) },
+      required: ["id"],
+    }),
+  },
+  {
+    /*
+     * 替工具读写它自己的私有表。
+     *
+     * 能力不小，所以边界画得很死：只能碰那个工具 **在 manifest 里声明过的表**，
+     * 只能 select / count / insert / delete，值一律参数化。
+     * 没有 UPDATE、没有 DROP、没有裸 SQL —— 见 lib/agent/toolData.ts 的文件头。
+     */
+    name: "tool_data",
+    label: "读写工具的数据",
+    permission: "database",
+    description:
+      "读或写一个工具**它自己**的私有数据表（批量导入、查看记录、删一条）。" +
+      "表名必须是那个工具在 manifest 里声明过的；op 只能是 select / count / insert / delete。" +
+      "改之前先用 list_tools 或 read_tool 确认它到底有哪些表。",
+    parameters: S({
+      type: "object",
+      properties: {
+        tool_id: S({ type: "string", description: "工具 id" }),
+        table: S({ type: "string", description: "表名（不含前缀），如 records" }),
+        op: S({ type: "string", enum: ["select", "count", "insert", "delete"] }),
+        values: S({ type: "object", description: "insert 时要写的列与值" }),
+        id: S({ type: "string", description: "delete 时那一行的 id" }),
+        limit: S({ type: "number", description: "select 最多返回多少行（默认 50，上限 200）" }),
+      },
+      required: ["tool_id", "table", "op"],
+    }),
+  },
+
+  /* ---------------------------- 工作区（文件） ---------------------------- */
+  {
+    /*
+     * 写文件。这是"助手交出成品"的那条路：报告、方案、整理出来的清单、
+     * 用户要的 md —— 都写进它自己的工作区目录。
+     *
+     * 路径**只接受相对路径**（相对工作区根），并且不许 `..`。
+     * 这条不是洁癖：那是"助手把文件写到用户桌面或系统目录"的唯一通道。
+     */
+    name: "write_file",
+    label: "写文件",
+    permission: "writeTools",
+    needsDesktop: true,
+    description:
+      "在工作区里写一个文件（报告、方案、整理好的清单、markdown 都走这条）。" +
+      "path 是**相对工作区根目录**的相对路径，如 报告/季度总结.md；" +
+      "默认不覆盖已有文件（要覆盖就带 overwrite: true）。" +
+      "写完会在动作卡上给出完整路径，用户点一下就能打开。",
+    parameters: S({
+      type: "object",
+      properties: {
+        path: S({ type: "string", description: "相对路径，如 notes/调研.md" }),
+        content: S({ type: "string", description: "文件全文；append 时是**接着写的这一段**" }),
+        overwrite: S({ type: "boolean", description: "覆盖同名文件，默认 false" }),
+        append: S({
+          type: "boolean",
+          description:
+            "追加到已有文件末尾，默认 false。**内容很长时一定要分段写**：" +
+            "第一段正常写，之后每段都带 append: true —— 一次回复塞不下整份长文件时这是唯一稳的路。" +
+            "分段之间不要重复内容、不要另起开头，就接着上一段的最后一行写。",
+        }),
+        summary: S({ type: "string", description: "一句话说明这是什么文件（显示在动作卡上）" }),
+      },
+      required: ["path", "content"],
+    }),
+  },
+  {
+    name: "read_file",
+    label: "读文件",
+    needsDesktop: true,
+    description:
+      "读回工作区里一个文件的内容。改一个已经写过的文件之前先读一遍，" +
+      "否则你会覆盖掉用户手改过的部分。",
+    parameters: S({
+      type: "object",
+      properties: { path: S({ type: "string", description: "相对路径" }) },
+      required: ["path"],
+    }),
+  },
+  {
+    name: "list_files",
+    label: "看工作区",
+    needsDesktop: true,
+    description: "列出工作区里已有的文件（名称与体积）。想知道以前写过什么就用它，别凭记忆猜。",
+    parameters: S({ type: "object", properties: {} }),
+  },
+  {
+    name: "delete_file",
+    label: "删文件",
+    permission: "writeTools",
+    needsDesktop: true,
+    description:
+      "删掉工作区里一个文件。不可逆 —— 需要用户确认，" +
+      "所以只在确实要删的时候调（整理临时文件、清掉写错的稿子）。",
+    parameters: S({
+      type: "object",
+      properties: {
+        path: S({ type: "string", description: "相对路径" }),
+        reason: S({ type: "string", description: "为什么删（会显示在确认卡上）" }),
+      },
+      required: ["path"],
     }),
   },
 
@@ -182,14 +402,86 @@ export const AGENT_TOOLS: AgentToolSpec[] = [
     }),
   },
   {
+    name: "sandbox_run",
+    label: "沙箱试跑",
+    description:
+      "**装之前先在沙箱里真跑一遍**，通过才拿得到通行证 —— install_tool 只认这张票。" +
+      "它会把源码放进一个隔离 iframe 里执行：抓控制台报错与未捕获异常、看界面有没有真渲染出东西、" +
+      "记录它调用了哪些宿主能力。试跑**不落库**（row/kv 只记账，gallery 不真存），" +
+      "但能力门与正式运行完全一致：没申请 gallery 却调 gallery.put，这里一样被拒。" +
+      "⚠️ 源码**不要塞进参数**：只给 id 与 name，整份源码另起一个 ```html 代码块写在正文里；" +
+      "**源码很长、一次写不完时，改用 write_file 分段写进工作区**（后续段带 append: true），" +
+      "然后这里只给 html_file（工作区相对路径），不要再把源码贴一遍。" +
+      "返回不通过时，按 errors 里每一条改源码，改完**重新调一次** sandbox_run —— 旧的票随即作废。" +
+      "通过之后把返回的 ticket 原样带进 install_tool。",
+    parameters: S({
+      type: "object",
+      properties: {
+        id: S({ type: "string", description: "工具 id，与接下来 install_tool 用的**必须一致**" }),
+        name: S({ type: "string", description: "工具中文名（只是为了让报告好读）" }),
+        html: S({
+          type: "string",
+          description:
+            "完整 HTML 文档源码（自包含，CSS/JS 内联）。**长文件不要走这条路** —— 用 html_file",
+        }),
+        html_file: S({
+          type: "string",
+          description:
+            "源码文件的**工作区相对路径**（如 tools/pomodoro.html）。" +
+            "一份源码一次回复写不完时就用它：先 write_file 分段把整份写进工作区（后续段带 append: true），" +
+            "再在这里只给路径。与 html 二选一；都不给时取正文里那个 ```html 代码块",
+        }),
+        schema: S({
+          type: "object",
+          description: "私有数据表声明，与 install_tool 的 schema 同形。不存数据就省略",
+        }),
+        capabilities: S({
+          type: "array",
+          description:
+            '要申请的宿主能力，目前可写："gallery"（读写图库）、"task"（注入组件读当前那条待办）。' +
+            "源码里用了 gallery.* / task.get 就必须在这里声明，否则试跑会被拒",
+          items: S({ type: "string" }),
+        }),
+        injects: S({
+          type: "array",
+          description:
+            "这个工具要嵌进宿主界面的位置：{ kind: \"detailSection\" | \"rowAction\" | \"detailAction\", label?, height? }。" +
+            "detailSection 出现在待办详情面板底部（height 默认 180）；另两个是按钮。" +
+            "省略就是普通的整页工具。写法见 read_skill 的 component-inject",
+          items: S({
+            type: "object",
+            properties: {
+              kind: S({
+                type: "string",
+                description: "detailSection | rowAction | detailAction",
+              }),
+              label: S({ type: "string", description: "按钮文字 / 分区标题，省略用工具名" }),
+              height: S({ type: "number", description: "detailSection 的高度（px，80-600）" }),
+            },
+            required: ["kind"],
+          }),
+        }),
+      },
+      /*
+       * html 刻意**不列为必填**：它有三个来源（参数 / 工作区文件 / 正文的
+       * ```html 代码块），写死必填会让模型为了"填一个参数"把几 KB 源码硬塞进
+       * JSON —— 那正是最容易转义坏、也最容易被长度掐断的写法。
+       */
+      required: ["id"],
+    }),
+  },
+  {
     name: "install_tool",
     label: "安装工具",
     description:
       "把一个单 HTML 工具装进工作台（写进工具目录，装完就出现在侧边栏）。" +
       "html 必须是完整、自包含的 HTML 文档；需要存数据时同时给 schema。" +
+      "⚠️ **必须先 sandbox_run 并拿到 ticket**：没票、票过期、或源码改过之后票对不上，" +
+      "这一步都会被直接拒绝 —— 没有例外，宿主不认「我验过了」这句话，只认票。" +
       "⚠️ 源码很长时**不要把它塞进这个参数**（JSON 里的换行/引号极易转义坏，" +
-      "接口会直接拒收）：参数里只给 id 与 name，整份源码另起一个 ```html 代码块写在正文里。" +
-      "写之前先 read_skill 取 tool-authoring 的全文。",
+      "接口会直接拒收）：**推荐做法是参数里只给 id / name / ticket** —— 装的就是 sandbox_run 验过的那一份，" +
+      "不必把源码再抄一遍（抄一遍反而容易对不上票）。真要在这一步贴源码就另起一个 ```html 代码块，" +
+      "且必须与 sandbox_run 验过的那份**一字不差**。写之前先 read_skill 取 tool-authoring 的全文。",
     parameters: S({
       type: "object",
       properties: {
@@ -204,12 +496,49 @@ export const AGENT_TOOLS: AgentToolSpec[] = [
           description:
             "图标名，从这个清单里选：sun star calendar inbox home package crop receipt image calculator file list settings boxes sparkles video hash notebook-pen bot",
         }),
-        html: S({ type: "string", description: "完整 HTML 文档源码（自包含，CSS/JS 内联）" }),
+        html: S({
+          type: "string",
+          description:
+            "完整 HTML 文档源码（自包含，CSS/JS 内联）。**建议省略**：省略时装的正是 sandbox_run 验过的那一份；" +
+            "写了就必须与验过的那份一字不差，差一个字节票就作废",
+        }),
+        html_file: S({
+          type: "string",
+          description:
+            "源码文件的**工作区相对路径**（如 tools/pomodoro.html，就是 write_file 分段写进去的那个文件）。" +
+            "省略 html 时装的正是「验过的那一份」，所以这一步通常两个都不用给；" +
+            "只有在 sandbox_run 之后又改过源码、且改动是分段 write_file 写进工作区的，才在这里给路径" +
+            "（改完源码必须**重新** sandbox_run，旧票随即作废）",
+        }),
+        /** 沙箱通行证。由 sandbox_run 通过时签发 */
+        ticket: S({
+          type: "string",
+          description: "sandbox_run 通过时返回的通行证。**必填**，且必须与这份源码对应",
+        }),
         schema: S({
           type: "object",
           description:
             "私有数据表声明，形状为 { tables: [{ name, columns: [{name,type,pk?,notNull?,default?}], indexes? }] }。" +
             "不需要存数据就省略。列的规则见 read_skill 的 data-binding",
+        }),
+        capabilities: S({
+          type: "array",
+          description: '要申请的宿主能力："gallery" / "task"。与 sandbox_run 里给的保持一致',
+          items: S({ type: "string" }),
+        }),
+        injects: S({
+          type: "array",
+          description:
+            "要嵌进宿主界面的位置（与 sandbox_run 的 injects 同形）。写了它就会出现在待办详情面板 / 行内 / 详情头部",
+          items: S({
+            type: "object",
+            properties: {
+              kind: S({ type: "string", description: "detailSection | rowAction | detailAction" }),
+              label: S({ type: "string" }),
+              height: S({ type: "number" }),
+            },
+            required: ["kind"],
+          }),
         }),
         overwrite: S({
           type: "boolean",
@@ -217,7 +546,7 @@ export const AGENT_TOOLS: AgentToolSpec[] = [
             "已存在同名工具时是否覆盖。默认 false。用户明确要求更新那个工具时才给 true",
         }),
       },
-      required: ["id", "name", "html"],
+      required: ["id", "name", "ticket"],
     }),
     permission: "writeTools",
     needsDesktop: true,
@@ -597,13 +926,38 @@ export function htmlFromBlocks(text: string): string {
   return "";
 }
 
-/** 填充 install_tool 的 html 参数（原生 tool_calls 那条路也会用到） */
+/**
+ * 正文里那个 ```html 代码块是不是**没写就断了**。
+ *
+ * 一次回复被长度上限掐断时，最常见的样子就是：开了个 ```html 头、源码写到
+ * 一半、没有收尾的 ```。这时 htmlFromBlocks 只能老实地返回空串，宿主看到的是
+ * 「没有拿到源码」—— 而模型看到这句会以为是自己参数写错了，于是**原样再来一遍**，
+ * 又断在同一个地方。那个循环要靠"说清楚是断了"才能解开，所以这里单独立一条。
+ */
+export function unclosedHtmlFence(text: string): boolean {
+  const t = text ?? "";
+  const opens = (t.match(/```(?:html|htm)[ \t]*\n/g) ?? []).length;
+  if (!opens) return false;
+  // 开了头就数收尾：收尾 fence 只算 ``` 独占一行的那些
+  const closes = (t.match(/^[ \t]*```[ \t]*$/gm) ?? []).length;
+  return closes < opens;
+}
+
+/**
+ * 填充 html 参数（原生 tool_calls 那条路也会用到）。
+ *
+ * 两个动作都收：整份源码塞进 JSON 参数极易被换行/引号转义坏，
+ * 约定是**另起一个 ```html 代码块**，这里把它捞回来填进参数。
+ * sandbox_run 与 install_tool 走同一条路，是因为它们必须拿到
+ * **同一份**源码 —— 通行证比的是源码指纹，两条路解析规则不一致
+ * 就会凭空出现"票对不上"。
+ */
 export function withHtmlFallback(
   name: string,
   args: Record<string, unknown>,
   text: string,
 ): Record<string, unknown> {
-  if (name !== "install_tool") return args;
+  if (name !== "install_tool" && name !== "sandbox_run") return args;
   const has = typeof args.html === "string" && args.html.trim().length > 0;
   if (has) return args;
   const fromBlock = htmlFromBlocks(text);
@@ -858,5 +1212,35 @@ export function actionProtocolBlock(): string {
     "```html",
     "<!doctype html>…（整份源码放这里，不要塞进上面那行 args）",
     "```",
+    "",
+    OUTPUT_LENGTH_BLOCK,
   ].join("\n");
 }
+
+/**
+ * 「一次回复写不完怎么办」—— 写进 system prompt 的那一段。
+ *
+ * ------------------------------------------------------------------
+ * 为什么这件事要写在提示词里
+ * ------------------------------------------------------------------
+ * 输出长度上限是**物理的**：一份几千行的工具 HTML 一次吐不完，写到一半就被
+ * 掐断。而模型看不见 finish_reason —— 它以为自己写完了，下一步就拿着半截
+ * 源码去装，宿主报「文件是空的」，它读成"我参数写错了"，改完参数名原样再来
+ * 一遍，又断在同一个地方。runtime 会在被掐断时回灌一句提示，但**事先知道
+ * 有这条路**比事后被纠正少走两三轮（2026-09-26 真机：卡了 6 轮才装上）。
+ *
+ * 所以提示词里必须提前给方法：分段 write_file + append，再按路径引用。
+ */
+export const OUTPUT_LENGTH_BLOCK = [
+  "⚠️ **一次回复有长度上限**。写长文件（工具 HTML、长报告、长清单）时，",
+  "不要指望一次写完 —— 分段写：",
+  "",
+  "1. 第一段：`write_file` 正常写（path 用工作区相对路径，如 `tools/pomodoro.html`）；",
+  "2. 之后每一段：`write_file` 带 `append: true`，**就接着上一段的最后一行写**，",
+  "   每段短一点（几百行以内），不要重复已经写过的内容、不要每次另起开头；",
+  "3. 整份写完之后，再用 `sandbox_run` / `install_tool` 的 `html_file` 指向那个文件 ——",
+  "   不要把源码再贴一遍。",
+  "",
+  "如果收到「被输出长度上限掐断」或「代码块没有闭合」的提示，**换上面这条路**，",
+  "不要从头再写一遍（那样还是会断在同一个地方）。",
+].join("\n");

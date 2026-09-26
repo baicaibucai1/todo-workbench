@@ -1025,6 +1025,39 @@ section("20. 背景（壁纸）设置");
   check("壁纸路径落在 wallpapers 目录下",
     wp.wallpaperUrl("x.jpg").endsWith("wallpapers/x.jpg"), wp.wallpaperUrl("x.jpg"));
 
+  /* --- 自定义壁纸 --- */
+  check("识别 custom:<仓库路径>",
+    wp.parseBackground("custom:2026-09/a.png").kind === "custom");
+  const cw = wp.parseBackground("custom:2026-09/a.png");
+  check("解析出的仓库路径正确", cw.kind === "custom" && cw.path === "2026-09/a.png");
+  check("custom 与 image 不会互相认错",
+    wp.parseBackground("image:custom:a.png").kind === "image" &&
+      wp.parseBackground("custom:a.png").kind === "custom");
+  check("只有 custom: 前缀时退回 auto（等于指了个空文件）",
+    wp.parseBackground("custom:").kind === "auto");
+  check("自定义背景序列化可以往返",
+    wp.formatBackground(wp.parseBackground("custom:2026-09/a.png")) === "custom:2026-09/a.png");
+  check("三种背景两两不同",
+    new Set([
+      wp.formatBackground({ kind: "auto" }),
+      wp.formatBackground({ kind: "image", file: "a.jpg" }),
+      wp.formatBackground({ kind: "custom", path: "a.jpg" }),
+    ]).size === 3);
+
+  check("自定义清单：空值给空数组", wp.parseCustomWallpapers(undefined).length === 0);
+  check("自定义清单：坏 JSON 给空数组而不是抛异常",
+    wp.parseCustomWallpapers("{oops").length === 0);
+  check("自定义清单：不是数组也给空数组", wp.parseCustomWallpapers('{"a":1}').length === 0);
+  check("自定义清单：缺 path 的项被丢掉",
+    wp.parseCustomWallpapers('[{"path":"a.png"},{"name":"没路径"}]').length === 1);
+  check("自定义清单：缺 name 时用路径顶上",
+    wp.parseCustomWallpapers('[{"path":"a.png"}]')[0].name === "a.png");
+  check("自定义清单：序列化能原样读回",
+    wp.parseCustomWallpapers(wp.formatCustomWallpapers([{ path: "a.png", name: "我的图" }]))[0]
+      .name === "我的图");
+  check("壁纸只收图片（video/mp4 不匹配）",
+    !wp.WALLPAPER_IMAGE_ONLY.test("video/mp4") && wp.WALLPAPER_IMAGE_ONLY.test("image/png"));
+
   // 清单读不到（没抓过图 / 离线）时必须安静地返回空数组，由界面给出补救提示
   const list = await wp.loadWallpapers();
   check("清单读不到时返回空数组而不是抛异常", Array.isArray(list) && list.length === 0,
@@ -1957,7 +1990,10 @@ section("25. 工具的启用、状态保持与单文件导入");
   // 不剔不行：函数上方那段解释「为什么必须先写内存」的注释里本身就写着
   // `await repo.setSettings(patch)`，直接搜会先撞到它 —— 判据永远在骗人。
   const bodyStart = storeSrc ? storeSrc.indexOf("saveSettings: async (patch) => {") : -1;
-  const body = bodyStart >= 0 ? storeSrc.slice(bodyStart, bodyStart + 3000) : "";
+  // 窗口给 8000：函数体一旦变长（比如往里加一个"模块开关改了要立刻收摊"的
+  // 分支），截太短就会只看得到前半段 —— 那时 iWrite 是 -1，两条断言一起红，
+  // 看上去像 saveSettings 的顺序被改坏了，其实只是这段字被切掉了。
+  const body = bodyStart >= 0 ? storeSrc.slice(bodyStart, bodyStart + 8000) : "";
   // 去掉整行注释与块注释的续行（本函数体内没有含 // 的字符串，够用）
   const code = body
     .split("\n")
@@ -2214,6 +2250,161 @@ section("27. 详情面板分区顺序的解析与重排");
   check("默认配置能原样读回", ds.parseDetailSections(round).join(",") === ALL.join(","), round);
   check("序列化会补上写漏的分区",
     ds.parseDetailSections(ds.formatDetailSections(["note"])).length === ALL.length);
+}
+
+/* ---------- 28. 主题色与从壁纸取色 ---------- */
+
+section("28. 主题色调与壁纸取色");
+
+{
+  const th = await import("../src/lib/theme.ts");
+  const pl = await import("../src/lib/palette.ts");
+  const st2 = await import("../src/lib/settings.ts");
+
+  /* --- hex 解析 --- */
+  check("三位简写能展开", th.normalizeHex("#abc") === "#aabbcc", th.normalizeHex("#abc"));
+  check("不带 # 也能认", th.normalizeHex("aabbcc") === "#aabbcc");
+  check("大写归一成小写", th.normalizeHex("#AABBCC") === "#aabbcc");
+  check("长度不对的一律不认", th.normalizeHex("#ab") === null && th.normalizeHex("#abcd") === null);
+  check("带透明度的不认（CSS 变量里它会导致整体变透明）",
+    th.normalizeHex("#aabbcc80") === null);
+  check("空值不认", th.normalizeHex(undefined) === null && th.normalizeHex("") === null);
+
+  /* --- 可用区间：这条是整套东西的地基 --- */
+  /*
+   * 界面上凡是 bg-primary / bg-accent 的地方，字色都写死了白色。
+   * 所以"任何能进入 CSS 的颜色，白字都得看得清"是一条硬承诺 ——
+   * 它就是 fitForUi 存在的全部理由。这里用一批极端色压一遍：
+   * 纯白、纯黄、纯黑、深蓝、荧光绿。
+   */
+  const extremes = ["#ffffff", "#ffff00", "#000000", "#000080", "#00ff00", "#ff00ff", "#7f7f7f"];
+  const fitted = extremes.map(th.fitForUi);
+  check("极端色全都被收进可读区间（白字不会糊）",
+    fitted.every((c) => th.readableTextOn(c) === "#ffffff"),
+    fitted.map((c) => `${c}:${th.readableTextOn(c)}`).join(" "));
+
+  const lOf = (hex) => th.rgbToHsl(th.hexToRgb(hex)).l;
+  check("太亮的被压下来（L 不超过上限）",
+    fitted.every((c) => lOf(c) <= th.L_RANGE.max + 1e-6),
+    fitted.map((c) => lOf(c).toFixed(3)).join(" "));
+  check("太暗的被提上去（L 不低于下限）",
+    fitted.every((c) => lOf(c) >= th.L_RANGE.min - 1e-6),
+    fitted.map((c) => lOf(c).toFixed(3)).join(" "));
+  check("纯灰会被提到看得出的饱和度",
+    th.rgbToHsl(th.hexToRgb(th.fitForUi("#808080"))).s >= th.S_MIN - 1e-6,
+    JSON.stringify(th.rgbToHsl(th.hexToRgb(th.fitForUi("#808080")))));
+  check("收拾颜色不改色相（还是原来那个色，只是明暗浓淡变了）",
+    Math.abs(th.rgbToHsl(th.hexToRgb(th.fitForUi("#ffff00"))).h -
+      th.rgbToHsl(th.hexToRgb("#ffff00")).h) < 1);
+
+  /* --- 混色与字色 --- */
+  check("往白里混会变亮", th.luminance(th.shade("#000000", 0.5)) > th.luminance("#000000"));
+  check("往黑里混会变暗", th.luminance(th.shade("#ffffff", -0.5)) < th.luminance("#ffffff"));
+  check("深色上用白字、浅色上用黑字",
+    th.readableTextOn("#202020") === "#ffffff" && th.readableTextOn("#f5f5f5") === "#1a1a1a");
+  check("混色端点正确",
+    th.mixHex("#000000", "#ffffff", 0) === "#000000" &&
+      th.mixHex("#000000", "#ffffff", 1) === "#ffffff");
+
+  /* --- 预设色板 --- */
+  check("预设至少够挑（6 套以上）", th.PALETTES.length >= 6, String(th.PALETTES.length));
+  check("每套两个色都不一样（品牌色与主操作色不能是同一个）",
+    th.PALETTES.every((p) => p.accent !== p.primary));
+  // 第二参数 false = 不提饱和度：预设是人挑的，"石墨"就该是灰的。
+  // 这里只兜"白字看不清"那条底线，所以比对的是落地时用的那个口径。
+  check("每套的色都落在可用区间（落地时不会再被改动）",
+    th.PALETTES.every(
+      (p) => th.fitForUi(p.accent, false) === p.accent && th.fitForUi(p.primary, false) === p.primary,
+    ),
+    th.PALETTES.map((p) => `${p.id}:${th.fitForUi(p.accent, false) === p.accent}`).join(" "));
+  check("每套落地后白字都看得清",
+    th.PALETTES.every(
+      (p) => th.readableTextOn(p.accent) === "#ffffff" && th.readableTextOn(p.primary) === "#ffffff",
+    ));
+  check("每套内部两色拉得开（色相差或明度差够大）", th.PALETTES.every((p) => {
+    const a = th.rgbToHsl(th.hexToRgb(p.accent));
+    const b = th.rgbToHsl(th.hexToRgb(p.primary));
+    const dh = Math.abs(a.h - b.h);
+    return Math.min(dh, 360 - dh) > 25 || Math.abs(a.l - b.l) > 0.08;
+  }));
+  check("预设 id 不重复", new Set(th.PALETTES.map((p) => p.id)).size === th.PALETTES.length);
+  check("默认色板就是第一套", th.DEFAULT_THEME.id === th.PALETTES[0].id);
+  check("默认配色与改造前一致（老用户升级不该发现界面变色）",
+    th.DEFAULT_THEME.accent === "#d4537e" && th.DEFAULT_THEME.primary === "#378add");
+
+  check("能认出落在预设上的配色", th.matchPalette("#d4537e", "#378add")?.id === "rouge");
+  check("自定义配色认不出对应预设（此时界面应显示为「自定义」那一项）",
+    th.matchPalette("#123456", "#654321") === null);
+
+  /* --- 从设置读 --- */
+  check("没配过时给默认色", th.themeColorsFrom({}).accent === th.DEFAULT_THEME.accent);
+  check("非法色值退回默认而不是把坏值写进 CSS",
+    th.themeColorsFrom({ [st2.SETTINGS.accent]: "不是颜色" }).accent === th.DEFAULT_THEME.accent);
+  check("合法色值原样采用",
+    th.themeColorsFrom({ [st2.SETTINGS.accent]: "#2f9e6f" }).accent === "#2f9e6f");
+  check("两个键各自独立（只改一个不影响另一个）",
+    th.themeColorsFrom({ [st2.SETTINGS.primary]: "#2f9e6f" }).accent === th.DEFAULT_THEME.accent &&
+      th.themeColorsFrom({ [st2.SETTINGS.primary]: "#2f9e6f" }).primary === "#2f9e6f");
+  check("新设置键名带 appearance 前缀",
+    st2.SETTINGS.accent.startsWith("appearance.") && st2.SETTINGS.primary.startsWith("appearance."));
+  check("默认配置里主题色留空（改默认配色只需动 theme.ts 一处）",
+    st2.DEFAULT_SETTINGS[st2.SETTINGS.accent] === "" &&
+      st2.DEFAULT_SETTINGS[st2.SETTINGS.primary] === "");
+
+  /* --- 取色：纯函数部分 --- */
+  const px = (list) => {
+    const a = new Uint8ClampedArray(list.length * 4);
+    list.forEach((p, i) => {
+      a[i * 4] = p[0];
+      a[i * 4 + 1] = p[1];
+      a[i * 4 + 2] = p[2];
+      a[i * 4 + 3] = p.length > 3 ? p[3] : 255;
+    });
+    return a;
+  };
+  const hue = (hex) => th.rgbToHsl(th.hexToRgb(hex)).h;
+  const hueDist = (a, b) => {
+    const d = Math.abs(hue(a) - hue(b));
+    return Math.min(d, 360 - d);
+  };
+
+  const solid = new Array(64).fill([212, 83, 126]);
+  const one = pl.paletteFromPixels(px(solid));
+  check("纯色图取出的就是那个色（色相一致）", one && hueDist(one.accent, "#d4537e") < 6,
+    JSON.stringify(one));
+
+  const twoTone = [
+    ...new Array(70).fill([200, 40, 60]), // 红：占多数
+    ...new Array(30).fill([40, 90, 200]), // 蓝：占少数
+  ];
+  const two = pl.paletteFromPixels(px(twoTone));
+  check("占比大的那一簇当品牌色", two && hueDist(two.accent, "#c8283c") < 30,
+    JSON.stringify(two));
+  check("第二簇当主操作色，且与品牌色拉得开",
+    two && hueDist(two.accent, two.primary) > 60, JSON.stringify(two));
+
+  check("全透明的图取不出色（返回 null 而不是一团黑）",
+    pl.paletteFromPixels(px(new Array(16).fill([0, 0, 0, 0]))) === null);
+  check("半透明像素被跳过", (() => {
+    const r = pl.paletteFromPixels(px([
+      ...new Array(50).fill([0, 0, 0, 0]),
+      ...new Array(50).fill([40, 120, 200, 255]),
+    ]));
+    return r && hueDist(r.accent, "#2878c8") < 30;
+  })());
+  check("空像素返回 null", pl.paletteFromPixels(new Uint8ClampedArray(0)) === null);
+
+  const gray = pl.paletteFromPixels(px(new Array(64).fill([150, 150, 150])));
+  check("灰图也取得出色（提饱和后仍是个能用的色）",
+    gray && th.rgbToHsl(th.hexToRgb(gray.accent)).l >= th.L_RANGE.min, JSON.stringify(gray));
+  check("取出来的两个色都已经落在可用区间（fitForUi 不会再动它）",
+    two && th.fitForUi(two.accent) === two.accent && th.fitForUi(two.primary) === two.primary,
+    JSON.stringify(two));
+  check("取出来的色上白字看得清（直接就能用，不用再收拾）",
+    two && th.readableTextOn(two.accent) === "#ffffff" && th.readableTextOn(two.primary) === "#ffffff",
+    JSON.stringify(two));
+  check("同一张图每次算出来一样（没有随机初始化）",
+    JSON.stringify(pl.paletteFromPixels(px(twoTone))) === JSON.stringify(two));
 }
 
 console.log(`\n${"=".repeat(52)}`);

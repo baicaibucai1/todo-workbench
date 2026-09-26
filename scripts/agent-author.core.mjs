@@ -221,28 +221,38 @@ if (SELFTEST) {
     "</body></html>",
   ].join("\n");
 
+  /*
+   * 2026-09-24 起装工具必须先过沙箱，所以自检也改成**真机那样的两回合**：
+   *
+   *   回合 1  sandbox_run（把整份源码交给沙箱验）
+   *   回合 2  从沙箱回给模型的那句话里取出 ticket，再发 install_tool
+   *
+   * 这样自检验的是"助手真的会走完这条流水线"，而不是"我手动塞一张票绕过它"。
+   * 顺带说明一件事：Node 里没有 iframe，沙箱跑不起来 —— 那时它只过静态体检，
+   * 票上如实记着"没试跑过"，装仍然可以进行（见 verifier.ts 的说明）。
+   */
+  const SCHEMA = {
+    tables: [
+      {
+        name: "clicks",
+        columns: [
+          { name: "id", type: "text", pk: true },
+          { name: "created_at", type: "text" },
+        ],
+      },
+    ],
+  };
+
   const toolCall = {
     index: 0,
     id: "call_selftest_1",
-    name: "install_tool",
+    name: "sandbox_run",
     // 故意把 arguments 切成几片发出去：这顺带验了"tool_calls 按 index 增量拼接"
     args: JSON.stringify({
       id: "selftest-tool",
       name: "自检小工具",
-      description: "agent-author --selftest 装的验证用工具",
-      icon: "star",
       html: SELFTEST_HTML,
-      schema: {
-        tables: [
-          {
-            name: "clicks",
-            columns: [
-              { name: "id", type: "text", pk: true },
-              { name: "created_at", type: "text" },
-            ],
-          },
-        ],
-      },
+      schema: SCHEMA,
     }),
   };
 
@@ -264,32 +274,56 @@ if (SELFTEST) {
       const hasToolResult = /"role"\s*:\s*"tool"/.test(body);
       res.writeHead(200, { "content-type": "text/event-stream" });
 
-      if (turn === 1 && !hasToolResult) {
-        // 第一回合：流式吐一个 install_tool 调用，arguments 分三片
-        const a = toolCall.args;
+      const emit = (name, args) => {
+        const a = JSON.stringify(args);
+        // 故意切成几片发：顺带验"tool_calls 按 index 增量拼接"
         const parts = [a.slice(0, 40), a.slice(40, 120), a.slice(120)];
-        res.write(chunk(wrap({ role: "assistant", content: "这就写一个装进去。" })));
         res.write(
           chunk(
             wrap({
               tool_calls: [
-                { index: 0, id: toolCall.id, type: "function", function: { name: toolCall.name, arguments: "" } },
+                { index: 0, id: toolCall.id, type: "function", function: { name, arguments: "" } },
               ],
             }),
           ),
         );
-        for (const p of parts) {
-          res.write(
-            chunk(wrap({ tool_calls: [{ index: 0, function: { arguments: p } }] })),
-          );
-        }
+        for (const p of parts) res.write(chunk(wrap({ tool_calls: [{ index: 0, function: { arguments: p } }] })));
         res.write(chunk(wrap({}, "tool_calls")));
         res.write("data: [DONE]\n\n");
         res.end();
+      };
+
+      if (!hasToolResult) {
+        // 第一回合：先验（沙箱），源码连着 schema 一起交过去
+        res.write(chunk(wrap({ role: "assistant", content: "这就写一个，先放进沙箱跑一遍。" })));
+        emit("sandbox_run", {
+          id: "selftest-tool",
+          name: "自检小工具",
+          html: SELFTEST_HTML,
+          schema: SCHEMA,
+        });
         return;
       }
 
-      // 第二回合：看到工具结果了，给一句收尾
+      // 第二回合：沙箱的结果已经在请求体里了 —— 从里面取出通行证再装
+      const ticket = /ticket: (v1\.[^\s\\"]+)/.exec(body)?.[1] ?? "";
+      // 只装一次：后面几轮的请求体里**仍然**带着那张票（回灌的 arguments 里有它），
+      // 不按回合数卡住的话会一遍遍重装，撞上"目录已存在"
+      if (turn === 2 && ticket) {
+        res.write(chunk(wrap({ role: "assistant", content: "验过了，装进去。" })));
+        emit("install_tool", {
+          id: "selftest-tool",
+          name: "自检小工具",
+          description: "agent-author --selftest 装的验证用工具",
+          icon: "star",
+          html: SELFTEST_HTML,
+          schema: SCHEMA,
+          ticket,
+        });
+        return;
+      }
+
+      // 第三回合：装完了，说一句收尾
       res.write(chunk(wrap({ role: "assistant", content: "" })));
       for (const t of ["装好了，", "侧边栏里点「自检小工具」就能用。"]) {
         res.write(chunk(wrap({ content: t })));

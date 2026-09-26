@@ -133,11 +133,11 @@ function ToolTab({
       data-tab-active={active ? "1" : "0"}
       title={tool.description}
       className={`flex shrink-0 items-center gap-1 rounded-md border pl-1.5 pr-0.5 py-0.5 transition-colors ${
-        active ? "border-[#378add] bg-[#378add]/10" : "border-transparent hover:bg-hover"
+        active ? "border-primary bg-primary/10" : "border-transparent hover:bg-hover"
       }`}
     >
       <button onClick={onOpen} className="flex min-w-0 items-center gap-1.5 py-1">
-        <Icon size={14} className={active ? "shrink-0 text-[#378add]" : "shrink-0 text-fg-dim"} />
+        <Icon size={14} className={active ? "shrink-0 text-primary" : "shrink-0 text-fg-dim"} />
         <span className={`max-w-[150px] truncate text-[12.5px] ${active ? "text-fg" : "text-fg-3"}`}>
           {tool.name}
         </span>

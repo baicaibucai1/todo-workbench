@@ -36,6 +36,8 @@
 
 import { isTauri } from "./db";
 import { validateToolSchema } from "./toolSchema";
+import { CAPABILITY_NAMES } from "./extensions/registry";
+import { normalizeInjects } from "./extensions/types";
 import type { ToolManifest } from "../types";
 
 /* ------------------------------------------------------------------ */
@@ -68,6 +70,9 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     entry: "index.html",
     dbVersion: 1,
     author: "内置",
+    // 它要把裁好的图存进图库 —— 那是**不属于自己**的共享资源，
+    // 所以必须申请；宿主据此决定放不放行（见 extensions/registry 的能力门）
+    capabilities: ["gallery"],
   },
   {
     id: "size-chart",
@@ -78,6 +83,7 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     entry: "index.html",
     dbVersion: 1,
     author: "内置",
+    capabilities: ["gallery"],
   },
   {
     // 它是「一个网页工具怎么用宿主的数据表」的样板：manifest 里声明 schema，
@@ -121,36 +127,18 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     entry: "index.html",
     dbVersion: 1,
     author: "内置",
+    capabilities: ["gallery"],
   },
-  {
-    // 它是**按 tool-authoring 契约交付的一份样本**：单个自包含 HTML、只走
-    // postMessage、战绩写自己的私有表（records → tool_gomoku_records）。
-    // tests/gomoku.mjs 里有一段会逐条核对它有没有守那份契约 ——
-    // 标准写在文档里会漂，钉在测试上才不会。
-    id: "gomoku",
-    name: "五子棋",
-    version: "1.0.0",
-    description:
-      "15×15 的人机五子棋：你执黑先手，电脑会攻也会堵；每局结束自动把胜负与手数记进自己的数据表，战绩可清空",
-    icon: "hash",
-    entry: "index.html",
-    dbVersion: 1,
-    author: "内置",
-    schema: {
-      tables: [
-        {
-          name: "records",
-          columns: [
-            { name: "id", type: "text", pk: true },
-            { name: "result", type: "text" },
-            { name: "moves", type: "integer" },
-            { name: "created_at", type: "text" },
-          ],
-          indexes: [{ columns: ["created_at"] }],
-        },
-      ],
-    },
-  },
+  // 这里**没有五子棋**，是故意的。
+  //
+  // 它是《单 HTML 工具编写标准》的活样本，当初为了验证「AI 能不能自己写出
+  // 合格的工具」而生成，从来不是要发给用户的功能。tools/ 下每多一个目录，
+  // 工具包 zip 就多一份、设置页就多一行 —— 一份开发样本摆在那儿，等于让
+  // 每个用户都收到一个他没要过的东西。
+  //
+  // 所以它搬去了 tests/fixtures/gomoku/（2026-09-24）：不进工具包、不进设置页，
+  // 但契约测试照跑（npm run gomoku:test，59 项断言把标准逐条钉死）。
+  // 标准写在文档里会漂，钉在测试上才不会 —— 只是那份测试现在明确指向夹具目录。
 ];
 
 /** 内存中的已注册工具 */
@@ -195,7 +183,40 @@ export function validateManifest(raw: unknown): ToolManifest | null {
       const schema = validateToolSchema(id, m.schema);
       return schema ? { schema } : {};
     })(),
+    // 能力申请：要碰**不属于自己**的共享资源（目前只有图库）就得在这里写明。
+    // 按白名单过滤，写什么奇奇怪怪的名字都会被丢掉；没写就是没有。
+    ...(() => {
+      const caps = (Array.isArray(m.capabilities) ? m.capabilities : []).filter((c): c is string =>
+        typeof c === "string" && (CAPABILITY_NAMES as string[]).includes(c),
+      );
+      return caps.length ? { capabilities: caps } : {};
+    })(),
+    // 注入组件的挂载声明。同样是外部输入：只认白名单里的三个位置，
+    // 认不出来的一律丢掉（见 extensions/types.ts 的 normalizeInjects）。
+    ...(() => {
+      const injects = normalizeInjects(m.injects);
+      return injects.length ? { injects } : {};
+    })(),
+    // 命令声明：助手驱动它干活时可用的动作名。同样是外部输入，
+    // 只认小写字母数字与连字符；没声明就是"不接受任何命令"。
+    ...(() => {
+      const cmds = normalizeCommands(m.commands);
+      return cmds.length ? { commands: cmds } : {};
+    })(),
   };
+}
+
+/** 命令名白名单。与 injects 同样的道理：认不出来的一律丢掉 */
+export function normalizeCommands(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const c of raw) {
+    if (typeof c !== "string") continue;
+    const v = c.trim();
+    if (!/^[a-z][a-z0-9-]{0,23}$/.test(v)) continue;
+    if (!out.includes(v)) out.push(v);
+  }
+  return out.slice(0, 12);
 }
 
 /* ------------------------------------------------------------------ */
@@ -291,6 +312,9 @@ async function scanTauriTools(): Promise<{ bundled: ToolManifest[]; user: ToolMa
 export async function loadTools(): Promise<ToolManifest[]> {
   if (!isTauri()) {
     registry = BUILTIN_TOOLS.map((t) => ({ ...t, source: "bundled" as const }));
+    // 夹具工具排在后面（见本文件 loadFixtureTools 的说明）：
+    // 它只在 dev + 带参数时出现，正式流程里这一行是空数组
+    registry.push(...(await loadFixtureTools()));
     registryLocation = "内置清单（浏览器模式）";
     return registry;
   }
@@ -416,7 +440,87 @@ async function desktopToolCandidates(tool: ToolManifest): Promise<string[]> {
  *   不必等到打包才能看到效果。
  *   生产构建由 vite.config.ts 的 workbenchTools 插件把 tools/ 复制到 dist/。
  */
+/* ------------------------------------------------------------------ */
+/* 测试夹具（仅开发模式）                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 夹具工具的入口地址覆盖表。
+ *
+ * 存在的理由：浏览器演示模式**装不了工具**（没有可写的文件系统），
+ * 于是"工具注入到宿主界面"这件事在浏览器里根本没有可注入的对象 ——
+ * 而 20 个 e2e 套件全跑在浏览器里。
+ *
+ * 做法：`?fixtureTools=1` 时把 tests/fixtures/tools/ 下的夹具灌进注册表，
+ * 入口地址直接指向夹具目录（`tools/<id>/` 下并没有它的文件）。
+ *
+ * 三重闸门，少一道都不行：
+ *   · `import.meta.env.DEV` —— 打包后这段整段不成立
+ *   · 必须显式带 `?fixtureTools=1` —— 开发时默认也不出现
+ *   · 只在浏览器模式（桌面端走真实目录）
+ * 所以用户永远看不到它，设置页也不会列出它。
+ */
+const fixtureUrls = new Map<string, string>();
+
+function registerFixtureUrl(id: string, url: string): void {
+  fixtureUrls.set(id, url);
+}
+
+/**
+ * 解析 `?fixtureTools=` 的值：
+ *   `undefined` —— 根本没带这个参数，一个夹具都不加载
+ *   `null`      —— `1` / `all`，全部加载
+ *   `Set`       —— 逗号分隔的 id 白名单
+ *
+ * 为什么要有白名单这一档：有的断言是"详情面板底部出现了 **1 个**注入分区"
+ * （agent-sandbox.mjs），夹具一多就变成 2 个、测试假红。让套件点名要哪几个，
+ * 比让所有夹具一起上、再回去改断言里的数字要好。
+ */
+function fixtureFilter(): Set<string> | null | undefined {
+  if (typeof location === "undefined") return undefined;
+  const m = /[?&]fixtureTools=([^&]*)/.exec(location.search);
+  if (!m) return undefined;
+  const v = decodeURIComponent(m[1]).trim();
+  if (!v || v === "1" || v === "all") return null;
+  return new Set(
+    v
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+}
+
+async function loadFixtureTools(): Promise<ToolManifest[]> {
+  // 不能写 `import.meta.env.DEV`：单测把源码用 esbuild 打成 Node bundle 跑，
+  // 那里的 import.meta 上没有 env —— 直接取会 TypeError，整个套件当场崩。
+  // 所以取成"可选"：取不到就是非开发环境，正是我们要的默认。
+  const env = (import.meta as unknown as { env?: { DEV?: boolean } }).env;
+  if (!env?.DEV) return [];
+  const filter = fixtureFilter();
+  if (filter === undefined) return [];
+  try {
+    const res = await fetch("/tests/fixtures/tools/index.json");
+    if (!res.ok) return [];
+    const raw = (await res.json()) as unknown;
+    if (!Array.isArray(raw)) return [];
+    const out: ToolManifest[] = [];
+    for (const item of raw) {
+      const m = validateManifest(item);
+      if (!m) continue;
+      if (filter && !filter.has(m.id)) continue;
+      registerFixtureUrl(m.id, `/tests/fixtures/tools/${m.id}/${m.entry}`);
+      out.push(m);
+    }
+    return out;
+  } catch {
+    // 夹具读不到就当作没有 —— 正式开发流程里这才是常态
+    return [];
+  }
+}
+
 export async function resolveToolUrl(tool: ToolManifest): Promise<string | null> {
+  const fixture = fixtureUrls.get(tool.id);
+  if (fixture) return fixture;
   if (!isTauri()) {
     // BASE_URL 保证部署在子路径下时也拼得对
     const base = import.meta.env.BASE_URL || "/";

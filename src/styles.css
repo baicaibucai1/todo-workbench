@@ -1,8 +1,22 @@
 @import "tailwindcss";
 
 @theme {
+  /*
+   * 主题色：两个，不是两个色值，是**两个角色**。
+   *
+   *   accent  —— 品牌色。待办完成圈、紧急标记、AI 悬浮球这类"属于本应用"的印记。
+   *   primary —— 主操作色。按钮、选中态、输入框聚焦边框这类"能点的东西"。
+   *
+   * 分开是因为它们同时出现在同一屏上（比如一条待办的完成圈是 accent，
+   * 而选中它的蓝框是 primary），合成一个色就分不清"这是我的标记"还是"这个能点"。
+   *
+   * 这里的值是**初始值**。运行时的实际值由 lib/theme.ts 的 applyThemeColors() 写到
+   * <html> 的 style 上（内联样式优先级高于 :root），设置里改了立刻生效。
+   * 也就是说：改色不需要重新构建，也不需要换 class。
+   */
   --color-accent: #d4537e;
   --color-accent-dark: #993556;
+  --color-primary: #378add;
   --font-sans: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI",
     "Microsoft YaHei", system-ui, -apple-system, sans-serif;
 

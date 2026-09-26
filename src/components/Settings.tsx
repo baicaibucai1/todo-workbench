@@ -45,8 +45,12 @@ import {
   Plug,
   ShieldCheck,
   Eraser,
+  FolderOpen,
   KeyRound,
   BookOpen,
+  ImagePlus,
+  Sparkles,
+  ExternalLink,
 } from "lucide-react";
 import { useStore } from "../store";
 import * as repo from "../lib/repo";
@@ -57,7 +61,6 @@ import {
   isThemeMode,
   parseAgentPermissions,
   parseDisabledTools,
-  parseSpecialEnabled,
   parseToolKeepState,
   parseUrgentMinutes,
   readAgentConfig,
@@ -69,6 +72,7 @@ import {
   withDefaults,
   type ThemeMode,
 } from "../lib/settings";
+import { isEnabled, selectable, togglePatch, agentEnabled, AGENT_EXT_ID } from "../lib/extensions/registry";
 import {
   canInstallTools,
   checkToolId,
@@ -100,18 +104,35 @@ import {
 import { dropToolNamespace } from "../lib/toolSchema";
 import { postToTool } from "../lib/toolLink";
 import { HOST_SOURCE } from "../lib/toolBridge";
-import { attachmentStore, formatBytes } from "../lib/attachments";
+import {
+  attachmentStore,
+  errorText,
+  formatBytes,
+  pickLocalMedia,
+} from "../lib/attachments";
 import {
   SCRIM,
   SCRIM_LEVELS,
+  WALLPAPER_MAX_BYTES,
   formatBackground,
   isScrimLevel,
   loadWallpapers,
   parseBackground,
+  parseCustomWallpapers,
   wallpaperUrl,
   type ScrimLevel,
   type Wallpaper,
 } from "../lib/wallpapers";
+import { useWallpaperUrl } from "../lib/useWallpaperUrl";
+import { customWallpaperUrl } from "../lib/customWallpaper";
+import {
+  DEFAULT_THEME,
+  PALETTES,
+  applyThemeColors,
+  matchPalette,
+  themeColorsFrom,
+} from "../lib/theme";
+import { extractPalette } from "../lib/palette";
 import {
   ALL_SHARDS,
   checkConnection,
@@ -138,7 +159,9 @@ import {
   agentConfigProblems,
   agentProvider,
   chatEndpoint,
+  recommendedProvider,
 } from "../lib/agent/providers";
+import { openExternal } from "../lib/attachments";
 import { chat } from "../lib/agent/client";
 import * as agentRuntime from "../lib/agent/runtime";
 
@@ -533,6 +556,9 @@ function AppearanceSection({
     { value: "system", label: "跟随系统", icon: Monitor },
   ];
 
+  const addCustom = useStore((s) => s.addCustomWallpaper);
+  const removeCustom = useStore((s) => s.removeCustomWallpaper);
+
   const [wallpapers, setWallpapers] = useState<Wallpaper[] | null>(null);
   useEffect(() => {
     let alive = true;
@@ -548,6 +574,92 @@ function AppearanceSection({
   const scrimRaw = settings[SETTINGS.bgScrim];
   const scrim: ScrimLevel = isScrimLevel(scrimRaw) ? scrimRaw : "medium";
   const pick = (value: string) => void saveSettings({ [SETTINGS.background]: value });
+
+  /* ---- 主题色 ---- */
+
+  const stored = themeColorsFrom(settings);
+  /**
+   * 取色器拖动中的值。
+   *
+   * 不为 null 时界面用它（此时还没落库）—— 这是"松手才落库"那条约定的
+   * 取色器版本：拖动过程中每秒能触发几十次 input 事件，次次落库的话
+   * 一次调色会给数据库写上百条。
+   */
+  const [draft, setDraft] = useState<{ accent: string; primary: string } | null>(null);
+  const shown = draft ?? stored;
+  const activePalette = matchPalette(shown.accent, shown.primary);
+
+  const previewColors = (next: { accent: string; primary: string }) => {
+    setDraft(next);
+    // 预览直接改 CSS 变量，跟落库走的是同一条路，所见即所得
+    applyThemeColors(next);
+  };
+
+  const commitColors = () => {
+    if (!draft) return;
+    void saveSettings({
+      [SETTINGS.accent]: draft.accent,
+      [SETTINGS.primary]: draft.primary,
+    });
+    setDraft(null);
+  };
+
+  /* ---- 自定义壁纸 ---- */
+
+  const custom = parseCustomWallpapers(settings[SETTINGS.customWallpapers]);
+  const bgSrc = useWallpaperUrl(settings[SETTINGS.background]);
+  const [busy, setBusy] = useState<"" | "upload" | "pick">("");
+  const [note, setNote] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+  const uploadWallpaper = async () => {
+    setBusy("upload");
+    setNote(null);
+    try {
+      const picked = await pickLocalMedia();
+      const first = picked[0];
+      // 没选（取消对话框）不是错误，静默收尾
+      if (!first) return;
+      const name =
+        typeof first === "string" ? first.split(/[\\/]/).pop() || "壁纸" : first.name;
+      await addCustom(first, name);
+      setNote({ kind: "ok", text: `已添加并切换：${name}` });
+    } catch (e) {
+      setNote({ kind: "err", text: errorText(e) });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  /**
+   * 从当前铺着的那张图取主题色。
+   *
+   * 只在铺了图时才有意义（跟随视图时取的是渐变，不是一个确定的色），
+   * 所以按钮不显示；真被点到（自动化测试直接调）时给一句人话而不是静默失败。
+   */
+  const pickFromWallpaper = async () => {
+    if (!bgSrc) {
+      setNote({ kind: "err", text: "当前没有铺图，先选一张壁纸" });
+      return;
+    }
+    setBusy("pick");
+    setNote(null);
+    try {
+      const p = await extractPalette(bgSrc);
+      if (!p) {
+        setNote({ kind: "err", text: "这张图取不了色（跨域限制或图片损坏）" });
+        return;
+      }
+      await saveSettings({
+        [SETTINGS.accent]: p.accent,
+        [SETTINGS.primary]: p.primary,
+      });
+      setNote({ kind: "ok", text: `已取样：${p.accent} / ${p.primary}` });
+    } catch (e) {
+      setNote({ kind: "err", text: errorText(e) });
+    } finally {
+      setBusy("");
+    }
+  };
 
   return (
     <div className="max-w-[560px]">
@@ -569,7 +681,7 @@ function AppearanceSection({
                 onClick={() => void saveSettings({ [SETTINGS.theme]: o.value })}
                 className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-[13px] whitespace-nowrap transition-colors ${
                   theme === o.value
-                    ? "border-[#378add] bg-[#378add] text-white"
+                    ? "border-primary bg-primary text-white"
                     : "border-line bg-card text-fg-3 hover:bg-hover"
                 }`}
               >
@@ -583,34 +695,199 @@ function AppearanceSection({
 
       <div className="mt-5">
         <SectionTitle
-          title="待办背景"
-          desc="默认跟着视图自带的那套渐变走；也可以选一张必应壁纸铺满整个待办区。"
+          title="主题色调"
+          desc="品牌色是待办完成圈、紧急标记这类「属于本应用」的印记；主操作色是按钮、选中态这类「能点的东西」。两个一起换，换的是整套关系。"
         />
 
         <Card>
+          <div className="text-[12.5px] text-fg-2">预设</div>
+          <div className="mt-2 grid grid-cols-4 gap-2">
+            {PALETTES.map((p) => {
+              const on = activePalette?.id === p.id;
+              return (
+                <button
+                  key={p.id}
+                  data-palette={p.id}
+                  onClick={() =>
+                    void saveSettings({
+                      [SETTINGS.accent]: p.accent,
+                      [SETTINGS.primary]: p.primary,
+                    })
+                  }
+                  className={`overflow-hidden rounded-lg border text-left transition-colors ${
+                    on ? "border-primary ring-2 ring-primary/25" : "border-line hover:border-fg-dim"
+                  }`}
+                >
+                  {/* 一格里放两个色块：用户要挑的是"这两个搭不搭"，不是一个色 */}
+                  <span className="flex h-8 w-full">
+                    <span className="flex-1" style={{ background: p.accent }} />
+                    <span className="flex-1" style={{ background: p.primary }} />
+                  </span>
+                  <span className="flex items-center gap-1 px-2 py-1 text-[12px] text-fg-3">
+                    {on && <Check size={12} className="text-primary" />}
+                    {p.name}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 flex items-end gap-4 border-t border-line pt-3">
+            <ColorField
+              label="品牌色"
+              value={shown.accent}
+              onInput={(v) => previewColors({ ...shown, accent: v })}
+              onCommit={commitColors}
+              testId="accent-color"
+            />
+            <ColorField
+              label="主操作色"
+              value={shown.primary}
+              onInput={(v) => previewColors({ ...shown, primary: v })}
+              onCommit={commitColors}
+              testId="primary-color"
+            />
+            <button
+              data-reset-colors
+              onClick={() =>
+                void saveSettings({
+                  [SETTINGS.accent]: DEFAULT_THEME.accent,
+                  [SETTINGS.primary]: DEFAULT_THEME.primary,
+                })
+              }
+              className="mb-[3px] ml-auto flex items-center gap-1 rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] text-fg-3 hover:bg-hover"
+            >
+              <RotateCcw size={12} />
+              恢复默认
+            </button>
+          </div>
+
+          <div className="mt-2 text-[12px] leading-relaxed text-fg-dim">
+            太亮或太灰的色会被自动收到能看清白字的范围里 —— 界面上按钮的字是白色的，
+            给出看不清的字比不给这个选项更糟。
+          </div>
+        </Card>
+      </div>
+
+      <div className="mt-5">
+        <SectionTitle
+          title="待办背景"
+          desc="默认跟着视图自带的那套渐变走；也可以选一张必应壁纸，或者上传自己的图铺满整个待办区。"
+        />
+
+        <Card>
+          {/*
+           * 上传与取色放在最上面、且**不依赖内置清单**：
+           * 就算这个环境一张必应壁纸都没抓过，用户照样能传自己的图。
+           * 把它们塞进 wallpapers.length > 0 那个分支里，是这次最容易犯的错
+           * —— 那样"没抓过图"的用户会以为这个功能根本不存在。
+           */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              data-add-wallpaper
+              disabled={busy === "upload"}
+              onClick={() => void uploadWallpaper()}
+              className="flex items-center gap-1.5 rounded-lg border border-line bg-card px-3 py-1.5 text-[13px] text-fg-2 transition-colors hover:bg-hover disabled:opacity-50"
+            >
+              <ImagePlus size={14} />
+              {busy === "upload" ? "正在存入…" : "上传我的图片"}
+            </button>
+
+            {bg.kind !== "auto" && (
+              <button
+                data-pick-from-wallpaper
+                disabled={busy === "pick"}
+                onClick={() => void pickFromWallpaper()}
+                className="flex items-center gap-1.5 rounded-lg border border-line bg-card px-3 py-1.5 text-[13px] text-fg-2 transition-colors hover:bg-hover disabled:opacity-50"
+              >
+                <Sparkles size={14} />
+                {busy === "pick" ? "取样中…" : "取这张图的主色"}
+              </button>
+            )}
+
+            <span className="ml-auto text-[12px] text-fg-dim">
+              单张 ≤ {formatBytes(WALLPAPER_MAX_BYTES)}，只收图片
+            </span>
+          </div>
+
+          {note && (
+            <div
+              data-wallpaper-note={note.kind}
+              className={`mt-2 rounded-md px-2.5 py-1.5 text-[12.5px] ${
+                note.kind === "err" ? "bg-danger-soft text-danger" : "bg-chip text-fg-2"
+              }`}
+            >
+              {note.text}
+            </div>
+          )}
+
+          {/* -------- 我上传的 -------- */}
+          {custom.length > 0 && (
+            <div className="mt-3 border-t border-line pt-3">
+              <div className="text-[12.5px] text-fg-2">我的图片</div>
+              <div className="mt-2 grid grid-cols-3 gap-2.5">
+                {custom.map((c) => (
+                  <div key={c.path} className="group relative">
+                    <button
+                      data-custom-wallpaper={c.path}
+                      title={c.name}
+                      onClick={() => pick(formatBackground({ kind: "custom", path: c.path }))}
+                      className={`w-full overflow-hidden rounded-lg border text-left transition-colors ${
+                        bg.kind === "custom" && bg.path === c.path
+                          ? "border-primary ring-2 ring-primary/25"
+                          : "border-line hover:border-fg-dim"
+                      }`}
+                    >
+                      <CustomThumb path={c.path} />
+                      <span className="block truncate px-2 py-1.5 text-[12.5px] text-fg-3">
+                        {c.name}
+                      </span>
+                    </button>
+                    {/*
+                     * 删除按钮是**盖在缩略图上**的独立按钮，不是嵌在选择按钮里：
+                     * 嵌套 button 是非法 HTML，且点删除会顺带把背景切过去。
+                     */}
+                    <button
+                      data-remove-wallpaper={c.path}
+                      title="删掉这张"
+                      onClick={() => void removeCustom(c.path)}
+                      className="absolute right-1 top-1 rounded-md bg-black/55 p-1 text-white opacity-0 transition-opacity hover:bg-black/75 focus:opacity-100 group-hover:opacity-100"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* -------- 必应每日壁纸 -------- */}
           {wallpapers === null ? (
-            <div className="py-6 text-center text-[13px] text-fg-dim">正在读取壁纸清单…</div>
+            <div className="mt-3 border-t border-line py-6 text-center text-[13px] text-fg-dim">
+              正在读取壁纸清单…
+            </div>
           ) : wallpapers.length === 0 ? (
             // 空清单不是"坏掉了"，而是这个环境还没抓过图 —— 直接给出补救命令，
             // 比显示一排灰格子有用
-            <div className="text-[13px] leading-relaxed text-fg-2">
-              <div className="font-medium text-danger">还没有抓到壁纸图片</div>
+            <div className="mt-3 border-t border-line pt-3 text-[13px] leading-relaxed text-fg-2">
+              <div className="font-medium text-danger">还没有抓到必应壁纸</div>
               <div className="mt-1 text-fg-3">
-                壁纸是随包发布的静态资源，需要在工程里跑一次抓取脚本：
+                它是随包发布的静态资源，需要在工程里跑一次抓取脚本（不影响上传自己的图）：
               </div>
               <code className="mt-2 block rounded-md bg-chip px-2.5 py-1.5 font-mono text-[12.5px] text-fg-2">
                 node scripts/fetch-wallpapers.mjs
               </code>
             </div>
           ) : (
-            <>
-              <div className="grid grid-cols-3 gap-2.5">
+            <div className="mt-3 border-t border-line pt-3">
+              <div className="text-[12.5px] text-fg-2">必应每日壁纸</div>
+              <div className="mt-2 grid grid-cols-3 gap-2.5">
                 <button
                   data-bg-option="auto"
                   onClick={() => pick("auto")}
                   className={`group overflow-hidden rounded-lg border text-left transition-colors ${
                     bg.kind === "auto"
-                      ? "border-[#378add] ring-2 ring-[#378add]/25"
+                      ? "border-primary ring-2 ring-primary/25"
                       : "border-line hover:border-fg-dim"
                   }`}
                 >
@@ -620,7 +897,7 @@ function AppearanceSection({
                     style={{ background: "linear-gradient(135deg,#c2436b,#a8681a 34%,#2a6cb0 67%,#443c9a)" }}
                   />
                   <span className="flex items-center gap-1.5 px-2 py-1.5 text-[12.5px] text-fg-2">
-                    {bg.kind === "auto" && <Check size={13} className="text-[#378add]" />}
+                    {bg.kind === "auto" && <Check size={13} className="text-primary" />}
                     跟随视图
                   </span>
                 </button>
@@ -633,7 +910,7 @@ function AppearanceSection({
                     onClick={() => pick(formatBackground({ kind: "image", file: w.file }))}
                     className={`overflow-hidden rounded-lg border text-left transition-colors ${
                       bg.kind === "image" && bg.file === w.file
-                        ? "border-[#378add] ring-2 ring-[#378add]/25"
+                        ? "border-primary ring-2 ring-primary/25"
                         : "border-line hover:border-fg-dim"
                     }`}
                   >
@@ -650,46 +927,125 @@ function AppearanceSection({
                 ))}
               </div>
 
-              <div className="mt-3 border-t border-line pt-3 text-[12px] leading-relaxed text-fg-dim">
-                {bg.kind === "image"
-                  ? `当前：${wallpapers.find((w) => w.file === bg.file)?.title || bg.file}`
-                  : "当前：跟随视图渐变"}
-                <span className="ml-1">
-                  · 共 {wallpapers.length} 张，来自必应每日壁纸；要换一批就再跑一次抓取脚本
-                </span>
+              <div className="mt-2 text-[12px] leading-relaxed text-fg-dim">
+                共 {wallpapers.length} 张；要换一批就再跑一次抓取脚本
               </div>
+            </div>
+          )}
 
-              {/* 遮罩只在铺图时才有意义 —— 照片明暗差得远，没有它白字会糊在天空上 */}
-              {bg.kind === "image" && (
-                <div className="mt-3 border-t border-line pt-3">
-                  <div className="text-[12.5px] text-fg-2">遮罩强度</div>
-                  <div className="mt-1 text-[12px] leading-relaxed text-fg-dim">
-                    壁纸越亮，越需要压暗一些才看得清文字。
-                  </div>
-                  <div className="mt-2 flex gap-1.5">
-                    {SCRIM_LEVELS.map((lv) => (
-                      <button
-                        key={lv}
-                        data-bg-scrim={lv}
-                        onClick={() => void saveSettings({ [SETTINGS.bgScrim]: lv })}
-                        className={`flex-1 rounded-lg border px-3 py-2 text-[13px] transition-colors ${
-                          scrim === lv
-                            ? "border-[#378add] bg-[#378add] text-white"
-                            : "border-line bg-card text-fg-3 hover:bg-hover"
-                        }`}
-                      >
-                        {SCRIM[lv].label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
+          <div className="mt-3 border-t border-line pt-3 text-[12px] leading-relaxed text-fg-dim">
+            {bg.kind === "image"
+              ? `当前：${wallpapers?.find((w) => w.file === bg.file)?.title || bg.file}`
+              : bg.kind === "custom"
+                ? `当前：${custom.find((c) => c.path === bg.path)?.name || "我的图片"}`
+                : "当前：跟随视图渐变"}
+          </div>
+
+          {/* 遮罩只在铺图时才有意义 —— 照片明暗差得远，没有它白字会糊在天空上 */}
+          {bg.kind !== "auto" && (
+            <div className="mt-3 border-t border-line pt-3">
+              <div className="text-[12.5px] text-fg-2">遮罩强度</div>
+              <div className="mt-1 text-[12px] leading-relaxed text-fg-dim">
+                壁纸越亮，越需要压暗一些才看得清文字。
+              </div>
+              <div className="mt-2 flex gap-1.5">
+                {SCRIM_LEVELS.map((lv) => (
+                  <button
+                    key={lv}
+                    data-bg-scrim={lv}
+                    onClick={() => void saveSettings({ [SETTINGS.bgScrim]: lv })}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-[13px] transition-colors ${
+                      scrim === lv
+                        ? "border-primary bg-primary text-white"
+                        : "border-line bg-card text-fg-3 hover:bg-hover"
+                    }`}
+                  >
+                    {SCRIM[lv].label}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
         </Card>
       </div>
     </div>
   );
+}
+
+/* ---------------------------- 外观的两个小件 ---------------------------- */
+
+/**
+ * 取色器一格。
+ *
+ * ⚠️ 落库时机是这里唯一 tricky 的地方：
+ * React 的 onChange 绑的是原生 input 事件，拖动色板时每秒能触发几十次。
+ * 所以「拖动中只预览、松手才落库」必须靠**原生 change 事件** ——
+ * 它在关闭取色面板时才来一次。两者分工：
+ *   onChange（= input）  → 改 CSS 变量，界面立刻变色
+ *   原生 change          → 写库
+ * 少绑那个原生监听的话，一次调色会给 core_settings 写上几十条。
+ */
+function ColorField({
+  label,
+  value,
+  onInput,
+  onCommit,
+  testId,
+}: {
+  label: string;
+  value: string;
+  onInput: (v: string) => void;
+  onCommit: () => void;
+  testId: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const commitRef = useRef(onCommit);
+  commitRef.current = onCommit;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const handler = () => commitRef.current();
+    el.addEventListener("change", handler);
+    return () => el.removeEventListener("change", handler);
+  }, []);
+
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[12px] text-fg-dim">{label}</span>
+      <span className="flex items-center gap-2">
+        <input
+          ref={ref}
+          type="color"
+          data-color-input={testId}
+          value={value}
+          onChange={(e) => onInput(e.target.value)}
+          className="h-8 w-12 cursor-pointer rounded border border-line bg-transparent p-0.5"
+        />
+        <code className="font-mono text-[12px] text-fg-3">{value}</code>
+      </span>
+    </label>
+  );
+}
+
+/** 自定义壁纸的缩略图：地址要向仓库异步要，所以不能直接用 <img src={path}> */
+function CustomThumb({ path }: { path: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void customWallpaperUrl(path)
+      .then((u) => {
+        if (alive) setUrl(u);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [path]);
+
+  // 还没拿到 / 文件已被手动删掉：留一块占位，而不是一个裂开的图
+  if (!url) return <span className="block h-[74px] w-full bg-chip" />;
+  return <img src={url} alt="" loading="lazy" className="h-[74px] w-full object-cover" />;
 }
 
 /* ------------------------------ 分区：数据库 ------------------------------ */
@@ -1170,7 +1526,6 @@ function BehaviorSection({
 }) {
   const startup = settings[SETTINGS.startupView] ?? "myday";
   const sidebarDefault = (settings[SETTINGS.sidebarOpen] ?? "1") !== "0";
-  const specialOn = parseSpecialEnabled(settings[SETTINGS.specialEnabled]);
   const reminderOn = (settings[SETTINGS.reminderEnabled] ?? "1") !== "0";
   const systemNotify = (settings[SETTINGS.reminderSystem] ?? "0") === "1";
   const snooze = settings[SETTINGS.reminderSnooze] ?? "10";
@@ -1233,7 +1588,7 @@ function BehaviorSection({
             value={startup}
             data-act="startup-view"
             onChange={(e) => void saveSettings({ [SETTINGS.startupView]: e.target.value })}
-            className="w-[160px] rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
+            className="w-[160px] rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-fg-2 outline-none focus:border-primary"
           >
             {STARTUP_VIEWS.map((v) => (
               <option key={v.value} value={v.value}>
@@ -1292,7 +1647,7 @@ function BehaviorSection({
               value={snooze}
               data-act="snooze-minutes"
               onChange={(e) => void saveSettings({ [SETTINGS.reminderSnooze]: e.target.value })}
-              className="w-[110px] rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
+              className="w-[110px] rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-fg-2 outline-none focus:border-primary"
             >
               {["5", "10", "30", "60"].map((m) => (
                 <option key={m} value={m}>
@@ -1328,7 +1683,7 @@ function BehaviorSection({
                 setUrgentCustomMode(false);
                 void saveSettings({ [SETTINGS.urgentMinutes]: v });
               }}
-              className="w-[110px] rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
+              className="w-[110px] rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-fg-2 outline-none focus:border-primary"
             >
               {URGENT_PRESETS.map((p) => (
                 <option key={p.minutes} value={String(p.minutes)}>
@@ -1357,7 +1712,7 @@ function BehaviorSection({
                   onKeyDown={(e) => {
                     if (e.key === "Enter") e.currentTarget.blur();
                   }}
-                  className="w-[110px] rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
+                  className="w-[110px] rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-fg-2 outline-none focus:border-primary"
                 />
               </FieldRow>
             </>
@@ -1401,7 +1756,7 @@ function BehaviorSection({
                     setHoverId(null);
                   }}
                   className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors ${
-                    isTarget ? "border-[#378add] bg-hover" : "border-line bg-card"
+                    isTarget ? "border-primary bg-hover" : "border-line bg-card"
                   } ${dragId === id ? "opacity-50" : ""}`}
                 >
                   <GripVertical size={13} className="shrink-0 cursor-grab text-fg-dim" />
@@ -1469,24 +1824,29 @@ function BehaviorSection({
 
       <div className="mt-5">
         <SectionTitle
-          title="模块"
-          desc="关掉的功能会从界面上收起，已经存下的数据仍留在数据库里，随时可以再打开。"
+          title="选装模块"
+          desc="默认都不带 —— 只有跟单、存素材这类专门玩法才需要。打开即生效，关掉只是从界面上收起，已经存下的数据仍留在数据库里。"
         />
         <Card>
-          <FieldRow
-            label="特殊单号"
-            hint="以快递单号为起点、每一步带处理时效的那类记录。关掉后侧边栏入口、专属视图、创建时的类型选择、我的一天里那一组、以及时效提醒与紧急区都会停；已经建好的单子不受影响，仍留在「流程任务」列表里"
-          >
-            <Switch
-              on={specialOn}
-              onToggle={() =>
-                void saveSettings({
-                  [SETTINGS.specialEnabled]: specialOn ? "0" : "1",
-                })
-              }
-              testId="special-enabled"
-            />
-          </FieldRow>
+          {/*
+            这个列表由注册表长出来（selectable()），不是在这里一条条列的。
+            加一个选装模块的代价因此只剩「去 registry 登记一条」——
+            以前每加一个模块，这里要补一行、开关键要在 settings.ts 补一个、
+            侧栏要加一句过滤，漏一处不报错，只是界面有一半不对。
+            AI 助手被 selectable 排除：它开不开取决于有没有配 Key，不是这个开关。
+          */}
+          {selectable().map((ext) => {
+            const on = isEnabled(settings, ext.id);
+            return (
+              <FieldRow key={ext.id} label={ext.name} hint={ext.description ?? ""}>
+                <Switch
+                  on={on}
+                  onToggle={() => void saveSettings(togglePatch(settings, ext.id))}
+                  testId={`${ext.id}-enabled`}
+                />
+              </FieldRow>
+            );
+          })}
         </Card>
       </div>
     </div>
@@ -1986,7 +2346,7 @@ function ToolIcon({ icon }: { icon?: string }) {
   const Icon = resolveIcon(icon);
   return (
     <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-chip">
-      <Icon size={16} className="text-[#378add]" />
+      <Icon size={16} className="text-primary" />
     </span>
   );
 }
@@ -2037,7 +2397,7 @@ function ImportToolDialog({
     >
       <div className="w-full max-w-[440px] rounded-xl border border-line bg-card p-5 shadow-xl">
         <div className="flex items-center gap-2">
-          <FileCode2 size={16} className="text-[#378add]" />
+          <FileCode2 size={16} className="text-primary" />
           <h3 className="text-[14px] font-medium text-fg">导入为工具</h3>
         </div>
         <p className="mt-1 break-all font-mono text-[11.5px] text-fg-dim">{fileName}</p>
@@ -2051,7 +2411,7 @@ function ImportToolDialog({
               data-import-name=""
               onChange={(e) => setName(e.target.value)}
               onBlur={() => setTouched(true)}
-              className="w-full rounded-lg border border-line bg-card px-3 py-2 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
+              className="w-full rounded-lg border border-line bg-card px-3 py-2 text-[13px] text-fg-2 outline-none focus:border-primary"
             />
           </label>
 
@@ -2065,7 +2425,7 @@ function ImportToolDialog({
               onChange={(e) => setId(e.target.value)}
               onBlur={() => setTouched(true)}
               className={`w-full rounded-lg border bg-card px-3 py-2 font-mono text-[13px] text-fg-2 outline-none ${
-                touched && idError ? "border-danger" : "border-line focus:border-[#378add]"
+                touched && idError ? "border-danger" : "border-line focus:border-primary"
               }`}
             />
             {touched && idError && idError !== nameError && (
@@ -2085,7 +2445,7 @@ function ImportToolDialog({
               value={icon}
               data-import-icon=""
               onChange={(e) => setIcon(e.target.value)}
-              className="w-[180px] rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
+              className="w-[180px] rounded-lg border border-line bg-card px-2.5 py-1.5 text-[13px] text-fg-2 outline-none focus:border-primary"
             >
               {Object.keys(ICONS).map((k) => (
                 <option key={k} value={k}>
@@ -2102,7 +2462,7 @@ function ImportToolDialog({
               data-import-desc=""
               rows={2}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full resize-none rounded-lg border border-line bg-card px-3 py-2 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
+              className="w-full resize-none rounded-lg border border-line bg-card px-3 py-2 text-[13px] text-fg-2 outline-none focus:border-primary"
             />
           </label>
         </div>
@@ -2126,7 +2486,7 @@ function ImportToolDialog({
                 description: description.trim() || undefined,
               })
             }
-            className="rounded-lg bg-[#378add] px-3 py-1.5 text-[13px] text-white disabled:opacity-40"
+            className="rounded-lg bg-primary px-3 py-1.5 text-[13px] text-white disabled:opacity-40"
           >
             {busy ? "安装中…" : "安装"}
           </button>
@@ -2291,7 +2651,7 @@ function SyncSection({
                 data-sync-provider={p.id}
                 data-on={on ? "1" : "0"}
                 className={`max-w-[260px] rounded-lg border px-3 py-2 text-left ${
-                  on ? "border-[#378add] bg-card" : "border-line bg-card hover:bg-hover"
+                  on ? "border-primary bg-card" : "border-line bg-card hover:bg-hover"
                 }`}
               >
                 <span className="block text-[13px] text-fg-2">{p.label}</span>
@@ -2429,8 +2789,8 @@ function SyncSection({
                 <span
                   className="flex size-[18px] shrink-0 items-center justify-center rounded border"
                   style={{
-                    borderColor: on ? "#378add" : "var(--color-line)",
-                    background: on ? "#378add" : "transparent",
+                    borderColor: on ? "var(--color-primary)" : "var(--color-line)",
+                    background: on ? "var(--color-primary)" : "transparent",
                   }}
                 >
                   {on && <Check size={12} className="text-white" />}
@@ -2565,6 +2925,75 @@ const PERM_ROWS = [
 
 type PermKey = (typeof PERM_ROWS)[number]["key"];
 
+/**
+ * 「还没接上模型」时的引导卡。
+ *
+ * 为什么要这一张，而不是继续用那句"去 xxx 里配 Key"：
+ * 没接过 API 的人卡住的从来不是"填哪一格"，而是**Key 从哪儿来**。
+ * 只告诉他缺什么，他得自己去找注册入口 —— 这一步流失的人最多。
+ * 所以卡片给的是一条完整路径：注册 → 建 Key → 粘回来，并且推荐的那一家
+ * 必须自己登记了 signup（providers.ts 的 recommendedProvider 守着这条约束）。
+ *
+ * 「用别家」没有藏起来：助手接的是 OpenAI 兼容接口，任何人手上有 Key 都能用，
+ * 推荐只是给还没有的人一个起点，不是绑定。
+ */
+function SignupGuide({ onUseOther }: { onUseOther: () => void }) {
+  const p = recommendedProvider();
+  const steps = [
+    "注册并登录（邮箱即可）",
+    "进控制台的 API 密钥页面，创建一把 Key",
+    "把 Key 复制下来，粘到下面的「API Key」里",
+  ];
+  return (
+    <div
+      data-agent-signup-guide=""
+      className="mb-4 rounded-xl border border-accent/30 bg-card px-4 py-3.5"
+    >
+      <div className="flex items-center gap-2">
+        <Sparkles size={15} className="text-accent" />
+        <span className="text-[13.5px] font-medium text-fg">还差一把 API Key</span>
+      </div>
+      <p className="mt-1.5 text-[12.5px] leading-relaxed text-fg-2">
+        助手要调用对话接口才能说话，而调用接口需要一把 Key。没有的话推荐用{" "}
+        <b className="font-medium">{p.name}</b> —— 它和助手走的都是 OpenAI 兼容接口，
+        注册就能拿 Key：
+      </p>
+      <ol className="mt-2 space-y-1">
+        {steps.map((s, i) => (
+          <li key={s} className="flex gap-2 text-[12.5px] leading-relaxed text-fg-3">
+            <span className="mt-[1px] grid size-[18px] shrink-0 place-items-center rounded-full bg-hover text-[11px] text-fg-2">
+              {i + 1}
+            </span>
+            {s}
+          </li>
+        ))}
+      </ol>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {p.signup && (
+          <button
+            onClick={() => void openExternal(p.signup!)}
+            data-agent-signup={p.signup}
+            className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] text-white hover:opacity-90"
+          >
+            去注册 {p.name}
+            <ExternalLink size={12} />
+          </button>
+        )}
+        <button
+          onClick={onUseOther}
+          data-agent-signup-skip=""
+          className="rounded-lg border border-line px-3 py-1.5 text-[12.5px] text-fg-2 hover:bg-hover"
+        >
+          我手上已经有别的 Key
+        </button>
+      </div>
+      <p className="mt-2 text-[11.5px] leading-relaxed text-fg-dim">
+        Key 只写进本机数据库的 core_settings，请求直接从这里发到你选的那家，不经过任何中转。
+      </p>
+    </div>
+  );
+}
+
 function AgentSection({
   settings,
   saveSettings,
@@ -2578,6 +3007,22 @@ function AgentSection({
   const provider = agentProvider(cfg.provider);
   const problems = agentConfigProblems(cfg);
   const desktop = isTauri();
+  /** 与服务商按钮里那个 `on` 同名容易看混，这里叫 enabled */
+  const enabled = agentEnabled(settings);
+  const providersRef = useRef<HTMLDivElement | null>(null);
+
+  /** 用系统对话框挑一个目录。手填路径容易打错，而打错的目录会让"写了文件找不到" */
+  const pickWorkspaceDir = async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const picked = await open({
+      directory: true,
+      multiple: false,
+      title: "选一个目录作为助手的工作区",
+    });
+    if (typeof picked === "string" && picked) {
+      await saveSettings({ [SETTINGS.agentWorkspace]: picked });
+    }
+  };
 
   const [busy, setBusy] = useState<"test" | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
@@ -2658,18 +3103,57 @@ function AgentSection({
         desc="工作台内置的助手：能对话、能按单 HTML 工具的标准写出工具并装进来、能把日程记到待办里，也能给工具绑定数据表。它用的是 OpenAI 兼容接口，Key 只存在本机。"
       />
 
-      {!desktop && (
-        <div className="mb-3 flex items-start gap-2 rounded-lg border border-[#a32d2d]/30 bg-danger-soft px-3 py-2.5">
-          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-danger" />
-          <div className="text-[12px] leading-relaxed text-danger">
-            浏览器演示模式：可以对话（接口允许跨源的话），但装工具、绑数据表这类要写文件的事做不到。
-            助手会如实告诉你，并把生成好的源码留在动作卡上让你复制走。
-          </div>
-        </div>
-      )}
+      {/* 总闸：关掉之后助手整个不在（悬浮球不渲染、不加载、不联网） */}
+      <div
+        data-agent-enabled-row=""
+        data-on={enabled ? "1" : "0"}
+        className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-line bg-card px-3.5 py-3"
+      >
+        <span className="min-w-0">
+          <span className="block text-[13px] text-fg">启用 AI 助手</span>
+          <span className="mt-0.5 block text-[11.5px] leading-relaxed text-fg-dim">
+            关掉之后左下角的悬浮球会消失，助手也不会再联网。聊过的记录都留着，
+            把开关打开就原样回来。
+          </span>
+        </span>
+        <Switch
+          on={enabled}
+          onToggle={() => void saveSettings(togglePatch(settings, AGENT_EXT_ID))}
+          testId="agent-enabled"
+        />
+      </div>
 
-      {/* 服务商 */}
-      <div className="mb-4">
+      {!enabled ? (
+        <div data-agent-off="" className="rounded-xl border border-dashed border-line px-4 py-5 text-center">
+          <Bot size={18} className="mx-auto text-fg-dim" />
+          <p className="mt-2 text-[12.5px] leading-relaxed text-fg-3">
+            AI 助手已关闭，悬浮球已经收起。
+            <br />
+            任何时候把上面的开关打开，它都会带着原来的对话记录回来。
+          </p>
+        </div>
+      ) : (
+        <>
+          {problems.length > 0 && (
+            <SignupGuide
+              onUseOther={() =>
+                providersRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
+              }
+            />
+          )}
+
+          {!desktop && (
+            <div className="mb-3 flex items-start gap-2 rounded-lg border border-[#a32d2d]/30 bg-danger-soft px-3 py-2.5">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0 text-danger" />
+              <div className="text-[12px] leading-relaxed text-danger">
+                浏览器演示模式：可以对话（接口允许跨源的话），但装工具、绑数据表这类要写文件的事做不到。
+                助手会如实告诉你，并把生成好的源码留在动作卡上让你复制走。
+              </div>
+            </div>
+          )}
+
+          {/* 服务商 */}
+          <div className="mb-4" ref={providersRef}>
         <div className="mb-2 text-[13px] font-medium text-fg">用哪家的模型</div>
         <div className="flex flex-wrap gap-2">
           {AGENT_PROVIDERS.map((p) => {
@@ -2778,6 +3262,49 @@ function AgentSection({
         </div>
       </Card>
 
+      {/*
+        工作区：助手写文件的目录。
+        默认落在数据目录下的 agent-workspace/（留空即用默认），想放同步盘
+        或自己的项目目录就在这里改 —— 那是只有用户自己知道的事。
+      */}
+      <div className="mt-6">
+        <div className="mb-2 flex items-center gap-1.5 text-[13px] font-medium text-fg">
+          <FolderOpen size={14} className="text-fg-dim" />
+          工作区（它写文件的地方）
+        </div>
+        <Card>
+          <div className="space-y-2">
+            <label className="block">
+              <span className="mb-1 block text-[12px] text-fg-dim">目录</span>
+              <div className="flex gap-2">
+                <input
+                  value={settings[SETTINGS.agentWorkspace] ?? ""}
+                  placeholder={desktop ? "留空 = 数据目录下的 agent-workspace/" : "浏览器模式没有工作区"}
+                  data-field="agent-workspace"
+                  disabled={!desktop}
+                  onChange={(e) => void saveSettings({ [SETTINGS.agentWorkspace]: e.target.value })}
+                  className="min-w-0 flex-1 rounded-lg border border-line bg-card px-3 py-2 font-mono text-[12.5px] text-fg-2 outline-none focus:border-accent disabled:opacity-50"
+                />
+                {desktop && (
+                  <button
+                    onClick={() => void pickWorkspaceDir()}
+                    data-agent-workspace-pick=""
+                    className="shrink-0 rounded-lg border border-line px-2.5 py-2 text-[12.5px] text-fg-2 hover:bg-hover"
+                  >
+                    选择…
+                  </button>
+                )}
+              </div>
+              <span className="mt-1 block text-[11.5px] leading-relaxed text-fg-dim">
+                助手写的报告、方案、markdown 都落在这里。它**只能**写这个目录里面的文件
+                —— 相对路径里的 <code className="font-mono">..</code> 会被拒绝。
+                想看这些文件：设置 → 行为 → 模块里打开「工作区」。
+              </span>
+            </label>
+          </div>
+        </Card>
+      </div>
+
       {/* 权限 */}
       <div className="mt-6">
         <div className="mb-2 flex items-center gap-1.5 text-[13px] font-medium text-fg">
@@ -2864,10 +3391,12 @@ function AgentSection({
       <div className="mt-4 flex items-start gap-2 rounded-lg border border-line bg-card px-3 py-2.5">
         <KeyRound size={13} className="mt-0.5 shrink-0 text-fg-dim" />
         <div className="text-[11.5px] leading-relaxed text-fg-dim">
-          助手能看到待办与清单（读得到你手上有什么），但<b className="font-medium">碰不到流程任务</b>，
-          也没有直接执行 SQL 的通道 —— 工具的私有数据只能由那个工具自己经宿主通道访问。
+           助手能看到待办与清单（读得到你手上有什么），但<b className="font-medium">碰不到流程任务</b>，
+            也没有直接执行 SQL 的通道 —— 工具的私有数据只能由那个工具自己经宿主通道访问。
+          </div>
         </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }
@@ -3008,7 +3537,7 @@ function TextField({
             e.currentTarget.blur();
           }
         }}
-        className="w-full rounded-lg border border-line bg-card px-3 py-2 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
+        className="w-full rounded-lg border border-line bg-card px-3 py-2 text-[13px] text-fg-2 outline-none focus:border-primary"
       />
       {hint && <span className="mt-1 block text-[11.5px] leading-relaxed text-fg-dim">{hint}</span>}
     </label>
@@ -3023,7 +3552,7 @@ function Switch({ on, onToggle, testId }: { on: boolean; onToggle: () => void; t
       aria-checked={on}
       data-switch={testId}
       className="relative h-[22px] w-[40px] rounded-full transition-colors"
-      style={{ background: on ? "#378add" : "#c9c8c2" }}
+      style={{ background: on ? "var(--color-primary)" : "#c9c8c2" }}
     >
       <span
         className="absolute top-[3px] size-4 rounded-full bg-card transition-all"

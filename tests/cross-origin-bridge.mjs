@@ -22,6 +22,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { makePng } from "./png.mjs";
+import { enableModule } from "./_enable-module.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -180,6 +181,11 @@ console.log("\n0. 探针自检");
 await page.goto(HOST, { waitUntil: "load" });
 await page.waitForSelector("aside", { timeout: 20000 });
 check("postMessage 探针能记录到消息（否则后面的断言全是假绿）", await probeWorks());
+
+// 第 2 节要把产出存进图库，而图库是**选装模块**（v18 起默认不带）——
+// 不开它，gallery.put 会被能力门回绝，那条断言会红在"存不进去"上，
+// 而真凶其实只是模块没开。
+await enableModule(page, "gallery");
 
 /* ================================================================== */
 console.log("\n1. 跨源：src 写着同源、实际加载在别的 host（302）");

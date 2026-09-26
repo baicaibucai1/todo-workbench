@@ -100,7 +100,10 @@ import {
   readGalleryDataUrl,
   THUMB_MAX,
 } from "./gallery";
+import { fetchTaskById } from "./repo";
 import type { GalleryItem, GalleryKind, GalleryOrigin } from "../types";
+import { capabilityError, capabilityState } from "./extensions/registry";
+import type { ToolInjectKind } from "./extensions/types";
 
 /** 协议标记，避免和页面里其他 postMessage 流量串台 */
 export const TOOL_SOURCE = "workbench-tool";
@@ -127,7 +130,9 @@ export type ToolOp =
   | "tools.send"
   | "gallery.list"
   | "gallery.get"
-  | "gallery.put";
+  | "gallery.put"
+  /** 注入组件读**它挂着的那一条**待办（只读）。见文件头「task.get」 */
+  | "task.get";
 
 /**
  * 工具私有 KV 的键名约束。
@@ -239,15 +244,18 @@ export interface ToolContext {
   theme: "light" | "dark";
   runtime: "desktop" | "browser";
   /**
-   * 宿主是否提供图库通道（gallery.*）。
+   * 宿主此刻是否为**这个工具**开放图库通道（gallery.*）。
    *
-   * 存在的理由是**版本错配**：工具与宿主分开升级，用户完全可能在一个
-   * 还没有图库的宿主上装了一个会调 gallery.* 的新工具。
-   * 没有这个标记的话，那种情况只会表现为"点了没反应"或一句含糊的
-   * "不支持的操作"，用户无从判断是自己装错了还是软件坏了。
-   * 工具据此把相关入口置灰并说明原因。
+   * 现在是会变的（以前恒为 true）：图库已经改成选装模块，
+   * 它关着的时候这儿就是 false。判据有两层 —— 工具在 manifest 里申请过，
+   * 并且提供这个能力的模块开着。
+   *
+   * 它存在的理由仍然成立：**工具与宿主分开**。用户完全可能在宿主没有图库
+   * （或图库关着）的情况下装了一个会调 gallery.* 的工具，没有这个标记的话
+   * 那种情况只会表现为"点了没反应"或一句含糊的"不支持的操作"。
+   * 工具据此把入口置灰、把产物改成下载到本地。
    */
-  gallery: true;
+  gallery: boolean;
   /**
    * 宿主是否提供数据表通道（row.* / schema.info）。
    *
@@ -257,6 +265,17 @@ export interface ToolContext {
   data: true;
   /** 宿主是否提供工具联动（tools.*） */
   link: true;
+  /**
+   * **注入组件**的挂载上下文：它挂在哪、替哪条待办干活。
+   *
+   * 整页工具没有这个字段（它不和某条待办绑定）。注入组件靠它决定自己
+   * 显示什么 —— 同一个组件挂在两条待办上是两个 iframe 实例、
+   * 两份 `ctx.inject`，互不干扰。
+   *
+   * 有了它才需要 `task` 能力：组件只被允许读 `taskId` 指的**那一条**，
+   * 不能拿 id 去翻别的（见 task.get 的实现）。
+   */
+  inject?: { kind: ToolInjectKind; taskId: string };
 }
 
 export interface ToolBridge {
@@ -393,8 +412,17 @@ function currentTheme(): "light" | "dark" {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 }
 
-/** 组装工具运行上下文 —— 工具据此显示"我连到哪儿了" */
-export function buildContext(toolId: string): ToolContext {
+/**
+ * 组装工具运行上下文 —— 工具据此显示"我连到哪儿了"。
+ *
+ * settings 由调用方传进来而不是在这里向 store 取：lib 层不认识 UI 状态，
+ * 桥也就能在测试里被单独建起来（给一份普通对象即可）。
+ */
+export function buildContext(
+  toolId: string,
+  settings: Record<string, string>,
+  inject?: ToolContext["inject"],
+): ToolContext {
   const info = dbInfo();
   return {
     toolId,
@@ -404,9 +432,11 @@ export function buildContext(toolId: string): ToolContext {
     schemaVersion: info.schemaVersion,
     theme: currentTheme(),
     runtime: isTauri() ? "desktop" : "browser",
-    gallery: true,
+    // 图库是**申请来的**：manifest 里写过、且那个模块开着，才是 true
+    gallery: capabilityState(settings, toolId, "gallery") === "on",
     data: true,
     link: true,
+    ...(inject ? { inject } : {}),
   };
 }
 
@@ -547,8 +577,22 @@ export function createToolBridge(
     openTool?: (id: string, payload: unknown) => Promise<void>;
     /** 当前机器上的其他工具（tools.list 用）。由组件从 store 组装后传进来 */
     peers?: () => ToolLinkMeta[];
+    /**
+     * 当前设置（能力门要用）。同样是惰性的：每次判断现取，
+     * 否则用户在设置里打开图库之后，已经挂着的工具要重启才会看到。
+     */
+    getSettings?: () => Record<string, string>;
+    /**
+     * 注入组件的挂载上下文（整页工具不给）。
+     *
+     * 有了它，`task.get` 才知道该读哪一条 —— 也**只有**它指定的那一条能读：
+     * 组件不能拿 id 去翻别人的待办，这就是"注入组件只读当前条目"的边界。
+     */
+    getInject?: () => ToolContext["inject"];
   },
 ): ToolBridge {
+  const currentSettings = (): Record<string, string> => opts.getSettings?.() ?? {};
+  const currentInject = (): ToolContext["inject"] | undefined => opts.getInject?.();
   /**
    * 工具 iframe 的真实 origin。
    *
@@ -602,7 +646,49 @@ export function createToolBridge(
 
     try {
       if (op === "info") {
-        reply(id, true, buildContext(toolId));
+        reply(id, true, buildContext(toolId, currentSettings(), currentInject()));
+        return;
+      }
+
+      /*
+       * task.get —— 注入组件读它挂着的那一条待办。
+       *
+       * 两道门，缺一不可：
+       *   1. manifest 里申请过 `task` 能力（与 gallery 同一套规矩）
+       *   2. **此刻确实挂在某条待办上**（整页工具没有上下文，一律拒绝）
+       *
+       * 第 2 条是"最小权限"的落地：组件拿不到"给我 id X 的待办"这种接口，
+       * 它只能读宿主已经决定给它的那一条。想读别的？没有这条路。
+       * 返回的是**只读快照**，改待办仍然只能走宿主的界面与助手的日程动作。
+       */
+      if (op === "task.get") {
+        const state = capabilityState(currentSettings(), toolId, "task");
+        if (state !== "on") {
+          reply(id, false, `读当前待办不可用：${capabilityError(state, "task")}`);
+          return;
+        }
+        const inject = currentInject();
+        if (!inject?.taskId) {
+          reply(id, false, "这个组件没有挂在任何一条待办上，task.get 只有在注入到详情/行内/详情头部时才有意义");
+          return;
+        }
+        const task = await fetchTaskById(inject.taskId);
+        if (!task) {
+          reply(id, false, "它挂着的那条待办已经不存在了（可能刚被删除）");
+          return;
+        }
+        reply(id, true, {
+          id: task.id,
+          title: task.title,
+          note: task.note ?? "",
+          done: !!task.done,
+          important: !!task.important,
+          myDay: !!task.myDay,
+          dueDate: task.dueDate ?? null,
+          remindAt: task.remindAt ?? null,
+          listId: task.listId ?? null,
+          createdAt: task.createdAt,
+        });
         return;
       }
 
@@ -863,6 +949,17 @@ export function createToolBridge(
        * 安全性说明见文件头「gallery.* —— 一次有意识的边界放宽」。
        * 三处共同点：工具只能传 id / 内容，**永远传不了路径**。 */
 
+      // 能力门：图库是**申请来的**服务，不是工具装上了就自动有的。
+      // 回绝不抛异常而是给一句有方向的错 —— 工具要能据此降级
+      // （把产物改成下载到本地），而不是弹一个"失败"了事。
+      // 三态而不是布尔，是因为工具作者需要知道该去改自己还是去开模块。
+      if (op === "gallery.list" || op === "gallery.get" || op === "gallery.put") {
+        const state = capabilityState(currentSettings(), toolId, "gallery");
+        if (state !== "on") {
+          return reply(id, false, `图库通道不可用：${capabilityError(state, "gallery")}`);
+        }
+      }
+
       if (op === "gallery.list") {
         const rawKind = payload?.kind;
         const kind: GalleryKind | "all" =
@@ -955,7 +1052,14 @@ export function createToolBridge(
       window.removeEventListener("message", onMessage);
       unregisterToolPoster(toolId, post);
     },
-    pushContext: () => post({ source: HOST_SOURCE, type: "tool:context", data: buildContext(toolId) }),
+    // 注入组件的挂载上下文要跟着一起推 —— 漏了它的症状是"组件永远停在
+    // 等上下文"，而界面上看着一切正常（iframe 挂着、也没报错）
+    pushContext: () =>
+      post({
+        source: HOST_SOURCE,
+        type: "tool:context",
+        data: buildContext(toolId, currentSettings(), currentInject()),
+      }),
     postEvent: (event: string, data: unknown) =>
       post({ source: HOST_SOURCE, type: "tool:event", event, data }),
     postIntent: (data: unknown, from: string | null) =>

@@ -2909,6 +2909,120 @@ export async function appendAgentMessage(msg: AgentMessageRow): Promise<void> {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* 助手自己写的技能（v18）                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 库里存的一条技能。
+ *
+ * `source` 只有两个值：`builtin`（代码里那几份，skills.ts）与 `agent`
+ * （助手自己加的）。**内置的不进这张表** —— 它们是代码，改它们要发版；
+ * 这张表只装"助手总结出来的、会一直用下去的规矩"。
+ * 界面把两者合起来展示，但删只能删 source='agent' 的。
+ */
+export interface AgentSkillRow {
+  id: string;
+  title: string;
+  summary: string;
+  rules: string[];
+  body: string;
+  source: "builtin" | "agent";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function fetchAgentSkills(): Promise<AgentSkillRow[]> {
+  const rows = await db().select<{
+    id: string;
+    title: string;
+    summary: string;
+    rules: string;
+    body: string;
+    source: string;
+    created_at: string;
+    updated_at: string;
+  }>(`SELECT * FROM core_agent_skills ORDER BY updated_at DESC`);
+
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title ?? "",
+    summary: r.summary ?? "",
+    rules: parseStringList(r.rules),
+    body: r.body ?? "",
+    // 认不出来的 source 一律当 agent：它至少是"可以被删掉的"，
+    // 反过来（当成 builtin）会让用户删不掉一条助手加的规矩
+    source: r.source === "builtin" ? "builtin" : "agent",
+    createdAt: r.created_at ?? "",
+    updatedAt: r.updated_at ?? "",
+  }));
+}
+
+/** 与 parseActions 同理：坏数据当空数组，不让一条坏记录挡住整个技能列表 */
+function parseStringList(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 写入一条助手自己写的技能（id 冲突就覆盖）。
+ *
+ * 覆盖而不是报"已存在"：助手改规矩是常事（写错一条、想补一条），
+ * 让它先删再写等于每次都要多一轮对话，而且中途失败会留下"规矩没了"的空档。
+ */
+export async function upsertAgentSkill(s: {
+  id: string;
+  title: string;
+  summary: string;
+  rules: string[];
+  body: string;
+}): Promise<void> {
+  const d = db();
+  const now = new Date().toISOString();
+  const rules = JSON.stringify(s.rules ?? []);
+
+  /*
+   * ⚠️ 这里**刻意不用** `INSERT ... ON CONFLICT`：
+   * 浏览器 demo 用的 MemoryDb 不认它（不是报错，是静默不做），
+   * 于是"改一条规矩"在真机上生效、在网页里毫无反应 —— 这种只在一条路
+   * 上坏的 bug 最难查。两次单表操作在 JS 里分派，两个驱动就一起对了。
+   */
+  const has = await d.select<{ id: string }>(`SELECT id FROM core_agent_skills WHERE id = ?`, [
+    s.id,
+  ]);
+  if (has.length) {
+    await d.execute(
+      `UPDATE core_agent_skills
+         SET title = ?, summary = ?, rules = ?, body = ?, source = 'agent', updated_at = ?
+       WHERE id = ?`,
+      [s.title, s.summary, rules, s.body ?? "", now, s.id],
+    );
+    return;
+  }
+  await d.execute(
+    `INSERT INTO core_agent_skills (id, title, summary, rules, body, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'agent', ?, ?)`,
+    [s.id, s.title, s.summary, rules, s.body ?? "", now, now],
+  );
+}
+
+/** 删一条。返回 false 表示这条不存在（或它是内置的，删不掉） */
+export async function deleteAgentSkill(id: string): Promise<boolean> {
+  const d = db();
+  const rows = await d.select<{ source: string }>(
+    `SELECT source FROM core_agent_skills WHERE id = ?`,
+    [id],
+  );
+  if (!rows.length || rows[0].source === "builtin") return false;
+  await d.execute(`DELETE FROM core_agent_skills WHERE id = ?`, [id]);
+  return true;
+}
+
 /**
  * 清空**全部**对话记录（所有会话一起删）。返回删掉了几条消息。
  *

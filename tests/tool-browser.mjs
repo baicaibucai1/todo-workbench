@@ -14,6 +14,7 @@
 
 import { createRequire } from "node:module";
 import fs from "node:fs";
+import { enableModule } from "./_enable-module.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -65,6 +66,14 @@ await page.waitForTimeout(800);
 check("标题正确", (await page.title()) === "待办工作台", await page.title());
 check("侧边栏已挂载", (await page.locator("aside").count()) > 0);
 check("初始无控制台错误", errors.length === 0, errors.slice(0, 3).join(" | "));
+
+// 第 5b 节验的是"工具导出的图默认留一份在图库"，而图库 v18 起是选装模块、
+// 默认不带 —— 不在这里先打开，那一节会红在"图库里一条都没多"上。
+await enableModule(page, "gallery");
+check(
+  "启用后侧边栏出现「图库」入口",
+  (await page.locator('aside [data-nav="gallery"]').count()) === 1,
+);
 
 console.log("\n2. 工具已注册到侧边栏");
 // 工具区可能被折叠，展开它
@@ -413,10 +422,11 @@ await page.waitForTimeout(600);
 await page.locator('button[data-section="tools"]').click();
 await page.waitForTimeout(500);
 
-// 5 = image-crop / size-chart / ai-gen / scratchpad / gomoku。
+// 4 = image-crop / size-chart / ai-gen / scratchpad。
+// 五子棋不算：它是 tests/fixtures/gomoku/ 下的编写标准样本，不是产品里的工具。
 // 再加内置工具时这里要跟着改 —— 写死数字是为了让"多出一个陌生工具"能被立刻发现，
 // 而不是悄无声息地出现在用户的侧边栏里。
-check("设置里列出了全部工具", (await page.locator("[data-tool-row]").count()) === 5, String(await page.locator("[data-tool-row]").count()));
+check("设置里列出了全部工具", (await page.locator("[data-tool-row]").count()) === 4, String(await page.locator("[data-tool-row]").count()));
 check("每个工具一行（图片裁剪）", (await page.locator("[data-tool-row='image-crop']").count()) === 1);
 check(
   "标了来源：内置",

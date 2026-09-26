@@ -188,7 +188,157 @@ await backToTodo();
 check("待办区回到渐变模式", (await bgMode()) === "auto", String(await bgMode()));
 check("背景图元素已移除", (await page.locator("[data-bg-image]").count()) === 0);
 
-console.log("\n6. 控制台");
+/* ------------------------------------------------------------------ */
+/* 6. 主题色调                                                         */
+/* ------------------------------------------------------------------ */
+
+console.log("\n6. 主题色调：换一套预设，界面真的跟着变");
+
+const cssVar = (name) =>
+  page.evaluate(
+    (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(),
+    name,
+  );
+
+await openAppearance();
+const palettes = page.locator("[data-palette]");
+check("预设色板列出来了", (await palettes.count()) >= 6, `${await palettes.count()} 套`);
+
+const accent0 = await cssVar("--color-accent");
+const primary0 = await cssVar("--color-primary");
+info("默认主题色", { accent: accent0, primary: primary0 });
+check("默认配色就是改造前那套（老用户不该发现变了）",
+  accent0 === "#d4537e" && primary0 === "#378add", `${accent0} / ${primary0}`);
+
+await page.locator('[data-palette="pine"]').click();
+await page.waitForTimeout(400);
+const accent1 = await cssVar("--color-accent");
+const primary1 = await cssVar("--color-primary");
+info("换成「松翠」后", { accent: accent1, primary: primary1 });
+check("品牌色跟着变了", accent1 === "#2f9e6f", accent1);
+check("主操作色也跟着变（换的是整套，不是一个色）", primary1 === "#1f6f8b", primary1);
+
+/*
+ * 关键一条：改色是写 CSS 变量，不是换 class。
+ * 所以要看的是「用了这个变量的地方真的变色了」，而不是「变量值变了」。
+ * 这里取一个实打实的界面元素（待办行上的完成圈）来验。
+ */
+const circleUsesAccent = await page.evaluate(() => {
+  const el = document.createElement("div");
+  el.style.color = "var(--color-accent)";
+  document.body.appendChild(el);
+  const v = getComputedStyle(el).color;
+  el.remove();
+  return v;
+});
+info("--color-accent 落到真实元素上", circleUsesAccent);
+check("变量能被引擎解析成真实颜色（不是空值）",
+  circleUsesAccent !== "" && circleUsesAccent !== "rgba(0, 0, 0, 0)", circleUsesAccent);
+
+await page.reload({ waitUntil: "load" });
+await page.waitForSelector("aside", { timeout: 20000 });
+await page.waitForTimeout(900);
+check("刷新后主题色还在（配置落库）", (await cssVar("--color-accent")) === accent1,
+  await cssVar("--color-accent"));
+
+await openAppearance();
+await page.locator("[data-reset-colors]").click();
+await page.waitForTimeout(400);
+check("「恢复默认」能回到默认配色",
+  (await cssVar("--color-accent")) === "#d4537e" &&
+    (await cssVar("--color-primary")) === "#378add",
+  `${await cssVar("--color-accent")} / ${await cssVar("--color-primary")}`);
+
+/* ------------------------------------------------------------------ */
+/* 7. 自定义壁纸：上传 → 铺上 → 取色 → 删除                              */
+/* ------------------------------------------------------------------ */
+
+console.log("\n7. 自定义壁纸：上传自己的图");
+
+/** 拿一张随包壁纸当"用户要传的图"，省得在测试里现造图片 */
+function seedUploadFile() {
+  const idx = JSON.parse(fs.readFileSync("public/wallpapers/index.json", "utf8"));
+  const file = idx.items?.[0]?.file;
+  if (!file) throw new Error("public/wallpapers/index.json 里没有图，先跑抓取脚本");
+  const tmp = ".setup-tmp/upload-wallpaper-test.jpg";
+  fs.mkdirSync(".setup-tmp", { recursive: true });
+  fs.copyFileSync(`public/wallpapers/${file}`, tmp);
+  return tmp;
+}
+
+const uploadFile = seedUploadFile();
+info("用这张模拟上传", uploadFile);
+
+check("还没传过时没有「我的图片」这一区",
+  (await page.locator("[data-custom-wallpaper]").count()) === 0);
+
+// 浏览器里是动态创建的 <input type=file>，所以走 filechooser 事件而不是直接填表单
+const [chooser] = await Promise.all([
+  page.waitForEvent("filechooser"),
+  page.locator("[data-add-wallpaper]").click(),
+]);
+await chooser.setFiles(uploadFile);
+await page.waitForTimeout(1200);
+
+const note = page.locator("[data-wallpaper-note]");
+const noteText = (await note.count()) ? await note.first().innerText() : "";
+info("上传结果提示", noteText);
+check("上传后给出了结果提示（不是静默失败）", !!noteText, noteText);
+
+const customCards = page.locator("[data-custom-wallpaper]");
+check("「我的图片」里出现了这张", (await customCards.count()) === 1,
+  `${await customCards.count()} 张`);
+
+/*
+ * 传完自动切过去 —— 这条是刻意的：
+ * 用户传完看不到变化，就会怀疑到底传成功没有。
+ * ⚠️ 得先回到待办区才读得到 [data-bg-mode]：设置页会把它整块顶掉。
+ */
+await backToTodo();
+check("传完直接铺上了（背景变成 custom）", (await bgMode()) === "custom", String(await bgMode()));
+check("data-bg-file 指向仓库里的那张",
+  (await page.locator("[data-bg-mode]").first().getAttribute("data-bg-file"))?.length > 0);
+
+const customDecoded = await bgImg().evaluate((el) => ({
+  w: el.naturalWidth,
+  h: el.naturalHeight,
+  fit: getComputedStyle(el).objectFit,
+}));
+info("自定义壁纸解码结果", customDecoded);
+check("自定义壁纸真的被解码铺上了", customDecoded.w > 0 && customDecoded.h > 0,
+  JSON.stringify(customDecoded));
+check("也是 cover 铺满", customDecoded.fit === "cover");
+await page.screenshot({ path: `${SHOT_DIR}/bg-custom-wallpaper.png` });
+
+console.log("\n8. 从这张图取主题色");
+await openAppearance();
+const pickBtn = page.locator("[data-pick-from-wallpaper]");
+check("铺着图时才有「取这张图的主色」", (await pickBtn.count()) === 1);
+
+const beforePick = await cssVar("--color-accent");
+await pickBtn.click();
+await page.waitForTimeout(1500);
+const afterPick = await cssVar("--color-accent");
+info("取色前后", { before: beforePick, after: afterPick });
+check("取色后主题色变了（不是点了个没反应的按钮）", afterPick !== beforePick,
+  `${beforePick} → ${afterPick}`);
+check("取出来的是个合法色值", /^#[0-9a-f]{6}$/.test(afterPick), afterPick);
+
+const notePick = (await note.count()) ? await note.first().innerText() : "";
+info("取色提示", notePick);
+check("取色结果有回话（成功或失败都说清楚）", !!notePick, notePick);
+
+console.log("\n9. 删掉这张自定义壁纸");
+await page.locator("[data-remove-wallpaper]").first().click();
+await page.waitForTimeout(800);
+check("「我的图片」里没有了", (await page.locator("[data-custom-wallpaper]").count()) === 0);
+
+// 同样要回到待办区才看得到背景层（设置页把它顶掉了）
+await backToTodo();
+check("背景退回跟随视图（不会留在已删的图上）", (await bgMode()) === "auto", String(await bgMode()));
+check("背景图元素一并撤掉", (await page.locator("[data-bg-image]").count()) === 0);
+
+console.log("\n10. 控制台");
 check("全程无控制台错误", errors.length === 0, errors.slice(0, 3).join(" | "));
 
 fs.mkdirSync(SHOT_DIR, { recursive: true });

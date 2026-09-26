@@ -272,12 +272,75 @@ console.log("\n2. 没配模型时的门槛：说清缺什么、把入口点开�
   check("门槛卡点名缺 API Key", gateText.includes("API Key"));
   check("门槛卡说了去哪一页配（那句话必须能照着走）", gateText.includes("设置 → AI 助手"));
 
+  /*
+    这一条针对的是"只告诉人缺什么，不告诉他从哪儿弄"：
+    没接过 API 的人卡住的从来不是"填哪一格"，而是 **Key 从哪儿来**。
+    所以门槛卡里必须有一条能直接走的路 —— 推荐的那家要自带注册地址，
+    而且两处（窗口 / 设置页）说的是同一家（数据源在 providers.ts）。
+  */
+  const signupBtn = page.locator("[data-agent-gate] [data-agent-signup]");
+  check("门槛卡上有「去注册」的那条路", (await signupBtn.count()) === 1);
+  const signupUrl = await signupBtn.getAttribute("data-agent-signup");
+  info("注册地址", signupUrl);
+  check("它指向的是一个能注册的平台域名", String(signupUrl).includes("platform.agnes-ai.com"), String(signupUrl));
+  check("注册按钮写的是 https（不是裸 http、不是文档页）", String(signupUrl).startsWith("https://"), String(signupUrl));
+
   await page.locator("[data-agent-goto-settings]").click();
   await page.waitForSelector("[data-settings]", { timeout: 20000 });
   await page.waitForTimeout(300);
   check("一句话就能落到 AI 助手分区（不用自己在八个分区里找）", (await page.locator('[data-field="agent-model"]').count()) === 1);
   check("分区导航里也有 ai 这一项", (await page.locator('[data-section="ai"]').count()) === 1);
   await shot("agent-02-settings");
+
+  /* ---- 同一张引导在设置页也要有（两处说法必须一致） ---- */
+  {
+    check("这一页也给了一张引导卡（没接 Model 时不该只说缺什么）", (await page.locator("[data-agent-signup-guide]").count()) === 1);
+    const guide = await page.locator("[data-agent-signup-guide]").innerText();
+    info("设置页引导卡", guide.replace(/\n+/g, " | ").slice(0, 180));
+    check("引导卡给的是一条完整路径（注册→建 Key→粘回来）", guide.includes("注册") && guide.includes("Key"));
+    check(
+      "引导卡里的地址与窗口那张是同一个",
+      (await page.locator("[data-agent-signup-guide] [data-agent-signup]").getAttribute("data-agent-signup")) ===
+        signupUrl,
+    );
+    check("「我手上已经有别的 Key」没有藏起来（推荐≠绑定）", guide.includes("已经有别的 Key"));
+  }
+
+  /* ---- AI 助手总开关 ---- */
+  {
+    const row = page.locator("[data-agent-enabled-row]");
+    check("这一页有「启用 AI 助手」这个总开关", (await row.count()) === 1);
+    check("默认是开着的（老用户装上来不会少东西）", (await row.getAttribute("data-on")) === "1");
+
+    await row.locator("[data-switch]").click();
+    await page.waitForTimeout(250);
+    check("关掉后开关状态是关", (await row.getAttribute("data-on")) === "0");
+    check("关掉后配置项收起来了（不是留一堆点不动的框）", (await page.locator('[data-field="agent-model"]').count()) === 0);
+    check("关掉后明确说了球去哪了", (await page.locator("[data-agent-off]").innerText()).includes("悬浮球"));
+
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    check("关掉之后悬浮球真的不在了", (await page.locator("[data-agent-ball]").count()) === 0);
+    check("助手窗口也不留残影", (await page.locator("[data-agent-window]").count()) === 0);
+
+    // 再开回来 —— "关了还能开"比"能关"更重要
+    await page.locator('[data-section="ai"]').click();
+    await page.waitForSelector("[data-agent-enabled-row]", { timeout: 10000 });
+    await page.locator("[data-agent-enabled-row] [data-switch]").click();
+    await page.waitForTimeout(250);
+    check("重新打开后开关回到开", (await page.locator("[data-agent-enabled-row]").getAttribute("data-on")) === "1");
+    check("配置项回来了", (await page.locator('[data-field="agent-model"]').count()) === 1);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    check("悬浮球回来了", (await page.locator("[data-agent-ball]").count()) === 1);
+
+    // 后面的段落还会在设置页里接着配，回到那一处
+    await page.locator("[data-agent-ball]").click();
+    await gotoAgent();
+    await page.locator("[data-agent-goto-settings]").click();
+    await page.waitForSelector("[data-settings]", { timeout: 20000 });
+    await page.waitForTimeout(300);
+  }
 }
 
 /* ================================================================== */
@@ -474,7 +537,8 @@ console.log("\n7. 技能面板：它会什么必须能被看见");
     [...document.querySelectorAll("[data-agent-skill]")].map((el) => el.getAttribute("data-agent-skill")),
   );
   info("技能", ids.join(" "));
-  check("四份技能都列出来了", ids.length === 4, String(ids.length));
+  check("五份技能都列出来了", ids.length === 5, String(ids.length));
+  check("包含注入组件那份（把工具嵌进待办详情就靠它）", ids.includes("component-inject"));
   check("包含写工具那份", ids.includes("tool-authoring"));
   check("包含绑数据表那份（「绑定数据库」这个能力就靠它）", ids.includes("data-binding"));
 
@@ -548,8 +612,31 @@ console.log("\n9. 演示模式的诚实拒绝（装工具这条路）");
 {
   await gotoAgent();
   captured.length = 0;
-  queue.push(toolReply("install_tool", { id: "demo-tool", name: "演示工具", html: "<html><body>hi</body></html>" }), textReply("这个环境装不了，源码给你。"));
+
+  /*
+    2026-09-24 起装工具**必须先过沙箱**：install_tool 只认通行证。
+    所以这里先跑一次 sandbox_run（浏览器里有 iframe，它是真跑），
+    拿到票再装 —— 顺序与真机一致，也顺带验了"演示模式里沙箱照样能跑"。
+  */
+  const HTML = "<html><body>hi</body></html>";
+  queue.push(toolReply("sandbox_run", { id: "demo-tool", name: "演示工具", html: HTML }), textReply("验过了，接着装。"));
   await send("给我做个演示工具");
+  await page.waitForSelector('[data-agent-action="sandbox_run"]', { timeout: 30000 });
+  await waitIdle();
+
+  const sbCard = page.locator('[data-agent-action="sandbox_run"]').last();
+  check("沙箱动作卡在", (await sbCard.count()) === 1);
+  check("它是成功的（这份源码没问题）", (await sbCard.getAttribute("data-agent-action-ok")) === "1");
+  const sbText = (await sbCard.locator("pre").first().textContent()) ?? "";
+  check("演示模式里沙箱也真跑了", /试跑：\d+ ms/.test(sbText), sbText.slice(0, 120));
+  const ticket = /通行证：(v1\.\S+)/.exec(sbText)?.[1] ?? "";
+  check("拿到了通行证", /^v1\./.test(ticket), ticket);
+
+  queue.push(
+    toolReply("install_tool", { id: "demo-tool", name: "演示工具", html: HTML, ticket }),
+    textReply("这个环境装不了，源码给你。"),
+  );
+  await send("装吧");
   await page.waitForSelector('[data-agent-action="install_tool"]', { timeout: 30000 });
   await waitIdle();
 

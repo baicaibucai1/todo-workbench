@@ -12,9 +12,12 @@
  * 它的时效要挂在流转过程态上、要进底部紧急区、要参与排序，
  * 而工具在物理上碰不到 core_* 表，塞不进去。
  *
- * 工具数量：四个业务工具（图片裁剪 / 尺码表 / AI 生成 / 五子棋）+「随手记」
+ * 工具数量：三个业务工具（图片裁剪 / 尺码表 / AI 生成）+「随手记」
  * （scratchpad，自带一张数据表，是"网页工具怎么用宿主数据库"的样板，
- * 见 tests/tool-database.mjs；五子棋同样自带一张数据表，见 tests/gomoku.mjs）。
+ * 见 tests/tool-database.mjs）。
+ * 五子棋**不算在内**：它是《单 HTML 工具编写标准》的活样本，2026-09-24 从
+ * tools/gomoku/ 搬到了 tests/fixtures/gomoku/ —— 不进工具包、不进侧边栏，
+ * 只作为契约测试的样品存在（npm run gomoku:test）。
  * 再增减内置工具时，下面「工具区正好几个工具」那条要跟着改 ——
  * 写死数字是为了让"冒出一个陌生工具"能被立刻发现，而不是悄悄混进用户的侧边栏。
  *
@@ -88,19 +91,22 @@ const sidebar = page.locator("aside button");
 check("侧边栏出现「AI 生成」", (await sidebar.filter({ hasText: "AI 生成" }).count()) > 0);
 check("侧边栏出现「尺码表生成器」", (await sidebar.filter({ hasText: "尺码表生成器" }).count()) > 0);
 check("侧边栏出现「图片裁剪」", (await sidebar.filter({ hasText: "图片裁剪" }).count()) > 0);
-check("侧边栏出现「五子棋」", (await sidebar.filter({ hasText: "五子棋" }).count()) > 0);
+// 方向是**反的**：五子棋是编写标准的测试夹具（tests/fixtures/gomoku/），
+// 不是发给用户的工具 —— 它出现在侧边栏里，说明有人把它拷回了 tools/。
+check("侧边栏没有「五子棋」（夹具不进产品）", (await sidebar.filter({ hasText: "五子棋" }).count()) === 0);
 // 占位工具已下线：它曾经以 iframe 工具的形式挂在侧边栏「工具」区里
 check(
   "「特殊单号记录」工具项已下线",
   (await sidebar.filter({ hasText: "特殊单号记录" }).count()) === 0,
 );
-// 但它并没有消失，而是变成了原生智能视图 —— 一个文字都不该少
+// 它并没有消失，而是变成了原生视图 —— 但 2026-09-24 起那是个**选装模块**：
+// 默认不启用，所以默认状态侧边栏里不该有它（要的人去设置里打开）。
 check(
-  "「特殊单号」以原生视图出现",
-  (await page.locator('aside [data-nav="special"]').count()) === 1,
+  "「特殊单号」默认不出现（选装模块）",
+  (await page.locator('aside [data-nav="special"]').count()) === 0,
 );
 info("工具数", await page.locator('aside [data-nav^="tool:"]').count());
-check("工具区正好五个工具", (await page.locator('aside [data-nav^="tool:"]').count()) === 5);
+check("工具区正好四个工具", (await page.locator('aside [data-nav^="tool:"]').count()) === 4);
 check("初始无控制台错误", errors.length === 0, errors.slice(0, 3).join(" | "));
 
 // 越界防护：工具只能发裸表名，宿主强制拼前缀 ——

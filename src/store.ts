@@ -29,11 +29,19 @@ import {
   isStartupView,
   isThemeMode,
   parseDisabledTools,
-  parseSpecialEnabled,
   parseToolKeepState,
   SETTINGS,
   withDefaults,
 } from "./lib/settings";
+import {
+  fallbackView,
+  hydrateTools,
+  isEnabled,
+  isViewAvailable,
+} from "./lib/extensions/registry";
+import { applyThemeColors, themeColorsFrom } from "./lib/theme";
+import { addCustomWallpaper, removeCustomWallpaperFile } from "./lib/customWallpaper";
+import { formatCustomWallpapers, parseCustomWallpapers } from "./lib/wallpapers";
 import { sendNotification } from "./lib/notify";
 import { firstVisibleRow } from "./lib/rows";
 import {
@@ -313,6 +321,23 @@ interface State {
   refresh: () => Promise<void>;
   loadSettings: () => Promise<void>;
   saveSettings: (patch: Record<string, string>) => Promise<void>;
+  /**
+   * 把一张图存成自定义壁纸，并**立刻**切到它。
+   *
+   * 传进来的 source 由 pickLocalMedia() 给：桌面是本机路径，浏览器是 File。
+   * 存完自动选中，是因为"传完没反应"是最让人怀疑的一步 ——
+   * 用户看不到壁纸变了，就不知道到底传成功没有。
+   * 失败时把原因抛回去，由界面原样显示（不吞、也不替他重试）。
+   */
+  addCustomWallpaper: (source: string | File, name: string) => Promise<void>;
+  /**
+   * 删掉一张自定义壁纸。
+   *
+   * 顺序是**先改设置再删文件**：反过来万一删文件那步失败，
+   * 设置里还指着一张不存在的文件，界面会一直显示"加载失败"。
+   * 如果删的正是当前这张，背景退回跟随视图 —— 留在已删的图上会白屏。
+   */
+  removeCustomWallpaper: (path: string) => Promise<void>;
   /** 打开设置。第二个参数是**一次性**的分区落点，见 settingsSection */
   openSettings: (open: boolean, section?: string) => void;
   setView: (view: ViewKey, listId?: string) => Promise<void>;
@@ -514,6 +539,9 @@ export const useStore = create<State>((set, get) => ({
       loadBundledTools(),
       repo.getAllSettings(),
     ]);
+    // 工具也是一种扩展：扫出来之后灌进注册表，
+    // 侧栏 / 能力门 / 卸载清理问的都是那张表（见 lib/extensions/registry.ts）
+    hydrateTools(tools);
     const settings = withDefaults(rawSettings);
     const theme = settings[SETTINGS.theme];
     const enabledTools = filterEnabled(tools, parseDisabledTools(settings[SETTINGS.toolsDisabled]));
@@ -539,6 +567,14 @@ export const useStore = create<State>((set, get) => ({
       agentOpen: startupAgent,
     });
     applyTheme(isThemeMode(theme) ? theme : "light");
+    /*
+     * 主题色必须在 init 里也推一次，不能只靠 loadSettings 那一处：
+     * init 自己读了一遍配置（要拿启动视图、侧边栏、工具停用名单），
+     * 它才是启动时真正走的那条路。漏了这里的表现很隐蔽 ——
+     * 改完色界面立刻变了（saveSettings 生效），一刷新又回到默认色，
+     * 看着像"没存住"，其实是启动时没推。
+     */
+    applyThemeColors(themeColorsFrom(settings));
 
     // 支持 ?tool=<id> 直达某个工具。
     // 没有路由的桌面应用里，这一条让"把某个工具甩给人看"变成可分享的链接，
@@ -617,14 +653,13 @@ export const useStore = create<State>((set, get) => ({
       get().openAgent();
       return;
     }
-    // 「特殊单号」关掉之后这个视图就不存在了，必须拦一道 —— 进这个视图的路
-    // 不止侧边栏一条（时效提醒卡片的「查看」、以后的直达链接都会走到这里），
-    // 放行的话用户会落到一个永远空着的列表上，看着像数据丢了。
-    if (
-      view === "special" &&
-      !parseSpecialEnabled(get().settings[SETTINGS.specialEnabled])
-    ) {
-      view = "orders";
+    // 目的地属于一个被关掉的模块时**改道**：进某个视图的路不止侧边栏一条
+    // （时效提醒卡片的「查看」、URL 直达都会走到这里），放行的话用户会落到
+    // 一个永远空着的列表上，看着像数据丢了。
+    // 改到哪儿由注册表说（见 fallbackView：特殊单号落到「流程任务」，
+    // 因为那批单子本来就同时躺在流程任务里）。
+    if (!isViewAvailable(get().settings, view)) {
+      view = fallbackView(view) as typeof view;
     }
     set({
       view,
@@ -699,6 +734,8 @@ export const useStore = create<State>((set, get) => ({
 
   reloadTools: async () => {
     const [tools, bundledTools] = await Promise.all([loadTools(), loadBundledTools()]);
+    // 装了 / 卸了工具都要让注册表跟着变，否则卸掉的工具还留在那儿
+    hydrateTools(tools);
     const { settings, activeToolId } = get();
     const enabledTools = filterEnabled(tools, parseDisabledTools(settings[SETTINGS.toolsDisabled]));
 
@@ -763,9 +800,9 @@ export const useStore = create<State>((set, get) => ({
       tasks,
       orders,
       view,
-      // 与 TaskList 传给 groupRows 的是同一个开关，否则会出现
-      // 「列表里没有这一组、右侧却选中了组里第一条」的错位
-      parseSpecialEnabled(get().settings[SETTINGS.specialEnabled]),
+      // 与 TaskList 传给 groupRows 的是同一个开关 —— 两边都问注册表，
+      // 否则会出现「列表里没有这一组、右侧却选中了组里第一条」的错位
+      isEnabled(get().settings, "special"),
     );
     if (!first) {
       set({ activeTaskId: null, activeOrderId: null });
@@ -820,6 +857,9 @@ export const useStore = create<State>((set, get) => ({
     const theme = settings[SETTINGS.theme];
     set({ settings });
     applyTheme(isThemeMode(theme) ? theme : "light");
+    // 主题色是"写在 <html> 上的"，跟深浅主题一样，载入配置时就得推一次，
+    // 否则刷新后界面会先闪一下默认色
+    applyThemeColors(themeColorsFrom(settings));
   },
 
   saveSettings: async (patch) => {
@@ -835,6 +875,13 @@ export const useStore = create<State>((set, get) => ({
     const applyEffects = (values: Record<string, string>) => {
       const theme = values[SETTINGS.theme];
       if (SETTINGS.theme in patch && theme && isThemeMode(theme)) applyTheme(theme);
+
+      // 主题色改完立刻生效 —— 用户在设置里按的，看不到变化就等于没保存上。
+      // 取值走 themeColorsFrom 而不是直接吃 patch：非法色值要在那里被退回默认色，
+      // 不能把一个坏字符串写进 CSS 变量（写进去的表现是"界面变成黑的"）。
+      if (SETTINGS.accent in patch || SETTINGS.primary in patch) {
+        applyThemeColors(themeColorsFrom(values));
+      }
 
       // 侧边栏默认展开这项要立刻生效，否则用户还得手动试一下才知道有没有保存
       if (SETTINGS.sidebarOpen in patch) {
@@ -862,27 +909,32 @@ export const useStore = create<State>((set, get) => ({
         });
       }
 
-      // 「特殊单号」被关掉时要立刻收摊，不能等下次启动 —— 开关就在设置里，
+      // 任何一个模块被关掉都要**立刻收摊**，不能等下次启动 —— 开关就在设置里，
       // 用户是盯着界面按的：
-      //   ① 当前视图正好停在它上面（那个视图已经没有内容）→ 换到「流程任务」
+      //   ① 当前视图正好停在它上面（那个视图已经没有内容）→ 改道
       //   ② 已经弹出来的时效提醒卡片 → 一并收掉，留着等于开关没生效
-      // 条件是看 patch（这次到底改了哪项）而不是值，避免别的设置一保存就顺带跑这里。
-      if (SETTINGS.specialEnabled in patch) {
-        if (!parseSpecialEnabled(values[SETTINGS.specialEnabled])) {
+      //
+      // 以前这里只认「特殊单号」这一个键；现在按统一的 `ext.<id>.enabled`
+      // 前缀判断（见 registry.settingsKey），加选装模块不用再回来补一句。
+      // 仍然看 patch（这次到底改了哪项）而不是值，避免别的设置一保存就顺带跑这里。
+      const touchedModule = Object.keys(patch).some(
+        (k) => k.startsWith("ext.") && k.endsWith(".enabled"),
+      );
+      if (touchedModule) {
+        if (!isViewAvailable(values, get().view)) {
           // 只把视图换掉，**刻意不走 setView** —— setView 会顺手把设置页关掉，
           // 而用户此刻正站在设置里按这个开关，被踢回列表页会让他以为点错了什么。
-          if (get().view === "special") {
-            set({
-              view: "orders",
-              activeListId: null,
-              activeTaskId: null,
-              activeOrderId: null,
-              detailClosedByUser: false,
-            });
-            void get().refresh();
-          }
-          if (get().orderDues.length) set({ orderDues: [] });
+          set({
+            view: fallbackView(get().view) as ReturnType<typeof get>["view"],
+            activeListId: null,
+            activeTaskId: null,
+            activeOrderId: null,
+            detailClosedByUser: false,
+          });
+          void get().refresh();
         }
+        // 时效提醒属于特殊单号：模块一关，那些卡片就不该还挂在屏幕上
+        if (!isEnabled(values, "special") && get().orderDues.length) set({ orderDues: [] });
       }
     };
 
@@ -911,6 +963,35 @@ export const useStore = create<State>((set, get) => ({
       applyEffects(before);
       throw err;
     }
+  },
+
+  addCustomWallpaper: async (source, name) => {
+    const item = await addCustomWallpaper(source, name);
+    const settings = get().settings;
+    const list = parseCustomWallpapers(settings[SETTINGS.customWallpapers]);
+    // 同一张图传两次不该出现两格：路径一样就当是同一张，替换掉旧的
+    const next = [...list.filter((x) => x.path !== item.path), item];
+    await get().saveSettings({
+      [SETTINGS.customWallpapers]: formatCustomWallpapers(next),
+      [SETTINGS.background]: `custom:${item.path}`,
+    });
+  },
+
+  removeCustomWallpaper: async (path) => {
+    const settings = get().settings;
+    const list = parseCustomWallpapers(settings[SETTINGS.customWallpapers]);
+    const next = list.filter((x) => x.path !== path);
+    const patch: Record<string, string> = {
+      [SETTINGS.customWallpapers]: formatCustomWallpapers(next),
+    };
+    // 删的正是当前这张 → 退回跟随视图。留在已删的图上，界面会是一块空白。
+    if (settings[SETTINGS.background] === `custom:${path}`) {
+      patch[SETTINGS.background] = "auto";
+    }
+    await get().saveSettings(patch);
+    // 设置已经落库了，这一步失败最多是仓库里多留一个文件，
+    // 不会让界面指向一张不存在的图 —— 所以放在后面，且不影响用户看到的結果
+    await removeCustomWallpaperFile(path).catch(() => undefined);
   },
 
   patchTask: async (id, patch) => {
@@ -1046,7 +1127,7 @@ export const useStore = create<State>((set, get) => ({
 
     // 模块被关掉时整段跳过。注意位置：必须放在**任务提醒那一段之后** ——
     // 上面那批待办提醒和这个开关无关，提前 return 会把它们一起吞掉。
-    if (!parseSpecialEnabled(get().settings[SETTINGS.specialEnabled])) return;
+    if (!isEnabled(get().settings, "special")) return;
 
     // 与任务提醒共用同一个开关：用户关掉提醒是"别打扰我"，
     // 不会期望流程任务那边还在弹。
@@ -1523,7 +1604,7 @@ export const useStore = create<State>((set, get) => ({
     ]);
     // 特殊单号关掉后，它的时效不该再往紧急区里冒 —— 这批单子之所以"紧急"，
     // 来源就是处理时效，留着等于开关只关了一半。普通流程任务照旧参与。
-    const specialOn = parseSpecialEnabled(get().settings[SETTINGS.specialEnabled]);
+    const specialOn = isEnabled(get().settings, "special");
     set({
       urgentTasks: tasks,
       urgentOrders: orders.filter((o) => !o.closed && (specialOn || o.kind !== "special")),

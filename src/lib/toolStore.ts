@@ -32,6 +32,8 @@
 
 import { isTauri } from "./db";
 import { loadBundledTools, validateManifest } from "./tools";
+import { CAPABILITY_NAMES } from "./extensions/registry";
+import { normalizeInjects } from "./extensions/types";
 import { validateToolSchema } from "./toolSchema";
 import type { ToolManifest } from "../types";
 
@@ -140,11 +142,24 @@ export function buildManifest(input: {
    * 用户说"我要记加班时长"，助手把表和界面一起写出来。
    */
   schema?: ToolManifest["schema"];
+  /**
+   * 要申请的宿主能力（gallery / task 等）。
+   *
+   * **按白名单过滤**：manifest 是外部输入，写什么都敢往上写。认不出来的名字
+   * 当场丢掉，宿主便永远不会去判断一个自己不认识的"能力"。
+   */
+  capabilities?: string[];
+  /** 要嵌进宿主界面的位置（注入组件）。同样是外部输入，走 normalizeInjects */
+  injects?: unknown;
   /** 作者。默认「导入」；AI 助手造的工具记「AI 助手」，出处要能查 */
   author?: string;
   dbVersion?: number;
 }): ToolManifest {
   const schema = validateToolSchema(input.id.trim(), input.schema);
+  const caps = (input.capabilities ?? [])
+    .map((c) => String(c).trim())
+    .filter((c) => (CAPABILITY_NAMES as string[]).includes(c));
+  const injects = normalizeInjects(input.injects);
   return {
     id: input.id.trim(),
     name: input.name.trim(),
@@ -157,6 +172,8 @@ export function buildManifest(input: {
     source: "user",
     // 校验不通过就整份丢掉：宁可"这个工具没有表"，也不要一个半截可用的 schema
     ...(schema ? { schema } : {}),
+    ...(caps.length ? { capabilities: caps } : {}),
+    ...(injects.length ? { injects } : {}),
   };
 }
 
@@ -203,6 +220,10 @@ export async function installFromHtml(input: {
   icon?: string;
   /** 数据表声明。校验不过会被丢掉（调用方要自查，见 lib/agent/actions.ts） */
   schema?: ToolManifest["schema"];
+  /** 宿主能力申请。按白名单过滤（见 buildManifest） */
+  capabilities?: string[];
+  /** 注入位置声明。外部输入，走 normalizeInjects */
+  injects?: unknown;
   author?: string;
   /** 已存在同名工具时覆盖它。默认 false（报错而不是覆盖） */
   overwrite?: boolean;

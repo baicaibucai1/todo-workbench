@@ -1,0 +1,94 @@
+[
+  {
+    "id": "panel-demo",
+    "name": "注入夹具",
+    "version": "1.0.0",
+    "description": "e2e 夹具：声明三个注入位置，用来验「工具嵌进宿主界面」这条链路",
+    "icon": "package",
+    "entry": "index.html",
+    "dbVersion": 1,
+    "author": "测试夹具",
+    "capabilities": [
+      "task"
+    ],
+    "injects": [
+      {
+        "kind": "detailSection",
+        "label": "注入夹具分区",
+        "height": 150
+      },
+      {
+        "kind": "rowAction",
+        "label": "夹具"
+      },
+      {
+        "kind": "detailAction",
+        "label": "注入夹具"
+      }
+    ]
+  },
+  {
+    "id": "pomodoro",
+    "name": "番茄钟",
+    "version": "1.0.0",
+    "description": "AI 助手真实产物（番茄工作法计时器：25 分钟专注，可改时长、暂停/继续/重置，完成即记入私有表，显示今日完成数）—— 浏览器演示模式下用它代替「装不了工具」",
+    "icon": "package",
+    "entry": "index.html",
+    "dbVersion": 1,
+    "author": "AI 助手",
+    "schema": {
+      "tables": [
+        {
+          "name": "records",
+          "columns": [
+            {
+              "name": "id",
+              "type": "text",
+              "pk": true
+            },
+            {
+              "name": "minutes",
+              "type": "integer",
+              "default": 25
+            },
+            {
+              "name": "day",
+              "type": "text"
+            },
+            {
+              "name": "created_at",
+              "type": "text"
+            }
+          ],
+          "indexes": [
+            {
+              "columns": [
+                "day"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "task-due-panel",
+    "name": "任务截止",
+    "version": "1.0.0",
+    "description": "AI 助手真实产物（在待办详情面板底部显示当前待办的标题、截止日期和剩余/逾期天数）—— 浏览器演示模式下用它代替「装不了工具」",
+    "icon": "calendar",
+    "entry": "index.html",
+    "dbVersion": 1,
+    "author": "AI 助手",
+    "capabilities": [
+      "task"
+    ],
+    "injects": [
+      {
+        "kind": "detailSection",
+        "label": "任务截止",
+        "height": 140
+      }
+    ]
+  }
+]

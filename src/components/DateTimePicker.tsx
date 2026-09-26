@@ -34,7 +34,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, Clock, X } from "lucide-react"
 
 const WEEK_LABELS = ["一", "二", "三", "四", "五", "六", "日"];
 
-const ACCENT = "#378add";
+const ACCENT = "var(--color-primary)";
 
 /** 本地今天，YYYY-MM-DD */
 function localToday(): string {

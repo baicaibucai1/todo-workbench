@@ -1,10 +1,8 @@
 import { useEffect } from "react";
 import Sidebar from "./components/Sidebar";
-import TaskList from "./components/TaskList";
 import TaskDetail from "./components/TaskDetail";
 import ToolArea from "./components/ToolArea";
 import Settings from "./components/Settings";
-import GalleryView from "./components/GalleryView";
 import AgentBall from "./components/AgentBall";
 import AgentWindow from "./components/AgentWindow";
 import ReminderToast from "./components/ReminderToast";
@@ -12,7 +10,23 @@ import FlowEditor from "./components/FlowEditor";
 import { useStore } from "./store";
 import { pickActiveTool } from "./lib/tools";
 import { applyTheme, SETTINGS, watchSystemTheme } from "./lib/settings";
+import { fallbackView, isViewAvailable, agentEnabled } from "./lib/extensions/registry";
+import { resolveViewComponent } from "./lib/extensions/views";
 import { PanelLeftOpen } from "lucide-react";
+
+/**
+ * 主内容区：把「这个视图现在还能不能落在那里」和「它渲染什么」分成两步。
+ *
+ * 合法性问注册表（模块被关掉的视图不该停在上面 —— 那看上去像数据丢了），
+ * 渲染体在 views.ts 里查。以前这两件事合在一句三元表达式里，
+ * 每加一个整页视图就往上再套一层，而且它天然不知道"能不能用"这回事。
+ */
+function MainArea() {
+  const view = useStore((s) => s.view);
+  const settings = useStore((s) => s.settings);
+  const Body = resolveViewComponent(isViewAvailable(settings, view) ? view : fallbackView(view));
+  return <Body />;
+}
 
 export default function App() {
   const {
@@ -25,7 +39,6 @@ export default function App() {
     settings,
     sidebarOpen,
     toggleSidebar,
-    view,
   } = useStore();
 
   useEffect(() => {
@@ -125,13 +138,7 @@ export default function App() {
         */}
         <ToolArea visible={toolVisible} />
         <div className={toolVisible ? "hidden" : "flex min-h-0 min-w-0 flex-1"}>
-          {settingsOpen ? (
-            <Settings />
-          ) : view === "gallery" ? (
-            <GalleryView />
-          ) : (
-            <TaskList />
-          )}
+          {settingsOpen ? <Settings /> : <MainArea />}
         </div>
         {/* 详情面板常驻渲染，靠宽度收放做滑入/滑出；开不展开由它自己判断 */}
         <TaskDetail />
@@ -143,8 +150,12 @@ export default function App() {
         某一栏里 —— 侧栏收起、切视图、开设置都不该把它弄丢，
         而且它**不属于任何一栏**：侧栏里已经没有助手这一项了，球是唯一入口。
       */}
-      <AgentBall />
-      <AgentWindow />
+      {/* 助手的开关在「设置 → AI 助手」。关掉就整颗球都不存在：不止是藏起来，
+          它也不会再启动 runtime、不会联网 ——"不用"这件事要落到实处 */}
+      {agentEnabled(settings) && <AgentBall />}
+      {/* 窗口跟着球一起收：如果只摘掉球，窗口虽然没人能打开，但它仍会占着
+          一个依赖 hidden iframe 的实例，"关掉了"就成了一句空话 */}
+      {agentEnabled(settings) && <AgentWindow />}
 
       <ReminderToast />
       {/* 流程编辑器是全局弹层：入口有两个（流程任务详情、底部创建器），

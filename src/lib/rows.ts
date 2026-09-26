@@ -66,7 +66,11 @@ export function groupRows(
    * （fetchWorkOrders 的 myday 分支）已经不返回这类单子，但 groupRows 的兜底
    * 分支会把传进来的东西原样渲染出去，只要有一处调用漏了过滤
    * （比如以后有人图省事直接传全量工单），关闭状态就当场破功。
-   * 默认启用，与设置项的默认值保持一致。
+   *
+   * 参数默认 true **只是给纯函数场景兜底**（单测直接调它算分组，没有设置
+   * 可查）。⚠️ 界面上的调用方一律要显式传当前开关值（TaskList 传 specialOn、
+   * store.selectFirst 传同一个值）—— 它现在是选装模块、默认是关的，
+   * 靠这个默认值"顺便"生效，等于开关只关了一半。
    */
   specialEnabled = true,
 ): { sections: Section[]; done: Row[] } {

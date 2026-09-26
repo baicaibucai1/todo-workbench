@@ -1,11 +1,11 @@
 {
-  "version": "0.2.0",
-  "notes": "**安装包从 62.9 MB 降到 7.3 MB。** 差的那 50 MB 几乎全是图片工具里那份本地 AI 模型（ONNX Runtime + MI-GAN，base64 分片塞在 `.js` 里）。为一个大多数人用不上的能力，让每一个用户、每一次增量更新都多下载几十兆 —— 这买卖不划算。",
-  "pub_date": "2026-09-24T06:05:54.011Z",
+  "version": "0.2.1",
+  "notes": "**修复了一个会让全新数据库卡死在「正在初始化工作台」的问题** —— 如果你装了v0.2.0 后一直白屏，这一版就是解药。",
+  "pub_date": "2026-09-24T07:11:32.135Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQTgwMmUzZERHT0pEU3R6Tzk3ZEh2N2FoNitOWFlQZ2VPREtvaVBYbWxSeTJzMUlOMFlsSTN5RG9mM0MyWHdQTlBaRWE4YWVFRStQYnkvOVBNLzVkMEMxNTNLUHBySlFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjIxNjM0CWZpbGU65b6F5Yqe5bel5L2c5Y+wXzAuMi4wX3g2NC1zZXR1cC5leGUKSWlESFdXT0tydSs3QW5KTy9adGZHSTFPbmQvdVlCdFpYTUExR3FDbjdHTmlNUHppUjZlV2czUlIxb1NiWlF0TnphcnRDZkt2Y1JuVFRHZXpBOGc0Qmc9PQo=",
-      "url": "https://github.com/baicaibucai1/todo-workbench/releases/download/v0.2.0/todo-workbench_0.2.0_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQTgwMmUzZERHT0VFMkc3Nm9wQzZSMUtSVVlLNGROcmNQdFdEemFSbGRkSlM4UVR4ekVJSGkzdnRRL20rQWh1anZsL0tDYittck1zR3dydmg2RXBWVlR2ZEhoVlkrUkFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjMzMjg4CWZpbGU65b6F5Yqe5bel5L2c5Y+wXzAuMi4xX3g2NC1zZXR1cC5leGUKejMyekx0NjlLT0NwbW5QOEQvTTQ0TzVMdWxrL0tvN1dSUHZOYkJKVzdmcHNnem9YSE91Ry9iaktJV0Jpd0psZFlCZUV2MTl6MFlVQVJMNHMwVGQwRFE9PQo=",
+      "url": "https://github.com/baicaibucai1/todo-workbench/releases/download/v0.2.1/todo-workbench_0.2.1_x64-setup.exe"
     }
   }
 }

@@ -132,7 +132,7 @@ export default function AttachmentPanel({ orderId }: { orderId: string }) {
 
       {/* 添加入口：贴网址 / 选本机文件 */}
       <div className="mt-1.5 flex items-center gap-1.5">
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-line bg-card px-2 py-1.5 focus-within:border-[#378add]">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-line bg-card px-2 py-1.5 focus-within:border-primary">
           {attachBusy ? (
             <Loader2 size={13} className="shrink-0 animate-spin text-fg-dim" />
           ) : (
@@ -500,7 +500,7 @@ function LinkRow({
                 e.currentTarget.blur();
               }
             }}
-            className="w-full rounded border border-[#378add] bg-card px-1 text-[12.5px] text-fg outline-none"
+            className="w-full rounded border border-primary bg-card px-1 text-[12.5px] text-fg outline-none"
           />
         ) : (
           <button
@@ -508,7 +508,7 @@ function LinkRow({
             onDoubleClick={() => setEditing(true)}
             onClick={() => a.sourceUrl && void openExternal(a.sourceUrl)}
             title={a.sourceUrl ?? ""}
-            className="block w-full truncate text-left text-[12.5px] text-fg-2 hover:text-[#378add]"
+            className="block w-full truncate text-left text-[12.5px] text-fg-2 hover:text-primary"
           >
             {a.title || host}
           </button>

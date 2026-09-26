@@ -22,6 +22,7 @@ import { DETAIL_WIDTH, SETTINGS, parseDetailWidth } from "../lib/settings";
 import { parseDetailSections, type DetailSectionId } from "../lib/detailSections";
 import { useDragWidth } from "../lib/useDragWidth";
 import type { Repeat, Step, Task, WorkOrder } from "../types";
+import { InjectedDetailActions, InjectedDetailSections } from "./InjectedTools";
 import OrderDetail from "./OrderDetail";
 import ResizeHandle from "./ResizeHandle";
 import DateTimePicker from "./DateTimePicker";
@@ -304,7 +305,7 @@ function DetailBody({
   onUnlink: (id: string) => void;
 }) {
   const list = lists.find((l) => l.id === task.listId);
-  const accent = list?.color ?? "#378add";
+  const accent = list?.color ?? "var(--color-primary)";
 
   const commitNote = (v: string) => {
     if (noteTimer.current) clearTimeout(noteTimer.current);
@@ -386,7 +387,7 @@ function DetailBody({
                   onClick={() => onSetDueDate(o.date)}
                   className={`flex-1 rounded px-2 py-1.5 text-[12.5px] transition-colors ${
                     task.dueDate === o.date
-                      ? "bg-[#378add] text-white"
+                      ? "bg-primary text-white"
                       : "text-fg-3 hover:bg-hover"
                   }`}
                 >
@@ -434,7 +435,7 @@ function DetailBody({
                   onClick={() => onPatch({ remindAt: p.at() })}
                   className={`rounded px-2 py-1 text-[12px] transition-colors ${
                     sameRemind(task.remindAt, p.at())
-                      ? "bg-[#378add] text-white"
+                      ? "bg-primary text-white"
                       : "text-fg-3 hover:bg-hover"
                   }`}
                 >
@@ -477,7 +478,7 @@ function DetailBody({
               data-repeat={o.value}
               onClick={() => onSetRepeat(o.value)}
               className={`flex-1 rounded px-2 py-1.5 text-[12.5px] transition-colors ${
-                task.repeat === o.value ? "bg-[#378add] text-white" : "text-fg-3 hover:bg-hover"
+                task.repeat === o.value ? "bg-primary text-white" : "text-fg-3 hover:bg-hover"
               }`}
             >
               {o.label}
@@ -500,7 +501,7 @@ function DetailBody({
         <select
           value={task.listId}
           onChange={(e) => onPatch({ listId: e.target.value })}
-          className="mt-1.5 w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
+          className="mt-1.5 w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-fg-2 outline-none focus:border-primary"
         >
           {lists.map((l) => (
             <option key={l.id} value={l.id}>
@@ -568,7 +569,7 @@ function DetailBody({
             commitNote(e.target.value);
           }}
           placeholder="添加备注"
-          className="mt-1.5 min-h-[110px] w-full resize-none rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim focus:border-[#378add]"
+          className="mt-1.5 min-h-[110px] w-full resize-none rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim focus:border-primary"
         />
       </>
     ),
@@ -599,6 +600,11 @@ function DetailBody({
           value={task.title}
           onCommit={(v) => onPatch({ title: v })}
         />
+
+        {/* 工具注入的操作（见 components/InjectedTools.tsx）：按钮后带一个可展开的面板 */}
+        <div className="mt-[3px] shrink-0">
+          <InjectedDetailActions taskId={task.id} />
+        </div>
 
         <button
           onClick={() => onOpenTask(null)}
@@ -635,6 +641,10 @@ function DetailBody({
             {blocks[id]}
           </div>
         ))}
+
+        {/* 工具注入的分区（见 components/InjectedTools.tsx）：排在内置分区之后，
+            因为它属于"用户自己加的东西"，不该把备注、子任务这些挤到后面 */}
+        <InjectedDetailSections taskId={task.id} />
       </div>
 
       {/* 底部：时间信息与删除 */}
@@ -992,7 +1002,7 @@ function TitleEditor({
           e.currentTarget.blur();
         }
       }}
-      className="min-w-0 flex-1 resize-none rounded border border-transparent bg-transparent px-1 py-0.5 text-[15px] leading-[22px] text-fg outline-none hover:border-line focus:border-[#378add] focus:bg-card"
+      className="min-w-0 flex-1 resize-none rounded border border-transparent bg-transparent px-1 py-0.5 text-[15px] leading-[22px] text-fg outline-none hover:border-line focus:border-primary focus:bg-card"
     />
   );
 }

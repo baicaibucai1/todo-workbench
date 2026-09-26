@@ -21,6 +21,7 @@
 
 import { createRequire } from "node:module";
 import { makePng } from "./png.mjs";
+import { enableModule } from "./_enable-module.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -191,7 +192,18 @@ if (FRESH) {
 await page.waitForSelector("aside", { timeout: 20000 });
 await page.waitForTimeout(900);
 
-check("侧边栏有「图库」入口", (await page.locator('aside [data-nav="gallery"]').count()) === 1);
+// 图库是**选装模块**（v18 起默认不带）：先把这条钉住，再把它打开 ——
+// 这个套件从头到尾验的都是"图库开着的时候"，但它默认不开这件事本身也有人验
+// （见 placeholder-tools.mjs 里那条"默认不出现"）。
+check(
+  "默认没有「图库」入口（选装模块）",
+  (await page.locator('aside [data-nav="gallery"]').count()) === 0,
+);
+await enableModule(page, "gallery");
+check(
+  "打开后侧边栏有「图库」入口",
+  (await page.locator('aside [data-nav="gallery"]').count()) === 1,
+);
 
 /* ------------------------------ 1. 空态 ------------------------------ */
 

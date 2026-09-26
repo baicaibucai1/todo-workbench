@@ -17,10 +17,24 @@ export const SETTINGS = {
   profileEmail: "profile.email",
   profileColor: "profile.color",
   theme: "appearance.theme",
-  /** 待办区背景：auto（跟随视图渐变）或 image:<壁纸文件名> */
+  /**
+   * 主题色（品牌色）：待办完成圈、紧急标记、AI 悬浮球这类"属于本应用"的印记。
+   * 存 #rrggbb。空 / 非法值一律退回 lib/theme.ts 的默认色。
+   */
+  accent: "appearance.accent",
+  /**
+   * 主操作色：按钮、选中态、输入框聚焦边框这类"能点的东西"。
+   * 与 accent 分开的理由见 styles.css 里那两个变量的定义。
+   */
+  primary: "appearance.primary",
+  /** 待办区背景：auto（跟随视图渐变）或 image:<必应壁纸文件名> 或 custom:<仓库相对路径> */
   background: "appearance.background",
   /** 壁纸上的遮罩强度：soft | medium | strong */
   bgScrim: "appearance.bgScrim",
+  /** 自定义壁纸的文件名清单（JSON 数组），用于在设置页里列出"我传过的图" */
+  customWallpapers: "appearance.customWallpapers",
+  /** 是否启用「图库」模块（选装，默认关；老库由迁移 v17 回填） */
+  galleryEnabled: "ext.gallery.enabled",
   startupView: "behavior.startupView",
   sidebarOpen: "behavior.sidebarOpen",
   /**
@@ -78,14 +92,18 @@ export const SETTINGS = {
    * 点开详情才能核对 —— 那这个记录表就白做了。
    */
   /**
-   * 是否启用「特殊单号」模块。
+   * 是否启用「特殊单号」模块（选装）。
    *
    * 关掉的是**入口与提醒**，不是数据：侧边栏入口、专属视图、创建弹窗里的类型切换、
    * 「我的一天」里那一组、以及时效提醒与紧急区都会停；已经建好的单子仍留在
    * 「流程任务」列表里，可以照常打开、推进、收尾，开关一打开就全回来。
-   * 默认启用 —— 关闭必须是显式动作，缺键不等于"用户不要它"。
+   *
+   * 默认**关闭**。默认值只管新建的库，老库由迁移 v17（modules_opt_in）按
+   * "这人有没有真建过特殊单号"回填 —— 见 lib/migrations.ts。
+   * 解析函数 parseSpecialEnabled 仍把「缺键」当开，那是最后一道兜底：
+   * 万一迁移没跑成，也不能让用过这个模块的人一升级就找不到入口。
    */
-  specialEnabled: "special.enabled",
+  specialEnabled: "ext.special.enabled",
   specialColumns: "special.columns",
   /** 相关信息的复制格式（见 lib/special.ts 的 CopyTemplate） */
   specialCopyTemplate: "special.copyTemplate",
@@ -225,6 +243,17 @@ export const SETTINGS = {
    * 而刚才那段被顶到列表下面，用户的第一反应是"它把我的对话弄丢了"。
    */
   agentCurrentChat: "agent.currentChat",
+  /**
+   * 助手的工作区目录。
+   *
+   * **空串 = 用默认落点**（数据目录下的 `agent-workspace/`）。默认落点而不是
+   * 强制手填，是为了让它"现在就能用"；留一个可改的出口，是因为有人会想把
+   * 产出放到同步盘或者自己的项目目录里 —— 那不是我们能替他决定的事。
+   *
+   * 解析归 `lib/agent/workspace.ts`（那一层还负责"这个路径能不能写"的判断），
+   * 这里只存字符串。
+   */
+  agentWorkspace: "agent.workspace",
 } as const;
 
 /** 头像可选色，与列表色板同源，避免两套颜色语言 */
@@ -286,8 +315,13 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.profileEmail]: DEFAULT_PROFILE.email,
   [SETTINGS.profileColor]: DEFAULT_PROFILE.color,
   [SETTINGS.theme]: "light",
+  // 空的主题色 = 用 lib/theme.ts 的默认色板。留空而不是写死色值，
+  // 是为了"改默认配色"只需动一处（theme.ts），老库也不会被旧色值钉住。
+  [SETTINGS.accent]: "",
+  [SETTINGS.primary]: "",
   [SETTINGS.background]: "auto",
   [SETTINGS.bgScrim]: "medium",
+  [SETTINGS.customWallpapers]: "[]",
   [SETTINGS.startupView]: "myday",
   [SETTINGS.sidebarOpen]: "1",
   [SETTINGS.detailWidth]: String(DETAIL_WIDTH.default),
@@ -299,7 +333,8 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.urgentMinutes]: String(URGENT_MINUTES.default),
   [SETTINGS.toolKeepState]: "1",
   [SETTINGS.toolsDisabled]: "",
-  [SETTINGS.specialEnabled]: "1",
+  [SETTINGS.specialEnabled]: "0",
+  [SETTINGS.galleryEnabled]: "0",
   [SETTINGS.specialColumns]: "[]",
   [SETTINGS.specialCopyTemplate]: "label-cn",
   [SETTINGS.specialDensity]: "comfortable",
@@ -332,6 +367,7 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.agentBallPos]: "",
   [SETTINGS.agentWindowPos]: "",
   [SETTINGS.agentCurrentChat]: "",
+  [SETTINGS.agentWorkspace]: "",
 };
 
 /**
@@ -439,10 +475,15 @@ export function parseToolKeepState(raw: string | undefined): boolean {
 /**
  * 「特殊单号」模块是否启用。
  *
- * 与 parseToolKeepState 同一条方向：**只有显式写了 "0" 才算关** ——
- * 缺键、空串、手改数据库留下的脏值一律按默认（启用）处理。
- * 方向不能反：反过来写的话，一次意外的脏值就会让用户那批记录从界面上
- * 凭空消失，而他还不知道发生了什么。
+ * ⚠️ 这里的方向与 DEFAULTS 相反，是**故意的**：DEFAULTS 管新建的库（默认关），
+ * 而缺键意味着"迁移没跑过"——那是个用过这个模块的老库，此时按"开"处理，
+ * 用户那批记录才不会在升级后凭空从界面上消失。
+ *
+ * 只有显式写了 "0" 才算关。方向不能反：反过来写的话，一次意外的脏值就会
+ * 让用户找不到入口，而他还不知道发生了什么。
+ *
+ * 注：宿主现在统一走 lib/extensions/registry.ts 的 isEnabled()，这个函数只剩
+ * 兜底与测试在用。
  */
 export function parseSpecialEnabled(raw: string | undefined): boolean {
   return raw !== "0";

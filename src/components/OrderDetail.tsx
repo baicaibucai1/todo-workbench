@@ -606,7 +606,7 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
             value={order.flowId}
             data-order-flow=""
             onChange={(e) => void changeFlow(e.target.value)}
-            className="mt-1.5 w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-fg-2 outline-none focus:border-[#378add]"
+            className="mt-1.5 w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] text-fg-2 outline-none focus:border-primary"
           >
             {flows.map((f) => (
               <option key={f.id} value={f.id}>
@@ -723,7 +723,7 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
               commitNote(e.target.value);
             }}
             placeholder="添加备注"
-            className="mt-1.5 min-h-[90px] w-full resize-none rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim focus:border-[#378add]"
+            className="mt-1.5 min-h-[90px] w-full resize-none rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim focus:border-primary"
           />
         </div>
       </div>
@@ -841,7 +841,7 @@ function TitleEditor({ value, onCommit }: { value: string; onCommit: (v: string)
           e.currentTarget.blur();
         }
       }}
-      className="min-w-0 flex-1 resize-none rounded border border-transparent bg-transparent px-1 py-0.5 text-[15px] leading-[22px] text-fg outline-none hover:border-line focus:border-[#378add] focus:bg-card"
+      className="min-w-0 flex-1 resize-none rounded border border-transparent bg-transparent px-1 py-0.5 text-[15px] leading-[22px] text-fg outline-none hover:border-line focus:border-primary focus:bg-card"
     />
   );
 }
@@ -869,7 +869,7 @@ function DateRow({
         <button
           onClick={() => onChange(t)}
           className={`rounded px-1.5 py-0.5 text-[12px] ${
-            value === t ? "bg-[#378add] text-white" : "text-fg-3 hover:bg-hover"
+            value === t ? "bg-primary text-white" : "text-fg-3 hover:bg-hover"
           }`}
         >
           今天
@@ -877,7 +877,7 @@ function DateRow({
         <button
           onClick={() => onChange(addDays(t, 1))}
           className={`rounded px-1.5 py-0.5 text-[12px] ${
-            value === addDays(t, 1) ? "bg-[#378add] text-white" : "text-fg-3 hover:bg-hover"
+            value === addDays(t, 1) ? "bg-primary text-white" : "text-fg-3 hover:bg-hover"
           }`}
         >
           明天

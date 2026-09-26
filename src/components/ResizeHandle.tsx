@@ -11,7 +11,7 @@
 
 import type { DragWidthApi } from "../lib/useDragWidth";
 
-const ACCENT = "#378add";
+const ACCENT = "var(--color-primary)";
 
 export default function ResizeHandle({
   api,
@@ -78,7 +78,7 @@ export default function ResizeHandle({
       {dragging && (
         <span
           data-resizer-readout=""
-          className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded bg-[#378add] px-1.5 py-0.5 text-[10px] leading-none text-white shadow"
+          className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded bg-primary px-1.5 py-0.5 text-[10px] leading-none text-white shadow"
         >
           {width} px
         </span>

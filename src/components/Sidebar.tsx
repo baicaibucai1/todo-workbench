@@ -13,46 +13,39 @@ import {
   ClipboardList,
   Timer,
   Images,
+  FolderOpen,
   Trash2,
   Settings2,
 } from "lucide-react";
 import { useStore } from "../store";
 import { fetchCounts } from "../lib/repo";
 import { ICONS } from "../lib/icons";
-import {
-  DEFAULT_PROFILE,
-  SETTINGS,
-  SIDEBAR_WIDTH,
-  parseSidebarWidth,
-  parseSpecialEnabled,
-} from "../lib/settings";
+import { DEFAULT_PROFILE, SETTINGS, SIDEBAR_WIDTH, parseSidebarWidth } from "../lib/settings";
 import { useDragWidth } from "../lib/useDragWidth";
 
 import UrgentPanel from "./UrgentPanel";
 import ResizeHandle from "./ResizeHandle";
 import type { SmartView } from "../types";
+import { navItems } from "../lib/extensions/registry";
+import type { ExtensionIconName } from "../lib/extensions/types";
 
-const SMART_ITEMS: Array<{
-  key: SmartView;
-  label: string;
-  icon: typeof Sun;
-  /** To Do 里该条目的强调色 */
-  color?: string;
-}> = [
-  { key: "myday", label: "我的一天", icon: Sun },
-  { key: "important", label: "重要", icon: Star },
-  { key: "all", label: "全部", icon: Inbox },
-  // 流程任务的专属入口。流程任务平时也混在「全部」里，但想"只看手上的单子"就有地方去了
-  { key: "orders", label: "流程任务", icon: ClipboardList },
-  // 特殊单号：流程任务里**带处理时效**的那一类（以快递单号为起点）。
-  // 它不是另一种记录，是流程任务的真子集 —— 所以这些单子同时照旧出现在「流程任务」里。
-  // 单独给个入口，是因为它们的价值就在"等不起"：在几十张流程任务里
-  // 翻哪一张快超时，是件很难受的事。
-  { key: "special", label: "特殊单号", icon: Timer },
-  // 图库**不**在这一组：前几项都是"待办的某种筛选"，它是独立素材库。
-  // 2026-09-22 起挪到底部、挨着「设置」—— 上层是"看哪些任务"，
-  // 下层是"这个程序里还有什么地方可去"，图库属于后者。
-];
+/**
+ * 注册表里那个字符串 → 真正的图标组件。
+ *
+ * 只认白名单里的几个名字（见 types.ts 的 ExtensionIconName），
+ * 所以外部输入（工具的 manifest）到不了引入任意组件这一步。
+ */
+const EXT_ICONS: Record<ExtensionIconName, typeof Sun> = {
+  sun: Sun,
+  star: Star,
+  inbox: Inbox,
+  "clipboard-list": ClipboardList,
+  timer: Timer,
+  images: Images,
+  sparkles: Star,
+  package: Package,
+  "folder-open": FolderOpen,
+};
 
 export default function Sidebar() {
   const {
@@ -78,12 +71,14 @@ export default function Sidebar() {
   } = useStore();
 
   /**
-   * 「特殊单号」模块开关。
+   * 侧栏项由注册表给：哪些视图存在、它们的模块开着没有、顺序是什么，
+   * 都不再写在这个组件里（见 lib/extensions/registry.ts 的 BUILTIN）。
    *
-   * 关掉后入口整个消失（下面的 SMART_ITEMS 会把它滤掉）—— 但**只隐藏入口，
-   * 不动数据**：那批记录仍留在「流程任务」列表里，开关一打开就全回来。
+   * 关掉一个模块时**入口整个消失，数据留着** —— 例如特殊单号那批记录
+   * 仍在「流程任务」列表里，开关一打开就全回来。
    */
-  const specialOn = parseSpecialEnabled(settings[SETTINGS.specialEnabled]);
+  const taskNav = navItems(settings, "tasks");
+  const placeNav = navItems(settings, "places");
 
   // 个人资料来自配置表，不再写死在界面上
   const profileName = settings[SETTINGS.profileName] ?? "";
@@ -219,20 +214,27 @@ export default function Sidebar() {
 
       {/* 智能视图 + 清单 */}
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {/* 关掉「特殊单号」时把那一项滤掉。过滤只影响**入口**，
-            不影响里面已有的单子 —— 它们仍在「流程任务」列表里 */}
-        {SMART_ITEMS.filter((item) => specialOn || item.key !== "special").map((item) => (
-          <NavRow
-            key={item.key}
-            navKey={item.key}
-            icon={<item.icon size={16} />}
-            label={item.label}
-            active={view === item.key && !activeToolId}
-            count={badge(item.key)}
-            accent="#d4537e"
-            onClick={() => void setView(item.key)}
-          />
-        ))}
+        {/*
+          视图项现在**问注册表要**（navItems）：哪些项存在、模块开着没有、
+          顺序是什么，都由 lib/extensions/registry.ts 里那条登记决定。
+          以前这里是 SMART_ITEMS 数组 + 一句 `specialOn &&` 过滤 ——
+          加一个模块要改两个文件、且漏改不报错，只表现为界面有一半不对。
+        */}
+        {taskNav.map((item) => {
+          const Icon = EXT_ICONS[item.icon ?? "package"];
+          return (
+            <NavRow
+              key={item.id}
+              navKey={item.id}
+              icon={<Icon size={16} />}
+              label={item.label}
+              active={view === item.id && !activeToolId}
+              count={badge(item.id as SmartView)}
+              accent="#d4537e"
+              onClick={() => void setView(item.id as SmartView)}
+            />
+          );
+        })}
 
         <div className="my-2 border-t border-line" />
 
@@ -255,7 +257,7 @@ export default function Sidebar() {
               icon={<Icon size={16} />}
               label={tool.name}
               active={activeToolId === tool.id}
-              accent="#378add"
+              accent="var(--color-primary)"
               onClick={() => openTool(tool.id)}
             />
           );
@@ -378,7 +380,7 @@ export default function Sidebar() {
       <UrgentPanel />
 
       {/*
-        底部：图库（上面是紧急区）。
+        底部：图库这一类"可以去的地方"。
         它和上面的视图组不是一回事 —— 上半栏回答"看哪些任务"，
         这里回答"这个程序里还有什么地方可去"。
 
@@ -387,17 +389,25 @@ export default function Sidebar() {
         同一件事摆两个入口，用户先要猜哪个才是"真的"，
         而高亮态还得分神去跟窗口开合。留一个就够了。
       */}
-      <div className="border-t border-line px-2 pt-2">
-        <NavRow
-          navKey="gallery"
-          icon={<Images size={16} />}
-          label="图库"
-          active={view === "gallery" && !activeToolId}
-          count={badge("gallery")}
-          accent="#d4537e"
-          onClick={() => void setView("gallery")}
-        />
-      </div>
+      {placeNav.length > 0 && (
+        <div className="border-t border-line px-2 pt-2">
+          {placeNav.map((item) => {
+            const Icon = EXT_ICONS[item.icon ?? "package"];
+            return (
+              <NavRow
+                key={item.id}
+                navKey={item.id}
+                icon={<Icon size={16} />}
+                label={item.label}
+                active={view === item.id && !activeToolId}
+                count={badge(item.id as SmartView)}
+                accent="#d4537e"
+                onClick={() => void setView(item.id as SmartView)}
+              />
+            );
+          })}
+        </div>
+      )}
       <div className="px-2 pt-1 pb-2">
         <button
           onClick={() => openSettings(true)}

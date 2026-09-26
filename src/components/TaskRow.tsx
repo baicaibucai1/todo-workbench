@@ -15,6 +15,7 @@ import type { Step, Task } from "../types";
 import { today, addDays } from "../lib/repo";
 import { formatDateTime } from "../lib/datetime";
 import { rowSurfaceClass } from "../lib/rowStyle";
+import { InjectedRowActions } from "./InjectedTools";
 
 interface Props {
   task: Task;
@@ -329,6 +330,8 @@ export default function TaskRow({
 
       {/* 悬停操作区 */}
       <div className="flex shrink-0 items-center gap-0.5 pt-[1px]">
+        {/* 工具注入的行内按钮（见 components/InjectedTools.tsx） */}
+        <InjectedRowActions taskId={task.id} />
         <div
           className={`relative flex items-center gap-0.5 transition-opacity ${
             pickerOpen || task.dueDate ? "opacity-100" : "opacity-0 group-hover:opacity-100"

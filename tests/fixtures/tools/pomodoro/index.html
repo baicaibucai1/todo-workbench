@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>番茄钟</title>
+<style>
+:root {
+  --bg: #f5f6fa;
+  --card: #ffffff;
+  --text: #2c3e50;
+  --text2: #7f8c8d;
+  --accent: #e74c3c;
+  --accent2: #c0392b;
+  --border: #e0e0e0;
+  --success: #27ae60;
+  --input-bg: #f0f0f0;
+}
+html[data-theme="dark"] {
+  --bg: #1a1d23;
+  --card: #242832;
+  --text: #e8e8e8;
+  --text2: #9aa0a8;
+  --accent: #ff6b5b;
+  --accent2: #e85545;
+  --border: #3a3f4a;
+  --success: #4cd964;
+  --input-bg: #2d323e;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+}
+h1 { font-size: 1.5rem; margin-bottom: 16px; font-weight: 600; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+  margin-bottom: 16px;
+}
+.time-display {
+  font-size: 4rem;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 2px;
+  color: var(--text);
+  margin-bottom: 16px;
+  min-height: 80px;
+}
+.time-display.running { color: var(--accent); }
+.btn-row {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+button {
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  user-select: none;
+}
+button:active { transform: scale(0.97); }
+button.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+button.primary:hover { background: var(--accent2); }
+.progress-bar-wrap {
+  background: var(--input-bg);
+  border-radius: 4px;
+  height: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 1s linear;
+  width: 0%;
+}
+.duration-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.duration-row label { font-size: 0.9rem; color: var(--text2); white-space: nowrap; }
+input[type=number] {
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  width: 80px;
+  font-size: 1rem;
+}
+.stat-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.stat-card .label { font-size: 0.9rem; color: var(--text2); }
+.stat-card .num {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--success);
+}
+.msg {
+  font-size: 0.85rem;
+  color: var(--accent);
+  min-height: 20px;
+  margin-top: 10px;
+  text-align: center;
+}
+</style>
+</head>
+<body>
+<h1>🍅 番茄钟</h1>
+
+<div class="card">
+  <div class="time-display" id="time" data-state="idle">25:00</div>
+  <div class="progress-bar-wrap">
+    <div class="progress-bar" id="bar"></div>
+  </div>
+  <div class="duration-row">
+    <label for="minutes">专注时长（分钟）</label>
+    <input type="number" id="minutes" value="25" min="1" max="120" step="1">
+  </div>
+  <div class="btn-row">
+    <button class="primary" id="btnStart" data-act="start">开始</button>
+    <button id="btnPause" data-act="pause" disabled>暂停</button>
+    <button id="btnReset" data-act="reset">重置</button>
+  </div>
+  <div class="msg" id="msg"></div>
+</div>
+
+<div class="stat-card">
+  <span class="label">今日完成</span>
+  <span class="num" id="todayCount" data-today="">0</span>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var TOOL_SOURCE = "workbench-tool";
+  var HOST_SOURCE = "workbench-host";
+  var seq = 0, waiting = new Map(), ctx = null;
+
+  function call(op, payload) {
+    var id = "r" + ++seq;
+    return new Promise(function (resolve, reject) {
+      waiting.set(id, { resolve: resolve, reject: reject });
+      parent.postMessage(
+        { source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} },
+        "*"
+      );
+      setTimeout(function () {
+        if (waiting.delete(id)) reject(new Error("宿主没有回应（" + op + "）"));
+      }, 10000);
+    }).then(function (res) {
+      if (!res.ok) throw new Error(String(res.error || "宿主拒绝了这次请求"));
+      return res.data;
+    });
+  }
+
+  window.addEventListener("message", function (e) {
+    var m = e.data;
+    if (!m || m.source !== HOST_SOURCE) return;
+    if (m.type === "tool:response") {
+      var w = waiting.get(m.id);
+      if (w) { waiting.delete(m.id); w.resolve({ ok: m.ok, data: m.data, error: m.error }); }
+      return;
+    }
+    if (m.type === "tool:context") {
+      ctx = m.data;
+      if (ctx) document.documentElement.dataset.theme = ctx.theme || "light";
+      return;
+    }
+  });
+
+  // 今天日期 YYYY-MM-DD（本地）
+  function todayStr() {
+    var d = new Date();
+    var y = d.getFullYear();
+    var mo = String(d.getMonth() + 1).padStart(2, "0");
+    var da = String(d.getDate()).padStart(2, "0");
+    return y + "-" + mo + "-" + da;
+  }
+
+  var elTime   = document.getElementById("time");
+  var elBar    = document.getElementById("bar");
+  var elMsg    = document.getElementById("msg");
+  var elInput  = document.getElementById("minutes");
+  var elStart  = document.getElementById("btnStart");
+  var elPause  = document.getElementById("btnPause");
+  var elReset  = document.getElementById("btnReset");
+  var elToday  = document.getElementById("todayCount");
+
+  var running  = false;
+  var paused   = false;
+  var totalSec = 25 * 60;
+  var remainSec = 25 * 60;
+  var timerId   = null;
+
+  function fmt(sec) {
+    var m = Math.floor(sec / 60);
+    var s = sec % 60;
+    return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+  }
+
+  function render() {
+    elTime.textContent = fmt(remainSec);
+    var pct = totalSec > 0 ? ((totalSec - remainSec) / totalSec * 100) : 0;
+    elBar.style.width = Math.min(pct, 100) + "%";
+  }
+
+  function tick() {
+    if (remainSec <= 0) {
+      clearInterval(timerId);
+      timerId = null;
+      running = false;
+      paused = false;
+      elTime.dataset.state = "done";
+      elTime.classList.remove("running");
+      elStart.textContent = "开始";
+      elStart.disabled = false;
+      elPause.textContent = "暂停";
+      elPause.disabled = true;
+      elMsg.textContent = "🎉 完成一个番茄！";
+      recordPomodoro();
+      remainSec = totalSec;
+      elTime.textContent = fmt(remainSec);
+      return;
+    }
+    remainSec--;
+    render();
+  }
+
+  function start() {
+    var mins = parseInt(elInput.value, 10);
+    if (isNaN(mins) || mins < 1) { elMsg.textContent = "请输入至少 1 分钟"; return; }
+    totalSec  = mins * 60;
+    remainSec = totalSec;
+    running = true;
+    paused = false;
+    elTime.dataset.state = "running";
+    elTime.classList.add("running");
+    elStart.textContent = running ? "重新开始" : "开始";
+    elStart.disabled = true;
+    elPause.disabled = false;
+    elPause.textContent = "暂停";
+    elMsg.textContent = "";
+    render();
+    timerId = setInterval(tick, 1000);
+  }
+
+  function pauseResume() {
+    if (!running) return;
+    if (paused) {
+      paused = false;
+      elPause.textContent = "暂停";
+      elTime.dataset.state = "running";
+      elTime.classList.add("running");
+      timerId = setInterval(tick, 1000);
+    } else {
+      paused = true;
+      clearInterval(timerId);
+      timerId = null;
+      elPause.textContent = "继续";
+      elTime.dataset.state = "paused";
+      elTime.classList.remove("running");
+    }
+    elStart.disabled = true;
+  }
+
+  function reset() {
+    running = false;
+    paused = false;
+    clearInterval(timerId);
+    timerId = null;
+    var mins = parseInt(elInput.value, 10) || 25;
+    totalSec  = mins * 60;
+    remainSec = totalSec;
+    elTime.dataset.state = "idle";
+    elTime.classList.remove("running");
+    elStart.textContent = "开始";
+    elStart.disabled = false;
+    elPause.textContent = "暂停";
+    elPause.disabled = true;
+    elMsg.textContent = "";
+    render();
+  }
+
+  async function recordPomodoro() {
+    var day = todayStr();
+    try {
+      await call("row.insert", {
+        table: "records",
+        row: {
+          id: "p-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+          minutes: parseInt(elInput.value, 10) || 25,
+          day: day,
+          created_at: new Date().toISOString()
+        }
+      });
+      await loadTodayCount();
+    } catch (err) {
+      elMsg.textContent = "记录失败：" + err.message;
+    }
+  }
+
+  async function loadTodayCount() {
+    try {
+      var day = todayStr();
+      var res = await call("row.count", { table: "records", where: { day: day } });
+      elToday.textContent = String(res.count);
+      elToday.dataset.today = day;
+      document.body.dataset.bindState = "bound";
+    } catch (err) {
+      // 表可能还没建好，静默
+    }
+  }
+
+  elStart.addEventListener("click", start);
+  elPause.addEventListener("click", pauseResume);
+  elReset.addEventListener("click", reset);
+  elInput.addEventListener("change", function () {
+    if (!running) {
+      var mins = parseInt(elInput.value, 10) || 25;
+      totalSec = mins * 60;
+      remainSec = totalSec;
+      render();
+    }
+  });
+
+  // 初始化
+  render();
+  loadTodayCount();
+})();
+</script>
+</body>
+</html>

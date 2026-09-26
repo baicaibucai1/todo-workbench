@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+:root, html[data-theme="light"] {
+  --bg: #f5f5f7;
+  --text: #1d1d1f;
+  --text-sub: #6e6e73;
+  --card: #ffffff;
+  --border: #d2d2d7;
+  --red: #ff3b30;
+}
+html[data-theme="dark"] {
+  --bg: #1c1c1e;
+  --text: #f5f5f7;
+  --text-sub: #98989d;
+  --card: #2c2c2e;
+  --border: #38383a;
+  --red: #ff453a;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.row .label {
+  color: var(--text-sub);
+  min-width: 56px;
+  flex-shrink: 0;
+}
+.row .value {
+  flex: 1;
+  word-break: break-all;
+}
+.row .value.overdue {
+  color: var(--red);
+  font-weight: 600;
+}
+.row .value.no-due {
+  color: var(--text-sub);
+  font-style: italic;
+}
+#error {
+  color: var(--text-sub);
+  font-size: 12px;
+  padding: 4px 0;
+  display: none;
+}
+</style>
+</head>
+<body data-bind-state="loading">
+<div id="panel" style="display:none">
+  <div class="row">
+    <span class="label">标题</span>
+    <span class="value" id="f-title"></span>
+  </div>
+  <div class="row">
+    <span class="label">截止日期</span>
+    <span class="value" id="f-due"></span>
+  </div>
+  <div class="row">
+    <span class="label">剩余</span>
+    <span class="value" id="f-left"></span>
+  </div>
+</div>
+<div id="error"></div>
+<script>
+(function () {
+  "use strict";
+  var TOOL_SOURCE = "workbench-tool";
+  var HOST_SOURCE = "workbench-host";
+  var seq = 0, waiting = new Map(), ctx = null;
+
+  function call(op, payload) {
+    var id = "r" + ++seq;
+    return new Promise(function (resolve, reject) {
+      waiting.set(id, { resolve: resolve, reject: reject });
+      parent.postMessage(
+        { source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} },
+        "*"
+      );
+      setTimeout(function () {
+        if (waiting.delete(id)) reject(new Error("宿主没有回应（" + op + "）"));
+      }, 10000);
+    }).then(function (res) {
+      if (!res.ok) throw new Error(String(res.error || "宿主拒绝了这次请求"));
+      return res.data;
+    });
+  }
+
+  function pad(n) { return n < 10 ? "0" + n : "" + n; }
+  function todayStr() {
+    var d = new Date();
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+  function daysDiff(fromStr, toStr) {
+    // fromStr - toStr，正数表示 toStr 在 fromStr 之后
+    var a = new Date(fromStr + "T00:00:00"), b = new Date(toStr + "T00:00:00");
+    return Math.round((b - a) / 86400000);
+  }
+
+  function render(t) {
+    var panel = document.getElementById("panel");
+    var err = document.getElementById("error");
+    panel.style.display = "";
+    err.style.display = "none";
+    document.body.dataset.bindState = "bound";
+
+    document.getElementById("f-title").textContent = t.title || "（无标题）";
+
+    var dueEl = document.getElementById("f-due");
+    var leftEl = document.getElementById("f-left");
+
+    if (!t.dueDate) {
+      dueEl.textContent = "未设截止";
+      dueEl.className = "value no-due";
+      leftEl.textContent = "—";
+      leftEl.className = "value no-due";
+      return;
+    }
+
+    dueEl.textContent = t.dueDate;
+    dueEl.className = "value";
+
+    var today = todayStr();
+    var diff = daysDiff(today, t.dueDate);
+    if (diff < 0) {
+      var days = Math.abs(diff);
+      leftEl.textContent = "逾期 " + days + " 天";
+      leftEl.className = "value overdue";
+    } else if (diff === 0) {
+      leftEl.textContent = "今天截止";
+      leftEl.className = "value";
+    } else {
+      leftEl.textContent = "还有 " + diff + " 天";
+      leftEl.className = "value";
+    }
+  }
+
+  function showError(msg) {
+    document.getElementById("panel").style.display = "none";
+    var err = document.getElementById("error");
+    err.textContent = msg;
+    err.style.display = "";
+    document.body.dataset.bindState = "error";
+  }
+
+  window.addEventListener("message", function (e) {
+    var m = e.data;
+    if (!m || m.source !== HOST_SOURCE) return;
+
+    if (m.type === "tool:response") {
+      var w = waiting.get(m.id);
+      if (w) { waiting.delete(m.id); w.resolve({ ok: m.ok, data: m.data, error: m.error }); }
+      return;
+    }
+    if (m.type === "tool:context") {
+      ctx = m.data;
+      document.documentElement.dataset.theme = ctx.theme || "light";
+      if (ctx && ctx.inject) {
+        call("task.get", {})
+          .then(render)
+          .catch(function (e2) { showError("读取待办失败：" + e2.message); });
+      }
+      return;
+    }
+  });
+
+  // 首次也主动取一次上下文
+  call("info", {}).then(function (d) {
+    document.documentElement.dataset.theme = (d && d.theme) || "light";
+    if (d && d.inject) {
+      return call("task.get", {}).then(render).catch(function (e2) {
+        showError("读取待办失败：" + e2.message);
+      });
+    }
+  }).catch(function (e3) {
+    showError("无法获取上下文：" + e3.message);
+  });
+})();
+</script>
+</body>
+</html>

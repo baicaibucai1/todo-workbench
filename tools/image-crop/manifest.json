@@ -6,5 +6,6 @@
   "icon": "crop",
   "entry": "index.html",
   "dbVersion": 1,
-  "author": "内置"
+  "author": "内置",
+  "capabilities": ["gallery"]
 }

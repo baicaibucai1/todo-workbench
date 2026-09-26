@@ -23,6 +23,7 @@
 
 import { createRequire } from "node:module";
 import { makePng } from "./png.mjs";
+import { enableModule } from "./_enable-module.mjs";
 import fs from "node:fs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
@@ -98,6 +99,16 @@ const readVal = (frame, id) =>
   }, id);
 
 /* ================================================================== */
+console.log("\n0. 先启用图库（它是选装模块，工具存图要靠它）");
+
+// 这个套件验的正是"工具的产物能不能落进图库"，而图库 v18 起默认不带 ——
+// 不开它，第 1 节的「从图库打开」入口就会整个消失，后面的断言全红在
+// "入口不见了"上，看上去像工具坏了。
+await page.goto(BASE, { waitUntil: "load" });
+await page.waitForSelector("aside", { timeout: 20000 });
+await page.waitForTimeout(800);
+await enableModule(page, "gallery");
+
 console.log("\n1. 图片裁剪工具：Image Studio 已置入工具槽，并可连通图库");
 
 const fc = await openTool("image-crop");

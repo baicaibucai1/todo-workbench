@@ -37,6 +37,7 @@
 
 import { HTML_MAX_BYTES } from "../toolStore";
 import { toolPrefix } from "../tools";
+import * as repo from "../repo";
 
 /** 代码块围栏。抽成常量是为了让下面的正文能直接写，不必到处转义反引号 */
 const F = "```";
@@ -50,6 +51,8 @@ export interface AgentSkill {
   rules: string[];
   /** 全文。由 read_skill 按需取 */
   body: string;
+  /** 谁写的：内置（代码）还是助手自己存的（库）。内置删不掉 */
+  source?: "builtin" | "agent";
 }
 
 const MB = Math.round(HTML_MAX_BYTES / 1024 / 1024);
@@ -68,7 +71,11 @@ export const SKILLS: AgentSkill[] = [
       "界面文案用简体中文；颜色自己定一套，但必须**响应宿主的深浅色**（收到 tool:context 后把 ctx.theme 写到 <html data-theme>）",
       "关键状态写 data-* 属性、按钮写 data-act —— 这个项目靠它做自动化验证，没有它新功能就没法被回归测试覆盖",
       "交付大段 HTML 时**不要把它塞进工具参数**：JSON 字符串里的换行与引号极易转义坏（接口会直接 400 拒收，用户只看到一句看不懂的报错）。动作里只给 id / name，整份源码另起一个 html 代码块（写法见动作协议）",
+      "**一次回复有长度上限**：一份几百行以上的 HTML 一次写不完，写到一半会被掐断 —— 那时代码块不闭合，宿主什么也收不到，你只会看到「没有拿到源码」。**别试着一次写完，直接分段**：`write_file` 第一段正常写（path 用工作区相对路径，如 tools/pomodoro.html），之后每段带 `append: true` 接着上一段的最后一行写（每段几百行以内，不要重复、不要另起开头），写完之后 `sandbox_run` 只给 `html_file` 指过去，源码不要再贴一遍",
+      "收到「被输出长度上限掐断」或「代码块没有闭合」时，**换成分段 write_file 那条路**，不要从头再写一遍 —— 从头写还是会断在同一个地方（2026-09-26 真机：卡了 6 轮才装上，根因就是这个循环）",
       "不许写假按钮、假开关、假进度条：点了没反应的东西，比没有它更伤",
+      "**装之前必须 sandbox_run**：它在隔离 iframe 里真跑一遍（抓报错、看是不是白屏、核对你声明的能力），通过了才发通行证；install_tool **只认票**，没票会被直接拒绝",
+      "install_tool 里**可以不写 html**：省略时装的正是 sandbox_run 验过的那一份（推荐，省得把源码再抄一遍）；要写就必须与试跑那份**一字不差** —— 通行证绑的是源码指纹，抄歪一个字节票就作废，想改就改完再跑一次，别拿旧票去装新源码",
     ],
     body: [
       "# 单 HTML 工具编写标准",
@@ -191,6 +198,7 @@ export const SKILLS: AgentSkill[] = [
       "",
       "## 六、交付前自检",
       "",
+      "- [ ] **已经 sandbox_run 通过并拿到 ticket**（没票装不上，这不是可选项）",
       "- [ ] 单个 HTML，CSS/JS 全内联，无外部引用",
       "- [ ] id 合法、name 是中文短名、icon 在清单里",
       "- [ ] 需要存数据 → schema 已按 data-binding 技能声明",
@@ -390,6 +398,90 @@ export const SKILLS: AgentSkill[] = [
 
   /* ------------------------------------------------------------------ */
   {
+    id: "component-inject",
+    title: "注入组件（把工具嵌进宿主界面）",
+    summary: "写一个挂在某条待办上的组件：详情分区 / 详情头部按钮 / 行内按钮，只读当前那条",
+    rules: [
+      "注入组件**只读**：能调 task.get 读它挂着的那一条，没有任何写接口 —— 改待办只能走宿主的界面或你的日程动作",
+      "要先知道自己在哪条待办上：从 tool:context 里读 ctx.inject.taskId；不读它就成了每条待办上都一样的死面板",
+      "manifest 里必须申请 capabilities: [\"task\"] 才能调 task.get，没申请会被宿主拒绝（沙箱里当场就会报出来）",
+      "注入位置只有三种：detailSection（详情面板底部的常驻分区）、detailAction（详情头部按钮）、rowAction（列表行内按钮）",
+      "同一个组件挂在两条待办上是两个 iframe 实例、两份上下文，**不要**用全局变量记住「上一条」",
+      "按钮型的面板高度只有 320px 上下：注入组件是配角，别把详情面板顶满；需要更高就用 detailSection",
+    ],
+    body: [
+      "# 注入组件（把工具嵌进宿主界面）",
+      "",
+      "整页工具占工具区那一大片，和「在看哪条待办」没关系。",
+      "**注入组件**相反：它挂在**某一条待办**上，替那一條干活。",
+      "比如「给这条待办配一张参考图」、「这条待办要几步、画成甘特条」。",
+      "",
+      "## 一、声明挂在哪",
+      "",
+      "install_tool 时给 `injects`（一个工具可以同时声明多个位置）：",
+      "",
+      F + "json",
+      "injects: [",
+      '  { "kind": "detailSection", "label": "配图", "height": 180 },',
+      '  { "kind": "detailAction", "label": "配图" },',
+      '  { "kind": "rowAction", "label": "配图" }',
+      "]",
+      F,
+      "",
+      "| kind | 落在哪 | 备注 |",
+      "| --- | --- | --- |",
+      "| `detailSection` | 待办详情面板底部，常驻 | `height` 默认 180，区间 80–600 |",
+      "| `detailAction` | 详情面板头部的按钮 | 点开是一个约 320px 的面板 |",
+      "| `rowAction` | 列表每一行的悬停操作区 | 同上，点开是浮层 |",
+      "",
+      "## 二、拿到「我在替谁干活」",
+      "",
+      "宿主把上下文投进 `tool:context`，关键字段是 `ctx.inject`：",
+      "",
+      F + "js",
+      'if (m.type === "tool:context") {',
+      "  ctx = m.data;",
+      '  document.documentElement.dataset.theme = ctx.theme || "light";',
+      "  if (ctx.inject) {",
+      "    // ctx.inject.kind    —— 这次挂在哪个位置",
+      "    // ctx.inject.taskId  —— 挂着的那条待办的 id",
+      '    var t = await call("task.get", {});   // 读那一条（只读）',
+      "    render(t);",
+      "  }",
+      "}",
+      F,
+      "",
+      "⚠️ **不要假设 tool:context 一定在你发第一个请求之前到** —— 先渲染骨架，收到再填充。",
+      "",
+      "## 三、task.get 返回什么",
+      "",
+      "`{ id, title, note, done, important, myDay, dueDate, remindAt, listId, createdAt }`",
+      "",
+      "它**只返回挂载的那一条**，没有「给我某个 id 的待办」这种接口 ——",
+      "这是刻意的：注入组件不该有能力翻别人的待办。",
+      "两条被拒绝的常见原因：没申请 `task` 能力；或者它挂的那条刚被删了。",
+      "两种都要在界面上显示出来，不要静默。",
+      "",
+      "## 四、写法要点",
+      "",
+      "- 仍然是**单个自包含的 HTML**：CSS/JS 内联，不引 CDN（规则同 tool-authoring）。",
+      "- 深浅色照样要响应 `ctx.theme`。",
+      "- 关键状态写 `data-*`（这个项目的 e2e 靠它断言），比如",
+      "  `document.body.dataset.bindState = \"bound\"`。",
+      "- 自己要存东西照样用 `row.*`（私有表）或 `kv.*`（配置），与整页工具一致。",
+      "- **不许写假按钮**：面板里放一个点了没反应的按钮，比不放更糟。",
+      "",
+      "## 五、提交前",
+      "",
+      "和整页工具一样走 sandbox_run → 拿 ticket → install_tool。",
+      "沙箱会把它当作**挂在一示例待办上**来试跑：它会收到 `ctx.inject`，",
+      "`task.get` 会返回一条合成的待办 —— 所以「收到上下文之后怎么渲染」这段",
+      "在沙箱里是真被跑过的，不是纸上谈兵。",
+    ].join("\n"),
+  },
+
+  /* ------------------------------------------------------------------ */
+  {
     id: "tool-integration",
     title: "工具联动与图库",
     summary: "工具之间怎么传数据、怎么用工作台图库、怎么存自己的配置",
@@ -480,9 +572,47 @@ export const SKILLS: AgentSkill[] = [
   },
 ];
 
-/** 按 id 取技能 */
+/* ------------------------------------------------------------------ */
+/* 助手自己写的技能（存在库里，v18 的 core_agent_skills）              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 从库里读来的那几份。
+ *
+ * 为什么它是一份模块级缓存而不是每次读库：技能索引**每一轮对话都要拼进
+ * system prompt**，而库在浏览器 demo 下是 localStorage、在桌面下是 SQLite —
+ * 让每一轮都多一次往返不值得。反正写入方只有一个（add_skill / delete_skill
+ * 动作），写完调一次 refresh 就行。
+ */
+let CUSTOM: AgentSkill[] = [];
+
+/** 重新读库。失败就保留上一份 —— 少一条技能不至于让助手失忆 */
+export async function refreshSkills(): Promise<void> {
+  try {
+    const rows = await repo.fetchAgentSkills();
+    CUSTOM = rows
+      .filter((r) => r.source === "agent")
+      .map((r) => ({
+        id: r.id,
+        title: r.title,
+        summary: r.summary,
+        rules: r.rules,
+        body: r.body,
+        source: "agent" as const,
+      }));
+  } catch {
+    // 库没起来（浏览器 demo 的第一帧）时保持现状
+  }
+}
+
+/** 内置 + 助手自己写的。界面、提示词、read_skill 都看这一份 */
+export function allSkills(): Array<AgentSkill & { source?: "builtin" | "agent" }> {
+  return [...SKILLS.map((s) => ({ ...s, source: "builtin" as const })), ...CUSTOM];
+}
+
+/** 按 id 取技能（内置优先，再查助手自己写的） */
 export function skillById(id: string): AgentSkill | undefined {
-  return SKILLS.find((s) => s.id === id);
+  return SKILLS.find((s) => s.id === id) ?? CUSTOM.find((s) => s.id === id);
 }
 
 /**
@@ -492,9 +622,11 @@ export function skillById(id: string): AgentSkill | undefined {
  * 一句话是\"让具体怎么做只在需要时出现，模型对它的注意力反而更高\"。
  */
 export function skillPromptBlock(): string {
-  const parts = SKILLS.map((s) => {
+  const parts = allSkills().map((s) => {
     const rules = s.rules.map((r) => `- ${r}`).join("\n");
-    return `### ${s.id} · ${s.title}\n${s.summary}\n${rules}`;
+    // 标出来源：助手得知道哪几条是自己存的（也就知道哪几条可以被自己改掉）
+    const tag = s.source === "agent" ? "（你自己记的）" : "";
+    return `### ${s.id} · ${s.title}${tag}\n${s.summary}\n${rules}`;
   });
   return [
     "## 你掌握的技能（硬规则常驻，全文用 read_skill 取）",
@@ -507,12 +639,19 @@ export function skillPromptBlock(): string {
 }
 
 /** 技能清单（给界面展示用；与注入给模型的是同一份数据） */
-export function skillsDigest(): Array<{ id: string; title: string; summary: string; rules: number }> {
-  return SKILLS.map((s) => ({
+export function skillsDigest(): Array<{
+  id: string;
+  title: string;
+  summary: string;
+  rules: number;
+  source: "builtin" | "agent";
+}> {
+  return allSkills().map((s) => ({
     id: s.id,
     title: s.title,
     summary: s.summary,
     rules: s.rules.length,
+    source: s.source ?? "builtin",
   }));
 }
 

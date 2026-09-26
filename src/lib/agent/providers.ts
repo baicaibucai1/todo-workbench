@@ -33,6 +33,14 @@ export interface AgentProvider {
   desc: string;
   /** 申请 Key / 看文档的地方，界面上给一个链接 */
   docs: string;
+  /**
+   * 注册 / 申请 Key 的地方。**只有"会推荐新用户去的那一家"需要填**。
+   *
+   * 填了它，界面就能在「用户还没接任何 API」时给出一条能走的路
+   * （注册 → 建 Key → 粘回来），而不是一句"去设置里配"。
+   * 链接会过期，所以它与 docs 一样，全站只有这一份来源。
+   */
+  signup?: string;
   defaultBase: string;
   /** 常见站点，做成下拉方便切换（如百炼的国内/新加坡） */
   basePresets: Array<{ label: string; value: string }>;
@@ -55,6 +63,19 @@ export interface AgentProvider {
    * 所以这里为 false 时只是少一条，不是少一条腿。
    */
   nativeTools: boolean;
+  /**
+   * 单次回复的 token 上限。
+   *
+   * **必须显式给**：不给就用服务端的默认值，而多数 OpenAI 兼容接口的默认
+   * 是 4096 —— 写一份 15K 字符的 HTML 要 6~8K token，正好卡在中间被截断。
+   * 症状很难认：模型"写了"、界面上也能看到半份源码，但代码块没有闭合，
+   * 于是提取不到 html，最后报一句「文件是空的」，谁也想不到是长度问题。
+   *
+   * 各家上限不同（DeepSeek 输出上限 8192、百炼 qwen 系列多是 8192），
+   * 所以这里取一个各家都接得住的值，而不是越大越好 ——
+   * 超过上限是 400，那是"整轮失败"，比截断还糟。
+   */
+  maxTokens?: number;
   /** 请求体定制。给的是标准 OpenAI 形状，需要改的地方自己加 */
   buildBody?: (o: {
     model: string;
@@ -108,6 +129,9 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     name: "Agnes AI",
     desc: "全模态，OpenAI 风格接口。agnes-3.0-flash 是 Agent / 编程向的型号",
     docs: "https://wiki.agnes-ai.com/",
+    // 引导新用户去的那一个入口：填它不是广告，而是回答"没 Key 的人第一步点哪儿"。
+    // 平台域名与 help 文档不同 —— 注册在 platform.，文档在 wiki.。
+    signup: "https://platform.agnes-ai.com",
     defaultBase: "https://apihub.agnes-ai.com/v1",
     basePresets: [
       { label: "国际站", value: "https://apihub.agnes-ai.com/v1" },
@@ -122,6 +146,7 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     ],
     defaultModel: "agnes-3.0-flash",
     editableModel: true,
+    maxTokens: 8192,
     auth: (key) => ({ Authorization: `Bearer ${key}` }),
     nativeTools: true,
   },
@@ -154,6 +179,7 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     ],
     defaultModel: "qwen-plus",
     editableModel: true,
+    maxTokens: 8192,
     auth: (key) => ({ Authorization: `Bearer ${key}` }),
     nativeTools: true,
   },
@@ -186,6 +212,7 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     ],
     defaultModel: "deepseek-v4-flash",
     editableModel: true,
+    maxTokens: 8192,
     auth: (key) => ({ Authorization: `Bearer ${key}` }),
     nativeTools: true,
   },
@@ -215,6 +242,7 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     models: [],
     defaultModel: "",
     editableModel: true,
+    maxTokens: 8192,
     auth: (key) => ({ Authorization: `Bearer ${key}` }),
     nativeTools: true,
   },
@@ -235,6 +263,19 @@ export function customProvider(): AgentProvider {
  */
 export function agentProvider(id: string | undefined): AgentProvider {
   return AGENT_PROVIDERS.find((p) => p.id === id) ?? customProvider();
+}
+
+/**
+ * 「还没接模型」时推荐的那一家。
+ *
+ * 它必须**自己填了 signup 才有资格** —— 推荐一个连注册地址都没登记的服务商，
+ * 等于把用户丢到搜索引擎面前。所以这里用代码守住这个约束，而不是靠人记得同步。
+ */
+export const RECOMMENDED_PROVIDER_ID = "agnes";
+
+export function recommendedProvider(): AgentProvider {
+  const p = agentProvider(RECOMMENDED_PROVIDER_ID);
+  return p.signup ? p : customProvider();
 }
 
 /** 计算真正要请求的地址。用户把完整端点粘进"接口地址"里也能用 */
@@ -300,6 +341,8 @@ export function buildChatBody(
     model: cfg.model,
     messages: o.messages,
     stream: o.stream,
+    // 显式给上限：不写就吃服务端默认（多数是 4096），写工具时会被悄悄截断
+    ...(p.maxTokens ? { max_tokens: p.maxTokens } : {}),
   };
   if (o.tools && o.tools.length) {
     body.tools = o.tools;

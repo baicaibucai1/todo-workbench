@@ -1,0 +1,45 @@
+{
+  "id": "pomodoro",
+  "name": "番茄钟",
+  "version": "1.0.0",
+  "description": "番茄工作法计时器：25 分钟专注，可改时长、暂停/继续/重置，完成即记入私有表，显示今日完成数",
+  "icon": "package",
+  "entry": "index.html",
+  "dbVersion": 1,
+  "author": "AI 助手",
+  "source": "user",
+  "schema": {
+    "tables": [
+      {
+        "name": "records",
+        "columns": [
+          {
+            "name": "id",
+            "type": "text",
+            "pk": true
+          },
+          {
+            "name": "minutes",
+            "type": "integer",
+            "default": 25
+          },
+          {
+            "name": "day",
+            "type": "text"
+          },
+          {
+            "name": "created_at",
+            "type": "text"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "day"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

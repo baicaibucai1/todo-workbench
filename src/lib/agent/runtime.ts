@@ -45,8 +45,9 @@ import {
   toolsForModel,
   toolSpec,
   withHtmlFallback,
+  unclosedHtmlFence,
 } from "./protocol";
-import { skillPromptBlock } from "./skills";
+import { skillPromptBlock, refreshSkills } from "./skills";
 import { agentConfigProblems, agentProvider } from "./providers";
 import type {
   AgentAction,
@@ -57,8 +58,15 @@ import type {
   AgentState,
 } from "./types";
 
-/** 一轮里最多执行多少步（模型回合数），见文件头 */
-const MAX_STEPS = 6;
+/**
+ * 一轮里最多执行多少步（模型回合数），见文件头。
+ *
+ * 8 而不是 6：写工具这条链的天然步数是「读技能（可能两三份）→ 试跑 → 装」，
+ * 中途只要试跑报一项问题就得再试一次，6 步会在**临门一脚**处截断
+ * （2026-09-24 真跑那次正好卡在第 6 步：票拿齐了却没轮到 install_tool）。
+ * 真跑不完也没关系 —— 步数用尽只是结束这一轮，用户可以再说一句继续。
+ */
+const MAX_STEPS = 8;
 
 /** 带进上下文的历史条数。够用且不会让请求体越来越大 */
 const HISTORY_LIMIT = 40;
@@ -71,6 +79,50 @@ const HISTORY_LIMIT = 40;
  */
 const REPAIRED_NOTE =
   "（提醒：你这次给的参数不是合法 JSON，宿主已自动修复并按修复结果执行。下次请把大段内容放进独立的代码块，不要塞进参数里。）";
+
+/**
+ * 一次回复被**输出长度上限掐断**时，回给模型的那句。
+ *
+ * ------------------------------------------------------------------
+ * 为什么必须回这一句
+ * ------------------------------------------------------------------
+ * 被掐断时模型自己**不知道**（它拿不到 finish_reason，只看到自己的上下文里
+ * 少了一截）。它以为话已经说完了，于是下一步就照着"已经写完"的前提往下走 ——
+ * 最典型的后果是拿着一份半截的 HTML 去 install_tool，宿主报「文件是空的」，
+ * 而它把这句读成"我参数写错了"，改完参数名原样再来一遍，又断在同一个地方。
+ * 2026-09-26 真机上就卡在这个循环里。
+ *
+ * 所以这句要做两件事：**告诉它断了**，以及**告诉它换一条路**（分段 write_file）。
+ * 只说前半句，它最常见的反应是"好的我重新写一遍" —— 那还是会断。
+ */
+function truncatedNotice(unclosed: boolean): string {
+  return unclosed
+    ? "（系统提示：你上一条回复**被输出长度上限掐断了** —— 那个 ```html 代码块没有闭合，我什么都没收到。" +
+        "别从头再写一遍（那样还是会断在同一个地方）：改用 write_file **分段**写进工作区 ——" +
+        "第一段正常写，之后每段带 append: true，每段写小一点、就接着上一段的最后一行写；" +
+        "整份写完之后再调 sandbox_run，只给 html_file 指向那个文件。）"
+    : "（系统提示：你上一条回复**被输出长度上限掐断了**，我收到的内容是不完整的。" +
+        "请**接着上一条的最后继续**，不要从头重写、也不要重复已经写过的部分。" +
+        "如果你正在写文件，改成用 write_file 分段写（第一段正常写，之后每段带 append: true），" +
+        "这样每一段都不会撞到长度上限。）";
+}
+
+/** 代码块没闭合时，附在动作结果前面的那句（与 truncatedNotice 是同一件事的两面） */
+const UNCLOSED_NOTE =
+  "（提醒：你这一条里的 ```html 代码块没有闭合 —— 源码写到一半就断了，所以这一步收到的是空源码。" +
+  "改用 write_file 分段写进工作区（后续段 append: true），再用 html_file 指过去。）";
+
+/** 这两个动作要收整份源码，所以"没闭合"这件事只对它们有意义 */
+function isSourceAction(name: string): boolean {
+  return name === "sandbox_run" || name === "install_tool";
+}
+
+function callNote(repaired: boolean | undefined, unclosed: boolean, name: string): string {
+  const parts: string[] = [];
+  if (repaired) parts.push(REPAIRED_NOTE);
+  if (unclosed && isSourceAction(name)) parts.push(UNCLOSED_NOTE);
+  return parts.join("\n");
+}
 
 /* ------------------------------------------------------------------ */
 /* 极简订阅式状态                                                       */
@@ -187,6 +239,9 @@ export async function ensureLoaded(): Promise<void> {
   if (state.loaded) return;
   if (loading) return loading;
   loading = (async () => {
+    // 助手自己存的技能要在拼第一句 system prompt 之前就位，
+    // 否则它"上一轮刚学会的规矩"这一轮就不在索引里 —— 那等于没学会。
+    await refreshSkills();
     let chats = await repo.fetchAgentChats();
     if (!chats.length) {
       // 全新库（或刚被清空）：先给一段空的。
@@ -291,6 +346,7 @@ export function buildSystemPrompt(c: SystemContext): string {
     "1. **对话**：回答用户关于这个工作台、关于他手头事情的问题。说人话，别绕。",
     "2. **按标准写工具**：用户想要一个小工具（记账、算料、生成某类图…）时，",
     "   你按单 HTML 工具的标准把它**写出来并装进工作台**，它会出现在侧边栏里。",
+    "   这是你的**工具箱**：写 → 沙箱试跑 → 拿通行证 → 提交安装，一步都不能跳。",
     "3. **建日程**：把用户说的\"明天下午三点提醒我\"变成工作台里真的会提醒的待办；",
     "   需要几步才能做完的，拆成子任务。",
     "",
@@ -345,6 +401,42 @@ export function buildSystemPrompt(c: SystemContext): string {
     "删除与覆盖不需要你主动问 —— 宿主会在你动手之前自动拦一次。你直接调就行，",
     "用户点了确认你才会真的执行。**他被拦下之后不要换个写法重试**：那不是绕过，",
     "是让他连点取消。要改就按他说的改。",
+    "",
+    "# 工具箱：写工具 / 写组件的完整流程",
+    "",
+    "你要交付的 HTML 是**机器批量产出的，没有人会在它落盘之前看一眼**，",
+    "所以这条路自带一道机器关。四步，顺序不能变：",
+    "",
+    "1. **写**：按技能 tool-authoring（整页工具）或 component-inject（嵌进待办详情的组件）",
+    "   写一份自包含的单 HTML。源码另起 ```html 代码块，别塞进参数。",
+    "2. **试跑**：调 `sandbox_run`。它在隔离 iframe 里**真跑一遍** —— 抓控制台报错、",
+    "   看界面是不是白屏、核对你声明的能力与它实际调用的桥接对不对得上。",
+    "   试跑**不落库**（row/kv 只记账、图库不真存），可以放心跑。",
+    "3. **拿票**：试跑通过才会返回一张 `ticket`。**没通过就没有票**，",
+    "   这时按返回的每一条问题改源码，改完重新跑 —— 不要试图绕过。",
+    "4. **提交**：调 `install_tool`，把 `ticket` 原样带上即可 —— **html 参数可以不写**，",
+    "   省略时装的正是第 2 步验过的那一份（推荐）。要写就必须与试跑那份一字不差。",
+    "",
+    "这道关在宿主里，不在你的自觉里：没票、票过期、或源码改过后票对不上，",
+    "install_tool 会被**直接拒绝**。所以：",
+    "",
+    "- 不要用\"我检查过了\"代替 sandbox_run —— 宿主只认票。",
+    "- 提交时别把源码重抄一遍：抄一遍就可能对不上票，不写 html 最省事也最稳。",
+    "- 源码改一个字节，旧票就作废；改完请重新试跑。",
+    "- 试跑报的每一条都要真改。**不许为了让检查通过而删掉报错的那段功能**：",
+    "  那等于交给用户一个缺一半的工具，而他会以为是你做不出来。",
+    "",
+    "# 工作区：你要交出文件时就写到这里",
+    "",
+    "你有一个自己的工作区目录（`write_file` / `read_file` / `list_files` / `delete_file`）。",
+    "调研报告、方案、整理好的清单、用户要的 markdown —— 都写进去，",
+    "**不要在对话里把长文整篇回贴一遍**（那会把他要看的东西挤走）。",
+    "",
+    "- path 是**相对工作区根目录**的相对路径，如 `报告/季度总结.md`；不许 `..`、不许绝对路径。",
+    "- 默认**不覆盖**已有文件。要覆盖就先 `read_file` 看一眼，再带 `overwrite: true`。",
+    "- 写完告诉用户文件在哪，别复述内容。他会自己打开看。",
+    "- 删文件会被拦下来问用户一次，不用你替他决定。",
+    "- 浏览器演示模式没有工作区，那时直接说明做不到，不要假装写成功了。",
     "",
     "# 这个工作台的结构（提到它们时不要说错）",
     "",
@@ -655,6 +747,8 @@ export async function send(text: string, host: AgentHost): Promise<void> {
   const granted = new Set<string>();
   const collected: AgentAction[] = [];
   let finalText = "";
+  /** 被掐断的那几段正文拼起来（见 truncatedNotice：断了之后是"接着写"，不是"重写"） */
+  let partialText = "";
 
   try {
     for (let step = 0; step < MAX_STEPS; step++) {
@@ -668,7 +762,25 @@ export async function send(text: string, host: AgentHost): Promise<void> {
         tools,
         signal: controller.signal,
         onDelta: (t) => emit({ streaming: state.streaming + t }),
+        /*
+         * 重试前必须把已经打出来的字清掉：一次 chat 要么整轮算数、要么一句
+         * 都不算，重试是原样重发。不清的话用户会看到"半句话 + 一个完整的
+         * 重述"，还会误以为模型精神不太稳定。
+         */
+        onRetry: (info) =>
+          emit({
+            streaming: "",
+            phase: `连接不稳，${Math.max(1, Math.round(info.waitMs / 1000))} 秒后自动重试（第 ${info.attempt}/${info.max} 次）…`,
+          }),
       });
+
+      // 这两件是一回事的两面，但模型要做的事不同：断了要"接着写"，
+      // 块没闭合要"换通道"。所以分开判、分开说。
+      const cut = !!res.truncated;
+      const unclosed = unclosedHtmlFence(res.text ?? "");
+      if (cut) {
+        emit({ phase: "上一轮被长度上限掐断了，正在让它接着写…", streaming: "" });
+      }
 
       /* ---- 通道一：原生工具调用 ---- */
       if (res.toolCalls.length) {
@@ -677,7 +789,7 @@ export async function send(text: string, host: AgentHost): Promise<void> {
           id: a.id,
           name: a.name,
           args: withHtmlFallback(a.name, a.args, res.text ?? ""),
-          note: a.repaired ? REPAIRED_NOTE : "",
+          note: callNote(a.repaired, unclosed, a.name),
         }));
 
         // 助手的这一轮回复必须进上下文（含 tool_calls），否则下面那些 role=tool
@@ -698,7 +810,18 @@ export async function send(text: string, host: AgentHost): Promise<void> {
 
         // 顺序要紧：tool 结果必须**紧跟**它的调用，中间不能插 user 消息 ——
         // 严格的服务端会判成"这个 tool 消息没有对应的调用"。
-        wire.push(...(await execute(calls, { asTool: true }, permissions, host, collected, controller.signal, granted)));
+        wire.push(
+          ...(await execute(
+            calls,
+            { asTool: true },
+            permissions,
+            host,
+            collected,
+            controller.signal,
+            granted,
+            () => settings,
+          )),
+        );
 
         if (parsed.errors.length) {
           wire.push({
@@ -706,6 +829,7 @@ export async function send(text: string, host: AgentHost): Promise<void> {
             content: `（系统提示：你上面有 ${parsed.errors.length} 个调用我看不懂 —— ${parsed.errors.join("；")}。请修正后重试。）`,
           });
         }
+        if (cut) wire.push({ role: "user", content: truncatedNotice(unclosed) });
         continue;
       }
 
@@ -716,13 +840,22 @@ export async function send(text: string, host: AgentHost): Promise<void> {
         id: "",
         name: a.name,
         args: withHtmlFallback(a.name, a.args, text),
-        note: a.repaired ? REPAIRED_NOTE : "",
+        note: callNote(a.repaired, unclosed, a.name),
       }));
 
       if (blockCalls.length) {
         wire.push({ role: "assistant", content: parsed.cleanText });
         wire.push(
-          ...(await execute(blockCalls, { asTool: false }, permissions, host, collected, controller.signal, granted)),
+          ...(await execute(
+            blockCalls,
+            { asTool: false },
+            permissions,
+            host,
+            collected,
+            controller.signal,
+            granted,
+            () => settings,
+          )),
         );
         if (parsed.errors.length) {
           wire.push({
@@ -730,6 +863,7 @@ export async function send(text: string, host: AgentHost): Promise<void> {
             content: `（系统提示：另外有几段我读不出来 —— ${parsed.errors.join("；")}。修好格式再来，或者直接说人话。）`,
           });
         }
+        if (cut) wire.push({ role: "user", content: truncatedNotice(unclosed) });
         continue;
       }
 
@@ -749,11 +883,24 @@ export async function send(text: string, host: AgentHost): Promise<void> {
         continue;
       }
 
+      /*
+       * 纯文本被掐断：**不能当成"答复完成"** —— 用户看到的是半句，而模型
+       * 以为自己说完了（它看不到 finish_reason）。让它接着写；步数用尽就
+       * 把已经攒下的那几段交出去，总比一句"没有返回内容"强。
+       */
+      if (cut && step < MAX_STEPS - 1) {
+        partialText += text;
+        wire.push({ role: "assistant", content: text });
+        wire.push({ role: "user", content: truncatedNotice(unclosed) });
+        continue;
+      }
+
       // 纯文本：这就是这一轮的答复
-      finalText = parsed.cleanText || text;
+      finalText = partialText ? partialText + text : parsed.cleanText || text;
       break;
     }
 
+    if (!finalText && partialText) finalText = partialText;
     if (!finalText && collected.length) {
       // 动作都做完了但模型没来得及说话：给一句兜底，别让用户看到空白气泡
       finalText = "";
@@ -824,6 +971,11 @@ async function execute(
   collected: AgentAction[],
   signal: AbortSignal,
   granted: Set<string>,
+  /**
+   * 当前设置。往下传给动作层 —— 沙箱的能力门要按**此刻**的设置判断，
+   * 不能拿一份启动时的快照（用户在设置里刚打开图库，试跑就该按"开着的"算）。
+   */
+  getSettings?: () => Record<string, string>,
 ): Promise<WireMessage[]> {
   const results: Array<{ id: string; content: string }> = [];
 
@@ -898,7 +1050,11 @@ async function execute(
     /* ---- 3. 真动手 ---- */
     const label = toolSpec(call.name)?.label ?? call.name;
     emit({ phase: `正在${label}…` });
-    const outcome: Outcome = await runAction(call.name, call.args, { permissions, host });
+    const outcome: Outcome = await runAction(call.name, call.args, {
+      permissions,
+      host,
+      ...(getSettings ? { settings: getSettings } : {}),
+    });
     collected.push(outcome.action);
     // note 是给模型看的（"你的参数我修过"），放最前面，免得被结果正文淹掉
     results.push({ id: call.id, content: call.note ? `${call.note}\n${outcome.content}` : outcome.content });

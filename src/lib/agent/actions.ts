@@ -27,19 +27,34 @@
  */
 
 import * as repo from "../repo";
+import * as workspace from "./workspace";
 import { listTools, toolTable } from "../tools";
 import {
   canInstallTools,
   installFromHtml,
   readInstalledManifest,
+  reinstallBundledTool,
   toolDir,
+  uninstallTool,
   writeToolSchema,
 } from "../toolStore";
+import { toolData } from "./toolData";
+import { callTool } from "./toolRuntime";
 import { validateToolSchema } from "../toolSchema";
 import { localInputToIso } from "../datetime";
 import { parseDisabledTools, SETTINGS } from "../settings";
-import { skillById, SKILLS } from "./skills";
+import { skillById, SKILLS, refreshSkills as skillStore } from "./skills";
 import { AGENT_TOOLS, isAskTool, toolSpec } from "./protocol";
+import { normalizeInjects } from "../extensions/types";
+import { runSandbox } from "./sandbox";
+import {
+  formatProblems,
+  normalizeHtml,
+  resolveTicket,
+  staticProblems,
+  verify,
+  type ToolCandidate,
+} from "./verifier";
 import type { AgentAction, AgentPermissions } from "./types";
 import type { Task } from "../../types";
 
@@ -56,6 +71,12 @@ export interface AgentHost {
 export interface ActionContext {
   permissions: AgentPermissions;
   host: AgentHost;
+  /**
+   * 当前设置。惰性取，因为**能力门要按此刻的设置判断** ——
+   * 用户在设置里打开图库的同一秒，沙箱就该按"图库开着"来试跑。
+   * 选填：单测里给不了，取不到就按空设置（能力一律不可用）处理。
+   */
+  settings?: () => Record<string, string>;
 }
 
 /** 一个动作的结果。action 给界面，content 是回给模型的原始结果 */
@@ -86,6 +107,20 @@ function bool(args: Record<string, unknown>, key: string): boolean {
   if (v === "true" || v === "1") return true;
   if (v === "false" || v === "0") return false;
   throw new Error(`参数 ${key} 应该是布尔值，收到的是 ${JSON.stringify(v)}`);
+}
+
+/**
+ * 读一个字符串数组（capabilities 之类）。
+ *
+ * 也接受"单个字符串"：模型不总是记得包一层数组，而为一个空壳格式问题
+ * 让用户白等一轮不值得。收下它，但只认字符串元素 —— 别的类型丢掉，
+ * 反正宿主那边还有一道白名单。
+ */
+function strList(args: Record<string, unknown>, key: string): string[] {
+  const v = args[key];
+  if (v === undefined || v === null) return [];
+  const raw = Array.isArray(v) ? v : [v];
+  return raw.filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter(Boolean);
 }
 
 /**
@@ -193,6 +228,129 @@ function gate(specName: string, ctx: ActionContext): void {
 }
 
 /* ------------------------------------------------------------------ */
+/* 源码从哪来                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 这一次的 HTML 源码。三个来源，从显式到兜底：
+ *   1. `args.html` —— 模型直接给（短文件可以，长文件别走这条）
+ *   2. `args.html_file` —— **工作区里的文件**，长文件的正路（分段 write_file 写进去）
+ *   3. 正文里的 ```html 代码块 —— 由 withHtmlFallback 事先填进 args.html
+ *
+ * ------------------------------------------------------------------
+ * 为什么第 2 条值得单独做一条路
+ * ------------------------------------------------------------------
+ * 一次回复的输出有长度上限。一份几千行的工具 HTML 一回复写不完，模型写到
+ * 一半被掐断 —— 那个代码块是不闭合的，宿主拿不到任何源码，只能回一句
+ * 「没有拿到源码」；模型以为是自己写错了，原样再来一遍，又断在同一个地方。
+ * 2026-09-26 真机上就卡在这个循环里（install_tool 报「文件是空的」）。
+ *
+ * 分段写进工作区之后按路径取，模型**任何一步都不需要一次吐出整份源码**，
+ * 这个死循环就断了。
+ */
+async function resolveSourceHtml(
+  args: Record<string, unknown>,
+  settings: Record<string, string>,
+): Promise<{ ok: true; html: string } | { ok: false; message: string }> {
+  const inline = typeof args.html === "string" ? args.html : "";
+  if (inline.trim()) return { ok: true, html: inline };
+
+  const file = typeof args.html_file === "string" ? args.html_file.trim() : "";
+  if (!file) return { ok: false, message: "" }; // 调用方自己给那句"怎么做才对"
+
+  const bad = workspace.checkRelPath(file);
+  if (bad) return { ok: false, message: `html_file「${file}」不能用：${bad}` };
+
+  const r = await workspace.readWorkspaceFile(settings, file);
+  if (!r.ok) {
+    return {
+      ok: false,
+      message:
+        `工作区里读不到「${file}」：${r.message}。先用 write_file 把它写进去` +
+        `（太长就分段：第一段正常写，之后每段带 append: true），写完再来这一步`,
+    };
+  }
+  if (!r.content.trim()) {
+    return { ok: false, message: `工作区里的「${file}」是空的 —— 文件还没写完，接着用 write_file 带 append: true 补完再来` };
+  }
+  return { ok: true, html: r.content };
+}
+
+/**
+ * 当场把一份候选验一遍（静态 + 沙箱），返回过没过与完整报告。
+ *
+ * ------------------------------------------------------------------
+ * 什么时候会用到它
+ * ------------------------------------------------------------------
+ * install_tool 带的源码与票上那份对不上时。这个局面在真机上很常见：
+ * 模型在 install 那一步**又把整份源码贴了一遍**（它总觉得得给点什么），
+ * 而重贴一遍几乎必然与验过的那份有出入 —— 结尾多个空行、schema 键顺序变了、
+ * 或者它顺手改了一句。
+ *
+ * 以前的做法是直接拒绝，于是它只能重跑一轮；而重跑一轮它还是会再贴一遍，
+ * 于是又对不上（2026-09-26 真跑：分段写完、沙箱通过，最后一步就卡死在这）。
+ *
+ * 现在改成"**那就当场再验一遍**"：过了就装新的这一份（它此刻的意图），
+ * 不过就照旧拒绝并把问题列出来。通行证这道门并没有被绕过去 ——
+ * 没有票、票不存在、票过期、id 对不上，一律照旧拒绝；
+ * 这里做的是**把验证补做一次**，装上去的东西仍然是当场验过的。
+ */
+async function verifyNow(
+  c: ToolCandidate,
+  settings: Record<string, string>,
+): Promise<{ ok: true } | { ok: false; detail: string; ran: boolean }> {
+  const pre = staticProblems(c).filter((p) => p.level === "error");
+  if (pre.length) return { ok: false, ran: false, detail: formatProblems(staticProblems(c)) };
+
+  const report = await runSandbox({
+    id: c.id,
+    html: c.html,
+    ...(c.schema ? { schema: c.schema } : {}),
+    capabilities: c.capabilities ?? [],
+    injects: c.injects ?? [],
+    settings,
+  });
+  const v = verify(c, report);
+  if (!v.ok) return { ok: false, ran: !!report.ran, detail: formatProblems(v.problems) };
+
+  /*
+   * 沙箱没真跑起来时，这次"补验"其实只过了静态体检 —— 那不算验过。
+   *
+   * 这不是洁癖：模型在 install 这一步贴出来的源码**可能正是被长度掐断的那
+   * 一份**（半截的 HTML 照样能通过静态体检），这时候放行等于把坏文件装上去。
+   * 判定权交给"有没有真的跑起来"，环境说了算，不由我们放宽。
+   */
+  if (!report.ran) {
+    return {
+      ok: false,
+      ran: false,
+      detail: "当前环境跑不了 iframe 沙箱，所以这一步只能做静态体检 —— 那不足以判定这份新源码是好的。",
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * 「没有拿到源码」那一句。
+ *
+ * 关键在**不能只说"缺参数"**：一句「缺少参数 html」会让模型以为是自己参数名
+ * 写错了，于是它去改参数名、改缩进、把 JSON 重排一遍 —— 真正的解法却是换一条
+ * 通道。所以这句话里必须把它能走的三条路都点名。
+ *
+ * （"你写到一半被掐断"那一种是另一回事，由 runtime 的 UNCLOSED_NOTE 说 ——
+ *  那边拿得到正文全文，才判得出代码块有没有闭合。）
+ */
+function missingSourceHint(): string {
+  return (
+    "没有拿到源码：这一条里既没有 html 参数、也没有 html_file、正文里也没有 ```html 代码块。" +
+    "三条路选一条 —— ① 源码不长：另起一个 ```html 代码块把**整份**源码贴出来（别只贴片段，" +
+    "也别写成 ```html 之外的语言标记）；② 源码长、一次写不完：先 write_file 分段写进工作区" +
+    "（第一段正常写，之后每段带 append: true），再调 sandbox_run 只给 html_file 指过去；" +
+    "③ id / name / schema / capabilities 仍然放在参数里。"
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* 分发                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -260,6 +418,267 @@ const HANDLERS: Record<string, Handler> = {
       // 全文原样回给模型 —— 这就是"按需取全文"的全部实现
       content: skill.body,
     };
+  },
+
+  /*
+   * ------------------------------------------------------------------
+   * 助手自己写技能
+   * ------------------------------------------------------------------
+   * 为什么要这道门拦"每条规则要有后果"：常驻索引每一轮都要消耗注意力，
+   * 一条只写"要注意格式"的规则等于占了位置却什么也没说。
+   * 让它在写的时候就补上"违反了会怎样"，这条规则才算成立 ——
+   * 而"写了但没用"是最难察觉的一类浪费。
+   */
+  async add_skill(args) {
+    const id = str(args, "id", true);
+    const title = str(args, "title", true);
+    const summary = str(args, "summary", true);
+    const body = str(args, "body", true);
+    const rawRules = Array.isArray(args.rules) ? args.rules : [];
+    const rules = rawRules
+      .filter((r): r is string => typeof r === "string")
+      .map((r) => r.trim())
+      .filter(Boolean);
+
+    if (!/^[a-z][a-z0-9-]{1,31}$/.test(id)) {
+      const msg = "技能 id 只能用小写字母、数字和连字符（2–32 字符，字母开头）";
+      return { action: { tool: "add_skill", args, ok: false, summary: msg, error: msg }, content: msg };
+    }
+    // 内置那几份是代码，助手无权覆盖（覆盖了等于把"怎么写工具"的标准改了）
+    if (SKILLS.some((s) => s.id === id)) {
+      const msg = `「${id}」是内置技能，改不了。换一个 id，或者写一条新规矩`;
+      return { action: { tool: "add_skill", args, ok: false, summary: msg, error: msg }, content: msg };
+    }
+    if (!rules.length) {
+      const msg = "至少要有一条 rules —— 空规则占着常驻索引却什么也没说";
+      return { action: { tool: "add_skill", args, ok: false, summary: msg, error: msg }, content: msg };
+    }
+
+    await repo.upsertAgentSkill({ id, title, summary, rules, body });
+    await skillStore();
+    const msg = `已记下《${title}》（${rules.length} 条规则，以后每轮都会带上）`;
+    return {
+      action: { tool: "add_skill", args, ok: true, summary: msg, detail: rules.map((r) => `· ${r}`).join("\n") },
+      content: `${msg}。要改它就用同一个 id 再写一次；不要了就调 delete_skill。`,
+    };
+  },
+
+  async delete_skill(args) {
+    const id = str(args, "id", true);
+    if (SKILLS.some((s) => s.id === id)) {
+      const msg = `「${id}」是内置技能，删不掉（那是写工具的标准，删了你会开始写出装不上的工具）`;
+      return { action: { tool: "delete_skill", args, ok: false, summary: msg, error: msg }, content: msg };
+    }
+    const ok = await repo.deleteAgentSkill(id);
+    if (!ok) {
+      const msg = `没有 id 为「${id}」的技能（可能已经删过了）`;
+      return { action: { tool: "delete_skill", args, ok: false, summary: msg, error: msg }, content: msg };
+    }
+    await skillStore();
+    const msg = `已删掉技能「${id}」`;
+    return { action: { tool: "delete_skill", args, ok: true, summary: msg }, content: msg };
+  },
+
+  /* ------------------------- 操作已装的工具 ------------------------- */
+
+  async call_tool(args) {
+    const toolId = str(args, "tool_id", true);
+    const command = str(args, "command", true);
+    const params = (args.params ?? {}) as Record<string, unknown>;
+    const r = await callTool(toolId, command, params);
+    const name = listTools().find((t) => t.id === toolId)?.name ?? toolId;
+    if (!r.ok) {
+      return {
+        action: { tool: "call_tool", args, ok: false, summary: `${name}：${r.message}`, error: r.message },
+        content: r.message ?? "工具没有执行这条命令",
+      };
+    }
+    const detail = r.data === undefined ? "" : JSON.stringify(r.data, null, 1);
+    return {
+      action: {
+        tool: "call_tool",
+        args,
+        ok: true,
+        summary: `已让${name}执行「${command}」`,
+        detail,
+      },
+      content: `「${name}」执行了「${command}」${detail ? `，返回：${detail}` : "（没有返回值）"}。`,
+    };
+  },
+
+  async uninstall_tool(args, ctx) {
+    const id = str(args, "id", true);
+    const tool = listTools().find((t) => t.id === id);
+    if (!tool) {
+      const msg = `没有 id 为「${id}」的工具。先用 list_tools 看看都有什么`;
+      return { action: { tool: "uninstall_tool", args, ok: false, summary: msg, error: msg }, content: msg };
+    }
+    try {
+      const msg = await uninstallTool(tool);
+      await ctx.host.reloadTools();
+      return {
+        action: { tool: "uninstall_tool", args, ok: true, summary: `已卸载「${tool.name}」`, detail: msg },
+        content: `已卸载「${tool.name}」。${msg}`,
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { action: { tool: "uninstall_tool", args, ok: false, summary: msg, error: msg }, content: msg };
+    }
+  },
+
+  async reinstall_tool(args, ctx) {
+    const id = str(args, "id", true);
+    try {
+      await reinstallBundledTool(id);
+      await ctx.host.reloadTools();
+      const msg = `已把「${id}」恢复成出厂版本`;
+      return { action: { tool: "reinstall_tool", args, ok: true, summary: msg }, content: msg };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { action: { tool: "reinstall_tool", args, ok: false, summary: msg, error: msg }, content: msg };
+    }
+  },
+
+  async tool_data(args) {
+    const toolId = str(args, "tool_id", true);
+    const table = str(args, "table", true);
+    const op = str(args, "op", true) as "select" | "count" | "insert" | "delete";
+    if (!["select", "count", "insert", "delete"].includes(op)) {
+      const msg = `op 只能是 select / count / insert / delete，收到的是「${op}」`;
+      return { action: { tool: "tool_data", args, ok: false, summary: msg, error: msg }, content: msg };
+    }
+    const tool = listTools().find((t) => t.id === toolId);
+    if (!tool) {
+      const msg = `没有 id 为「${toolId}」的工具`;
+      return { action: { tool: "tool_data", args, ok: false, summary: msg, error: msg }, content: msg };
+    }
+
+    const r = await toolData(tool, table, op, {
+      values: (args.values ?? {}) as Record<string, unknown>,
+      id: str(args, "id"),
+      limit: Number(args.limit) || 0,
+    });
+    if (!r.ok) {
+      return {
+        action: { tool: "tool_data", args, ok: false, summary: r.message ?? "失败", error: r.message },
+        content: r.message ?? "失败",
+      };
+    }
+    const head = op === "count" ? `共 ${r.count} 条` : op === "select" ? `读到 ${r.count} 行` : `已写入/删除 ${r.affected} 行`;
+    const detail =
+      op === "select" && r.rows
+        ? JSON.stringify(r.rows.slice(0, 20), null, 1)
+        : "";
+    return {
+      action: { tool: "tool_data", args, ok: true, summary: `${tool.name} · ${table}：${head}`, detail },
+      content: op === "select" && r.rows ? `${head}：\n${JSON.stringify(r.rows)}` : head,
+    };
+  },
+
+  /* ---------------------------- 工作区（文件） ---------------------------- */
+
+  async write_file(args, ctx) {
+    const path = str(args, "path", true);
+    const content = str(args, "content", true);
+    const overwrite = bool(args, "overwrite");
+    const append = bool(args, "append");
+    const summary = str(args, "summary");
+    const settings = ctx.settings?.() ?? {};
+
+    const r = await workspace.writeWorkspaceFile(settings, path, content, overwrite, append);
+    if (!r.ok) {
+      return {
+        action: { tool: "write_file", args, ok: false, summary: `没写成：${r.message}`, error: r.message },
+        content: `没写成：${r.message}`,
+      };
+    }
+    const name = path.split("/").pop() || path;
+    const verb = append ? "已接着写" : "已写";
+    const msg = summary ? `${verb}《${summary}》→ ${name}` : `${verb} ${name}`;
+    return {
+      action: {
+        tool: "write_file",
+        args,
+        ok: true,
+        summary: msg,
+        detail: `${r.path}\n本次 ${content.length} 字符，文件共 ${r.total} 字符`,
+      },
+      content: [
+        `${msg}。完整路径：${r.path}，文件现有 ${r.total} 字符。`,
+        append
+          ? "这是追加的那一段。文件没写完就**继续写下一段**（还是 append: true）；写完了再去 sandbox_run / 安装。"
+          : "",
+        "告诉用户可以在「工作区」里打开它，别把整份内容再贴一遍。",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    };
+  },
+
+  async read_file(args, ctx) {
+    const path = str(args, "path", true);
+    const settings = ctx.settings?.() ?? {};
+    const r = await workspace.readWorkspaceFile(settings, path);
+    if (!r.ok) {
+      return {
+        action: { tool: "read_file", args, ok: false, summary: r.message, error: r.message },
+        content: r.message,
+      };
+    }
+    return {
+      action: {
+        tool: "read_file",
+        args,
+        ok: true,
+        summary: `已读回 ${path}（${r.content.length} 字符）`,
+        detail: r.content.slice(0, 4000),
+      },
+      content: r.content,
+    };
+  },
+
+  async list_files(_args, ctx) {
+    const settings = ctx.settings?.() ?? {};
+    const { root, files } = await workspace.listWorkspace(settings);
+    if (!root) {
+      return {
+        action: {
+          tool: "list_files",
+          args: _args,
+          ok: false,
+          summary: "这里没有工作区",
+          error: workspace.NO_WORKSPACE_MSG,
+        },
+        content: workspace.NO_WORKSPACE_MSG,
+      };
+    }
+    const lines = files.length
+      ? files.map((f) => `· ${f.path}${f.isDir ? "/" : `（${f.size ?? 0} 字节）`}`).join("\n")
+      : "（还是空的，你还没写过东西）";
+    return {
+      action: {
+        tool: "list_files",
+        args: _args,
+        ok: true,
+        summary: `工作区里有 ${files.length} 个条目`,
+        detail: lines,
+      },
+      content: `工作区：${root}\n${lines}`,
+    };
+  },
+
+  async delete_file(args, ctx) {
+    const path = str(args, "path", true);
+    const settings = ctx.settings?.() ?? {};
+    const r = await workspace.deleteWorkspaceFile(settings, path);
+    if (!r.ok) {
+      return {
+        action: { tool: "delete_file", args, ok: false, summary: r.message, error: r.message },
+        content: r.message,
+      };
+    }
+    const msg = `已删掉工作区里的 ${path}`;
+    return { action: { tool: "delete_file", args, ok: true, summary: msg }, content: msg };
   },
 
   /* ------------------------------- 工具 ------------------------------- */
@@ -352,11 +771,228 @@ const HANDLERS: Record<string, Handler> = {
     };
   },
 
+  /*
+   * 沙箱试跑。
+   *
+   * 它是 install_tool 的**前置动作**，也是"验证通过才准提交"那道门的唯一发票口。
+   * 这里刻意不做权限门：试跑不写任何东西（不落盘、不落库），
+   * 把它挡在权限后面只会让"先看看行不行"这条最安全的路也走不通。
+   */
+  async sandbox_run(args, ctx) {
+    const id = str(args, "id", true);
+    /*
+     * 源码拿不到时，报错要能照着做。
+     *
+     * 一句「缺少参数 html」会让模型以为是自己参数写错了，于是它去改参数名、
+     * 改缩进、把 JSON 重排一遍 —— 而真正的解法是**换一条通道**
+     * （```html 代码块，或者 write_file 分段 + html_file）。
+     * 2026-09-24 真跑那次耗在第一轮，2026-09-26 那次耗在"它被长度掐断、
+     * 却以为自己写完了"，两条都是同一类：它不知道该换路。
+     */
+    const src = await resolveSourceHtml(args, ctx.settings?.() ?? {});
+    if (!src.ok) {
+      const msg = src.message || "没有拿到源码";
+      return {
+        action: { tool: "sandbox_run", args, ok: false, summary: msg, error: msg },
+        content: src.message ? msg : missingSourceHint(),
+      };
+    }
+    const html = src.html;
+    const name = str(args, "name");
+    const capabilities = strList(args, "capabilities");
+    const injects = normalizeInjects(args.injects);
+    // schema 原样留着（不在这先校验）：验证器要拿"有没有声明"跟源码里的
+    // row.* 调用对账，提前判成非法反而会漏掉那条一致性检查
+    const candidate: ToolCandidate = {
+      id,
+      name,
+      html,
+      ...(has(args, "schema") ? { schema: args.schema } : {}),
+      capabilities,
+      injects,
+    };
+
+    // 静态体检先过：源码里引了 CDN、越权碰宿主这类问题**不必**跑起来就知道，
+    // 让模型先改完再跑，省一轮等待（沙箱有超时，跑一次要好几秒）
+    const pre = staticProblems(candidate).filter((p) => p.level === "error");
+    if (pre.length) {
+      const detail = formatProblems(staticProblems(candidate));
+      const msg = `静态体检没过（${pre.length} 项），所以没有试跑，也没有发通行证`;
+      return {
+        action: {
+          tool: "sandbox_run",
+          args,
+          ok: false,
+          summary: msg,
+          error: msg,
+          detail,
+        },
+        content: [
+          msg + "：",
+          detail,
+          "照着每一条改完源码，**重新调一次 sandbox_run**（参数里的源码要和你接下来要装的那份一字不差）。",
+        ].join("\n"),
+      };
+    }
+
+    const report = await runSandbox({
+      id,
+      html,
+      ...(has(args, "schema") ? { schema: args.schema } : {}),
+      capabilities,
+      injects,
+      settings: ctx.settings?.() ?? {},
+    });
+    const verdict = verify(candidate, report);
+
+    const detail = [
+      `试跑：${report.ran ? `${report.elapsedMs ?? 0} ms` : `没有跑起来（${report.reason ?? ""}）`}`,
+      `渲染：${report.rendered ? "有可见内容" : "空白"}`,
+      `桥接调用：${Object.keys(report.ops).length ? Object.entries(report.ops).map(([k, v]) => `${k}×${v}`).join("、") : "（没有）"}`,
+      ...(verdict.problems.length ? ["", formatProblems(verdict.problems)] : []),
+      ...(verdict.ticket ? ["", `通行证：${verdict.ticket}`, "把它原样带进 install_tool 的 ticket 参数。"] : []),
+    ].join("\n");
+
+    if (!verdict.ok || !verdict.ticket) {
+      const blocking = verdict.problems.filter((p) => p.level === "error");
+      const msg = `沙箱没通过（${blocking.length} 项问题），没有发通行证`;
+      return {
+        action: { tool: "sandbox_run", args, ok: false, summary: msg, error: msg, detail },
+        content: [msg + "。完整报告：", detail, "改完源码重新调 sandbox_run，通过了才有票装。"].join("\n"),
+      };
+    }
+
+    return {
+      action: {
+        tool: "sandbox_run",
+        args,
+        ok: true,
+        summary: `沙箱通过${report.ran ? "" : "（仅静态：这个环境跑不了 iframe）"}：${name || id}`,
+        detail,
+      },
+      content: [
+        "沙箱通过，已发通行证。接下来调 install_tool，参数：",
+        `  id: ${id}`,
+        `  name: ${name || id}`,
+        `  ticket: ${verdict.ticket}`,
+        has(args, "schema") ? "  schema: 与本次试跑完全一致" : "",
+        capabilities.length ? `  capabilities: ${JSON.stringify(capabilities)}` : "",
+        injects.length ? `  injects: ${JSON.stringify(injects)}` : "",
+        "  html: **可以不写** —— 省略时装的正是这一次验过的那份（推荐）；" +
+          "要写就必须与本次试跑那份一字不差，差一个字节票就作废。",
+        report.ran ? "" : "⚠️ 这个环境没有可执行的 iframe，只过了静态体检；装好之后请提醒用户打开看一眼。",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    };
+  },
+
   async install_tool(args, ctx) {
     const id = str(args, "id", true);
     const name = str(args, "name", true);
-    const html = str(args, "html", true);
+    /*
+     * html **刻意不设为必填**：省略时装的会是 sandbox_run 那次验过的那份，
+     * 这比让模型把整份源码再抄一遍更可靠（抄一遍就可能对不上票）。
+     *
+     * 但 html_file 是**显式指定**，指定了就必须读到 —— 它都指名了要装哪个文件，
+     * 读不到还默默装"验过的那份"，那是替它换了个东西装上去，比报错坏得多。
+     */
+    const src = await resolveSourceHtml(args, ctx.settings?.() ?? {});
+    if (!src.ok && src.message) {
+      const msg = `没有装：${src.message}`;
+      return {
+        action: { tool: "install_tool", args, ok: false, summary: msg, error: src.message },
+        content: msg,
+      };
+    }
+    const html = src.ok ? src.html : "";
     const overwrite = bool(args, "overwrite");
+    const capabilities = strList(args, "capabilities");
+    const injects = normalizeInjects(args.injects);
+
+    /*
+     * 通行证门。**放在最前面**：没验过就装等于把"装上去打不开"留给用户去发现。
+     *
+     * 这道门不写在提示词里的原因与另外几道确认门一样 —— 提示词只是概率，
+     * 上下文一长模型就会跳过；而"没验过的代码落到用户磁盘上"这件事
+     * 不该靠概率。票绑着源码指纹，所以它也不接受"验一份、装另一份"。
+     */
+    const candidate: ToolCandidate = {
+      id,
+      name,
+      html,
+      ...(has(args, "schema") ? { schema: args.schema } : {}),
+      capabilities,
+      injects,
+    };
+    const gateResult = resolveTicket(str(args, "ticket"), candidate);
+    const gateMsg = gateResult.ok ? "" : gateResult.message;
+
+    /*
+     * 源码（或 schema / 能力 / 注入）与票对不上时，**当场把新的这份再验一遍**。
+     *
+     * 直接拒绝是可证的、但它会制造一个死循环：模型在 install 这一步几乎总是
+     * 重贴一遍源码，重贴就必然与验过的那份有出入，于是每轮都卡在同一句报错上
+     * （2026-09-26 真跑：卡在最后一步）。补做一次验证既保住了
+     * "装的一定是验过的"这条底线，也让这一步能往前走。
+     *
+     * 补验失败时**不**悄悄改装票里那份 —— 那等于替它换了个东西装上去。
+     * 如实报出来，让它自己决定：改完重跑，或者去掉 html 装验过的那份。
+     */
+    let reverifyNote = "";
+    let chosen: ToolCandidate | null = gateResult.ok ? gateResult.candidate : null;
+    if (!gateResult.ok && gateResult.code === "TICKET_MISMATCH" && html.trim()) {
+      const re = await verifyNow(candidate, ctx.settings?.() ?? {});
+      if (re.ok) {
+        chosen = { ...candidate, html: normalizeHtml(candidate.html ?? "") };
+        reverifyNote =
+          "（你这次给的源码与通行证上那份不同，我按**新的这份**当场重新验了一遍，" +
+          "通过了才装。以后这一步可以不给 html —— 那装的就是验过的那一份。）";
+      } else {
+        const msg = re.ran
+          ? `没有装：${gateMsg}；按新的这份重新验了一遍，没通过`
+          : `没有装：${gateMsg}；这一步想当场补验，但当前环境跑不了沙箱，所以没有放行`;
+        return {
+          action: {
+            tool: "install_tool",
+            args,
+            ok: false,
+            summary: msg,
+            error: msg,
+            detail: re.detail,
+          },
+          content: [
+            msg + "。" + (re.ran ? "问题如下：" : re.detail),
+            re.ran ? re.detail : "",
+            "两条路：① 照着上面改完源码，重新 sandbox_run 拿新票再装；" +
+              "② 这一步**不给 html**（也不给 html_file），那装的就是上一次验过的那一份 —— 这是最省事的一条。",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        };
+      }
+    }
+
+    if (!chosen) {
+      const msg = `没有装：${gateMsg}`;
+      return {
+        action: {
+          tool: "install_tool",
+          args,
+          ok: false,
+          summary: msg,
+          error: gateMsg,
+          detail:
+            "流程是：写源码 → sandbox_run（拿 ticket）→ install_tool（带上 ticket）。" +
+            "装的就是 sandbox_run 验过的那一份，所以 install_tool 里可以不写 html。",
+        },
+        content:
+          msg + "。请先调 sandbox_run 把这份源码验一遍（源码另起 ```html 代码块），" +
+          "拿到 ticket 后再调 install_tool（带上 ticket 即可，不必再写一遍源码）。",
+      };
+    }
+    const { html: htmlToInstall, schema: schemaFromTicket, capabilities: capsFromTicket, injects: injectsFromTicket } =
+      chosen;
 
     // 图标：不在白名单里就退回 package，并且**在结果里说明**。
     // 不报错的原因：图标是装饰，为一个装饰让整件事失败不值得；
@@ -373,7 +1009,9 @@ const HANDLERS: Record<string, Handler> = {
     // schema 自己先校验一遍：installFromHtml 内部是**静默丢掉**不合法的 schema
     // （对界面导入来说那是对的取舍），但助手这条路上，静默丢掉意味着
     // "它以为绑好了表、其实没有" —— 那必须报出来。
-    const schemaRaw = args.schema;
+    // 注意取的是**票里那份**：没传 html 时，schema / capabilities / injects 都以
+    // 试跑那次为准，否则会出现"按 A 建的索引、装的却是 B"
+    const schemaRaw = has(args, "schema") ? args.schema : schemaFromTicket;
     let schema: ReturnType<typeof validateToolSchema> = null;
     if (schemaRaw !== undefined && schemaRaw !== null) {
       schema = validateToolSchema(id, schemaRaw);
@@ -408,10 +1046,12 @@ const HANDLERS: Record<string, Handler> = {
     const { manifest, replaced } = await installFromHtml({
       id,
       name,
-      html,
+      html: htmlToInstall,
       description: str(args, "description") || undefined,
       icon,
       schema: schema ?? undefined,
+      capabilities: capsFromTicket,
+      injects: injectsFromTicket,
       author: "AI 助手",
       overwrite,
     });
@@ -436,16 +1076,29 @@ const HANDLERS: Record<string, Handler> = {
           tableNames.length
             ? `数据表（打开这个工具时自动建好）：\n${tableNames.map((t) => `  · ${t}`).join("\n")}`
             : "数据表：没有声明（这个工具不存自己的数据）",
-        ].join("\n"),
+          manifest.capabilities?.length ? `能力：${manifest.capabilities.join("、")}` : "",
+          manifest.injects?.length
+            ? `注入位置：${manifest.injects.map((s) => s.label || s.kind).join("、")}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
       },
       content: [
+        reverifyNote,
         `${replaced ? "已更新" : "已安装"}工具 ${manifest.id}（${manifest.name}）。`,
         `目录：${dir}`,
         tableNames.length
           ? `它会用自己的私有表：${tableNames.join("、")}。这些表在这个工具**第一次被打开时**由宿主建好。`
           : "它没有声明私有表。",
+        manifest.injects?.length
+          ? `它还嵌进了宿主界面（${manifest.injects.map((s) => s.kind).join("、")}）：` +
+            "打开任意一条待办的详情就能看到它。"
+          : "",
         "可以再调 open_tool 把它打开给用户看。",
-      ].join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n"),
     };
   },
 
@@ -1071,6 +1724,57 @@ export async function describeConfirm(
   name: string,
   args: Record<string, unknown>,
 ): Promise<ConfirmRequest | null> {
+  /*
+   * 卸载工具。
+   *
+   * 目录一删，用户自己改过的那份源码也一起没了 —— 所以必须问。
+   * 卡上**写出工具名**（不是 id）：id 是英文的短串，看不出是哪个工具，
+   * 而"同意卸掉 pomodoro"和"同意卸掉一个叫 pomodoro 的东西"是两回事。
+   */
+  if (name === "uninstall_tool") {
+    const id = typeof args.id === "string" ? args.id.trim() : "";
+    if (!id) return null;
+    const t = listTools().find((x) => x.id === id);
+    const label = t ? `「${t.name}」` : `「${id}」`;
+    const reason = typeof args.reason === "string" ? args.reason.trim() : "";
+    return {
+      question: `要卸掉工具 ${label} 吗？`,
+      detail: [
+        t ? "" : `（没找到 id 为 ${id} 的工具 —— 它可能是已经卸过了）`,
+        "卸载会删掉这个工具的目录，你自己改过的源码也一起没了。",
+        "它存的数据会留着，重新装回来还能接着用。",
+        "只是想更新它就别卸 —— install_tool 带 overwrite 是原地的。",
+        reason ? `助手说明的原因：${reason}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      affects: ["uninstall_tool"],
+      danger: true,
+    };
+  }
+
+  /*
+   * 删工作区里的文件。
+   *
+   * 与 delete_schedules 同源的理由：文件不在回收站里，删了就是没了，
+   * 而助手"整理一下"的手感很容易滑到删掉用户还没看的稿子。
+   * 卡上要写出**文件名**（不是"一个文件"）—— 让用户盲签一个名字
+   * 是最容易出事的一类确认。
+   */
+  if (name === "delete_file") {
+    const path = typeof args.path === "string" ? args.path.trim() : "";
+    if (!path) return null;
+    const reason = typeof args.reason === "string" ? args.reason.trim() : "";
+    return {
+      question: `要删掉工作区里的「${path}」吗？`,
+      detail: ["删了就找不回来了（工作区没有回收站）。", reason ? `助手说明的原因：${reason}` : ""]
+        .filter(Boolean)
+        .join("\n"),
+      affects: ["delete_file"],
+      danger: true,
+    };
+  }
+
   if (name === "delete_schedules") {
     const ids = idList(args.ids);
     // 空 ids 会在执行时报错，不必先弹一张确认卡
