@@ -4,6 +4,7 @@
   "version": "0.2.5",
   "type": "module",
   "description": "待办工作台 - 以 Microsoft To Do 为原型的可扩展桌面工作台",
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

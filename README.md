@@ -1,5 +1,7 @@
 # 待办工作台
 
+![版本](https://img.shields.io/badge/版本-v0.2.5-blue) ![许可](https://img.shields.io/badge/license-MIT-green) ![平台](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
+
 以 Microsoft To Do 为原型的 Windows 桌面应用，但定位不止于待办——
 它是一个**可扩展的工作台**：待办是核心，流程任务、特殊单号、图库、工具等作为模块插进来，
 全部共用同一个本地数据库。
@@ -12,17 +14,21 @@
 
 作者：**Sogapopo**
 
-> **当前版本：`v0.2.1`** —— [**下载安装包**](https://github.com/baicaibucai1/todo-workbench/releases/latest)
-> （**7.3 MB**，Windows x64）。桌面版已打包成功、实机跑通，采用 GNU 工具链
+> **当前版本：`v0.2.5`** —— [**下载安装包**](https://github.com/baicaibucai1/todo-workbench/releases/latest)
+> （**7.35 MB**，Windows x64）。桌面版已打包成功、实机跑通，采用 GNU 工具链
 > （MSYS2 + MinGW-w64），**全程不需要管理员权限，也不需要 2–4 GB 的 Visual Studio**。
+>
+> v0.2.0 起安装包不再携带工具，想要内置工具请同时下载 Release 里的
+> `todo-workbench-tools_0.2.5.zip`（29.6 MB），解压即用。
 >
 > **安装包里不再附带任何工具。** 上一版是 62.9 MB，其中 50.8 MB 是图片工具那份本地
 > AI 模型 —— 为一个多半用不上的能力，让每个用户、每次更新都多下几十兆。现在工具作为
-> Release 上的一份**独立资产**（`todo-workbench-tools_0.2.1.zip`，29.6 MB）提供：
+> Release 上的一份**独立资产**（`todo-workbench-tools_0.2.5.zip`，29.6 MB）提供：
 > 想要就下载解压，不想装就一个都不占。宿主本体因此回到 7 MB 量级。
 >
-> v0.2.1 修复了一个会让**全新数据库**卡死在「正在初始化工作台」的迁移缺陷
-> （v16 回填历史对话时，空表触发的 SQL 聚合陷阱）；装了 0.2.0 的请更新。
+> v0.2.5 的重点：模块能即插即用（可注入扩展 + 注册表）、AI 助手有了工具箱与
+> 自己的工作区，以及修掉了两个只有真跑才暴露的坑 —— 写工具时**输出被长度掐断**、
+> 提交时**通行证对不上**（详见 [Release 说明](https://github.com/baicaibucai1/todo-workbench/releases/tag/v0.2.5)）。
 
 ---
 
@@ -1066,7 +1072,21 @@ npm run build:status
 
 ## 许可与致谢
 
+**本项目采用 MIT 许可证**，详见 [`LICENSE`](LICENSE)。
+
+```
+Copyright (c) 2026 SODA
+```
+
+一句话概括：你可以自由使用、复制、修改、合并、发布、分发、再许可和销售本软件，
+包括商用；唯一的要求是**保留版权声明与许可声明**。软件按「原样」提供，不含任何担保。
+
 - 作者：Sogapopo
 - 应用图标与壁纸的生成 / 抓取脚本均在本仓库内，**不依赖第三方图标库**
 - 图片工具的本地 AI 推理基于 ONNX Runtime Web 与开源去背景模型，
   许可证文件随模型一同分发（`tools/image-crop/ai/LICENSE.txt`）
+- 桌面端依赖 [Tauri](https://tauri.app/)（MIT / Apache-2.0 双许可）与
+  [Rust 生态的若干 crate](../src-tauri/Cargo.toml)，各自的许可见其自身声明
+
+> 仓库里带了一份 `.tauri-key.pub`（**公钥**），那是桌面版校验更新包签名用的；
+> 对应的私钥 `.tauri-key` 已在 `.gitignore` 中，不在版本控制里。
