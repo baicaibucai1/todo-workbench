@@ -1,0 +1,38 @@
+{
+  "id": "kitchen-sink",
+  "name": "能力演示",
+  "version": "1.0.0",
+  "description": "工具接入契约的全功能样本：主题、上下文、当前待办、键值配置、私有表、图库、工具联动、三个注入位置",
+  "icon": "sparkles",
+  "entry": "index.html",
+  "dbVersion": 1,
+  "author": "示例",
+  "source": "user",
+  "capabilities": [
+    "gallery",
+    "task"
+  ],
+  "schema": {
+    "tables": [
+      {
+        "name": "notes",
+        "columns": [
+          { "name": "id", "type": "text", "pk": true },
+          { "name": "title", "type": "text" },
+          { "name": "body", "type": "text" },
+          { "name": "tag", "type": "text" },
+          { "name": "done", "type": "integer", "default": 0 },
+          { "name": "created_at", "type": "text" }
+        ],
+        "indexes": [
+          { "columns": ["created_at"] }
+        ]
+      }
+    ]
+  },
+  "injects": [
+    { "kind": "detailSection", "label": "能力演示", "height": 240 },
+    { "kind": "detailAction", "label": "演示" },
+    { "kind": "rowAction", "label": "演示" }
+  ]
+}

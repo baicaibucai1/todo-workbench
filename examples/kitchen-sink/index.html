@@ -1,0 +1,664 @@
+<!doctype html>
+<!--
+  能力演示（kitchen-sink）—— 工具接入契约的全功能样本。
+
+  它把宿主提供的每一种通道都**真跑一遍**，而不是列在界面上：
+    · tool:context / info   主题、驱动、表前缀、挂载位置
+    · task.get              读"我挂在它上面的那条待办"（注入时才有）
+    · kv.set / get / all / del
+    · schema.info / row.count / row.select / row.insert / row.update / row.delete
+    · gallery.list / get / put
+    · tools.list / open / send
+  它同时声明了三个注入位置，所以装上之后会同时出现在：
+    待办详情面板底部、详情头部按钮、列表行内按钮。
+
+  对照文档：docs/tool-authoring-and-injection.md
+-->
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>能力演示</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f6f4;
+        --card: #ffffff;
+        --text: #2c2a26;
+        --sub: #8a8578;
+        --line: #e6e2d8;
+        --accent: #6b5bd6;
+        --accent-soft: #efedfb;
+        --danger: #c0392b;
+        --ok: #2e7d5b;
+        --chip: #f0eee8;
+      }
+      html[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #1b1a18;
+        --card: #23211d;
+        --text: #e6e2d8;
+        --sub: #948e80;
+        --line: #3a3730;
+        --accent: #9b8ff5;
+        --accent-soft: #2b2740;
+        --danger: #e2796a;
+        --ok: #63c296;
+        --chip: #2e2b26;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { height: 100%; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.6 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      #app { height: 100%; overflow: auto; padding: 10px 12px; }
+
+      .bar {
+        display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+        margin-bottom: 8px;
+      }
+      .chip {
+        background: var(--chip); color: var(--sub);
+        border-radius: 999px; padding: 2px 9px; font-size: 11.5px;
+      }
+      .chip b { color: var(--text); font-weight: 600; }
+
+      details {
+        border: 1px solid var(--line); border-radius: 10px;
+        background: var(--card); margin-bottom: 7px; overflow: hidden;
+      }
+      summary {
+        cursor: pointer; padding: 8px 11px; font-weight: 600; font-size: 12.5px;
+        display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      }
+      summary::-webkit-details-marker { display: none; }
+      summary::after { content: "▾"; color: var(--sub); font-size: 11px; }
+      details[open] summary::after { content: "▴"; }
+      .body { padding: 0 11px 11px; }
+
+      .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 7px; }
+      .k { color: var(--sub); min-width: 62px; font-size: 12px; }
+      .v { font-weight: 600; word-break: break-all; }
+
+      input, select, textarea, button {
+        font: inherit; color: var(--text);
+        background: var(--card); border: 1px solid var(--line);
+        border-radius: 7px; padding: 4px 8px;
+      }
+      input, textarea { flex: 1; min-width: 90px; }
+      textarea { resize: vertical; min-height: 44px; width: 100%; }
+      button { cursor: pointer; }
+      button:hover { border-color: var(--accent); }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      button.ghost { background: transparent; }
+      button.danger { color: var(--danger); border-color: var(--danger); }
+      button:disabled { opacity: .45; cursor: not-allowed; }
+
+      .msg {
+        margin-top: 7px; font-size: 12px; border-radius: 7px;
+        padding: 5px 8px; background: var(--chip); color: var(--sub);
+      }
+      .msg[data-kind="err"] { background: var(--accent-soft); color: var(--danger); }
+      .msg[data-kind="ok"] { color: var(--ok); }
+      .msg[hidden] { display: none; }
+
+      ul.list { list-style: none; margin-top: 7px; }
+      ul.list li {
+        border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
+        margin-bottom: 5px; display: flex; gap: 8px; align-items: flex-start;
+      }
+      ul.list li .main { flex: 1; min-width: 0; }
+      ul.list li .t { font-weight: 600; word-break: break-all; }
+      ul.list li .m { color: var(--sub); font-size: 11.5px; }
+      ul.list li.done .t { text-decoration: line-through; color: var(--sub); }
+
+      .grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+      .grid img {
+        width: 68px; height: 68px; object-fit: cover;
+        border: 1px solid var(--line); border-radius: 8px; cursor: pointer; background: var(--chip);
+      }
+      .empty { color: var(--sub); font-size: 12px; margin-top: 7px; }
+      code {
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        background: var(--chip); border-radius: 4px; padding: 0 4px; font-size: 11.5px;
+      }
+    </style>
+  </head>
+  <body data-bind-state="booting">
+    <div id="app">
+      <div class="bar">
+        <span class="chip">主题 <b id="f-theme">—</b></span>
+        <span class="chip">驱动 <b id="f-driver">—</b></span>
+        <span class="chip">运行时 <b id="f-runtime">—</b></span>
+        <span class="chip">挂载 <b id="f-kind">—</b></span>
+        <span class="chip">图库 <b id="f-gallery">—</b></span>
+      </div>
+
+      <!-- 1. 上下文 -->
+      <details open>
+        <summary>① 上下文与当前待办 <span class="chip">info · task.get</span></summary>
+        <div class="body">
+          <div class="row"><span class="k">工具 id</span><span class="v" id="f-id">—</span></div>
+          <div class="row"><span class="k">表前缀</span><span class="v" id="f-prefix">—</span></div>
+          <div class="row"><span class="k">taskId</span><span class="v" id="f-tid">—</span></div>
+          <div class="row"><span class="k">标题</span><span class="v" id="f-title">—</span></div>
+          <div class="row"><span class="k">截止</span><span class="v" id="f-due">—</span></div>
+          <div class="row">
+            <span class="k">状态</span><span class="v" id="f-flags">—</span>
+            <button data-act="task.get" id="btn-task">读一次</button>
+          </div>
+          <div class="msg" id="m-task" hidden></div>
+        </div>
+      </details>
+
+      <!-- 2. kv -->
+      <details>
+        <summary>② 键值配置 <span class="chip">kv.*</span></summary>
+        <div class="body">
+          <div class="row">
+            <span class="k">key</span>
+            <input id="kv-key" value="demo.note" />
+            <span class="k">value</span>
+            <input id="kv-value" placeholder="随便写点什么" />
+          </div>
+          <div class="row">
+            <button class="primary" data-act="kv.set">保存</button>
+            <button class="ghost" data-act="kv.get">读回</button>
+            <button class="ghost" data-act="kv.all">全部</button>
+            <button class="danger" data-act="kv.del">删除</button>
+          </div>
+          <div class="row"><span class="k">读到的</span><span class="v" id="kv-out">—</span></div>
+          <pre class="msg" id="m-kv" hidden></pre>
+        </div>
+      </details>
+
+      <!-- 3. row -->
+      <details>
+        <summary>③ 私有表 <span class="chip">schema.info · row.*</span></summary>
+        <div class="body">
+          <div class="row"><span class="k">表结构</span><span class="v" id="schema-out">—</span></div>
+          <div class="row">
+            <input id="n-title" placeholder="标题" />
+            <input id="n-tag" placeholder="标签" style="max-width:90px" />
+          </div>
+          <textarea id="n-body" placeholder="正文（可选）"></textarea>
+          <div class="row">
+            <button class="primary" data-act="row.insert">新增一条</button>
+            <button class="ghost" data-act="row.select">刷新列表</button>
+            <span class="v" id="row-count">—</span>
+          </div>
+          <ul class="list" id="note-list"></ul>
+          <div class="empty" id="row-empty" hidden>还没有记录，上面新增一条试试。</div>
+          <div class="msg" id="m-row" hidden></div>
+        </div>
+      </details>
+
+      <!-- 4. gallery -->
+      <details>
+        <summary>④ 图库 <span class="chip">gallery.*</span></summary>
+        <div class="body">
+          <div class="row">
+            <button class="ghost" data-act="gallery.list">刷新</button>
+            <button class="primary" data-act="gallery.put">生成一张存进去</button>
+            <span class="v" id="g-count">—</span>
+          </div>
+          <div class="grid" id="g-grid"></div>
+          <div class="empty" id="g-empty" hidden>图库里还没有东西（或图库模块没开）。</div>
+          <div class="msg" id="m-gallery" hidden></div>
+        </div>
+      </details>
+
+      <!-- 5. tools -->
+      <details>
+        <summary>⑤ 工具联动 <span class="chip">tools.*</span></summary>
+        <div class="body">
+          <div class="row">
+            <button class="ghost" data-act="tools.list">列出工具</button>
+            <select id="peer" style="flex:1"></select>
+          </div>
+          <div class="row">
+            <button class="primary" data-act="tools.open">拉起它并传一句话</button>
+            <button class="ghost" data-act="tools.send">给它发事件</button>
+          </div>
+          <ul class="list" id="peer-list"></ul>
+          <div class="msg" id="m-tools" hidden></div>
+          <div class="msg" id="m-inbox" hidden></div>
+        </div>
+      </details>
+    </div>
+
+    <script>
+      (function () {
+        "use strict";
+
+        var TOOL_SOURCE = "workbench-tool";
+        var HOST_SOURCE = "workbench-host";
+        var seq = 0;
+        var waiting = new Map();
+        var ctx = null;
+        var pendingDelete = null; /* 行内二次确认，不用 confirm() 弹窗 */
+
+        /* ---------------------------------------------------------------- */
+        /* 桥：唯一的通道。请求带 id，回应带回同一个 id                      */
+        /* ---------------------------------------------------------------- */
+        function call(op, payload) {
+          var id = "r" + ++seq;
+          return new Promise(function (resolve, reject) {
+            waiting.set(id, { resolve: resolve, reject: reject });
+            parent.postMessage(
+              { source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} },
+              "*"
+            );
+            setTimeout(function () {
+              if (waiting.delete(id)) reject(new Error("宿主没有回应（" + op + "）"));
+            }, 10000);
+          }).then(function (res) {
+            if (!res.ok) throw new Error(String(res.error || "宿主拒绝了这次请求"));
+            return res.data;
+          });
+        }
+
+        /* ---------------------------------------------------------------- */
+        /* DOM 小工具                                                        */
+        /* ---------------------------------------------------------------- */
+        function $(s) { return document.querySelector(s); }
+        function txt(s, v) {
+          var n = $(s);
+          if (!n) return;
+          n.textContent = v === null || v === undefined || v === "" ? "—" : String(v);
+        }
+        function msg(s, text, kind) {
+          var n = $(s);
+          if (!n) return;
+          n.textContent = text || "";
+          n.dataset.kind = kind || "";
+          n.hidden = !text;
+        }
+        function el(tag, cls, text) {
+          var n = document.createElement(tag);
+          if (cls) n.className = cls;
+          if (text !== undefined) n.textContent = text;
+          return n;
+        }
+        /* 每个按钮统一走这里：出错就把宿主的原话显示出来，不静默 */
+        function guard(s, fn) {
+          return function () {
+            msg(s, "", "");
+            Promise.resolve()
+              .then(fn)
+              .catch(function (e) { msg(s, String((e && e.message) || e), "err"); });
+          };
+        }
+
+        /* ---------------------------------------------------------------- */
+        /* ① 上下文与当前待办                                                */
+        /* ---------------------------------------------------------------- */
+        function applyContext(c) {
+          ctx = c;
+          document.documentElement.dataset.theme = c.theme === "dark" ? "dark" : "light";
+          txt("#f-theme", c.theme);
+          txt("#f-driver", c.driver);
+          txt("#f-runtime", c.runtime);
+          txt("#f-id", c.toolId);
+          txt("#f-prefix", c.tablePrefix);
+          txt("#f-kind", c.inject ? c.inject.kind : "整页工具");
+          txt("#f-tid", c.inject ? c.inject.taskId : "—");
+          txt("#f-gallery", c.gallery ? "可用" : "不可用");
+          document.body.dataset.bindState = "context";
+          document.body.dataset.injectKind = c.inject ? c.inject.kind : "page";
+          if (c.inject) loadTask();
+        }
+
+        function loadTask() {
+          return call("task.get", {})
+            .then(function (t) {
+              txt("#f-title", t.title);
+              txt("#f-due", t.dueDate ? t.dueDate + (t.remindAt ? "（提醒 " + t.remindAt + "）" : "") : "未设截止");
+              txt(
+                "#f-flags",
+                [t.done ? "已完成" : "未完成", t.important ? "重要" : "", t.myDay ? "我的一天" : ""]
+                  .filter(Boolean)
+                  .join(" · ")
+              );
+              document.body.dataset.bindState = "bound";
+              msg("#m-task", "读到了「" + t.title + "」——注入组件只能读它挂着的那一条。", "ok");
+            })
+            .catch(function (e) {
+              document.body.dataset.bindState = "error";
+              msg("#m-task", String(e.message || e) + "（整页模式下这是预期行为）", "err");
+            });
+        }
+
+        /* ---------------------------------------------------------------- */
+        /* ② kv：工具自己的配置                                               */
+        /* ---------------------------------------------------------------- */
+        function loadKv() {
+          return call("kv.get", { key: $("#kv-key").value })
+            .then(function (r) { txt("#kv-out", r.value === null ? "（没配过）" : r.value); })
+            .catch(function (e) { msg("#m-kv", String(e.message || e), "err"); });
+        }
+
+        /* ---------------------------------------------------------------- */
+        /* ③ 私有表：结构化 CRUD，没有 SQL                                    */
+        /* ---------------------------------------------------------------- */
+        function loadSchema() {
+          return call("schema.info", {})
+            .then(function (r) {
+              var t = r.tables[0];
+              txt("#schema-out", t ? t.fullName + "（主键 " + t.pk + "，" + t.columns.length + " 列）" : "（没声明表）");
+            })
+            .catch(function (e) { txt("#schema-out", String(e.message || e)); });
+        }
+
+        function renderNotes(rows) {
+          var ul = $("#note-list");
+          ul.textContent = "";
+          pendingDelete = null;
+          rows.forEach(function (r) {
+            var li = el("li", r.done ? "done" : "");
+            li.dataset.id = r.id;
+            var main = el("div", "main");
+            main.appendChild(el("div", "t", r.title));
+            main.appendChild(
+              el("div", "m", (r.tag ? "#" + r.tag + " · " : "") + String(r.created_at || "").slice(0, 19))
+            );
+            if (r.body) main.appendChild(el("div", "m", r.body));
+            li.appendChild(main);
+            var toggle = el("button", "ghost", r.done ? "还原" : "完成");
+            toggle.dataset.act = "row.update";
+            toggle.dataset.id = r.id;
+            toggle.dataset.done = r.done ? "0" : "1";
+            var del = el("button", "danger", "删除");
+            del.dataset.act = "row.delete";
+            del.dataset.id = r.id;
+            li.appendChild(toggle);
+            li.appendChild(del);
+            ul.appendChild(li);
+          });
+          $("#row-empty").hidden = rows.length > 0;
+        }
+
+        function loadNotes() {
+          return Promise.all([
+            call("row.select", { table: "notes", orderBy: "created_at", orderDir: "desc", limit: 50 }),
+            call("row.count", { table: "notes" }),
+          ])
+            .then(function (r) {
+              renderNotes(r[0].rows);
+              txt("#row-count", "共 " + r[1].count + " 条（本页 " + r[0].rows.length + "）");
+            })
+            .catch(function (e) { msg("#m-row", String(e.message || e), "err"); });
+        }
+
+        /* ---------------------------------------------------------------- */
+        /* ④ 图库：跨工具共享的素材库                                         */
+        /* ---------------------------------------------------------------- */
+        function loadGallery() {
+          return call("gallery.list", { kind: "image", limit: 12 })
+            .then(function (r) {
+              var grid = $("#g-grid");
+              grid.textContent = "";
+              r.items.forEach(function (it) {
+                var img = document.createElement("img");
+                img.src = it.thumb || it.dataUrl || "";
+                img.title = (it.title || "（无标题）") + " · " + (it.origin || "");
+                img.dataset.id = it.id;
+                img.dataset.act = "gallery.get";
+                grid.appendChild(img);
+              });
+              txt("#g-count", r.items.length + " 张");
+              $("#g-empty").hidden = r.items.length > 0;
+            })
+            .catch(function (e) {
+              /* 图库是选装模块：关着的时候这里会拿到一句有方向的拒绝，照原话显示 */
+              txt("#g-count", "不可用");
+              msg("#m-gallery", String(e.message || e), "err");
+            });
+        }
+
+        /** 画一张简单的图，转成 dataURL 交给宿主存进图库 */
+        function makeImage() {
+          var cv = document.createElement("canvas");
+          cv.width = cv.height = 240;
+          var g = cv.getContext("2d");
+          var grd = g.createLinearGradient(0, 0, 240, 240);
+          grd.addColorStop(0, "#6b5bd6");
+          grd.addColorStop(1, "#2e7d5b");
+          g.fillStyle = grd;
+          g.fillRect(0, 0, 240, 240);
+          g.fillStyle = "#fff";
+          g.font = "600 20px system-ui, sans-serif";
+          g.fillText("来自能力演示", 28, 120);
+          g.font = "13px system-ui, sans-serif";
+          g.fillText(new Date().toLocaleString("zh-CN"), 28, 148);
+          return cv.toDataURL("image/png");
+        }
+
+        /* ---------------------------------------------------------------- */
+        /* ⑤ 工具联动                                                        */
+        /* ---------------------------------------------------------------- */
+        function loadTools() {
+          return call("tools.list", {})
+            .then(function (r) {
+              var sel = $("#peer");
+              var ul = $("#peer-list");
+              sel.textContent = "";
+              ul.textContent = "";
+              var others = r.tools.filter(function (t) { return t.id !== (ctx && ctx.toolId); });
+              others.forEach(function (t) {
+                var opt = document.createElement("option");
+                opt.value = t.id;
+                opt.textContent = t.name + (t.running ? "（运行中）" : "");
+                sel.appendChild(opt);
+                var li = el("li", "");
+                li.appendChild(el("div", "t", t.name));
+                li.appendChild(el("div", "m", t.id + " · " + (t.running ? "运行中" : "未运行")));
+                ul.appendChild(li);
+              });
+              if (!others.length) {
+                ul.appendChild(el("li", "", "这台机器上还没有别的可联动工具"));
+                msg("#m-tools", "没有可联动的工具", "");
+              }
+            })
+            .catch(function (e) { msg("#m-tools", String(e.message || e), "err"); });
+        }
+
+        /* ---------------------------------------------------------------- */
+        /* 按钮                                                              */
+        /* ---------------------------------------------------------------- */
+        document.addEventListener("click", function (ev) {
+          var b = ev.target.closest("[data-act]");
+          if (!b) return;
+          var act = b.dataset.act;
+          var id = b.dataset.id;
+
+          if (act === "task.get") { loadTask(); return; }
+
+          if (act === "kv.set") {
+            guard("#m-kv", function () {
+              return call("kv.set", { key: $("#kv-key").value, value: $("#kv-value").value }).then(function (r) {
+                msg("#m-kv", "已存 " + r.bytes + " 字节（kv 的值必须是字符串）", "ok");
+                return loadKv();
+              });
+            })();
+            return;
+          }
+          if (act === "kv.get") {
+            guard("#m-kv", function () {
+              return loadKv().then(function () { msg("#m-kv", "读到了（没配过时是 null，不是报错）", "ok"); });
+            })();
+            return;
+          }
+          if (act === "kv.all") {
+            guard("#m-kv", function () {
+              return call("kv.all", {}).then(function (r) {
+                $("#m-kv").textContent = JSON.stringify(r.entries, null, 2);
+                $("#m-kv").dataset.kind = "ok";
+                $("#m-kv").hidden = false;
+              });
+            })();
+            return;
+          }
+          if (act === "kv.del") {
+            guard("#m-kv", function () {
+              return call("kv.del", { key: $("#kv-key").value }).then(function () {
+                msg("#m-kv", "已删除", "ok");
+                txt("#kv-out", "（没配过）");
+              });
+            })();
+            return;
+          }
+
+          if (act === "row.insert") {
+            guard("#m-row", function () {
+              var title = $("#n-title").value.trim();
+              if (!title) throw new Error("先写个标题");
+              return call("row.insert", {
+                table: "notes",
+                row: {
+                  /* 主键由工具自己给：这样才能靠业务键做幂等，宿主不替你生成 id */
+                  id: "n-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+                  title: title,
+                  body: $("#n-body").value,
+                  tag: $("#n-tag").value.trim(),
+                  done: 0,
+                  created_at: new Date().toISOString(),
+                },
+              }).then(function () {
+                $("#n-title").value = "";
+                $("#n-body").value = "";
+                $("#n-tag").value = "";
+                msg("#m-row", "已写入", "ok");
+                return loadNotes();
+              });
+            })();
+            return;
+          }
+          if (act === "row.select") {
+            guard("#m-row", loadNotes)();
+            return;
+          }
+          if (act === "row.update") {
+            guard("#m-row", function () {
+              return call("row.update", { table: "notes", id: id, patch: { done: Number(b.dataset.done) } })
+                .then(loadNotes);
+            })();
+            return;
+          }
+          if (act === "row.delete") {
+            /* 行内二次确认：第一次点改名，再点一次才真删 */
+            if (pendingDelete !== id) {
+              pendingDelete = id;
+              b.textContent = "再点一次确认";
+              b.classList.add("danger");
+              return;
+            }
+            guard("#m-row", function () {
+              return call("row.delete", { table: "notes", id: id }).then(function () {
+                msg("#m-row", "已删除", "ok");
+                return loadNotes();
+              });
+            })();
+            return;
+          }
+
+          if (act === "gallery.list") {
+            guard("#m-gallery", loadGallery)();
+            return;
+          }
+          if (act === "gallery.get") {
+            guard("#m-gallery", function () {
+              return call("gallery.get", { id: id }).then(function (it) {
+                msg("#m-gallery", "拿到原图：" + it.width + "×" + it.height + "，" + Math.round(it.dataUrl.length / 1024) + " KB 的 dataURL", "ok");
+              });
+            })();
+            return;
+          }
+          if (act === "gallery.put") {
+            guard("#m-gallery", function () {
+              return call("gallery.put", {
+                dataUrl: makeImage(),
+                title: "能力演示生成 " + new Date().toLocaleTimeString("zh-CN"),
+                note: "由示例工具 kitchen-sink 写入",
+              }).then(function () {
+                msg("#m-gallery", "已存进图库（来源由宿主盖章，工具自报不算）", "ok");
+                return loadGallery();
+              });
+            })();
+            return;
+          }
+
+          if (act === "tools.list") {
+            guard("#m-tools", loadTools)();
+            return;
+          }
+          if (act === "tools.open") {
+            guard("#m-tools", function () {
+              var target = $("#peer").value;
+              if (!target) throw new Error("先在下拉里选一个工具");
+              return call("tools.open", { tool: target, data: { from: "kitchen-sink", at: Date.now() } })
+                .then(function () { msg("#m-tools", "已拉起「" + target + "」，它加载完会收到 tool:intent", "ok"); });
+            })();
+            return;
+          }
+          if (act === "tools.send") {
+            guard("#m-tools", function () {
+              var target = $("#peer").value;
+              if (!target) throw new Error("先在下拉里选一个工具");
+              /* 只投已经在运行的工具：对方没在跑会明确报错，不会静默丢 */
+              return call("tools.send", { tool: target, event: "demo", data: { hello: true } })
+                .then(function () { msg("#m-tools", "已投给「" + target + "」", "ok"); });
+            })();
+            return;
+          }
+        });
+
+        /* ---------------------------------------------------------------- */
+        /* 收宿主的消息                                                      */
+        /* ---------------------------------------------------------------- */
+        window.addEventListener("message", function (e) {
+          var m = e.data;
+          if (!m || m.source !== HOST_SOURCE) return;
+
+          if (m.type === "tool:response") {
+            var w = waiting.get(m.id);
+            if (w) { waiting.delete(m.id); w.resolve({ ok: m.ok, data: m.data, error: m.error }); }
+            return;
+          }
+          if (m.type === "tool:context") {
+            applyContext(m.data);
+            return;
+          }
+          if (m.type === "tool:intent") {
+            msg("#m-inbox", "被别的工具拉起了，收到：" + JSON.stringify(m.data) + "（来自 " + (m.from || "?") + "）", "ok");
+            return;
+          }
+          if (m.type === "tool:event") {
+            msg("#m-inbox", "收到事件「" + m.event + "」：" + JSON.stringify(m.data) + "（来自 " + (m.from || "?") + "）", "ok");
+            return;
+          }
+        });
+
+        /* ---------------------------------------------------------------- */
+        /* 启动：先渲染骨架，再自己取一次上下文                               */
+        /* 不要假设 tool:context 一定比第一个请求先到                        */
+        /* ---------------------------------------------------------------- */
+        function boot() {
+          call("info", {})
+            .then(function (c) {
+              applyContext(c);
+              return Promise.all([loadKv(), loadSchema().then(loadNotes), loadGallery(), loadTools()]);
+            })
+            .catch(function (e) {
+              document.body.dataset.bindState = "error";
+              msg("#m-task", "拿不到上下文：" + String(e.message || e), "err");
+            });
+        }
+
+        boot();
+      })();
+    </script>
+  </body>
+</html>
