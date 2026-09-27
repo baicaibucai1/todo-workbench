@@ -46,17 +46,6 @@ export function unregisterToolPoster(toolId: string, post: Poster): void {
 }
 
 /**
- * 这个工具此刻有没有接收端。
- *
- * 注意它回答的是"有没有 iframe 挂着"，不是"用户能不能打开它" ——
- * 后者由登记表的 enabled 决定，两者是正交的（详见 toolStore 文件头的三种状态）。
- */
-export function isToolRunning(toolId: string): boolean {
-  const set = posters.get(toolId);
-  return !!set && set.size > 0;
-}
-
-/**
  * 给某个工具投递一条消息。返回是否真的投出去了。
  *
  * 返回值的意义：调用方要能区分"对方收到了"和"这里压根没人在听"。
@@ -67,9 +56,4 @@ export function postToTool(toolId: string, msg: unknown): boolean {
   if (!set || set.size === 0) return false;
   for (const post of set) post(msg);
   return true;
-}
-
-/** 供测试用：清空登记表 */
-export function __resetToolLink(): void {
-  posters.clear();
 }

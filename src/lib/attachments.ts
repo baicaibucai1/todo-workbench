@@ -635,13 +635,3 @@ export async function openExternal(url: string): Promise<void> {
   }
   window.open(url, "_blank", "noopener,noreferrer");
 }
-
-/* ------------------------------------------------------------------ */
-/* 媒体尺寸探测                                                        */
-/* ------------------------------------------------------------------ */
-
-export interface MediaSize {
-  width: number;
-  height: number;
-  durationMs: number | null;
-}

@@ -192,7 +192,7 @@ export default function Sidebar() {
         </div>
 
         {/* 搜索框 */}
-        <div className="mt-3 flex h-8 items-center gap-1.5 rounded-md border border-line bg-card px-2.5 focus-within:border-[#d4537e]">
+        <div className="mt-3 flex h-8 items-center gap-1.5 rounded-md border border-line bg-card px-2.5 focus-within:border-accent">
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -230,7 +230,7 @@ export default function Sidebar() {
               label={item.label}
               active={view === item.id && !activeToolId}
               count={badge(item.id as SmartView)}
-              accent="#d4537e"
+              accent="var(--color-accent)"
               onClick={() => void setView(item.id as SmartView)}
             />
           );
@@ -298,7 +298,7 @@ export default function Sidebar() {
                         if (e.key === "Enter") e.currentTarget.blur();
                         if (e.key === "Escape") setEditingId(null);
                       }}
-                      className="min-w-0 flex-1 rounded border border-[#d4537e] bg-card px-1.5 py-0.5 text-[13px] outline-none"
+                      className="min-w-0 flex-1 rounded border border-accent bg-card px-1.5 py-0.5 text-[13px] outline-none"
                     />
                   </div>
                 ) : (
@@ -361,7 +361,7 @@ export default function Sidebar() {
                       setAddingList(false);
                     }
                   }}
-                  className="min-w-0 flex-1 rounded border border-[#d4537e] bg-card px-1.5 py-0.5 text-[13px] outline-none"
+                  className="min-w-0 flex-1 rounded border border-accent bg-card px-1.5 py-0.5 text-[13px] outline-none"
                 />
               </div>
             ) : (
@@ -401,7 +401,7 @@ export default function Sidebar() {
                 label={item.label}
                 active={view === item.id && !activeToolId}
                 count={badge(item.id as SmartView)}
-                accent="#d4537e"
+                accent="var(--color-accent)"
                 onClick={() => void setView(item.id as SmartView)}
               />
             );
@@ -459,7 +459,7 @@ function NavRow({
       )}
       <span
         className="grid size-4 shrink-0 place-items-center"
-        style={{ color: active ? accent : "#5a5955" }}
+        style={{ color: active ? accent : "var(--color-fg-3)" }}
       >
         {icon}
       </span>

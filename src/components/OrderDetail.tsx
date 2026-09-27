@@ -88,6 +88,8 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
     .filter((s) => s.flowId === order.flowId)
     .sort((a, b) => a.sortOrder - b.sortOrder);
   const stage = flowStages.find((s) => s.id === order.stageId);
+  // 阶段色兜底必须留着真 hex：别处会把这个值拼上透明度后缀（`${color}1f`），
+  // 换成 var(--color-…) 拼出来就是非法 CSS，那一块会直接变透明。
   const color = stage?.color ?? "#888780";
   const idx = flowStages.findIndex((s) => s.id === order.stageId);
 
@@ -173,12 +175,12 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
   // 在动作上没有区别，琥珀色的"预警"在真正的紧急面前是噪音。
   // 走语义令牌：深浅主题各取各的值（styles.css）。
   const dueColor = !order.stageDueAt
-    ? "#888780"
+    ? "var(--color-fg-dim)"
     : order.closed
-      ? "#0f6e56"
+      ? "var(--color-ok)"
       : ds === "overdue" || ds === "soon"
         ? "var(--color-danger)"
-        : "#0f6e56";
+        : "var(--color-ok)";
 
   /* ---------------- 相关信息 ---------------- */
 
@@ -371,7 +373,7 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
 
           <div className="mt-1 px-0.5 text-[11.5px] text-fg-dim">
             {order.closed ? (
-              <span className="text-[#0f6e56]">
+              <span className="text-ok">
                 已完结{order.completedAt ? ` · ${formatWhen(order.completedAt)}` : ""}
               </span>
             ) : (
@@ -484,7 +486,7 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
                 className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px] text-fg-dim hover:bg-hover"
               >
                 {copied === "__all__" ? (
-                  <Check size={12} className="text-[#0f6e56]" />
+                  <Check size={12} className="text-ok" />
                 ) : (
                   <Copy size={12} />
                 )}
@@ -536,7 +538,7 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
                   className="grid size-6 shrink-0 place-items-center rounded text-fg-dim hover:bg-hover"
                 >
                   {copied === f.id ? (
-                    <Check size={12} className="text-[#0f6e56]" />
+                    <Check size={12} className="text-ok" />
                   ) : (
                     <Copy size={12} />
                   )}
@@ -627,7 +629,7 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
             icon={<Star size={15} />}
             label={order.important ? "已标记为重要" : "标记为重要"}
             active={order.important}
-            activeColor="#ba7517"
+            activeColor="var(--color-warn)"
             onClick={() => void toggleOrderImportant(order)}
           />
         </div>

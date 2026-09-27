@@ -584,8 +584,8 @@ function DetailBody({
           title={task.done ? "标记为未完成" : "标记为已完成"}
           className="mt-[3px] grid size-[20px] shrink-0 place-items-center rounded-full border-[1.5px] transition-colors"
           style={{
-            borderColor: task.done ? "#b4b2a9" : accent,
-            background: task.done ? "#b4b2a9" : "transparent",
+            borderColor: task.done ? "var(--color-done)" : accent,
+            background: task.done ? "var(--color-done)" : "transparent",
           }}
         >
           {task.done ? (
@@ -623,14 +623,14 @@ function DetailBody({
             icon={<Sun size={15} />}
             label={task.myDay ? "已添加到我的一天" : "添加到我的一天"}
             active={task.myDay}
-            activeColor="#d4537e"
+            activeColor="var(--color-accent)"
             onClick={onToggleMyDay}
           />
           <QuickToggle
             icon={<Star size={15} />}
             label={task.important ? "已标记为重要" : "标记为重要"}
             active={task.important}
-            activeColor="#ba7517"
+            activeColor="var(--color-warn)"
             onClick={onToggleImportant}
           />
         </div>
@@ -695,8 +695,8 @@ function StepRow({
         data-step-toggle=""
         className="grid size-[18px] shrink-0 place-items-center rounded-full border-[1.5px] transition-colors"
         style={{
-          borderColor: step.done ? "#b4b2a9" : accent,
-          background: step.done ? "#b4b2a9" : "transparent",
+          borderColor: step.done ? "var(--color-done)" : accent,
+          background: step.done ? "var(--color-done)" : "transparent",
         }}
       >
         {step.done && (

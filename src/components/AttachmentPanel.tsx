@@ -171,9 +171,9 @@ export default function AttachmentPanel({ orderId }: { orderId: string }) {
           data-attach-msg={message.tone}
           className={`mt-1.5 flex items-start gap-1.5 rounded-lg px-2 py-1.5 text-[11.5px] leading-relaxed ${
             message.tone === "ok"
-              ? "bg-[#1d9e75]/10 text-[#0f6e56]"
+              ? "bg-ok-bright/10 text-ok"
               : message.tone === "warn"
-                ? "bg-[#ba7517]/10 text-[#8a5a12]"
+                ? "bg-warn/10 text-warn"
                 : "bg-danger-soft text-danger"
           }`}
         >
@@ -623,7 +623,7 @@ function MissingBox({ a, onRemove, compact }: { a: WoAttachment; onRemove: () =>
       className={`grid size-full place-items-center ${compact ? "" : "min-h-[80px]"} px-2 py-3`}
     >
       <div className="text-center">
-        <AlertTriangle size={compact ? 16 : 18} className="mx-auto text-[#ba7517]" />
+        <AlertTriangle size={compact ? 16 : 18} className="mx-auto text-warn" />
         <div className="mt-1 text-[11px] text-fg-3">文件缺失</div>
         <div className="mt-0.5 truncate text-[10.5px] text-fg-dim" title={a.relPath ?? ""}>
           {a.title}

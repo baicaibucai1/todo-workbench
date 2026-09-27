@@ -58,9 +58,13 @@
 | --- | --- |
 | ![紧急区](docs/screenshots/urgent.png) | ![面板拖宽](docs/screenshots/resizable-panels.png) |
 
-| 设置 · 工具（启用停用 / 安装卸载 / 导入单文件） | 设置 · 关于 |
+| 设置 · 通用（外观 / 主题 / 行为 / 数据） | 设置 · 工具（启用停用 / 安装卸载 / 导入单文件） |
 | --- | --- |
-| ![设置 · 工具](docs/screenshots/settings-tools.png) | ![设置 · 关于](docs/screenshots/about.png) |
+| ![设置 · 通用](docs/screenshots/settings.png) | ![设置 · 工具](docs/screenshots/settings-tools.png) |
+
+| 设置 · 同步（WebDAV / OneDrive） | 设置 · 关于（版本 / 更新 / 许可证） |
+| --- | --- |
+| ![设置 · 同步](docs/screenshots/settings-sync.png) | ![设置 · 关于](docs/screenshots/about.png) |
 
 内置工具（都是完全自治的单页应用，共用同一个数据库；**本体不在安装包里**，
 从 Release 上的工具包取得）：
@@ -663,7 +667,14 @@ main/
       AgentBall.tsx    悬浮球（唯一入口：可拖动、松手贴边、落点记住、忙碌时转圈）
       AgentWindow.tsx  助手窗口（可拖动、位置记住）+ 右侧历史对话栏
       AgentView.tsx    AI 助手对话主体（消息流 / 动作卡 / 技能抽屉）
-      Settings.tsx     设置（九个分区）
+      Settings.tsx     设置**外壳**：分区导航 + 导出/导入/清空三个跨分区动作
+        settings/        设置的九个分区，各自一个文件、互相不知道对方存在
+          parts.tsx         通用零件（标题/卡片/开关…）与 Flash 提示类型
+          nav.ts            分区顺序与图标（唯一来源）
+          ProfileSection.tsx / AppearanceSection.tsx / ToolsSection.tsx
+          ImportToolDialog.tsx / DatabaseSection.tsx / DataSection.tsx
+          SyncSection.tsx / BehaviorSection.tsx / AboutSection.tsx
+          AgentSection.tsx
       UrgentPanel.tsx  紧急区
       InjectedTools.tsx 注入组件的三个挂载点（详情分区 / 详情按钮 / 行内按钮）
       ToolHost.tsx / ToolArea.tsx  工具容器与标签条
@@ -900,10 +911,10 @@ node tests/task-detail.mjs       # 也可以单跑某一个套件
 工作区堆了生成物想收一收：
 
 ```bash
-node scripts/clean.mjs            # 只报告，不动手
-node scripts/clean.mjs --yes      # 删掉 dist / .setup-tmp / shots / 各种日志
-node scripts/clean.mjs --yes --deep   # 连 src-tauri/target 一起删（下次打包要重编 3–5 分钟）
-node scripts/clean.mjs --yes --old    # 顺带清掉 release-assets 里的旧版本包
+npm run clean                     # 只报告，不动手
+npm run clean -- --yes            # 删掉 dist / .setup-tmp / shots / 各种日志
+npm run clean -- --yes --deep     # 连 src-tauri/target 一起删（下次打包要重编 3–5 分钟）
+npm run clean -- --yes --old      # 顺带清掉 release-assets 里的旧版本包
 ```
 
 它**默认只报告**，而且要显式 `--yes` 才动手；`.tauri-key`（更新签名私钥）、

@@ -159,8 +159,8 @@ export default function TaskRow({
         title={task.done ? "标记为未完成" : "标记为已完成"}
         className="mt-[1px] grid size-[19px] shrink-0 place-items-center rounded-full border-[1.5px] transition-colors"
         style={{
-          borderColor: task.done ? "#b4b2a9" : accent,
-          background: task.done ? "#b4b2a9" : "transparent",
+          borderColor: task.done ? "var(--color-done)" : accent,
+          background: task.done ? "var(--color-done)" : "transparent",
         }}
       >
         {task.done ? (
@@ -190,7 +190,7 @@ export default function TaskRow({
                 setEditing(false);
               }
             }}
-            className="w-full rounded border border-[#d4537e] bg-card px-1 py-0.5 text-[14px] outline-none"
+            className="w-full rounded border border-accent bg-card px-1 py-0.5 text-[14px] outline-none"
           />
         ) : (
           <div
@@ -287,8 +287,8 @@ export default function TaskRow({
                           title={s.done ? "标记未完成" : "标记完成"}
                           className="grid size-[15px] shrink-0 place-items-center rounded-full border-[1.5px] transition-colors"
                           style={{
-                            borderColor: s.done ? "#b4b2a9" : accent,
-                            background: s.done ? "#b4b2a9" : "transparent",
+                            borderColor: s.done ? "var(--color-done)" : accent,
+                            background: s.done ? "var(--color-done)" : "transparent",
                           }}
                         >
                           {s.done && (
@@ -361,7 +361,7 @@ export default function TaskRow({
           onClick={onToggleMyDay}
           className={`grid size-7 place-items-center rounded hover:bg-hover ${
             task.myDay
-              ? "text-[#d4537e]"
+              ? "text-accent"
               : "text-fg-dim opacity-0 group-hover:opacity-100"
           }`}
         >
@@ -373,11 +373,11 @@ export default function TaskRow({
           onClick={onToggleImportant}
           className={`grid size-7 place-items-center rounded hover:bg-hover ${
             task.important
-              ? "text-[#ba7517]"
+              ? "text-warn"
               : "text-fg-dim opacity-0 group-hover:opacity-100"
           }`}
         >
-          <Star size={15} fill={task.important ? "#ba7517" : "none"} />
+          <Star size={15} fill={task.important ? "var(--color-warn)" : "none"} />
         </button>
 
         <button
@@ -454,7 +454,7 @@ function DatePicker({
             key={o.date}
             onClick={() => onPick(o.date)}
             className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-[13px] hover:bg-hover ${
-              value === o.date ? "text-[#d4537e]" : "text-fg-2"
+              value === o.date ? "text-accent" : "text-fg-2"
             }`}
           >
             {o.label}

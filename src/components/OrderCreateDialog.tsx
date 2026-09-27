@@ -278,7 +278,7 @@ export default function OrderCreateDialog({
         {/* 标题栏 */}
         <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-4">
           {isSpecial ? (
-            <Timer size={15} className="text-[#d85a30]" />
+            <Timer size={15} className="text-special" />
           ) : (
             <ClipboardList size={15} className="text-primary" />
           )}
@@ -300,7 +300,7 @@ export default function OrderCreateDialog({
         {error && (
           <div
             data-oc-error=""
-            className="flex shrink-0 items-center gap-2 border-b border-line bg-[#fdf6e7] px-4 py-2 text-[12.5px] text-[#7a5406]"
+            className="flex shrink-0 items-center gap-2 border-b border-line bg-tip-bg px-4 py-2 text-[12.5px] text-tip-text"
           >
             <AlertTriangle size={13} className="shrink-0" />
             <span className="min-w-0 flex-1">{error}</span>
@@ -336,7 +336,7 @@ export default function OrderCreateDialog({
                 icon={<Timer size={12} />}
                 label="特殊单号"
                 kind="special"
-                accent="#d85a30"
+                accent="var(--color-special)"
               />
             </div>
           )}
@@ -350,7 +350,7 @@ export default function OrderCreateDialog({
                 onChange={(e) => setNo(e.target.value)}
                 data-oc-no=""
                 placeholder="粘贴快递单号"
-                className="w-full rounded-lg border border-line bg-card px-2.5 py-2 font-mono text-[13.5px] text-fg outline-none placeholder:font-sans placeholder:text-fg-dim focus:border-[#d85a30]"
+                className="w-full rounded-lg border border-line bg-card px-2.5 py-2 font-mono text-[13.5px] text-fg outline-none placeholder:font-sans placeholder:text-fg-dim focus:border-special"
               />
             </Field>
           )}
@@ -400,7 +400,7 @@ export default function OrderCreateDialog({
           {isSpecial && duplicate && (
             <div
               data-oc-dup=""
-              className="mt-1 flex items-center gap-1.5 rounded-md bg-[#fdf6e7] px-2 py-1 text-[11.5px] text-[#7a5406]"
+              className="mt-1 flex items-center gap-1.5 rounded-md bg-tip-bg px-2 py-1 text-[11.5px] text-tip-text"
             >
               <AlertTriangle size={12} className="shrink-0" />
               <span className="min-w-0 flex-1 truncate">
@@ -415,7 +415,7 @@ export default function OrderCreateDialog({
                   openOrder(duplicate.id);
                 }}
                 data-oc-dup-open=""
-                className="shrink-0 rounded px-1.5 py-0.5 hover:bg-[#f5e6c8]"
+                className="shrink-0 rounded px-1.5 py-0.5 hover:bg-tip-line"
               >
                 打开那条
               </button>
@@ -654,10 +654,10 @@ export default function OrderCreateDialog({
               onClick={() => setImportant((v) => !v)}
               data-oc-important=""
               className={`flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-[13px] transition-colors ${
-                important ? "bg-card font-medium text-[#ba7517]" : "text-fg-3 hover:bg-card"
+                important ? "bg-card font-medium text-warn" : "text-fg-3 hover:bg-card"
               }`}
             >
-              <Star size={15} fill={important ? "#ba7517" : "none"} />
+              <Star size={15} fill={important ? "var(--color-warn)" : "none"} />
               {important ? "已标记为重要" : "标记为重要"}
             </button>
 
@@ -699,7 +699,7 @@ export default function OrderCreateDialog({
             disabled={busy}
             data-oc-submit=""
             className={`rounded-lg px-3.5 py-1.5 text-[13px] font-medium text-white disabled:opacity-50 ${
-              isSpecial ? "bg-[#d85a30]" : "bg-primary"
+              isSpecial ? "bg-special" : "bg-primary"
             }`}
           >
             {busy ? "创建中…" : isSpecial ? "登记单号" : "创建流程任务"}

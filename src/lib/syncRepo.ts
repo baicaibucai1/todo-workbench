@@ -109,7 +109,7 @@ async function fetchAllLogs(): Promise<WoLog[]> {
 /* 导出                                                                */
 /* ------------------------------------------------------------------ */
 
-export async function exportTasksPayload(): Promise<TasksPayload> {
+async function exportTasksPayload(): Promise<TasksPayload> {
   const [lists, tasks, steps, links] = await Promise.all([
     fetchLists(true),
     // includeDone + includeDeleted：同步要的是**全量快照**，
@@ -121,7 +121,7 @@ export async function exportTasksPayload(): Promise<TasksPayload> {
   return { lists, tasks, steps, links };
 }
 
-export async function exportOrdersPayload(): Promise<OrdersPayload> {
+async function exportOrdersPayload(): Promise<OrdersPayload> {
   const [flows, allStages, workOrders, woFields, woLogs] = await Promise.all([
     fetchFlows(true),
     fetchStages(),
@@ -138,12 +138,12 @@ export async function exportOrdersPayload(): Promise<OrdersPayload> {
   return { flows, stages, workOrders, woFields, woLogs };
 }
 
-export async function exportGalleryPayload(): Promise<GalleryPayload> {
+async function exportGalleryPayload(): Promise<GalleryPayload> {
   // fetchAllGallery 已经含软删（备份也要墓碑），直接复用
   return { items: await fetchAllGallery() };
 }
 
-export async function exportAttachmentsPayload(): Promise<AttachmentsPayload> {
+async function exportAttachmentsPayload(): Promise<AttachmentsPayload> {
   return { items: await fetchAllAttachments() };
 }
 
@@ -379,7 +379,7 @@ const W_ATTACH: TableWrite = {
 
 /* ------------------------------ 分片写回 ------------------------------ */
 
-export async function applyTasksPayload(p: TasksPayload): Promise<void> {
+async function applyTasksPayload(p: TasksPayload): Promise<void> {
   await upsertAll(W_LISTS, p.lists ?? []);
   await upsertAll(W_TASKS, p.tasks ?? []);
   await upsertAll(W_LINKS, p.links ?? []);
@@ -394,7 +394,7 @@ export async function applyTasksPayload(p: TasksPayload): Promise<void> {
   await replaceAll("core_steps", W_STEPS, steps);
 }
 
-export async function applyOrdersPayload(p: OrdersPayload): Promise<void> {
+async function applyOrdersPayload(p: OrdersPayload): Promise<void> {
   await upsertAll(W_FLOWS, p.flows ?? []);
   await upsertAll(W_ORDERS, p.workOrders ?? []);
   await upsertAll(W_FIELDS, p.woFields ?? []);
@@ -436,11 +436,11 @@ export async function applyOrdersPayload(p: OrdersPayload): Promise<void> {
   if (statements.length) await db().transaction(statements);
 }
 
-export async function applyGalleryPayload(p: GalleryPayload): Promise<void> {
+async function applyGalleryPayload(p: GalleryPayload): Promise<void> {
   await upsertAll(W_GALLERY, p.items ?? []);
 }
 
-export async function applyAttachmentsPayload(p: AttachmentsPayload): Promise<void> {
+async function applyAttachmentsPayload(p: AttachmentsPayload): Promise<void> {
   await upsertAll(W_ATTACH, p.items ?? []);
 }
 

@@ -627,7 +627,7 @@ export default function SpecialOrdersView() {
           <button
             onClick={() => setRegOpen(true)}
             data-sp-register=""
-            className="flex items-center gap-1.5 rounded-md bg-[#d85a30] px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:brightness-95"
+            className="flex items-center gap-1.5 rounded-md bg-special px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:brightness-95"
           >
             <Timer size={14} />
             登记单号
@@ -757,11 +757,11 @@ export default function SpecialOrdersView() {
               title="只看标记为重要的记录"
               className={`flex shrink-0 items-center gap-1 rounded-md border px-2 py-1.5 text-[12px] transition-colors ${
                 onlyImportant
-                  ? "border-[#ba7517] bg-[#ba7517]/10 text-[#ba7517]"
+                  ? "border-warn bg-warn/10 text-warn"
                   : "border-line bg-surface text-fg-3 hover:bg-hover"
               }`}
             >
-              <Star size={12} fill={onlyImportant ? "#ba7517" : "none"} />
+              <Star size={12} fill={onlyImportant ? "var(--color-warn)" : "none"} />
               重要
             </button>
 
@@ -857,7 +857,7 @@ export default function SpecialOrdersView() {
                               ),
                             })
                           }
-                          className="size-3.5 accent-[#d85a30]"
+                          className="size-3.5 accent-special"
                         />
                         <span className="min-w-0 flex-1 truncate text-fg-2">{label}</span>
                         <span className="shrink-0 text-[10.5px] text-fg-dim">
@@ -929,7 +929,7 @@ export default function SpecialOrdersView() {
                   data-sp-density-on={compact ? "1" : "0"}
                   className={`rounded-md border px-2 py-1 text-[11.5px] transition-colors ${
                     compact
-                      ? "border-[#d85a30] bg-[#d85a30]/10 text-[#d85a30]"
+                      ? "border-special bg-special/10 text-special"
                       : "border-line text-fg-3 hover:bg-hover"
                   }`}
                 >
@@ -961,7 +961,7 @@ export default function SpecialOrdersView() {
             <span className="text-fg-3">命中 {rows.length} 条 · 命中范围含相关信息字段</span>
           )}
           {toast && (
-            <span data-sp-toast="" className="font-medium text-[#1d9e75]">
+            <span data-sp-toast="" className="font-medium text-ok-bright">
               {toast}
             </span>
           )}
@@ -972,7 +972,7 @@ export default function SpecialOrdersView() {
           <div
             data-sp-batch=""
             data-sp-batch-count={selected.length}
-            className="mb-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-[#d85a30]/40 bg-[#d85a30]/[0.07] px-2 py-1.5"
+            className="mb-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-special/40 bg-special/[0.07] px-2 py-1.5"
           >
             <span className="px-1 text-[12px] font-medium text-fg-2">
               已选 {selected.length} 条
@@ -1081,7 +1081,7 @@ export default function SpecialOrdersView() {
             </p>
             <button
               onClick={() => setRegOpen(true)}
-              className="mt-1.5 flex items-center gap-1.5 rounded-md bg-[#d85a30] px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:brightness-95"
+              className="mt-1.5 flex items-center gap-1.5 rounded-md bg-special px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:brightness-95"
             >
               <Timer size={14} />
               登记第一张单号
@@ -1109,7 +1109,7 @@ export default function SpecialOrdersView() {
                 onChange={() => setSelected(allChecked ? [] : visibleIds)}
                 data-sp-select-all=""
                 title="全选（当前筛选出来的）"
-                className="size-3.5 accent-[#d85a30]"
+                className="size-3.5 accent-special"
               />
               <span>记录（单号 / 说明）</span>
               <span>流程 · 当前步骤</span>
@@ -1220,14 +1220,16 @@ function RecordRow({
   // 与列表行同一条纪律：只能往前走一步，退回是详情面板里的显式动作
   const next = idx >= 0 ? flowStages[idx + 1] : undefined;
 
+  // 阶段色兜底保持真 hex：下面有 `${color}1f` 这种拼透明度的写法，
+  // 换成 var(--color-…) 会拼出非法 CSS。参见 components/OrderRow.tsx。
   const color = stage?.color ?? "#888780";
   const ds = dueState(order);
   // 与 OrderRow 的胶囊同一套语义：临期和逾期都是 danger 红，逾期加粗
   const dueStyle: Record<DueState, { color: string; background: string; fontWeight?: number }> = {
     overdue: { color: "var(--color-danger)", background: "var(--color-danger-soft)", fontWeight: 700 },
     soon: { color: "var(--color-danger)", background: "var(--color-danger-soft)" },
-    ok: { color: "#5a5955", background: "rgba(0,0,0,.055)" },
-    none: { color: "#8a8985", background: "rgba(0,0,0,.055)" },
+    ok: { color: "var(--color-fg-3)", background: "rgba(0,0,0,.055)" },
+    none: { color: "var(--color-fg-dim)", background: "rgba(0,0,0,.055)" },
   };
 
   const extendMinutes =
@@ -1244,7 +1246,7 @@ function RecordRow({
         onOpen();
       }}
       className={`group relative cursor-pointer transition-colors ${
-        checked ? "bg-[#d85a30]/[0.06]" : active ? "bg-chip" : "hover:bg-hover"
+        checked ? "bg-special/[0.06]" : active ? "bg-chip" : "hover:bg-hover"
       } border-b border-line last:border-b-0`}
     >
       {active && <span className="absolute inset-y-0 left-0 w-[3px]" style={{ background: color }} />}
@@ -1257,13 +1259,13 @@ function RecordRow({
           onChange={onToggleCheck}
           data-sp-select={order.id}
           title="选中这条记录"
-          className="size-3.5 accent-[#d85a30]"
+          className="size-3.5 accent-special"
         />
 
         {/* 记录：单号是"对账用的标识"（等宽、突出），说明跟在后面；第二行是登记时间与备注 */}
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-1.5">
-            {order.important && <Star size={11} className="shrink-0 text-[#ba7517]" fill="#ba7517" />}
+            {order.important && <Star size={11} className="shrink-0 text-warn" fill="var(--color-warn)" />}
             <span
               data-order-no={order.no}
               className={`shrink-0 font-mono text-[12.5px] font-medium ${
@@ -1283,7 +1285,7 @@ function RecordRow({
                 className="shrink-0 rounded p-0.5 text-fg-dim opacity-0 transition-opacity hover:text-fg-2 group-hover:opacity-100"
               >
                 {copiedNo ? (
-                  <Check size={11} className="text-[#1d9e75]" />
+                  <Check size={11} className="text-ok-bright" />
                 ) : (
                   <Copy size={11} />
                 )}
@@ -1370,7 +1372,7 @@ function RecordRow({
               className="flex max-w-full items-center gap-1 rounded px-1 py-1 text-[11.5px] text-fg-2 transition-colors hover:bg-hover"
             >
               {copied ? (
-                <Check size={12} className="shrink-0 text-[#1d9e75]" />
+                <Check size={12} className="shrink-0 text-ok-bright" />
               ) : (
                 <Copy size={12} className="shrink-0 text-fg-dim" />
               )}
@@ -1466,10 +1468,10 @@ function RecordRow({
             onToggleImportant();
           }}
           className={`grid size-7 place-items-center rounded transition-colors hover:bg-hover ${
-            order.important ? "text-[#ba7517]" : "text-fg-dim"
+            order.important ? "text-warn" : "text-fg-dim"
           }`}
         >
-          <Star size={14} fill={order.important ? "#ba7517" : "none"} />
+          <Star size={14} fill={order.important ? "var(--color-warn)" : "none"} />
         </button>
         <button
           title="删除这条记录"

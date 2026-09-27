@@ -42,7 +42,7 @@ const VIEW_META: Record<
   },
   important: {
     icon: Star,
-    accent: "#ba7517",
+    accent: "var(--color-warn)",
     bg: "linear-gradient(135deg, #a8681a 0%, #d99b3f 50%, #e8b56a 100%)",
   },
   all: {
@@ -64,7 +64,7 @@ const VIEW_META: Record<
   // 重要的琥珀都拉开距离 —— 侧边栏里这几个入口是并排的，撞色就等于没颜色
   special: {
     icon: Timer,
-    accent: "#d85a30",
+    accent: "var(--color-special)",
     bg: "linear-gradient(135deg, #96361c 0%, #d85a30 50%, #eaa587 100%)",
   },
   list: {
@@ -208,6 +208,8 @@ export default function TaskList() {
 
   const accent =
     view === "list"
+      // 列表色是**用户数据**（存在 core_lists.color 里、还会跟着同步走
+      // 跳到别的机器），这里的兜底值必须是同一个形状的真 hex，不能写成 CSS 变量。
       ? (lists.find((l) => l.id === activeListId)?.color ?? "#d4537e")
       : meta.accent;
 
@@ -369,6 +371,8 @@ export default function TaskList() {
             <div key={section.key} className="mb-3">
               {section.label && (
                 <div className="mb-1.5 flex items-center gap-2 px-1">
+                  {/* 逾期分组标题压在视图身份色渐变上，这一句是「渐变上的高亮」，
+                      跟主题无关；#ffe0e0 是白里挑一点粉，比纯白更像报警 */}
                   <span
                     className={`text-[12px] font-medium ${section.overdue ? "text-[#ffe0e0]" : "text-white/85"}`}
                   >
@@ -456,7 +460,7 @@ export default function TaskList() {
             {orderView ? (
               <span
                 className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium text-white"
-                style={{ background: specialOnly ? "#d85a30" : "var(--color-primary)" }}
+                style={{ background: specialOnly ? "var(--color-special)" : "var(--color-primary)" }}
               >
                 {specialOnly ? <Timer size={12} /> : <ClipboardList size={12} />}
                 {specialOnly ? "特殊单号" : "流程任务"}
@@ -525,7 +529,7 @@ export default function TaskList() {
                 data-compose-submit=""
                 className="shrink-0 rounded-md px-2.5 py-1 text-[12px] font-medium text-white"
                 style={{
-                  background: composeKind === "order" ? (specialOnly ? "#d85a30" : "var(--color-primary)") : accent,
+                  background: composeKind === "order" ? (specialOnly ? "var(--color-special)" : "var(--color-primary)") : accent,
                 }}
               >
                 {composeKind === "order" ? (specialOnly ? "登记单号" : "创建流程任务") : "添加"}

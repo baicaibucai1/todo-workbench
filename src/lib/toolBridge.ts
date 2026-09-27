@@ -500,10 +500,6 @@ function rememberThumb(relPath: string, thumb: string): void {
   thumbCache.set(relPath, thumb);
 }
 
-/** 供测试重置 */
-export function __resetThumbCache(): void {
-  thumbCache.clear();
-}
 
 /** 把图库条目转成给工具看的形状。**不含仓库路径** —— 工具拿不到路径就无从越界。 */
 interface ToolGalleryItem {

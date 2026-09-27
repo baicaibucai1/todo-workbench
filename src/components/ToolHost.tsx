@@ -226,7 +226,7 @@ export default function ToolFrame({ tool, active }: { tool: ToolManifest; active
           {schemaError && (
             <div
               data-tool-schema-error={tool.id}
-              className="flex items-start gap-2 border-b border-[#f0d9a8] bg-[#fdf6e7] px-4 py-2 text-[12.5px] leading-relaxed text-[#7a5406]"
+              className="flex items-start gap-2 border-b border-tip-line bg-tip-bg px-4 py-2 text-[12.5px] leading-relaxed text-tip-text"
             >
               <Info size={14} className="mt-px shrink-0" />
               <span>
@@ -300,9 +300,9 @@ function ToolContractDemo({
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
       <div className="mx-auto max-w-[680px]">
-        <div className="flex items-start gap-3 rounded-lg border border-[#f0d9a8] bg-[#fdf6e7] px-4 py-3">
-          <Info size={16} className="mt-px shrink-0 text-[#a5720f]" />
-          <div className="text-[13px] leading-relaxed text-[#7a5406]">
+        <div className="flex items-start gap-3 rounded-lg border border-tip-line bg-tip-bg px-4 py-3">
+          <Info size={16} className="mt-px shrink-0 text-tip-text" />
+          <div className="text-[13px] leading-relaxed text-tip-text">
             没能解析出「{toolName}」的入口文件，暂时显示契约说明。
             请确认工具目录下存在
             <code className="mx-1 rounded bg-chip px-1.5 py-px font-mono text-[12px]">
@@ -314,7 +314,7 @@ function ToolContractDemo({
                 上一版这里只显示这句通用提示，而真正的故障是「代码去 %APPDATA% 找，
                 工具却装在安装目录」，界面上完全看不出，只能靠翻源码猜。 */}
             {candidates.length > 0 && (
-              <div className="mt-2 border-t border-[#f0d9a8] pt-2">
+              <div className="mt-2 border-t border-tip-line pt-2">
                 已查找以下位置，均不存在：
                 <ul className="mt-1 space-y-0.5">
                   {candidates.map((c) => (
@@ -334,7 +334,7 @@ function ToolContractDemo({
           单文件工具可以直接在<b>设置 → 工具 → 导入 HTML 单文件</b>里装进来。
         </p>
 
-        <pre className="mt-3 overflow-x-auto rounded-lg bg-[#2c2c2a] px-4 py-3 font-mono text-[12px] leading-[1.7] text-[#e8e6e0]">
+        <pre className="mt-3 overflow-x-auto rounded-lg bg-code-bg px-4 py-3 font-mono text-[12px] leading-[1.7] text-code-fg">
 {`tools/${toolId}/
   manifest.json    清单：id / 名称 / 图标 / 入口 / dbVersion
   index.html       工具界面，完全自治的单页应用
@@ -344,7 +344,7 @@ function ToolContractDemo({
         {/* 这一条是踩过的坑，写在这里是因为它是**下一个写工具的人唯一会看到的地方**。
             桌面端走 asset 协议，Tauri 把整条路径编码成一个路径段，
             相对引用会被解析到站点根 —— 只在装出来的应用里复现，dev 下完全正常。 */}
-        <div className="mt-3 rounded-lg border border-[#f0d9a8] bg-[#fdf6e7] px-4 py-3 text-[13px] leading-relaxed text-[#7a5406]">
+        <div className="mt-3 rounded-lg border border-tip-line bg-tip-bg px-4 py-3 text-[13px] leading-relaxed text-tip-text">
           ⚠️ 工具引用自己的附属资源时，<b>必须拼成绝对 URL</b>。
           桌面端工具经 asset 协议加载，而 Tauri 会把整条路径编码成
           <code className="mx-1 rounded bg-chip px-1.5 py-px font-mono text-[11.5px]">
@@ -365,7 +365,7 @@ function ToolContractDemo({
         </div>
 
         <h3 className="mt-5 text-[14px] font-medium">manifest.json</h3>
-        <pre className="mt-2 overflow-x-auto rounded-lg bg-[#2c2c2a] px-4 py-3 font-mono text-[12px] leading-[1.7] text-[#e8e6e0]">
+        <pre className="mt-2 overflow-x-auto rounded-lg bg-code-bg px-4 py-3 font-mono text-[12px] leading-[1.7] text-code-fg">
 {`{
   "id": "${toolId}",
   "name": "${toolName}",
@@ -377,14 +377,14 @@ function ToolContractDemo({
         </pre>
 
         <h3 className="mt-5 flex items-center gap-2 text-[14px] font-medium">
-          <Database size={15} className="text-[#ba7517]" />
+          <Database size={15} className="text-warn" />
           数据表（可选）
         </h3>
         <p className="mt-1 text-[13px] leading-relaxed text-fg-3">
           工具要存自己的记录时，在 manifest 里<b>声明</b>表结构，宿主替你建和执行。
           你在 js 里调的是结构化接口，拿不到 SQL 通道，也就碰不到宿主的表：
         </p>
-        <pre className="mt-2 overflow-x-auto rounded-lg bg-[#2c2c2a] px-4 py-3 font-mono text-[11.5px] leading-[1.75] text-[#e8e6e0]">
+        <pre className="mt-2 overflow-x-auto rounded-lg bg-code-bg px-4 py-3 font-mono text-[11.5px] leading-[1.75] text-code-fg">
 {`// manifest.json
 "dbVersion": 1,
 "schema": { "tables": [{
@@ -424,13 +424,13 @@ await call("row.select",  { table: "records",
         </ul>
 
         <h3 className="mt-5 flex items-center gap-2 text-[14px] font-medium">
-          <ShieldCheck size={15} className="text-[#1d9e75]" />
+          <ShieldCheck size={15} className="text-ok-bright" />
           与其它工具联动（可选）
         </h3>
         <p className="mt-1 text-[13px] leading-relaxed text-fg-3">
           各工具在自己的 iframe 里，要协作就得经过宿主中转：
         </p>
-        <pre className="mt-2 overflow-x-auto rounded-lg bg-[#2c2c2a] px-4 py-3 font-mono text-[11.5px] leading-[1.75] text-[#e8e6e0]">
+        <pre className="mt-2 overflow-x-auto rounded-lg bg-code-bg px-4 py-3 font-mono text-[11.5px] leading-[1.75] text-code-fg">
 {`await call("tools.list");                  // 这台机器上还有哪些工具
 await call("tools.open", { tool: "image-crop",
   data: { url: "..." } });                 // 拉起它并把数据交给它
@@ -450,7 +450,7 @@ window.addEventListener("message", (e) => {
         </p>
 
         <h3 className="mt-5 flex items-center gap-2 text-[14px] font-medium">
-          <ShieldCheck size={15} className="text-[#1d9e75]" />
+          <ShieldCheck size={15} className="text-ok-bright" />
           数据隔离
         </h3>
         <p className="mt-1 text-[13px] leading-relaxed text-fg-3">
@@ -466,7 +466,7 @@ window.addEventListener("message", (e) => {
         </p>
 
         <h3 className="mt-5 flex items-center gap-2 text-[14px] font-medium">
-          <Database size={15} className="text-[#ba7517]" />
+          <Database size={15} className="text-warn" />
           数据库连通性验证
         </h3>
         <p className="mt-1 text-[13px] leading-relaxed text-fg-3">

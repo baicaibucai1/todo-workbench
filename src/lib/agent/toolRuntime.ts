@@ -55,16 +55,6 @@ export function unregisterLiveTool(toolId: string): void {
   live.delete(toolId);
 }
 
-/** 某个工具现在开着吗 */
-export function isToolLive(toolId: string): boolean {
-  return live.has(toolId);
-}
-
-/** 它声明了哪些命令（没开就返回空数组） */
-export function liveCommands(toolId: string): string[] {
-  return live.get(toolId)?.commands ?? [];
-}
-
 /** 等待一条回执的最长时间 */
 const REPLY_MS = 8000;
 

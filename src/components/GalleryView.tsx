@@ -17,8 +17,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Images,
-  ImageIcon,
-  Film,
   Plus,
   Search,
   X,
@@ -509,7 +507,7 @@ function Card({
           title="从图库移除"
           onClick={onRemove}
           data-gallery-remove={item.id}
-          className="grid size-6 place-items-center rounded bg-black/55 text-white hover:bg-[#c0392b]"
+          className="grid size-6 place-items-center rounded bg-black/55 text-white hover:bg-danger"
         >
           <Trash2 size={11} />
         </button>
@@ -791,5 +789,3 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-/** 给别处用的图标映射（工具区/详情里标注来源时会用到） */
-export { ImageIcon, Film };

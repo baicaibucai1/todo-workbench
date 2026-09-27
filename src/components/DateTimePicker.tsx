@@ -535,5 +535,3 @@ function buildGrid(view: Date): Cell[] {
   }
   return cells;
 }
-
-export { localToday as dtpToday, toLocalInputString as dtpToLocalInput };

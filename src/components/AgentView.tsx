@@ -706,7 +706,7 @@ function ActionCard({ action }: { action: AgentAction }) {
     >
       <div className="flex items-center gap-2">
         {action.ok ? (
-          <Check size={13} className="shrink-0 text-[#0f6e56]" />
+          <Check size={13} className="shrink-0 text-ok" />
         ) : (
           <ShieldAlert size={13} className="shrink-0 text-danger" />
         )}

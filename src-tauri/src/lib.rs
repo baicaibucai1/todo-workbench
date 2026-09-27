@@ -148,6 +148,9 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        // process 插件注册着，但**没在 capabilities 里授予 `process:default`** ——
+        // 那个权限等于白送 webview 一个「退出 / 重启整个应用」的入口，
+        // 而本项目前后端都没调用过它。真要用到再加权限，别默认开着。
         .plugin(tauri_plugin_process::init());
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]

@@ -50,8 +50,3 @@ const VIEW_COMPONENTS: Record<string, ComponentType> = {
 export function resolveViewComponent(view: string): ComponentType {
   return VIEW_COMPONENTS[view] ?? TaskList;
 }
-
-/** 这个 view 登记过吗（给测试与自己人看的：没登记的 id 会静默退回待办） */
-export function hasView(view: string): boolean {
-  return Object.prototype.hasOwnProperty.call(VIEW_COMPONENTS, view);
-}

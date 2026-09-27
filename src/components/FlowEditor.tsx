@@ -101,7 +101,7 @@ export default function FlowEditor() {
         {error && (
           <div
             data-flow-error=""
-            className="flex shrink-0 items-center gap-2 border-b border-line bg-[#fdf6e7] px-4 py-2 text-[12.5px] text-[#7a5406]"
+            className="flex shrink-0 items-center gap-2 border-b border-line bg-tip-bg px-4 py-2 text-[12.5px] text-tip-text"
           >
             <AlertTriangle size={13} className="shrink-0" />
             <span className="min-w-0 flex-1">{error}</span>
@@ -137,7 +137,7 @@ export default function FlowEditor() {
                     {f.isDefault && (
                       <span
                         title="新建流程任务时默认选中这套"
-                        className="shrink-0 rounded bg-[#e1f5ee] px-1.5 py-px text-[10px] text-[#0f6e56]"
+                        className="shrink-0 rounded bg-ok-soft px-1.5 py-px text-[10px] text-ok"
                       >
                         默认
                       </span>
@@ -420,7 +420,7 @@ function StageRow({
         data-stage-terminal={isTerminal ? "1" : "0"}
         title={isTerminal ? "终态：走到这里流程任务算完结" : "非终态：只是途经的一步"}
         className={`flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] ${
-          isTerminal ? "bg-[#e1f5ee] text-[#0f6e56]" : "text-fg-dim hover:bg-hover"
+          isTerminal ? "bg-ok-soft text-ok" : "text-fg-dim hover:bg-hover"
         }`}
       >
         <Flag size={11} />

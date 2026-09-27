@@ -10,12 +10,18 @@
  *
  * 用法（dev server 要先在 1420 上跑）：
  *   node tests/gen-readme-shots.mjs                       # 全部重拍
- *   node tests/gen-readme-shots.mjs --only settings-sync  # 只拍指定的（可跟多个）
+ *   node tests/gen-readme-shots.mjs --only settings-tools # 只拍指定的（可跟多个）
  *
  * `--only` 是为了改一处界面时别把 15 张图全换掉 —— 全量重拍会让 diff 里
  * 混进一堆毫无变化的二进制文件，评审时根本看不出真正改的是哪张。
  *
- * 产物写到 docs/screenshots/，文件名与 README 里的引用一一对应。
+ * 产物写到 docs/screenshots/，文件名与 README 里的引用**一一对应**。
+ * 这里每加一个 `shot()`，README 就得同步加一行引用；反过来 README 里删了
+ * 引用，这里的 `shot()` 也要跟着删 —— 否则下一次全量重拍就会留下一张没人
+ * 引用的孤儿图（`docs/screenshots/settings.png` 曾经就是这么来的：这里拍了、
+ * README 没引用，于是白占 97 KB 还让人以为是漏了什么）。
+ *
+ * 「设置 · 关于」不在这儿拍，它在 tests/gen-about-shot.mjs。
  */
 
 import { createRequire } from "node:module";
@@ -24,6 +30,7 @@ import path from "node:path";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
+const { enableModule } = await import("./_enable-module.mjs");
 
 const EDGE = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 const BASE = "http://localhost:1420/";
@@ -70,11 +77,23 @@ await page.reload({ waitUntil: "load" });
 await page.waitForSelector("aside", { timeout: 20000 });
 await page.waitForTimeout(1200);
 
-/** 点侧边栏某个导航项；工具与视图都用 data-nav */
+/** 点侧边栏某个导航项；工具与视图都用 data-nav。
+ *  选装模块没开时侧栏里就没有那一项 —— 不是"点了没反应"，是压根不存在，
+ *  所以这里宁可早点炸在一句人话上，也别让它卡满 30 秒超时。 */
 const nav = async (key) => {
-  await page.locator(`aside[data-sidebar-width] [data-nav="${key}"]`).first().click();
+  const item = page.locator(`aside[data-sidebar-width] [data-nav="${key}"]`).first();
+  if ((await item.count()) === 0) {
+    throw new Error(
+      `侧边栏里没有 data-nav="${key}" —— 多半是它所在的选装模块没打开（见下方 enableModule）`,
+    );
+  }
+  await item.click();
   await page.waitForTimeout(600);
 };
+
+/** 这两个模块默认关闭，而 README 里要截它们的界面，所以先按真实界面打开它们 */
+await enableModule(page, "special");
+await enableModule(page, "gallery");
 
 console.log("开始截图：");
 
@@ -102,7 +121,17 @@ if ((await handle.count()) > 0) {
 await nav("orders");
 await shot("orders");
 
-// 流程任务详情：进流程任务视图后默认就展开了第一条，这里把面板拖宽一点更像"详情"该有的样子
+/* 流程任务详情：视图里默认就展开第一条，所以紧接着再拍一张拿到的是**一模一样的
+   画面**（两张 md5 相同，README 里却挂了两个不同标题 —— 等于骗人）。
+   这里把详情面板滚到「流转记录」，既换了画面，也让"过程态流转留痕"真的入镜。
+   刻意**不改数据**：不点阶段条（那会真的推进流程），只滚动。 */
+{
+  const trace = page.getByText("流转记录", { exact: true }).first();
+  if ((await trace.count()) > 0) {
+    await trace.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(400);
+  }
+}
 await shot("order-detail");
 
 await nav("special");

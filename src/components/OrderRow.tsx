@@ -77,6 +77,8 @@ export default function OrderRow({
   // 要退回请到详情面板里选，那是个显式动作。
   const next = idx >= 0 ? flowStages[idx + 1] : undefined;
 
+  // 阶段色兜底保持真 hex：下面有 `${color}1f` 这种拼透明度的写法，
+  // 换成 var(--color-…) 会拼出非法 CSS。
   const color = stage?.color ?? "#888780";
   const dueLabel = order.dueDate ? shortDate(order.dueDate) : null;
   const overdue = !!order.dueDate && order.dueDate < today() && !order.closed;
@@ -92,8 +94,8 @@ export default function OrderRow({
   const dueStyle: Record<typeof dueSt, { color: string; background: string; fontWeight?: number }> = {
     overdue: { color: "var(--color-danger)", background: "var(--color-danger-soft)", fontWeight: 700 },
     soon: { color: "var(--color-danger)", background: "var(--color-danger-soft)" },
-    ok: { color: "#5a5955", background: "rgba(0,0,0,.055)" },
-    none: { color: "#8a8985", background: "rgba(0,0,0,.055)" },
+    ok: { color: "var(--color-fg-3)", background: "rgba(0,0,0,.055)" },
+    none: { color: "var(--color-fg-dim)", background: "rgba(0,0,0,.055)" },
   };
 
   return (
@@ -278,10 +280,10 @@ export default function OrderRow({
           title={order.important ? "取消重要" : "标记为重要"}
           onClick={onToggleImportant}
           className={`grid size-7 place-items-center rounded hover:bg-hover ${
-            order.important ? "text-[#ba7517]" : "text-fg-dim opacity-0 group-hover:opacity-100"
+            order.important ? "text-warn" : "text-fg-dim opacity-0 group-hover:opacity-100"
           }`}
         >
-          <Star size={15} fill={order.important ? "#ba7517" : "none"} />
+          <Star size={15} fill={order.important ? "var(--color-warn)" : "none"} />
         </button>
 
         <button

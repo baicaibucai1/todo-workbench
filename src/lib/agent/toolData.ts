@@ -30,11 +30,6 @@ import { toolPrefix } from "../tools";
 import { db } from "../db";
 import type { ToolManifest } from "../../types";
 
-export interface ToolTableRow {
-  name: string;
-  columns: Array<{ name: string; type?: string }>;
-}
-
 /** 一个工具声明过的表名（含前缀后的真名） */
 function declaredTables(tool: ToolManifest): Map<string, string[]> {
   const out = new Map<string, string[]>(); // 真表名 -> 列名

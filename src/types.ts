@@ -123,12 +123,6 @@ export interface Step {
   dueAt: string | null;
 }
 
-/** 视图筛选条件 */
-export interface ViewFilter {
-  view: SmartView | "list";
-  listId?: string;
-}
-
 /* ------------------------------------------------------------------ */
 /* 流程任务                                                                */
 /* ------------------------------------------------------------------ */

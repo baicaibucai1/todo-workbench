@@ -28,7 +28,6 @@
       ]
     },
     "dialog:default",
-    "process:default",
     "updater:default"
   ]
 }

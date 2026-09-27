@@ -130,10 +130,15 @@ tools/<id>/
 
 ```
 sun  star  calendar  inbox  home  package  crop  receipt  image
-calculator  file  list  settings  boxes  sparkles  video  hash  notebook-pen
+calculator  file  list  settings  boxes  sparkles  video  hash  notebook-pen  bot
 ```
 
 写错会静默退回 `package`（包裹图标），不报错。
+
+> 这份清单有**四个副本**，改一处要四处一起改：
+> `src/lib/icons.ts`（唯一真身）、`src/lib/agent/protocol.ts` 的动作参数说明、
+> `src/lib/agent/skills.ts` 的提示词、`src/lib/agent/actions.ts` 的 `ICON_OK`。
+> 三个提示词副本里早就写了 `bot`，而真身里没有 —— 于是 AI 选了 `bot` 却拿到包裹图标。
 
 ### schema 声明
 

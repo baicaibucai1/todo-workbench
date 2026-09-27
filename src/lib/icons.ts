@@ -24,6 +24,7 @@ import {
   Video,
   Hash,
   NotebookPen,
+  Bot,
   type LucideIcon,
 } from "lucide-react";
 
@@ -48,6 +49,9 @@ export const ICONS: Record<string, LucideIcon> = {
   hash: Hash,
   // 记笔记类工具（随包自带的「随手记」用）
   "notebook-pen": NotebookPen,
+  // 助手类工具（AI 写的工具常想用机器人图标；三处技能提示词都列了 bot，
+  // 这里必须真的有映射，否则会静默退回默认包裹图标）
+  bot: Bot,
 };
 
 export function resolveIcon(name?: string): LucideIcon {

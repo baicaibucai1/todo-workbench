@@ -129,8 +129,8 @@ export default function ReminderToast() {
           className="pointer-events-auto animate-toast-in rounded-lg border border-line bg-card p-3 shadow-[0_10px_30px_rgba(0,0,0,0.18)]"
         >
           <div className="flex items-start gap-2">
-            <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-[#d4537e]/12">
-              <Bell size={13} className="text-[#d4537e]" />
+            <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-accent/12">
+              <Bell size={13} className="text-accent" />
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1 text-[11px] text-fg-dim">
