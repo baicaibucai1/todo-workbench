@@ -1,5 +1,35 @@
 [
   {
+    "id": "counter",
+    "name": "计数器",
+    "version": "1.0.0",
+    "description": "e2e 夹具：注册三个动作给助手（add / read / reset），用来验工具注册 + 配套 skill + headless 隐藏执行",
+    "icon": "calculator",
+    "entry": "index.html",
+    "dbVersion": 1,
+    "author": "测试夹具",
+    "headless": true,
+    "actions": [
+      {
+        "name": "add",
+        "description": "把计数加上 n（默认 1）。用户说「加一」「加 5」时用",
+        "params": [{ "name": "n", "type": "number", "description": "要加多少，默认 1" }]
+      },
+      { "name": "read", "description": "读出当前计数。想知道现在是几时用，不要自己去猜" },
+      { "name": "reset", "description": "把计数归零。只有用户明确说「清零 / 归零」时才调", "destructive": true }
+    ],
+    "skill": {
+      "title": "驱动「计数器」",
+      "summary": "这个夹具工具注册给助手的三个动作：add / read / reset",
+      "rules": [
+        "add 不填 n 就按 1 算；read 返回的 count 就是界面上那个数",
+        "reset 会归零，宿主会先问用户一次 —— 你不要再追一句「确定吗」",
+        "失败时返回的是工具的原话，照着它改，别拿同一组参数重试"
+      ],
+      "body": "# 驱动「计数器」\n\n这是一个 e2e 夹具工具，注册了三个动作：\n\n- `tool_counter_add`（参数 n，可选，默认 1）\n- `tool_counter_read`（无参数，返回 { count }）\n- `tool_counter_reset`（无参数，**destructive**，会先问用户）\n\n它声明了 headless，所以没被打开时宿主也会为它起一个隐藏实例执行命令。"
+    }
+  },
+  {
     "id": "panel-demo",
     "name": "注入夹具",
     "version": "1.0.0",

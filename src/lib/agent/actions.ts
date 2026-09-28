@@ -28,7 +28,7 @@
 
 import * as repo from "../repo";
 import * as workspace from "./workspace";
-import { listTools, toolTable } from "../tools";
+import { listTools, normalizeActions, normalizeSkill, toolTable } from "../tools";
 import {
   canInstallTools,
   installFromHtml,
@@ -43,8 +43,17 @@ import { callTool } from "./toolRuntime";
 import { validateToolSchema } from "../toolSchema";
 import { localInputToIso } from "../datetime";
 import { parseDisabledTools, SETTINGS } from "../settings";
-import { skillById, SKILLS, refreshSkills as skillStore } from "./skills";
+import { allSkills, skillById, SKILLS, refreshSkills as skillStore } from "./skills";
+import {
+  isToolActionName,
+  isToolSkillId,
+  parseToolActionName,
+  toolActionName,
+  toolActionNames,
+  toolSkillId,
+} from "./toolActions";
 import { AGENT_TOOLS, isAskTool, toolSpec } from "./protocol";
+import type { ToolActionParam } from "../../types";
 import { normalizeInjects } from "../extensions/types";
 import { runSandbox } from "./sandbox";
 import {
@@ -366,6 +375,34 @@ export async function runAction(
   args: Record<string, unknown>,
   ctx: ActionContext,
 ): Promise<Outcome> {
+  /*
+   * 工具自己注册的动作（`tool_<id>_<action>`）**排在最前面**。
+   *
+   * 它们不在 HANDLERS 里 —— HANDLERS 是编译期写死的一张表，而这一批名字
+   * **每次都从 listTools() 现算**（装/卸/停用随时会变，登记一份就会错位）。
+   * 所以走单独的分发。
+   *
+   * 为什么必须在"认不认识这个动作"那道检查**之前**：那个工具此刻
+   * 可能已经不在了（被卸掉或停用），而 `toolSpec` 是从注册表现算的 ——
+   * 先判它就会回一句"不认识的动作"，于是模型读成"我函数名写错了"，
+   * 而真实情况是"那个工具没了"。这两句话让用户做的下一件事完全不同。
+   *
+   * 权限：这批动作**不挂 permission**。驱动一个用户自己装进来的工具，
+   * 与他在界面上点开它是同一件事，不需要再开一道开关；
+   * 真正危险的那部分由工具在 manifest 里标 destructive，走下面的确认门。
+   */
+  if (isToolActionName(name)) {
+    try {
+      return await runToolAction(name, args, ctx);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        action: { tool: name, args, ok: false, summary: `执行失败：${msg}`, error: msg },
+        content: `执行失败：${msg}`,
+      };
+    }
+  }
+
   const spec = toolSpec(name);
   if (!spec) {
     const msg = `不认识的动作「${name}」`;
@@ -404,7 +441,8 @@ const HANDLERS: Record<string, Handler> = {
     const id = str(args, "id", true);
     const skill = skillById(id);
     if (!skill) {
-      const msg = `没有「${id}」这个技能。可用的：${SKILLS.map((s) => s.id).join("、")}`;
+      // 列**当前**全部技能（含工具自带的那几份）：模型只能从这里知道有哪些可查
+      const msg = `没有「${id}」这个技能。可用的：${allSkills().map((s) => s.id).join("、")}`;
       return { action: { tool: "read_skill", args, ok: false, summary: msg, error: msg }, content: msg };
     }
     return {
@@ -449,6 +487,16 @@ const HANDLERS: Record<string, Handler> = {
       const msg = `「${id}」是内置技能，改不了。换一个 id，或者写一条新规矩`;
       return { action: { tool: "add_skill", args, ok: false, summary: msg, error: msg }, content: msg };
     }
+    /*
+     * 工具自带的那几份（id 是 `tool-use-<toolId>`）也改不了 ——
+     * 它们的生命周期由工具目录决定：装上来就有、卸掉就没。
+     * 助手在这里写一份同 id 的，工具一卸就留下一条**指向空气**的说明，
+     * 而它还会照着这条说明去调一个已经不存在的函数。
+     */
+    if (isToolSkillId(id)) {
+      const msg = `「${id}」是工具自带的技能（随工具装卸），改不了。想记自己的规矩就换一个 id`;
+      return { action: { tool: "add_skill", args, ok: false, summary: msg, error: msg }, content: msg };
+    }
     if (!rules.length) {
       const msg = "至少要有一条 rules —— 空规则占着常驻索引却什么也没说";
       return { action: { tool: "add_skill", args, ok: false, summary: msg, error: msg }, content: msg };
@@ -467,6 +515,12 @@ const HANDLERS: Record<string, Handler> = {
     const id = str(args, "id", true);
     if (SKILLS.some((s) => s.id === id)) {
       const msg = `「${id}」是内置技能，删不掉（那是写工具的标准，删了你会开始写出装不上的工具）`;
+      return { action: { tool: "delete_skill", args, ok: false, summary: msg, error: msg }, content: msg };
+    }
+    // 工具自带的那几份删不掉：它是随工具装卸的，删了下次装回来它又出现，
+    // 而这一次删除本身也不会真的生效（见 add_skill 那条注释）
+    if (isToolSkillId(id)) {
+      const msg = `「${id}」是工具自带的技能，随工具装卸 —— 不想要那个工具就卸掉它，这条技能自己会消失`;
       return { action: { tool: "delete_skill", args, ok: false, summary: msg, error: msg }, content: msg };
     }
     const ok = await repo.deleteAgentSkill(id);
@@ -694,6 +748,17 @@ const HANDLERS: Record<string, Handler> = {
       enabled: !disabled.has(t.id),
       has_schema: !!t.schema,
       tables: t.schema?.tables.map((x) => x.name) ?? [],
+      // 它注册给助手的动作。**list_tools 是助手发现"我能驱动什么"的地方** ——
+      // 它不去翻 manifest，只能在这里看到。没注册就是空数组（多数工具如此）
+      actions: (t.actions ?? []).map((a) => ({
+        name: a.name,
+        fn: toolActionName(t.id, a.name),
+        description: a.description,
+        destructive: a.destructive === true,
+      })),
+      // 没打开时宿主能不能为它起隐藏实例（决定了"先 open_tool"是不是必需的）
+      headless: t.headless === true,
+      has_skill: !!t.skill,
       description: t.description ?? "",
     }));
     return {
@@ -706,7 +771,10 @@ const HANDLERS: Record<string, Handler> = {
           .map(
             (r) =>
               `${r.id} · ${r.name} v${r.version} · ${r.source === "bundled" ? "内置" : "自己导入"}` +
-              `${r.enabled ? "" : "（已停用）"}${r.has_schema ? ` · 表：${r.tables.join("、")}` : ""}`,
+              `${r.enabled ? "" : "（已停用）"}${r.has_schema ? ` · 表：${r.tables.join("、")}` : ""}` +
+              (r.actions.length
+                ? `\n    可驱动：${r.actions.map((a) => `${a.fn}${a.destructive ? "（危险）" : ""}`).join("、")}`
+                : ""),
           )
           .join("\n"),
       },
@@ -1006,6 +1074,31 @@ const HANDLERS: Record<string, Handler> = {
     const icon = ICON_OK.has(rawIcon) ? rawIcon : "package";
     const iconNote = rawIcon && !ICON_OK.has(rawIcon) ? `（图标「${rawIcon}」不在可选清单里，已用默认图标）` : "";
 
+    /*
+     * 注册给助手的动作 / 自带说明书。
+     *
+     * 它们**不进通行证指纹**：票绑的是"这份源码有没有真的跑起来"，
+     * 而 actions / headless / skill 不影响源码能不能跑 ——
+     * 把它们算进指纹，模型每次在 install 这一步补一两个参数就会撞
+     * TICKET_MISMATCH，然后卡在"票对不上"这一句上（2026-09-26 那条死循环）。
+     * 所以这里以 install_tool 这一次给的为准。
+     *
+     * 但**丢掉的要报出来**：静默丢掉等于"它以为注册了、其实没有"，
+     * 而那事的后果是用户问"你不是说能让它自己干活吗"。
+     */
+    const declared = Array.isArray(args.actions) ? args.actions.length : 0;
+    const actions = normalizeActions(args.actions);
+    const actionsNote =
+      declared > actions.length
+        ? `（声明了 ${declared} 个动作，只有 ${actions.length} 个通过校验：名字只能用小写字母数字与连字符、字母开头、最长 24 位，一个工具最多 12 个）`
+        : "";
+    const skillGiven = !!args.skill && typeof args.skill === "object";
+    const skill = normalizeSkill(args.skill, name);
+    const skillNote =
+      skillGiven && !skill
+        ? "（自带的 skill 没通过校验被丢掉了：至少要写 summary / rules / body 中的一样）"
+        : "";
+
     // schema 自己先校验一遍：installFromHtml 内部是**静默丢掉**不合法的 schema
     // （对界面导入来说那是对的取舍），但助手这条路上，静默丢掉意味着
     // "它以为绑好了表、其实没有" —— 那必须报出来。
@@ -1052,6 +1145,9 @@ const HANDLERS: Record<string, Handler> = {
       schema: schema ?? undefined,
       capabilities: capsFromTicket,
       injects: injectsFromTicket,
+      ...(actions.length ? { actions } : {}),
+      ...(bool(args, "headless") ? { headless: true } : {}),
+      ...(skill ? { skill } : {}),
       author: "AI 助手",
       overwrite,
     });
@@ -1080,6 +1176,15 @@ const HANDLERS: Record<string, Handler> = {
           manifest.injects?.length
             ? `注入位置：${manifest.injects.map((s) => s.label || s.kind).join("、")}`
             : "",
+          manifest.actions?.length
+            ? `注册给助手的动作：\n${manifest.actions
+                .map((a) => `  · ${toolActionName(manifest.id, a.name)}${a.destructive ? "（危险，会先问）" : ""} —— ${a.description}`)
+                .join("\n")}`
+            : "",
+          manifest.headless ? "允许后台隐藏执行（headless）：助手不必先打开它就能驱动" : "",
+          manifest.skill ? `自带说明书：技能 ${toolSkillId(manifest.id)}` : "",
+          actionsNote,
+          skillNote,
         ]
           .filter(Boolean)
           .join("\n"),
@@ -1681,6 +1786,110 @@ const HANDLERS: Record<string, Handler> = {
 };
 
 /* ------------------------------------------------------------------ */
+/* 工具自己注册的动作（动态，不在 HANDLERS 里）                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `tool_<id>_<action>` 的执行侧。
+ *
+ * ------------------------------------------------------------------
+ * 为什么它不在 HANDLERS 那张表里
+ * ------------------------------------------------------------------
+ * HANDLERS 是编译期写死的一张表，而这一批名字**每次都从 listTools() 现算** ——
+ * 工具随时会被装上、卸掉、停用，登记一份就会与真实状态错位。
+ * 所以分发放在这里，按名字反解出"哪个工具的哪个动作"再去找。
+ *
+ * 找不到时的措辞很要紧：`这台工作台上没有这个工具` 与 `你调错了动作名`
+ * 对用户是完全不同的两件事 —— 前者说明工具被卸了或停用了，
+ * 后者会让他以为助手坏了。所以这里一律先查注册表再下结论。
+ */
+async function runToolAction(
+  name: string,
+  args: Record<string, unknown>,
+  ctx: ActionContext,
+): Promise<Outcome> {
+  const parsed = parseToolActionName(name);
+  if (!parsed) {
+    const msg = `不认识的动作「${name}」`;
+    return { action: { tool: name, args, ok: false, summary: msg, error: msg }, content: msg };
+  }
+  const tool = listTools().find((t) => t.id === parsed.toolId);
+  if (!tool) {
+    const msg =
+      `这台工作台上没有 id 为「${parsed.toolId}」的工具（它可能已经被卸载或停用了）。` +
+      `先用 list_tools 看看现在都装了什么`;
+    return { action: { tool: name, args, ok: false, summary: msg, error: msg }, content: msg };
+  }
+  const action = (tool.actions ?? []).find((a) => a.name === parsed.action);
+  if (!action) {
+    const names = toolActionNames(tool);
+    const msg =
+      `「${tool.name}」没有注册动作「${parsed.action}」。` +
+      `它注册过的：${names.join("、") || "（一个都没有）"}`;
+    return { action: { tool: name, args, ok: false, summary: msg, error: msg }, content: msg };
+  }
+
+  const missing = (action.params ?? [])
+    .filter((p) => p.required && (args[p.name] === undefined || args[p.name] === ""))
+    .map((p) => p.name);
+  if (missing.length) {
+    const msg = `「${tool.name}·${action.name}」缺了必填参数：${missing.join("、")}`;
+    return { action: { tool: name, args, ok: false, summary: msg, error: msg }, content: msg };
+  }
+
+  // 按声明的类型转一次（模型最爱把 25 写成 "25"）；没声明的参数原样透传 ——
+  // 工具可能接受没写进 manifest 的可选参数，宿主不该替它决定哪些参数不合法
+  const params: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    const decl = (action.params ?? []).find((p) => p.name === k);
+    params[k] = decl ? coerceParam(v, decl) : v;
+  }
+
+  const r = await callTool(tool.id, action.name, params, {
+    headless: tool.headless === true,
+    ...(ctx.settings ? { settings: ctx.settings } : {}),
+  });
+  const label = `${tool.name}·${action.name}`;
+  if (!r.ok) {
+    const msg = r.message ?? "工具没有执行这条动作";
+    return {
+      action: { tool: name, args, ok: false, summary: `${label}：${msg}`, error: msg },
+      content: msg,
+    };
+  }
+  const detail = r.data === undefined ? "" : JSON.stringify(r.data, null, 1);
+  return {
+    action: {
+      tool: name,
+      args,
+      ok: true,
+      summary: `已让${tool.name}执行「${action.name}」`,
+      detail,
+    },
+    content: `「${tool.name}」执行了「${action.name}」${detail ? `，返回：${detail}` : "（没有返回值）"}。`,
+  };
+}
+
+/** 按声明的类型转一次。转不动就原样给 —— 工具自己会报错，比宿主猜错强 */
+function coerceParam(v: unknown, decl: ToolActionParam): unknown {
+  if (v === undefined || v === null) return v;
+  const type = decl.type ?? "string";
+  if (type === "number") {
+    if (typeof v === "number") return v;
+    if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v);
+    return v;
+  }
+  if (type === "boolean") {
+    if (typeof v === "boolean") return v;
+    if (v === "true" || v === "1") return true;
+    if (v === "false" || v === "0") return false;
+    return v;
+  }
+  if (typeof v === "string") return v;
+  return typeof v === "number" || typeof v === "boolean" ? String(v) : v;
+}
+
+/* ------------------------------------------------------------------ */
 /* 强制确认                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -1724,6 +1933,49 @@ export async function describeConfirm(
   name: string,
   args: Record<string, unknown>,
 ): Promise<ConfirmRequest | null> {
+  /*
+   * 工具自己注册、并且**自己标了 destructive** 的动作。
+   *
+   * ------------------------------------------------------------------
+   * "要不要问"由工具在 manifest 里声明，不是提示词里求来的
+   * ------------------------------------------------------------------
+   * 哪个动作会清掉用户的数据，只有写这个工具的人知道 —— 宿主猜不出来，
+   * 提示词也求不准（那是概率，而删数据要的是确定）。所以工具标了，
+   * 宿主就在执行前把确认卡摆出来；没标就照直做。
+   *
+   * 工具没装 / 动作没注册时**返回 null**：那些情况会在执行时报出
+   * "没有这个工具 / 没有这个动作"，先弹一张问"要不要做个不存在的动作"
+   * 的卡纯属添乱。
+   */
+  if (isToolActionName(name)) {
+    const p = parseToolActionName(name);
+    const t = p ? listTools().find((x) => x.id === p.toolId) : undefined;
+    const a = t && p ? (t.actions ?? []).find((x) => x.name === p.action) : undefined;
+    if (!t || !a?.destructive) return null;
+    const paramLines = Object.entries(args)
+      .map(([k, v]) => `· ${k}：${typeof v === "string" ? v : JSON.stringify(v)}`)
+      .join("\n");
+    return {
+      question: `要让「${t.name}」执行「${a.name}」吗？`,
+      detail: [
+        a.description,
+        "",
+        paramLines || "（这次没有带参数）",
+        "",
+        "这个动作被工具自己在 manifest 里标成了**会改动或清空数据**，所以要你点一下头。",
+        a.params?.some((x) => x.required)
+          ? `必填参数：${a.params.filter((x) => x.required).map((x) => x.name).join("、")}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      // 按**完整函数名**记账：同一个工具的不同动作该各自问一次，
+      // "同意它清空"不等于"同意它做任何事"
+      affects: [name],
+      danger: true,
+    };
+  }
+
   /*
    * 卸载工具。
    *

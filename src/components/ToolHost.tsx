@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { registerLiveTool, unregisterLiveTool } from "../lib/agent/toolRuntime";
+import { toolActionNames } from "../lib/agent/toolActions";
 import {
   FolderOpen,
   RefreshCw,
@@ -174,11 +175,13 @@ export default function ToolFrame({ tool, active }: { tool: ToolManifest; active
     });
 
     /*
-     * 登记"这个工具现在活着"，好让助手的 call_tool 找得到它。
-     * 只登记**已打开**的：为此去后台偷偷起一个 iframe 是另一回事
-     * （不可见、不可控），所以没打开就是没打开，action 会照实说。
+     * 登记"这个工具现在活着"，好让助手驱动它时**优先发给这个实例**
+     * （用户看得见它在动，才是"驱动工具"该有的样子）。
+     *
+     * 只登记已打开的：没打开时宿主会不会为它起一个隐藏实例，取决于它
+     * 自己在 manifest 里有没有声明 headless —— 那道门在 toolRuntime 里。
      */
-    registerLiveTool(tool.id, () => frameRef.current, tool.commands ?? []);
+    registerLiveTool(tool.id, () => frameRef.current, toolActionNames(tool));
 
     return () => {
       unregisterLiveTool(tool.id);

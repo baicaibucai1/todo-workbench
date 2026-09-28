@@ -93,7 +93,10 @@ const { chat, isAbortError, AgentHttpError, isRetryableError } = await import(
 );
 const settings = await import("../src/lib/settings.ts");
 const { checkToolId, HTML_MAX_BYTES, buildManifest } = await import("../src/lib/toolStore.ts");
-const { toolPrefix, loadTools } = await import("../src/lib/tools.ts");
+const { toolPrefix, loadTools, normalizeActions, normalizeSkill } = await import(
+  "../src/lib/tools.ts"
+);
+const toolActions = await import("../src/lib/agent/toolActions.ts");
 
 const registry = await import("../src/lib/extensions/registry.ts");
 const { agentEnabled, AGENT_EXT_ID, selectable, settingsKey } = registry;
@@ -2263,6 +2266,384 @@ section("14. 一次写不完：输出上限、断在哪、以及「接着写」�
     const rule = SKILLS.find((s) => s.id === "tool-authoring").rules.join("\n");
     check("tool-authoring 的硬规则里也写了这条", rule.includes("一次回复有长度上限"));
     check("tool-authoring 里点名了 append: true", rule.includes("append: true"));
+  }
+}
+
+/* ================================================================== */
+section("15. 上传图片：谁能看图、图怎么进请求、以及看不了时怎么说");
+/* ================================================================== */
+
+/*
+ * 这一段是"先问 API 收不收，再动手"的产物。三条结论直接写死在这里，因为
+ * 它们是从各家**官方文档**查来的，而文档会改 —— 改动后这里会红，
+ * 提醒回来复核而不是让一份过期名单继续替用户下判断：
+ *
+ *   · DeepSeek —— 只有视觉型号收图，其它一律 400 `This model does not support image`；
+ *   · 百炼     —— 官方写了三种传入方式（公网 URL / 本地路径 / Base64）；
+ *   · Agnes    —— 官方只演示了公网 URL，base64 这条路**没有官方承诺**。
+ *
+ * 也因此这三家在这份测试里有截然不同的待遇：前两家可以断言 yes/no，
+ * Agnes 只能断言"我们没把握"。
+ */
+{
+  /* -- 1. 能力判定：能、不能、不知道，三种必须分得开 -- */
+  {
+    const aliyunVl = P.agentVisionSupport("aliyun", "qwen3-vl-plus");
+    check("百炼 qwen3-vl-plus 能看图", aliyunVl.support === "yes", JSON.stringify(aliyunVl));
+    check("并且官方支持 base64（本机图片走得通）", aliyunVl.base64 === true);
+
+    check("百炼 qwen3.7-plus 也能看图", P.agentVisionSupport("aliyun", "qwen3.7-plus").support === "yes");
+    const aliyunPlain = P.agentVisionSupport("aliyun", "qwen-plus");
+    check("百炼 qwen-plus 是纯文本型号", aliyunPlain.support === "no", JSON.stringify(aliyunPlain));
+    check(
+      "看不了时必须给出换哪一个（只说「不支持」等于让用户自己去翻文档）",
+      aliyunPlain.note.includes("qwen3-vl-plus"),
+      aliyunPlain.note,
+    );
+
+    check(
+      "DeepSeek 只有 vision 型号能收图",
+      P.agentVisionSupport("deepseek", "deepseek-v4-flash-vision-exp").support === "yes",
+    );
+    check("DeepSeek vision 型号支持 base64", P.agentVisionSupport("deepseek", "deepseek-v4-flash-vision-exp").base64 === true);
+    check(
+      "DeepSeek deepseek-v4-flash 不能收图（它是官方点名的非视觉型号）",
+      P.agentVisionSupport("deepseek", "deepseek-v4-flash").support === "no",
+    );
+    check("deepseek-reasoner 也不能收图", P.agentVisionSupport("deepseek", "deepseek-reasoner").support === "no");
+    check("deepseek-chat 映射到 v4-flash，同样不能收图", P.agentVisionSupport("deepseek", "deepseek-chat").support === "no");
+
+    const agnes = P.agentVisionSupport("agnes", "agnes-3.0-flash");
+    check("Agnes 3.0-flash 名义上能看图", agnes.support === "yes", JSON.stringify(agnes));
+    check(
+      "但 base64 未标 true —— 官方只演示过公网 URL，不能替用户承诺",
+      agnes.base64 === false,
+      JSON.stringify(agnes.base64),
+    );
+
+    const custom = P.agentVisionSupport("custom", "whatever-model");
+    check("自建网关一律 unknown（我们不该替用户猜）", custom.support === "unknown", JSON.stringify(custom));
+    check("unknown 时也不许断言 base64 可用", custom.base64 === false);
+    check(
+      "手填的陌生型号同样是 unknown（不可知 ≠ 不能）",
+      P.agentVisionSupport("aliyun", "my-self-hosted-vl").support === "unknown",
+    );
+    check("没填模型时说清楚还没选", P.agentVisionSupport("aliyun", "").note.includes("还没选模型"));
+    check("模型名大小写不影响判定", P.agentVisionSupport("aliyun", "QWEN3-VL-PLUS").support === "yes");
+  }
+
+  /* -- 2. 名单本身要经得起检查 -- */
+  {
+    check("schema 已推进到 v19（core_agent_messages 多了 images 列）", CURRENT_SCHEMA_VERSION === 19, String(CURRENT_SCHEMA_VERSION));
+    check("v19 这条迁移存在且叫得出名字", migrations.some((m) => m.version === 19 && m.name === "agent_message_images"));
+
+    for (const prv of P.AGENT_PROVIDERS) {
+      if (!prv.vision) continue;
+      // 用户该能从下拉里**直接选到**一个能看图的型号 —— 否则名单等于不存在
+      const pickable = prv.vision.models.filter((id) => prv.models.some((m) => m.id === id));
+      check(`${prv.id} 至少有一个能看图的型号出现在下拉里`, pickable.length > 0, JSON.stringify(prv.vision.models));
+      check(`${prv.id} 的视觉名单没有重复项`, new Set(prv.vision.models).size === prv.vision.models.length);
+      if (!prv.vision.base64) {
+        check(
+          `${prv.id} 在 base64 没把握时把话说清楚（不能只写个 true 了事）`,
+          String(prv.vision.note).length > 10,
+          String(prv.vision.note),
+        );
+      }
+    }
+  }
+
+  /* -- 3. 落库：图跟消息一起走 -- */
+  {
+    await fresh();
+    // fresh() 之后库里一段会话都没有，消息得挂在一个真实存在的会话上 ——
+    // 挂在空 id 上虽然也存得进去，但 fetchAgentChats 永远找不到它
+    await repo.createAgentChat({
+      id: "c-images",
+      title: "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    const chatId = "c-images";
+    const one = {
+      id: "mi-1",
+      chatId,
+      role: "user",
+      content: "看看这个报错",
+      actions: [],
+      images: [{ id: "a", name: "a.png", dataUrl: "data:image/jpeg;base64,AAAA", thumb: "t", mime: "image/jpeg", width: 8, height: 8, bytes: 25 }],
+      error: "",
+      seq: Date.now(),
+      createdAt: new Date().toISOString(),
+    };
+    await repo.appendAgentMessage(one);
+    const rows = await repo.fetchAgentMessages(chatId);
+    const got = rows.find((r) => r.id === "mi-1");
+    check("图片的 dataUrl 完整读回来了", got?.images?.[0]?.dataUrl === "data:image/jpeg;base64,AAAA", JSON.stringify(got?.images));
+    check("文件名也存下来了（模型看不到图时至少有它可以提）", got?.images?.[0]?.name === "a.png");
+
+    // 历史列表那一行：带图的那条不该只显示成一句干巴巴的文字。
+    // ⚠️ 摘要取的是**最后一条**消息，所以这一段必须排在下面那条 mi-2 之前
+    const list = await repo.fetchAgentChats();
+    const mine = list.find((c) => c.id === chatId);
+    check(
+      "带图的那条在会话摘要里标注了有几张图",
+      String(mine?.preview).includes("1 张图片"),
+      String(mine?.preview),
+    );
+    check(
+      "chatPreview 纯函数：既没字又没图时才落到那句兜底",
+      repo.chatPreview("user", "", 0) === "你：（没有文字）",
+      repo.chatPreview("user", "", 0),
+    );
+    check(
+      "chatPreview 纯函数：有字有图时两者都出现",
+      repo.chatPreview("user", "看看这个", 2).includes("看看这个") &&
+        repo.chatPreview("user", "看看这个", 2).includes("2 张图片"),
+      repo.chatPreview("user", "看看这个", 2),
+    );
+
+    // DeepSeek 那条硬约束的第二个落点：图片只允许出现在 user 消息里。
+    // 排在摘要检查之后 —— 助手消息一旦进来，它就成了"最后一条"
+    await repo.appendAgentMessage({ ...one, id: "mi-2", role: "assistant", seq: Date.now() + 1 });
+    const rows2 = await repo.fetchAgentMessages(chatId);
+    const assistantRow = rows2.find((r) => r.id === "mi-2");
+    check(
+      "助手消息即使传了图也存成空（图片只能出现在 user 消息）",
+      assistantRow?.images?.length === 0,
+      JSON.stringify(assistantRow?.images),
+    );
+
+    // 坏数据不能把整段对话读崩
+    check("images 列是坏 JSON 时当空数组", repo.parseImages("{not json")?.length === 0);
+    check("images 列不是数组时当空数组", repo.parseImages(JSON.stringify({ a: 1 }))?.length === 0);
+    check(
+      "残一条（缺 dataUrl）会被筛掉而不是留个画不出来的空图",
+      repo.parseImages(JSON.stringify([{ id: "x" }, { id: "y", dataUrl: "d" }]))?.length === 1,
+    );
+  }
+
+  /* -- 4. wire：图怎么进请求、超出额度时怎么降级 -- */
+  {
+    const mk = (id, role, content, imgs = []) => ({ id, role, content, images: imgs, actions: [] });
+    const img = (id, bytes) => ({ id, name: `${id}.png`, dataUrl: `data:image/jpeg;base64,${id}`, thumb: "", mime: "image/jpeg", width: 8, height: 8, bytes });
+
+    const plain = runtime.buildUserContent(mk("m1", "user", "你好"), [], { allow: true, modelLabel: "m" });
+    check("没带图的普通消息仍然是纯字符串（不为了兼容而整体改形状）", typeof plain === "string" && plain === "你好", JSON.stringify(plain));
+
+    const withImg = runtime.buildUserContent(
+      mk("m2", "user", "看看这个", [img("a", 100)]),
+      [img("a", 100)],
+      { allow: true, modelLabel: "m" },
+    );
+    check("带图时变成内容块数组", Array.isArray(withImg), JSON.stringify(withImg));
+    check("文字在前、图在后", withImg[0].type === "text" && withImg[0].text === "看看这个", JSON.stringify(withImg[0]));
+    check("图块用的是 OpenAI 的 image_url 形状", withImg[1].type === "image_url" && !!withImg[1].image_url.url);
+    check("图块里没有多余的 detail 字段（那不在通用契约里）", !("detail" in (withImg[1].image_url ?? {})));
+
+    const noText = runtime.buildUserContent(mk("m3", "user", "", [img("a", 100)]), [img("a", 100)], {
+      allow: true,
+      modelLabel: "m",
+    });
+    check("只传图不打字时不写空字符串 text 块", !noText.some((p) => p.type === "text"), JSON.stringify(noText));
+
+    // 型号不支持：不许发块，但必须把事说给模型听
+    const blind = runtime.buildUserContent(mk("m4", "user", "看看", [img("a", 100)]), [], {
+      allow: false,
+      modelLabel: "qwen-plus",
+    });
+    check("型号看不了时返回纯字符串，不夹带任何图片块", typeof blind === "string", JSON.stringify(blind));
+    check("并且点名了看不了的那个模型", String(blind).includes("qwen-plus"));
+    check("并且说明图片没有传给它", String(blind).includes("没有传给你"));
+    check("并且要求它如实说而不是假装看到了", String(blind).includes("不要假装看到了图片内容"));
+
+    // 预算：最新的先走
+    const recent = img("new", 100);
+    const msgs = [
+      mk("old1", "user", "第一张", Array.from({ length: 4 }, (_, i) => img(`o${i}`, 100))),
+      mk("old2", "user", "第二张", Array.from({ length: 4 }, (_, i) => img(`p${i}`, 100))),
+      mk("cur", "user", "刚才粘的", [recent]),
+    ];
+    // 三条消息共 9 张图，额度 6 张：按最新优先，老消息会被**切成一半**而不是整条丢弃
+    const plan = runtime.planImages(msgs, true);
+    check("预算不够时最新那条一定有份", plan.get("cur")?.length === 1, JSON.stringify([...plan.keys()]));
+    check("次新的那条先占满", plan.get("old2")?.length === 4, String(plan.get("old2")?.length));
+    check(
+      "最早那条被切到只剩余下的额度（不是整条消失）",
+      plan.get("old1")?.length === 1,
+      String(plan.get("old1")?.length),
+    );
+
+    const partial = runtime.buildUserContent(msgs[0], plan.get("old1") ?? [], { allow: true, modelLabel: "m" });
+    const partialText = JSON.stringify(partial);
+    check("部分发出时说清还有几张没带上", partialText.includes("原本还有 3 张图"), partialText.slice(0, 160));
+    check("并且点明原因是额度（不是模型不支持）", partialText.includes("额度"), partialText.slice(0, 160));
+    check("已经带上的那张确实在图块里", JSON.stringify(partial).includes("image_url"));
+
+    check("allow=false 时一张都不发", runtime.planImages(msgs, false).size === 0);
+    check(
+      "单张图就超过总字节额度时不会硬塞进去",
+      runtime.planImages([mk("big", "user", "", [img("huge", 99 * 1024 * 1024)])], true).get("big") === undefined,
+    );
+  }
+}
+
+/* ================================================================== */
+section("16. 工具注册：manifest 声明 → 函数定义 → 配套 skill → 确认门");
+/* ================================================================== */
+
+/*
+ * 这一段验的是"工具把自己注册给助手"这条链上**宿主侧**的每一环。
+ * 真正的"工具收到命令并回结果"在浏览器里验（tests/agent-tool-actions.mjs）——
+ * jsdom 不执行 iframe 里的脚本，那一步在这里验不了也不该假装验了。
+ */
+{
+  /* ---- 16a. 命名：必须能无条件反解 ---- */
+  check("拼出来是 tool_<id>_<action>", toolActions.toolActionName("pomodoro", "start") === "tool_pomodoro_start");
+  check(
+    "反解回来是同一对",
+    JSON.stringify(toolActions.parseToolActionName("tool_pomodoro_start")) ===
+      JSON.stringify({ toolId: "pomodoro", action: "start" }),
+  );
+  // id 与动作名都只允许连字符、不允许下划线，所以按下划线切开恒为三段
+  check(
+    "工具 id 带连字符也不会歧义",
+    toolActions.parseToolActionName("tool_kitchen-sink_clear-notes")?.action === "clear-notes",
+  );
+  check("段数不对的不认（那是别人家的函数名）", toolActions.parseToolActionName("tool_a_b_c") === null);
+  check("不带前缀的不认", toolActions.parseToolActionName("create_schedules") === null);
+  check("带大写的不认（id 正则只收小写）", toolActions.parseToolActionName("tool_Pomodoro_start") === null);
+  check("isToolActionName 与 parse 始终一致", toolActions.isToolActionName("tool_pomodoro_start") === true);
+  check("工具技能的 id 有自己的命名空间", toolActions.toolSkillId("pomodoro") === "tool-use-pomodoro");
+  check("认得出那是工具命名空间", toolActions.isToolSkillId("tool-use-pomodoro") === true);
+  check("内置技能的 id 不会被误认成工具技能", toolActions.isToolSkillId("tool-authoring") === false);
+
+  /* ---- 16b. manifest 里的 actions 是外部输入，一律过白名单 ---- */
+  {
+    const acts = normalizeActions(
+      [
+        { name: "start", description: "开始", params: [{ name: "minutes", type: "number" }] },
+        { name: "reset", description: "清零", destructive: true },
+        { name: "Bad Name", description: "名字不合法" },
+        { name: "9x", description: "数字开头" },
+        { name: "dup", description: "第一条" },
+        { name: "dup", description: "第二条（重名）" },
+        { description: "没有名字" },
+        "不是对象",
+        { name: "nodesc" },
+      ],
+      undefined,
+    );
+    const by = Object.fromEntries(acts.map((a) => [a.name, a]));
+    check("合法的两个留下了", !!by.start && !!by.reset, acts.map((a) => a.name).join("、"));
+    check("不合法的名字被丢掉", !by["Bad Name"] && !by["9x"], acts.map((a) => a.name).join("、"));
+    check("重名只留第一条", by.dup?.description === "第一条");
+    check("没写说明的不丢，但合成一句（丢掉的话作者看不到任何提示）", by.nodesc?.description === "执行「nodesc」", String(by.nodesc?.description));
+    check("destructive 只有标了那个才有", by.reset?.destructive === true && by.start?.destructive === undefined);
+    check("参数按声明转成 number", by.start?.params?.[0]?.type === "number");
+
+    const many = normalizeActions(
+      Array.from({ length: 20 }, (_, i) => ({ name: "a" + i, description: "第" + i })),
+      undefined,
+    );
+    check("最多 12 个（多一个工具注册十几个动作说明它该拆）", many.length === 12, String(many.length));
+
+    const params = normalizeActions([{ name: "x", description: "d", params: [
+      { name: "ok", type: "boolean" },
+      { name: "bad name", type: "string" },
+      { name: "ok", type: "string" },
+      { name: 1, type: "string" },
+    ] }])[0];
+    check("参数名不合法的丢掉", params.params?.length === 1 && params.params[0].name === "ok", JSON.stringify(params.params));
+  }
+
+  /* ---- 16c. 老式 commands 要能被并进来 ---- */
+  {
+    const merged = normalizeActions([{ name: "start", description: "开始" }], ["start", "legacy-one"]);
+    check("老 commands 里没被覆盖的并了进来", !!merged.find((a) => a.name === "legacy-one"), merged.map((a) => a.name).join("、"));
+    check("已经被 actions 覆盖的不重复", merged.filter((a) => a.name === "start").length === 1);
+    check(
+      "并进来的那条说清它是老写法",
+      String(merged.find((a) => a.name === "legacy-one")?.description).includes("老式 commands"),
+    );
+    check("只有 commands 时也照样能注册", normalizeActions(undefined, ["only"])[0]?.name === "only");
+  }
+
+  /* ---- 16d. skill：不合格就整份丢，但没有 skill 时会按 actions 自动生成 ---- */
+  {
+    check("空壳 skill 丢掉", normalizeSkill({ title: "t" }, "工具") === null);
+    check("至少要有 summary / rules / body 中的一样", normalizeSkill({ title: "t", summary: "s" }, "工具") !== null);
+    check("没写 title 就用工具名拼一个", normalizeSkill({ summary: "s" }, "计数器")?.title === "《计数器》怎么用");
+    check("规则最多 8 条", normalizeSkill({ summary: "s", rules: Array.from({ length: 20 }, () => "r") }, "t")?.rules.length === 8);
+
+    const tool = {
+      id: "pomodoro",
+      name: "番茄钟",
+      version: "1.0.0",
+      entry: "index.html",
+      dbVersion: 1,
+      headless: true,
+      actions: normalizeActions([
+        { name: "start", description: "开始一个专注" },
+        { name: "reset", description: "清零", destructive: true },
+      ]),
+    };
+    const s = skills.toolSkillFor(tool);
+    check("注册了动作就有配套技能（不会出现只有函数没有说明书）", !!s, String(s?.id));
+    check("技能的 id 是 tool-use-<id>", s?.id === "tool-use-pomodoro");
+    check("来源是 tool", s?.source === "tool");
+    check("声明了 headless → 规则里说清不必先打开", s?.rules.some((r) => r.includes("不必先 open_tool")), String(s?.rules.length));
+    check("有 destructive → 规则里说清宿主会先问", s?.rules.some((r) => r.includes("先问用户")));
+    check("全文里列出了每个动作的函数名", String(s?.body).includes("tool_pomodoro_start"));
+    check("没注册动作 → 没有配套技能（纯展示工具不占常驻索引）", skills.toolSkillFor({ ...tool, actions: [], commands: [] }) === null);
+
+    const noHeadless = skills.toolSkillFor({ ...tool, headless: false, actions: [tool.actions[0]] });
+    check("没声明 headless → 规则里说清必须先打开", noHeadless?.rules.some((r) => r.includes("先被打开")));
+  }
+
+  /* ---- 16e. 函数定义：参数、说明、指向配套技能 ---- */
+  {
+    const spec = proto.actionToSpec("pomodoro", "番茄钟", {
+      name: "start",
+      description: "开始一个专注",
+      params: [{ name: "minutes", type: "number", required: true, description: "时长" }],
+    });
+    check("函数名是 tool_<id>_<action>", spec.name === "tool_pomodoro_start");
+    check("动作卡上是中文（用户不该看到 tool_pomodoro_start）", spec.label === "番茄钟·start");
+    check("工具动作不挂权限（驱动用户自己装的工具不需要再开一道开关）", spec.permission === undefined);
+    check("必填进了 required", JSON.stringify(spec.parameters.required) === JSON.stringify(["minutes"]));
+    check("参数类型按声明给", spec.parameters.properties.minutes?.type === "number");
+    check("说明里点名了配套技能", spec.description.includes("tool-use-pomodoro"));
+
+    const d = proto.actionToSpec("pomodoro", "番茄钟", { name: "reset", description: "清零", destructive: true });
+    check("destructive 的动作在说明里警告会先问", d.description.includes("先问用户"));
+  }
+
+  /* ---- 16f. 清单是现算的：停用 / 卸掉之后就没有了 ---- */
+  {
+    toolActions.setDisabledTools(["pomodoro"]);
+    check("被停用的工具不在暴露清单里", toolActions.exposedTools([{ id: "pomodoro", name: "p", version: "1", entry: "a", dbVersion: 1 }]).length === 0);
+    toolActions.setDisabledTools([]);
+    check("没停用的照常", toolActions.exposedTools([{ id: "pomodoro", name: "p", version: "1", entry: "a", dbVersion: 1 }]).length === 1);
+    check("给 null 也不会炸（单测里没人来刷它）", (toolActions.setDisabledTools(null), toolActions.isToolDisabled("x") === false));
+  }
+
+  /* ---- 16g. 执行侧：找不到工具 / 找不到动作时要说人话 ---- */
+  {
+    const r = await act("tool_ghost_start", {});
+    check("工具不存在时说清是工具没了（不是怪它调错了动作名）", r.content.includes("没有 id 为「ghost」的工具"), r.content.slice(0, 60));
+    check("动作卡标了失败", r.action.ok === false);
+    check("结果里点名下一步（先 list_tools）", r.content.includes("list_tools"));
+
+    const builtin = AGENT_TOOLS.map((t) => t.name);
+    check("内置动作一个都没被这套新名字撞掉", !builtin.includes("tool_ghost_start"));
+  }
+
+  /* ---- 16h. 确认门：只有工具标了 destructive 才问 ---- */
+  {
+    check("工具不存在时不弹卡（先弹一张问不存在的动作是添乱）", (await describeConfirm("tool_ghost_reset", {})) === null);
+    check("没标 destructive 的直接放行", (await describeConfirm("tool_pomodoro_start", { minutes: 25 })) === null);
+    check("不是工具动作的名字不受影响", (await describeConfirm("create_schedules", { items: [] })) === null);
   }
 }
 

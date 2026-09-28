@@ -34,6 +34,7 @@
 
 import { createRequire } from "node:module";
 import fs from "node:fs";
+import { makePng } from "./png.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -925,7 +926,143 @@ console.log("\n11. 停下来问你：选项卡、强制确认门、取消真的�
 }
 
 /* ================================================================== */
-console.log("\n12. 收尾：控制台干净");
+console.log("\n12. 上传图片：三个入口、能不能发、以及看不了时怎么说");
+/* ================================================================== */
+
+/*
+ * 这一段是 node 侧第 15 段的**同一个结论在真实界面上的另一半**：
+ * 单测能验"判断对不对"，验不了"点了按钮之后图到底有没有进请求体"。
+ * 而这里恰好能拿到被拦下来的**请求体原文**，于是可以断言得比单测更狠一层：
+ *
+ *   · 型号不支持时 —— 请求里**一个 image_url 都不许有**，但文字里要说清原因；
+ *   · 勾了「能看图」之后 —— 同一个界面、同一张图，请求里必须出现 image_url。
+ *
+ * 第二层价值是三个入口（按钮 / 粘贴 / 拖拽）走的是不是同一条路 ——
+ * 入口多了最容易坏的地方就是"这条能用那条不能用"。
+ */
+{
+  // 与 gallery / ai-gen 那两个套件同源：一张真 PNG，别用现成的 base64 字面量
+  const SMALL_PNG = makePng(64, 48, [40, 120, 220]);
+
+  const attach = async (name) => {
+    await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
+      name,
+      mimeType: "image/png",
+      buffer: SMALL_PNG,
+    });
+    // 解码 + 重编码是异步的，给它一小会儿
+    await page.waitForTimeout(500);
+  };
+
+  await gotoAgent();
+  await page.locator("[data-agent-input]").fill("看看这张图");
+
+  /* -- 1. 三个入口：按钮、粘贴、拖拽 -- */
+  await attach("按钮选的.png");
+  check(
+    "点 + 选文件：出现一张待发预览",
+    (await page.locator("[data-agent-pending]").getAttribute("data-agent-pending")) === "1",
+    await page.locator("[data-agent-pending]").getAttribute("data-agent-pending").catch(() => "没有"),
+  );
+
+  // 粘贴：没法用系统剪贴板，直接派发一个带图片的 paste 事件。
+  // ⚠️ buffer 必须是**真 PNG** —— 一个 3 字节的假文件会在解码那一步被吃掉，
+  // 症状是"粘贴毫无反应"，看上去像入口没接上，其实是图片根本打不开。
+  await page.evaluate((b64) => {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const dt = new DataTransfer();
+    dt.items.add(new File([bytes], "粘的.png", { type: "image/png" }));
+    document
+      .querySelector("[data-agent-input]")
+      .dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, SMALL_PNG.toString("base64"));
+  await page.waitForTimeout(600);
+  check(
+    "粘贴：也进了待发列表（三个入口是同一条路）",
+    (await page.locator("[data-agent-pending]").getAttribute("data-agent-pending")) === "2",
+    await page.locator("[data-agent-pending]").getAttribute("data-agent-pending").catch(() => "没有"),
+  );
+
+  // 去掉一张再拖一张，顺便验"能删"
+  await page.locator("[data-agent-pending-remove]").first().click();
+  check(
+    "去掉一张：数量回到 1",
+    (await page.locator("[data-agent-pending]").getAttribute("data-agent-pending")) === "1",
+    await page.locator("[data-agent-pending]").getAttribute("data-agent-pending").catch(() => "没有"),
+  );
+
+  /* -- 2. 当前型号是手填的 mock-model（unknown）：不许发图块，但要说清楚 -- */
+  {
+    captured.length = 0;
+    queue.length = 0;
+    queue.push(textReply("我收到你的话了，那张图我看不到。"));
+    await attach("拖进来的.png");
+    await page.locator("[data-agent-send]").click();
+    await waitIdle();
+
+    const bodies = JSON.stringify(captured);
+    check("模型不确定能否看图时，请求里一个 image_url 都没有", !bodies.includes("image_url"), bodies.slice(0, 200));
+    check(
+      "但文字里说清了「上传了图，而这个模型看不了」",
+      bodies.includes("看不了图") && bodies.includes("mock-model"),
+      bodies.includes("看不了图") ? "" : bodies.slice(0, 200),
+    );
+    check(
+      "发出去之后，那条消息上仍然挂着缩略图（没凭空消失）",
+      (await page.locator("[data-agent-sent-images]").count()) >= 1,
+    );
+  }
+
+  /* -- 3. 勾上「我填的模型能看图」之后：同一张图就必须进请求体 -- */
+  {
+    await gotoSettings("ai");
+    const box = page.locator("[data-agent-vision-override]");
+    check("未知型号时才给这个开关（已知能/不能的型号不该被覆盖）", (await box.count()) === 1);
+    check("默认没有勾上（不确定时不替用户冒险）", !(await box.isChecked()));
+    await box.check();
+    await page.locator("[data-agent-vision-override]").evaluate((el) => el.blur());
+    await page.waitForTimeout(300);
+
+    await gotoAgent();
+    captured.length = 0;
+    queue.length = 0;
+    queue.push(textReply("看到了，是一张纯色图。"));
+    await attach("第二次.png");
+    await page.locator("[data-agent-send]").click();
+    await waitIdle();
+
+    const last = captured[captured.length - 1];
+    const userMsg = (last?.messages ?? []).find((m) => m.role === "user" && Array.isArray(m.content));
+    check("勾上之后，请求里出现了带图的用户消息", !!userMsg, JSON.stringify(last?.messages ?? []).slice(0, 200));
+    const parts = userMsg?.content ?? [];
+    check("它是一个内容块数组而不是字符串", Array.isArray(parts), JSON.stringify(parts).slice(0, 160));
+    check("第一块是文字", parts[0]?.type === "text", JSON.stringify(parts[0]));
+    check("后面跟着 image_url 块", parts.some((p) => p.type === "image_url"), JSON.stringify(parts.map((p) => p.type)));
+    check(
+      "图片是以 data URI 发的（本机图片没有公网 URL）",
+      String(parts.find((p) => p.type === "image_url")?.image_url?.url ?? "").startsWith("data:image/jpeg;base64,"),
+      String(parts.find((p) => p.type === "image_url")?.image_url?.url ?? "").slice(0, 40),
+    );
+    check(
+      "图片只出现在 user 消息里（这条违规会让部分服务商直接 400）",
+      (last?.messages ?? [])
+        .filter((m) => m.role !== "user")
+        .every((m) => typeof m.content === "string"),
+      JSON.stringify(
+        (last?.messages ?? []).map((m) => [m.role, Array.isArray(m.content) ? "array" : "string"]),
+      ),
+    );
+    check(
+      "system 提示仍然是纯字符串（没有被顺手改成数组）",
+      typeof (last?.messages ?? [])[0]?.content === "string",
+    );
+  }
+}
+
+/* ================================================================== */
+console.log("\n13. 收尾：控制台干净");
 /* ================================================================== */
 
 {

@@ -9,6 +9,7 @@
     · schema.info / row.count / row.select / row.insert / row.update / row.delete
     · gallery.list / get / put
     · tools.list / open / send
+    · tool:command   让助手**直接操作**它（manifest 的 actions + headless）
   它同时声明了三个注入位置，所以装上之后会同时出现在：
     待办详情面板底部、详情头部按钮、列表行内按钮。
 
@@ -225,6 +226,36 @@
           <ul class="list" id="peer-list"></ul>
           <div class="msg" id="m-tools" hidden></div>
           <div class="msg" id="m-inbox" hidden></div>
+        </div>
+      </details>
+
+      <!--
+        6. 让助手驱动我（actions / headless）
+        这一节是"工具不只是给人点的"那部分：manifest 里注册了三个动作，
+        助手那一侧会多出 tool_kitchen-sink_add-note / _list-notes / _clear-notes
+        三个函数，直接调就行。执行结果会显示在这里（data-cmd-* 供 e2e 断言）。
+      -->
+      <details>
+        <summary>⑥ 让助手驱动我 <span class="chip">tool:command</span></summary>
+        <div class="body">
+          <div class="row">
+            <span class="k">已注册</span>
+            <span class="v" data-cmd-actions>add-note · list-notes · clear-notes</span>
+          </div>
+          <div class="row">
+            <span class="k">最近一次</span>
+            <span class="v" data-cmd-last>还没有被驱动过</span>
+          </div>
+          <div class="row">
+            <span class="k">次数</span><span class="v" data-cmd-count>0</span>
+          </div>
+          <p class="empty">
+            这三个动作由 manifest 的 <code>actions</code> 声明；本工具同时声明了
+            <code>"headless": true</code>，所以它<b>没被打开</b>时宿主也会为它起一个
+            隐藏实例执行命令 —— 助手不必先 open_tool。
+            自带的说明书在技能 <code>tool-use-kitchen-sink</code> 里。
+          </p>
+          <div class="msg" id="m-cmd" hidden></div>
         </div>
       </details>
     </div>
@@ -639,7 +670,112 @@
             msg("#m-inbox", "收到事件「" + m.event + "」：" + JSON.stringify(m.data) + "（来自 " + (m.from || "?") + "）", "ok");
             return;
           }
+          if (m.type === "tool:command") {
+            runCommand(m);
+            return;
+          }
         });
+
+        /* ---------------------------------------------------------------- */
+        /* 助手驱动我：tool:command                                          */
+        /* ---------------------------------------------------------------- */
+        /*
+         * 三条规矩（与 manifest 里声明的 actions 一一对应）：
+         *   1. **每条命令都要回** —— 不回的话助手那一侧是 8 秒超时，
+         *      它只能说"工具没回应"，用户看不出是没监听还是在忙；
+         *   2. **不弹 alert / confirm** —— 这个工具声明了 headless，
+         *      被后台隐藏执行时弹窗没人点，那条命令就永远悬着；
+         *   3. **清数据的动作让宿主替我问** —— manifest 里标了 destructive，
+         *      宿主会在执行前问用户一次，这里只管执行。
+         */
+        var cmdCount = 0;
+
+        function showCmd(text, kind) {
+          var last = document.querySelector("[data-cmd-last]");
+          var n = document.querySelector("[data-cmd-count]");
+          if (last) last.textContent = text;
+          if (n) n.textContent = String(cmdCount);
+          msg("#m-cmd", text, kind);
+        }
+
+        function runCommand(m) {
+          var reply = function (ok, data, error) {
+            parent.postMessage(
+              { source: TOOL_SOURCE, type: "tool:command:result", id: m.id, ok: ok, data: data, error: error },
+              "*",
+            );
+          };
+          var p = (m.params || {});
+          cmdCount++;
+          try {
+            if (m.name === "add-note") {
+              var title = String(p.title || "").trim();
+              if (!title) { reply(false, null, "缺少 title（要写标题）"); return; }
+              call("row.insert", {
+                table: "notes",
+                row: {
+                  id: "n" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+                  title: title,
+                  body: String(p.body || ""),
+                  tag: String(p.tag || "助手"),
+                  done: 0,
+                  created_at: new Date().toISOString(),
+                },
+              })
+                .then(function () {
+                  showCmd("助手让我加了一条：「" + title + "」", "ok");
+                  reply(true, { added: title });
+                  return loadNotes();
+                })
+                .catch(function (e) {
+                  showCmd("加失败：" + String(e.message || e), "err");
+                  reply(false, null, String(e.message || e));
+                });
+              return;
+            }
+            if (m.name === "list-notes") {
+              call("row.select", { table: "notes", limit: Number(p.limit) || 20 })
+                .then(function (rows) {
+                  var list = rows || [];
+                  showCmd("助手问了一次列表，共 " + list.length + " 条", "ok");
+                  reply(true, { count: list.length, titles: list.map(function (r) { return r.title; }) });
+                })
+                .catch(function (e) {
+                  showCmd("读失败：" + String(e.message || e), "err");
+                  reply(false, null, String(e.message || e));
+                });
+              return;
+            }
+            if (m.name === "clear-notes") {
+              /* destructive：宿主已经替我们问过用户了，这里直接清 */
+              call("row.select", { table: "notes", limit: 200 })
+                .then(function (rows) {
+                  var list = rows || [];
+                  return list.reduce(function (chain, r) {
+                    return chain.then(function () { return call("row.delete", { table: "notes", id: r.id }); });
+                  }, Promise.resolve());
+                })
+                .then(function () {
+                  showCmd("助手让我清空了全部记录", "ok");
+                  reply(true, { cleared: true });
+                  return loadNotes();
+                })
+                .catch(function (e) {
+                  showCmd("清失败：" + String(e.message || e), "err");
+                  reply(false, null, String(e.message || e));
+                });
+              return;
+            }
+            showCmd("不认识的动作「" + m.name + "」", "err");
+            reply(false, null, "没有「" + m.name + "」这个动作。我注册的是：add-note、list-notes、clear-notes");
+          } catch (err) {
+            showCmd("崩了：" + String(err && err.message || err), "err");
+            reply(false, null, String((err && err.message) || err));
+          }
+        }
+
+        /* 报到：宿主收到这条就不必再等 iframe 的 load 事件 */
+        parent.postMessage({ source: TOOL_SOURCE, type: "tool:hello" }, "*");
 
         /* ---------------------------------------------------------------- */
         /* 启动：先渲染骨架，再自己取一次上下文                               */

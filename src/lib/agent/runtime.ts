@@ -48,7 +48,9 @@ import {
   unclosedHtmlFence,
 } from "./protocol";
 import { skillPromptBlock, refreshSkills } from "./skills";
-import { agentConfigProblems, agentProvider } from "./providers";
+import { setDisabledTools } from "./toolActions";
+import { agentConfigProblems, agentProvider, agentVisionSupport } from "./providers";
+import type { AgentImage } from "./images";
 import type {
   AgentAction,
   AgentAsk,
@@ -70,6 +72,34 @@ const MAX_STEPS = 8;
 
 /** 带进上下文的历史条数。够用且不会让请求体越来越大 */
 const HISTORY_LIMIT = 40;
+
+/**
+ * 单次请求里，**历史消息**能带上多少张真图。
+ *
+ * 用户选了"原图落库"，好处是能追问"把左上角放大看看"（那张图还在）。
+ * 但这不等于**每一轮都要把所有历史图重发一遍**：聊到第二十条还在提第一条的
+ * 截图时，请求体里会躺着十几 MB 的 base64 —— 各家那条上限
+ * （DeepSeek 48MB、百炼要求 Data URI ≤ 20MB）就是这样被撞穿的，
+ * 而撞穿的表现不是变慢，是**整次请求失败**。
+ *
+ * 所以这里给历史定一个"最近的才配拥有原图"的额度，**最新优先**：
+ * 用户刚粘的那张一定有份（它通常就是问题本身），更早的自动降级成占位文字。
+ * 张数与字节两道闸门缺一不可：前者管 token 与延迟，后者管那条请求体硬上限。
+ */
+const IMAGE_HISTORY_MAX = 6;
+const IMAGE_HISTORY_BYTES = 8 * 1024 * 1024;
+
+/**
+ * 一个 "1"/"0" 形式的设置到底是不是"开"。
+ *
+ * **没设置过一律按关来读**：这条键授予的是"往请求里塞图片"的能力，
+ * 而猜错的代价是整次请求 400（DeepSeek 对不支持图片的型号就是这个答复）。
+ * 宁可让用户自己来按那一下。
+ */
+function truthy(raw: string | undefined): boolean {
+  const v = (raw ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
 
 /**
  * 参数是"修好之后"才解析出来时，附在动作结果前面的一句提醒。
@@ -205,7 +235,7 @@ async function push(msg: Omit<AgentMessage, "seq" | "createdAt">): Promise<Agent
           ...c,
           updatedAt: full.createdAt,
           messageCount: c.messageCount + 1,
-          preview: repo.chatPreview(full.role, full.content),
+          preview: repo.chatPreview(full.role, full.content, full.role === "user" ? full.images.length : 0),
         }
       : c,
   );
@@ -702,15 +732,39 @@ export function abort(): void {
   controller?.abort();
 }
 
-export async function send(text: string, host: AgentHost): Promise<void> {
+/**
+ * 发一句话给助手。
+ *
+ * `opts.images` 走的是**配置对象**而不是插在中间的位置参数：
+ * 这个函数的 Host 参数已经在最后一位，而它有三处调用分支只传两个参数
+ * （界面、单测、上层脚本）。把 images 插成第二个位置参数，那些旧调用不会报错，
+ * 只会**把 host 当成图片数组**静默接住 —— 一个"编译得过、运行时全乱"的坏改动。
+ * 配置对象让漏传的代价变成 undefined 而不是错位。
+ */
+export async function send(
+  text: string,
+  host: AgentHost,
+  opts: { images?: AgentImage[] } = {},
+): Promise<void> {
   const input = text.trim();
-  if (!input || state.busy) return;
+  const images = opts.images ?? [];
+  // 空输入但有图也算一句完整的话：「看看这张图」是可以不说话的
+  if (!input && !images.length) return;
+  if (state.busy) return;
 
   await ensureLoaded();
 
   const settings = withDefaults(await repo.getAllSettings());
   const cfg = readAgentConfig(settings);
   const permissions = parseAgentPermissions(settings);
+  /*
+   * 把"哪些工具被停用"刷进模块级快照。
+   *
+   * 停用了的工具不该出现在助手的能力清单里 —— 那是用户亲手关掉的，
+   * 助手再去驱动它等于绕过他的决定。而这份清单是在**发请求的那一刻同步拼**
+   * 的（toolsForModel / toolActionSpecs），读不了异步的库，所以每轮开刷一次。
+   */
+  setDisabledTools(parseDisabledTools(settings[SETTINGS.toolsDisabled]));
   const problems = agentConfigProblems(cfg);
   if (problems.length) {
     // 没配好就停在门口，而且把"缺什么、去哪里补"一次说全
@@ -720,14 +774,30 @@ export async function send(text: string, host: AgentHost): Promise<void> {
     return;
   }
 
-  await push({ id: uid(), role: "user", content: input, actions: [], error: "" });
-  // 这一段还没有名字的话，就用这句话开头几个字当标题（见 autoTitle 的说明）
-  await autoTitle(input);
+  await push({ id: uid(), role: "user", content: input, actions: [], images, error: "" });
+  // 这一段还没有名字的话，就用这句话开头几个字当标题（见 autoTitle 的说明）。
+  // 只有图没说话时，拿第一张图的文件名当标题 —— 否则历史列表里是一段空 preview
+  await autoTitle(input || (images[0]?.name ?? ""));
 
   controller = new AbortController();
   emit({ busy: true, streaming: "", phase: "正在思考…", error: "", ask: null });
 
-  const wire: WireMessage[] = await buildWire(permissions);
+  /*
+   * 这一轮到底能不能把图发出去。
+   *
+   * 判断放在这里而不是在 UI 里：UI 只负责展示"大概行不行"（那份名单随时会过期），
+   * 真正挡枪的是这一处 —— 因为判断错一次的代价是**整次请求 400**
+   * （DeepSeek 对非视觉型号就是这个答复），而不是"图没显示"。
+   */
+  const verdict = agentVisionSupport(cfg.provider, cfg.model);
+  const forced = truthy(settings[SETTINGS.agentVisionOverride]);
+  const sendImages =
+    images.length > 0 && (verdict.support === "yes" || (verdict.support === "unknown" && forced));
+
+  const wire: WireMessage[] = await buildWire(permissions, {
+    images: sendImages,
+    modelLabel: cfg.model.trim(),
+  });
   const allowed = (name: string): boolean => {
     const spec = toolSpec(name);
     if (!spec?.permission) return true;
@@ -920,6 +990,7 @@ export async function send(text: string, host: AgentHost): Promise<void> {
         role: "assistant",
         content: finalText,
         actions: collected,
+        images: [],
         error: msg,
       });
       emit({ busy: false, streaming: "", phase: "" });
@@ -935,6 +1006,7 @@ export async function send(text: string, host: AgentHost): Promise<void> {
           role: "assistant",
           content: finalText,
           actions: collected,
+          images: [],
           error: "",
         });
       }
@@ -1079,12 +1151,123 @@ async function execute(
   ];
 }
 
-/** 组装这一轮的上下文：system + 最近的历史 */
+/**
+ * 决定这一段历史里**哪几条消息的图能以真身进这一轮请求**。
+ *
+ * 预算从**最新的消息往回**分配 —— 倒序是这里唯一正确的方向：用户刚粘进来的
+ * 那张图几乎总是问题本身（"这个报错什么意思"），而三轮之前那张多半只是背景。
+ * 额度不够时该被牺牲的显然是后者；顺着历史从头发，撞上限的反而永远是最新那张。
+ *
+ * 单个**函数**而不是塞进 buildWire：这段分配逻辑没有 IO、全是算数，
+ * 却最容易在后面被人"顺手改一下"而改坏（症状是用户说"它突然不看我的图了"，
+ * 而代码看上去毫无变化）。抽出来才能被单测钉住。
+ *
+ * @param allow false 表示当前型号看不了图 —— 那时一张都不发
+ */
+export function planImages(
+  messages: Pick<AgentMessage, "id" | "role" | "images">[],
+  allow: boolean,
+): Map<string, AgentImage[]> {
+  const out = new Map<string, AgentImage[]>();
+  if (!allow) return out;
+
+  let left = IMAGE_HISTORY_MAX;
+  let bytes = IMAGE_HISTORY_BYTES;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "user" || !m.images.length) continue;
+    const take: AgentImage[] = [];
+    for (const img of m.images) {
+      if (left <= 0 || img.bytes > bytes) break;
+      take.push(img);
+      left -= 1;
+      bytes -= img.bytes;
+    }
+    if (take.length) out.set(m.id, take);
+  }
+  return out;
+}
+
+/**
+ * 一条用户消息的 wire content。
+ *
+ * 三种结果，成因各不相同，所以三句话写得也不一样：
+ *   · 有图且发出去   → content 块数组（文字在前、图在后）
+ *   · 有图但发出一部分 → 仍是块数组，文字里补一句"还有 N 张没重发"
+ *   · 一张都没发出去 → 纯字符串，说明是**型号看不了**还是**额度超了**
+ *
+ * 第三种绝不糊成一句"有图片"：用户会沿着错误的方向找原因
+ * （要么去折腾图片、要么以为助手在偷懒），而真相可能在设置里的模型下拉上。
+ */
+export function buildUserContent(
+  m: Pick<AgentMessage, "id" | "role" | "content" | "images">,
+  take: AgentImage[],
+  opts: { allow: boolean; modelLabel: string },
+): wireContent {
+  if (!m.images.length) return m.content;
+
+  const dropped = m.images.length - take.length;
+
+  if (!take.length) {
+    const named = m.images.map((x) => x.name).join("、");
+    return opts.allow
+      ? `${m.content}\n（这里原本有 ${m.images.length} 张图：${named}，但已经超过单次请求的图片额度，这次没有重发。用户问到它们时请说「这几张图我没再收到」，可以请他重新上传。）`
+      : `${m.content}\n（用户这次上传了 ${m.images.length} 张图片：${named}，但当前模型 \`${opts.modelLabel}\` 看不了图 —— 图片没有传给你。请如实说明这一点，不要假装看到了图片内容；建议用户换一个支持视觉的模型。）`;
+  }
+
+  const parts: ImageContentPart[] = [];
+  // 部分发出时也要说清"还有几张没带上"：否则模型会以为那就是全部，
+  // 用户问"第二张怎么样"时它会一本正经地回答一个它根本没看到的图
+  const note = dropped
+    ? `\n（这里原本还有 ${dropped} 张图：${m.images
+        .slice(take.length)
+        .map((x) => x.name)
+        .join("、")}，但超出单次请求的图片额度，这次没有一起发。）`
+    : "";
+  // 空字符串不写成 text 块：部分网关把 text: "" 判成非法请求
+  if (m.content) parts.push({ type: "text", text: `${m.content}${note}` });
+  else if (note) parts.push({ type: "text", text: note.trim() });
+  /*
+   * 不给 image_url 加 `detail` 字段。
+   *
+   * DeepSeek 支持它（low 会压到 512、也更省），但它**不在 OpenAI 的通用契约里**
+   * —— 百炼与自建网关遇到不认识的字段多半直接报参数非法。
+   * 而我们这边已经把长边压到 1280 了，各家对这个尺寸本来就有折算上限
+   * （DeepSeek 单图至多 384 token），省不到哪儿去，却要冒整次请求被拒的风险。
+   */
+  for (const img of take) {
+    parts.push({ type: "image_url", image_url: { url: img.dataUrl } });
+  }
+  return parts;
+}
+
+/**
+ * 带图消息的 content 组成部分。
+ *
+ * 与 client.ts 的 WireContent 保持同一形状，这里重新声明是为了让上面那个函数的
+ * 返回类型不需要绕一层 client 的类型导出 —— 两边不一致时 tsc 会在 buildWire 处报错。
+ */
+type wireContent =
+  | string
+  | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
+type ImageContentPart = Exclude<wireContent, string>[number];
+
+/**
+ * 组装这一轮的上下文：system + 最近的历史。
+ *
+ * `opts.images` 为 false 时不发任何图片块 —— 这不代表用户没传图，
+ * 而是说明**当前这个型号看不了图**。此时那些图会降级成一句文字说明：
+ * 保留"这里曾经有图"这个事实，而不是让它凭空消失，模型才知道该怎么回应
+ * （如实说"看不了"，而不是假装看到了然后开始编）。
+ */
 async function buildWire(
   permissions: { writeTools: boolean; schedules: boolean; database: boolean },
+  opts: { images: boolean; modelLabel: string } = { images: false, modelLabel: "" },
 ): Promise<WireMessage[]> {
   const [lists, settings] = await Promise.all([repo.fetchLists(), repo.getAllSettings()]);
   const disabled = parseDisabledTools(settings[SETTINGS.toolsDisabled]);
+  // 与 send() 里那次是同一件事（本文件可能只被单独调用到这里），重复赋值无害
+  setDisabledTools(disabled);
 
   const system = buildSystemPrompt({
     now: new Date(),
@@ -1096,8 +1279,19 @@ async function buildWire(
     desktop: isTauri(),
   });
 
-  const history = state.messages.slice(-HISTORY_LIMIT).map<WireMessage>((m) => {
-    if (m.role === "user") return { role: "user", content: m.content };
+  const window = state.messages.slice(-HISTORY_LIMIT);
+  const kept = planImages(window, opts.images);
+
+  const history = window.map<WireMessage>((m) => {
+    if (m.role === "user") {
+      return {
+        role: "user",
+        content: buildUserContent(m, kept.get(m.id) ?? [], {
+          allow: opts.images,
+          modelLabel: opts.modelLabel,
+        }),
+      };
+    }
     // 助手消息带上"它当时做过什么"：不带的话，模型会以为自己上一次没说清楚，
     // 于是把同一件事再做一遍（真的会装出第二个工具）
     const acts = m.actions.length

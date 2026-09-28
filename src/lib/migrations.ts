@@ -705,6 +705,51 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_core_agent_skills_source ON core_agent_skills(source);
     `,
   },
+
+  {
+    /*
+     * v19：**助手对话里的图片**。
+     *
+     * ============================ 为什么是加一列，而不是新建一张表 ============================
+     * 图片是**一条消息的一部分**（"这句话 + 这几张图"才算一次完整的输入），
+     * 不是独立实体。拆成表的话，读一段对话要为每条消息再 JOIN 一次图 ——
+     * 而本项目的 MemoryDb **不支持 JOIN**（会静默返回空，见项目约定），
+     * 浏览器演示模式下会表现成"图片全都丢了"。贴在消息行上没有这个问题。
+     *
+     * ============================ 为什么存 data URI 而不是路径 ============================
+     * 用户的图来自桌面、下载、截图目录 —— 那些位置几乎都不在 `fs:scope`
+     * （`$APPDATA/**`、`$RESOURCE/**`）之内，第二次就真读不到了，
+     * 何况原文件随时可能被删掉或挪走。而对话记录是要能翻回去重看的：
+     * 存一个失效路径，等于给用户一条"当时是有图的"的幻觉。
+     *
+     * 代价是体积：一张压到长边 1280 的 JPEG 约 150~400KB。
+     * 这是用户明确保留的选择（多轮追问"把左上角再放大看看"需要它），
+     * 而真正的风险不在库、在**请求体** —— 那条由 runtime 里的发送预算兜住，
+     * 不是靠这条迁移。
+     *
+     * ============================ 为什么用 ALTER 追加而不是重建表 ============================
+     * 这里躺着真实对话。用 NOT NULL DEFAULT 追加一列，老行自动补上默认值 ——
+     * MemoryDb 的 ALTER 分支会把默认值写进已有行（见 db.ts），
+     * 所以浏览器演示模式与真 SQLite 表现一致。
+     *
+     * ============================ 为什么还要一个 image_count ============================
+     * 历史列表要给每段对话算一句摘要。只知道 messages.content 时，一条"只有图
+     * 没打字"的消息会显示成「你：（没有文字）」—— 而用户明明传了图。
+     *
+     * 修它不能去读 images 列：那会把**每一段的每一条图片的几百 KB** 都拉出来，
+     * 只为回答"有几张"这种问题。而且 `JSON_ARRAY_LENGTH()` 这类函数在
+     * MemoryDb 上不存在（它连 JOIN 都不支持），只能在每处自己解析 —— 更糟。
+     *
+     * 所以冗余一个整数写入侧顺手写。**这与 images 列同源**（都由
+     * appendAgentMessage 一处写），不会出现两者打架的情况。
+     */
+    version: 19,
+    name: "agent_message_images",
+    sql: `
+      ALTER TABLE core_agent_messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE core_agent_messages ADD COLUMN image_count INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 /** 当前代码期望的 schema 版本 */

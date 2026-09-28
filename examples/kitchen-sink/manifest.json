@@ -34,5 +34,41 @@
     { "kind": "detailSection", "label": "能力演示", "height": 240 },
     { "kind": "detailAction", "label": "演示" },
     { "kind": "rowAction", "label": "演示" }
-  ]
+  ],
+  "headless": true,
+  "actions": [
+    {
+      "name": "add-note",
+      "description": "往这个演示工具的私有表里加一条备忘。用户说「记一下…」而他指的是这个工具时用",
+      "params": [
+        { "name": "title", "type": "string", "required": true, "description": "备忘标题，必填" },
+        { "name": "body", "type": "string", "description": "正文，可省略" },
+        { "name": "tag", "type": "string", "description": "标签，省略时记为「助手」" }
+      ]
+    },
+    {
+      "name": "list-notes",
+      "description": "列出这个工具里已有的备忘，返回条数与标题。想知道它记了什么时用，不要自己去读它的表",
+      "params": [
+        { "name": "limit", "type": "number", "description": "最多返回几条，默认 20" }
+      ]
+    },
+    {
+      "name": "clear-notes",
+      "description": "清空这个工具里的全部备忘。不可恢复 —— 只有用户明确说「都删掉 / 清空」时才调",
+      "destructive": true
+    }
+  ],
+  "skill": {
+    "title": "驱动「能力演示」",
+    "summary": "演示工具注册给助手的三个动作：加一条备忘、列出备忘、清空备忘",
+    "rules": [
+      "这三个动作**只碰这个演示工具自己的表**（tool_kitchen_sink_notes），与用户的待办无关 —— 他要记的是待办就用 create_schedules",
+      "add-note 的 title 是必填；tag 省略时工具自己记成「助手」，别替它编一个标签",
+      "list-notes 已经把条数与标题都返回了，**不要再调 tool_data 去读同一张表**（那是绕过工具自己，读到的数据可能与界面不一致）",
+      "clear-notes 会清空全部备忘、不可恢复：只有用户明确说「清空 / 都删掉」时才调，宿主会先问一次",
+      "动作失败时返回的 message 就是工具的原话（多半是「没有这个动作」或读表失败），照着它改，别拿同一组参数重试"
+    ],
+    "body": "# 驱动「能力演示」\n\n这是一个**示例工具**（examples/kitchen-sink），它的存在是为了把宿主每一条通道都跑一遍。\n它注册了三个动作，宿主为它们生成了同名的函数：\n\n- `tool_kitchen-sink_add-note` —— 加一条备忘\n- `tool_kitchen-sink_list-notes` —— 列出备忘\n- `tool_kitchen-sink_clear-notes` —— 清空（destructive，会先问用户）\n\n## 什么时候用\n\n用户说「记一下…」而**他指的是这个演示工具**时才用。\n他要记的是一件待办，那就走 `create_schedules` —— 备忘存在工具私有表里，\n不会出现在待办列表里，也不会提醒他。\n\n## 参数与返回\n\n### add-note\n\n- `title`（string，必填）：备忘标题\n- `body`（string，可选）：正文\n- `tag`（string，可选）：标签，省略时工具写成「助手」\n\n返回 `{ added: \"标题\" }`。写不进去时返回工具的报错原话\n（最常见的是私有表还没建 —— 那个工具被打开过一次才会建）。\n\n### list-notes\n\n- `limit`（number，可选，默认 20）\n\n返回 `{ count: N, titles: [...] }`。**不要**再去调 `tool_data` 读同一张表：\n那是绕过工具自己，读到的数据可能与界面上看到的不是一回事。\n\n### clear-notes\n\n没有参数，返回 `{ cleared: true }`。不可恢复 —— 宿主会先问用户一次。\n\n## 它是怎么被执行的\n\n这个工具声明了 `\"headless\": true`，所以它没被打开时，宿主会为它起一个\n隐藏实例执行这条命令，拿到结果立刻回收；它已经打开时会发给正在跑的那个\n实例（用户在界面上看得见变化）。"
+  }
 }

@@ -41,10 +41,25 @@ import {
   type RawToolCall,
 } from "./providers";
 
+/**
+ * 消息内容的两种形态。
+ *
+ * 字形串是绝大多数情况（system 提示、助手回复、普通聊天）—— 保持它作为
+ * 默认并不只是为了兼容，**更重要的是**：绝大多数网关只认字符串，
+ * 一上来全改成数组会让每一条消息都变胖，也让请求体的 diff 没法读。
+ *
+ * 数组形态只在**用户消息里有图**时出现。之所以允许混排而不是"整体改数组"：
+ * 谁都没把握各家网关对 `content: [{"type":"text",...}]` 的接受程度，
+ * 而字符串形态已经跑了几十个版本 —— 不动它就不用重新验证它。
+ */
+export type WireContent =
+  | string
+  | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
+
 /** 发给模型的消息（OpenAI 形状，只用到这几种字段） */
 export interface WireMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  content: WireContent;
   /** assistant 发起工具调用时带 */
   tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
   /** role="tool" 时指回哪一个调用 */

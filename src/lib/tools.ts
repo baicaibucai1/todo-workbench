@@ -38,7 +38,12 @@ import { isTauri } from "./db";
 import { validateToolSchema } from "./toolSchema";
 import { CAPABILITY_NAMES } from "./extensions/registry";
 import { normalizeInjects } from "./extensions/types";
-import type { ToolManifest } from "../types";
+import type {
+  ToolActionParam,
+  ToolActionSpec,
+  ToolManifest,
+  ToolSkillSpec,
+} from "../types";
 
 /* ------------------------------------------------------------------ */
 /* 内置工具清单（浏览器 demo 用；打包时由构建脚本生成真实的 tools/ 目录）  */
@@ -197,11 +202,26 @@ export function validateManifest(raw: unknown): ToolManifest | null {
       const injects = normalizeInjects(m.injects);
       return injects.length ? { injects } : {};
     })(),
-    // 命令声明：助手驱动它干活时可用的动作名。同样是外部输入，
-    // 只认小写字母数字与连字符；没声明就是"不接受任何命令"。
+    // 命令声明（老式）：只认小写字母数字与连字符。保留它是为了让
+    // 2026-09 之前写的 manifest 不用改 —— 新工具请写 actions。
     ...(() => {
       const cmds = normalizeCommands(m.commands);
       return cmds.length ? { commands: cmds } : {};
+    })(),
+    // 动作注册（新式）：助手驱动它干活用的完整声明。外部输入，
+    // 名字/参数一律过白名单；老式 commands 里没被覆盖的会并进来。
+    ...(() => {
+      const acts = normalizeActions(m.actions, m.commands);
+      return acts.length ? { actions: acts } : {};
+    })(),
+    // 是否允许宿主为它起隐藏实例。只有显式 true 才算开 ——
+    // 写什么都好，默认一律关（理由写在 types.ts 的 headless 上）。
+    ...(m.headless === true ? { headless: true } : {}),
+    // 自带的使用说明。外部输入，字段长度一律收口；一份不合格就整个丢掉
+    // （半截的技能比没有更糟：模型会照着半截的说明去调动作）。
+    ...(() => {
+      const skill = normalizeSkill(m.skill, name);
+      return skill ? { skill } : {};
     })(),
   };
 }
@@ -217,6 +237,150 @@ export function normalizeCommands(raw: unknown): string[] {
     if (!out.includes(v)) out.push(v);
   }
   return out.slice(0, 12);
+}
+
+/* ------------------------------------------------------------------ */
+/* 动作注册                                                            */
+/* ------------------------------------------------------------------ */
+
+/** 一个工具最多注册多少个动作。与 commands 的上限一致 */
+const ACTION_MAX = 12;
+/** 一个动作最多几个参数 */
+const PARAM_MAX = 8;
+/** 动作名 / 参数名 / 说明的长度上限（说明会被拼进 system prompt，不能无限长） */
+const DESC_MAX = 300;
+
+/** 动作名白名单。和工具 id 同一套字符集，因为它要拼进模型看到的函数名 */
+const ACTION_NAME_RE = /^[a-z][a-z0-9-]{0,23}$/;
+/** 参数名：允许驼峰（很多工具作者这么写），但仍然是限死字符集 */
+const PARAM_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,23}$/;
+
+function clip(v: string, max: number): string {
+  return v.length > max ? `${v.slice(0, max - 1)}…` : v;
+}
+
+/**
+ * 把 manifest 里的 `actions` 洗成可信的 ToolActionSpec[]，
+ * 并把老式 `commands` 里没被覆盖的那些并进来。
+ *
+ * ------------------------------------------------------------------
+ * 为什么"并进来"而不是二选一
+ * ------------------------------------------------------------------
+ * commands 是 2026-09 之前的写法，已经有工具在用它（虽然目前一个都没有）。
+ * 它只比 actions 少了说明与参数，**语义完全一样**：都是"助手可以让我干这个"。
+ * 让老 manifest 继续可用不需要任何代价 —— 合成一句说明就够了。
+ *
+ * ------------------------------------------------------------------
+ * 哪些会被丢掉
+ * ------------------------------------------------------------------
+ *   · 名字不合白名单的（拼进函数名会出事）
+ *   · 拼出来的函数名超过 64 字符的（OpenAI / Anthropic 的硬上限）
+ *   · 超过 12 个动作的（后面的一律丢 —— 一个工具给助手注册十几个动作，
+ *     说明它该拆成几个工具，或者该只暴露真正会被用到的那几个）
+ *
+ * 说明缺失**不丢**：合成一句"执行「xx」"。丢掉的后果是工具作者看到
+ * "我声明了但它没出现"却没有任何提示，那比一句干巴巴的说明糟得多。
+ */
+export function normalizeActions(raw: unknown, legacy?: unknown): ToolActionSpec[] {
+  const out: ToolActionSpec[] = [];
+  const seen = new Set<string>();
+
+  const push = (a: ToolActionSpec) => {
+    if (seen.has(a.name)) return;
+    if (out.length >= ACTION_MAX) return;
+    // 函数名 = tool_ + id + _ + action，宿主侧拼的时候才知道 id；这里只能守住
+    // 最坏情况（id 取满 32 字符）：5 + 32 + 1 + 24 = 62，仍在 64 以内，
+    // 所以这一条实际上永远不会触发 —— 留着是为了让上限这件事有据可查。
+    if (`tool_${"a".repeat(32)}_${a.name}`.length > 64) return;
+    seen.add(a.name);
+    out.push(a);
+  };
+
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (!item || typeof item !== "object") continue;
+      const a = item as Record<string, unknown>;
+      const name = typeof a.name === "string" ? a.name.trim() : "";
+      if (!ACTION_NAME_RE.test(name)) continue;
+      const desc = typeof a.description === "string" ? clip(a.description.trim(), DESC_MAX) : "";
+      const params = normalizeParams(a.params);
+      push({
+        name,
+        description: desc || `执行「${name}」`,
+        ...(params.length ? { params } : {}),
+        ...(a.destructive === true ? { destructive: true } : {}),
+      });
+    }
+  }
+
+  // 老式 commands：只把 actions 里没有的补进来，补的时候说清它是老写法
+  for (const c of normalizeCommands(legacy)) {
+    if (seen.has(c)) continue;
+    push({
+      name: c,
+      description: `「${c}」（这个工具用的是老式 commands 声明，没有给出说明与参数）`,
+    });
+  }
+
+  return out;
+}
+
+/** 动作参数。同样是外部输入：只认三种类型，名字限死字符集 */
+function normalizeParams(raw: unknown): ToolActionParam[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ToolActionParam[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const p = item as Record<string, unknown>;
+    const name = typeof p.name === "string" ? p.name.trim() : "";
+    if (!PARAM_NAME_RE.test(name) || seen.has(name)) continue;
+    if (out.length >= PARAM_MAX) break;
+    const type = p.type === "number" || p.type === "boolean" ? p.type : "string";
+    seen.add(name);
+    out.push({
+      name,
+      ...(typeof p.description === "string" && p.description.trim()
+        ? { description: clip(p.description.trim(), 160) }
+        : {}),
+      type,
+      ...(p.required === true ? { required: true } : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * 工具自带的那份使用说明。
+ *
+ * 不合格就返回 null（整份丢掉）—— 半截的说明比没有更危险：
+ * 模型会照着它去调动作，而它可能连"失败了该怎么办"都没写。
+ *
+ * `fallbackTitle` 是工具名：title 没写时用它拼一个，
+ * 因为技能索引里显示的是 title，空的 title 会让那一栏看起来像坏了。
+ */
+export function normalizeSkill(raw: unknown, fallbackTitle: string): ToolSkillSpec | null {
+  if (!raw || typeof raw !== "object") return null;
+  const s = raw as Record<string, unknown>;
+  const title = typeof s.title === "string" && s.title.trim() ? clip(s.title.trim(), 40) : "";
+  const summary = typeof s.summary === "string" ? clip(s.summary.trim(), 200) : "";
+  const body = typeof s.body === "string" ? clip(s.body.trim(), 6000) : "";
+  const rules = (Array.isArray(s.rules) ? s.rules : [])
+    .filter((r): r is string => typeof r === "string")
+    .map((r) => clip(r.trim(), 200))
+    .filter(Boolean)
+    .slice(0, 8);
+
+  // 三样都没有 = 这份 skill 是空壳，不要
+  if (!summary && !body && !rules.length) return null;
+  if (!title && !fallbackTitle) return null;
+
+  return {
+    title: title || `《${fallbackTitle}》怎么用`,
+    summary: summary || `《${fallbackTitle}》注册给助手的那些动作该怎么用`,
+    rules,
+    body,
+  };
 }
 
 /* ------------------------------------------------------------------ */

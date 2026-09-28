@@ -36,7 +36,9 @@
  */
 
 import { HTML_MAX_BYTES } from "../toolStore";
-import { toolPrefix } from "../tools";
+import { toolPrefix, listTools } from "../tools";
+import { isToolDisabled, toolActionName, toolActionNames, toolSkillId } from "./toolActions";
+import type { ToolManifest, ToolSkillSpec } from "../../types";
 import * as repo from "../repo";
 
 /** 代码块围栏。抽成常量是为了让下面的正文能直接写，不必到处转义反引号 */
@@ -51,8 +53,12 @@ export interface AgentSkill {
   rules: string[];
   /** 全文。由 read_skill 按需取 */
   body: string;
-  /** 谁写的：内置（代码）还是助手自己存的（库）。内置删不掉 */
-  source?: "builtin" | "agent";
+  /**
+   * 谁写的：内置（代码）、助手自己存的（库）、还是**随工具一起装进来的**。
+   * 内置与工具自带的都删不掉 —— 它们的生命周期由代码和工具目录决定，
+   * 不是由助手决定。
+   */
+  source?: "builtin" | "agent" | "tool";
 }
 
 const MB = Math.round(HTML_MAX_BYTES / 1024 / 1024);
@@ -75,6 +81,8 @@ export const SKILLS: AgentSkill[] = [
       "收到「被输出长度上限掐断」或「代码块没有闭合」时，**换成分段 write_file 那条路**，不要从头再写一遍 —— 从头写还是会断在同一个地方（2026-09-26 真机：卡了 6 轮才装上，根因就是这个循环）",
       "不许写假按钮、假开关、假进度条：点了没反应的东西，比没有它更伤",
       "**装之前必须 sandbox_run**：它在隔离 iframe 里真跑一遍（抓报错、看是不是白屏、核对你声明的能力），通过了才发通行证；install_tool **只认票**，没票会被直接拒绝",
+      "动作要留得住效果，**必须写进表里**（row.* / kv.*）：声明了 headless 之后宿主起的是**一次性**隐藏实例，纯内存的状态（计时到几秒、选中了哪一行）跑完就随实例一起没了",
+      "想让助手**直接操作**这个工具就在 manifest 里注册 `actions`（名字只用小写字母数字与连字符，字母开头，最长 24 位），并在源码**解析阶段**监听 `tool:command` —— 声明了却没监听，模型调过去只会拿到一句「超时没回应」",
       "install_tool 里**可以不写 html**：省略时装的正是 sandbox_run 验过的那一份（推荐，省得把源码再抄一遍）；要写就必须与试跑那份**一字不差** —— 通行证绑的是源码指纹，抄歪一个字节票就作废，想改就改完再跑一次，别拿旧票去装新源码",
     ],
     body: [
@@ -196,12 +204,74 @@ export const SKILLS: AgentSkill[] = [
       "  `document.body.dataset.bindState = \"bound\"`、按钮写 `data-act=\"save\"`、",
       "  列表项写 `data-id`。项目里每一个功能的 e2e 都依赖这个习惯。",
       "",
-      "## 六、交付前自检",
+      "## 六、让助手能驱动你（可选，但很值）",
+      "",
+      "默认的工具是**给人用的**：助手只能打开它、读写它的表。",
+      "想让助手**直接操作它**，在 manifest 里注册动作：",
+      "",
+      F + "json",
+      "{",
+      '  "headless": true,',
+      '  "actions": [',
+      '    { "name": "start",',
+      '      "description": "开始一个专注计时（不填 minutes 就按 25 分钟）",',
+      '      "params": [{ "name": "minutes", "type": "number", "description": "时长，分钟" }] },',
+      '    { "name": "reset", "description": "清零计数与全部记录", "destructive": true }',
+      "  ],",
+      '  "skill": { "summary": "驱动番茄钟：start / reset 分别什么时候用", "body": "…" }',
+      "}",
+      F,
+      "",
+      "装上之后助手那一侧**立刻**多出两个函数：`tool_pomodoro_start`、",
+      "`tool_pomodoro_reset`（名字恒为 `tool_<id>_<action>`）。它直接调就行 ——",
+      "不必先 open_tool，也不必自己拼命令名。",
+      "",
+      "源码这一侧要做的只有一件事：**监听 tool:command，并且每条都回结果**。",
+      "",
+      F + "html",
+      "<script>",
+      "// ⚠️ 必须在**解析阶段**就挂上（内联 script 顶层直接 addEventListener）。",
+      "// 等到 DOMContentLoaded 才挂的话，宿主可能已经把命令发过来了 ——",
+      "// 那条消息会被丢进虚空：不报错，也没人收到。",
+      "window.addEventListener(\"message\", function (e) {",
+      "  var m = e.data;",
+      "  if (!m || m.source !== \"workbench-host\") return;",
+      "  if (m.type !== \"tool:command\") return;",
+      "  function reply(ok, data, error) {",
+      "    parent.postMessage({ source: \"workbench-tool\", type: \"tool:command:result\",",
+      "      id: m.id, ok: ok, data: data, error: error }, \"*\");",
+      "  }",
+      "  try {",
+      "    if (m.name === \"start\") { start(Number(m.params.minutes) || 25); reply(true, { started: true }); return; }",
+      "    if (m.name === \"reset\") { doReset(); reply(true); return; }",
+      "    reply(false, null, \"没有「\" + m.name + \"」这个动作\");",
+      "  } catch (err) { reply(false, null, String((err && err.message) || err)); }",
+      "});",
+      "// 可选：明确报到。宿主收到这条就不必再等 iframe 的 load 事件",
+      "parent.postMessage({ source: \"workbench-tool\", type: \"tool:hello\" }, \"*\");",
+      "</script>",
+      F,
+      "",
+      "三条规矩：",
+      "",
+      "1. **每条命令都要回**。不回的话助手那一侧是 8 秒超时，它只能告诉用户",
+      "   「工具没回应」，而用户看不出是你没监听还是你在忙。",
+      "2. **别弹 alert / confirm**。开了 headless 之后那个实例藏在后台，",
+      "   弹窗没有人点，那条命令就永远悬着。",
+      "3. **会清数据的动作标 `destructive`**。宿主会在执行前替你问用户一次 ——",
+      "   这道门在宿主代码里，比你在界面里再问一遍可靠。",
+      "",
+      "`skill` 那份说明**写了就值**：它是助手唯一能知道「什么时候该调、参数怎么给、",
+      "返回值是什么」的地方。注册了 actions 却没给 skill 时，宿主会按动作列表",
+      "自动生成一份（只有函数名与参数），那不如你自己写。",
+      "",
+      "## 七、交付前自检",
       "",
       "- [ ] **已经 sandbox_run 通过并拿到 ticket**（没票装不上，这不是可选项）",
       "- [ ] 单个 HTML，CSS/JS 全内联，无外部引用",
       "- [ ] id 合法、name 是中文短名、icon 在清单里",
       "- [ ] 需要存数据 → schema 已按 data-binding 技能声明",
+      "- [ ] 注册了 actions → 源码里**真的监听了 tool:command**，且每条命令都回结果（声明了却没监听，助手只会拿到一句「超时没回应」）",
       "- [ ] 会写数据的地方都有失败提示（try/catch + 界面显示）",
       "- [ ] 深浅色都试过（把 <html data-theme> 手动改成 dark 看一眼）",
       "- [ ] 没有假按钮、没有写死的假数据",
@@ -605,14 +675,138 @@ export async function refreshSkills(): Promise<void> {
   }
 }
 
-/** 内置 + 助手自己写的。界面、提示词、read_skill 都看这一份 */
-export function allSkills(): Array<AgentSkill & { source?: "builtin" | "agent" }> {
-  return [...SKILLS.map((s) => ({ ...s, source: "builtin" as const })), ...CUSTOM];
+/* ------------------------------------------------------------------ */
+/* 工具自带的技能                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 工具在 manifest 里自带的那些说明书。
+ *
+ * ------------------------------------------------------------------
+ * 为什么它必须和动作**配套**出现
+ * ------------------------------------------------------------------
+ * 只把 `tool_<id>_<action>` 几个函数丢给模型，它知道"能调什么"，
+ * 却不知道"什么时候该调、调之前要准备什么、返回的东西是什么意思"。
+ * 那部分只有写这个工具的人知道 —— 所以它写在 manifest 里，装上就有了。
+ *
+ * 反过来也一样重要：**没有配套说明的动作不该被注册**。一个只有函数名、
+ * 没有任何用法的动作，模型只能靠猜，而猜错的代价是用户看到工具干了件怪事。
+ * 所以工具没写 skill 时，这里按它的动作列表**自动生成一份**（见 deriveSkill），
+ * 保证"有动作"必然"有说明书"。
+ *
+ * ------------------------------------------------------------------
+ * 它随工具装卸，也随工具停用
+ * ------------------------------------------------------------------
+ * 不落库：来源是磁盘上的工具目录。工具卸载了，这份说明自然消失 ——
+ * 存进库里就会留下一条指向空气的说明书，而助手会照着它去调一个不存在的函数。
+ */
+export function toolSkills(): AgentSkill[] {
+  const out: AgentSkill[] = [];
+  for (const t of listTools()) {
+    if (isToolDisabled(t.id)) continue;
+    const s = toolSkillFor(t);
+    if (s) out.push(s);
+  }
+  return out;
 }
 
-/** 按 id 取技能（内置优先，再查助手自己写的） */
+/**
+ * 单个工具的那份说明书；没注册动作就返回 null。
+ *
+ * 单独导出是为了让它**可单测**：toolSkills() 依赖注册表（浏览器 demo 下那份
+ * 清单里没有任何工具注册动作），而这一段逻辑才是真正要被钉住的部分。
+ */
+export function toolSkillFor(t: ToolManifest): AgentSkill | null {
+  // 没注册动作 → 没有配套说明书（纯展示型工具不需要占常驻索引的位置）
+  if (!toolActionNames(t).length) return null;
+  return {
+    id: toolSkillId(t.id),
+    ...(t.skill ? fromSpec(t.skill) : deriveSkill(t)),
+    source: "tool" as const,
+  };
+}
+
+/** manifest 里写好的那份，原样用（字段长度已由 normalizeSkill 收过口） */
+function fromSpec(s: ToolSkillSpec): Omit<AgentSkill, "id" | "source"> {
+  return { title: s.title, summary: s.summary, rules: s.rules, body: s.body };
+}
+
+/**
+ * 工具没写 skill 时，按它的动作列表**自动生成**一份。
+ *
+ * 内容刻意只写三件事：这些函数怎么来的、要不要先打开工具、失败时看什么。
+ * **不复述每个动作的说明** —— 那份说明已经在函数定义里了，
+ * 抄一遍只会让常驻索引变长，而长索引里最容易被忽略的正是中间那段。
+ * 参数与返回值明细放进 body（read_skill 才取）。
+ */
+function deriveSkill(t: ToolManifest): Omit<AgentSkill, "id" | "source"> {
+  const acts = t.actions ?? [];
+  const names = toolActionNames(t);
+  const rules: string[] = [
+    `这几个函数是工具「${t.name}」自己注册的；它必须装在这台工作台上（list_tools 里能看到）才有它们`,
+    t.headless
+      ? "不必先 open_tool —— 它没打开时宿主会为它起一个隐藏实例，执行完立刻回收；已经打开时会发给正在跑的那个"
+      : "它必须**先被打开**（open_tool）才收得到命令；没打开会明确回你一句，那时先 open_tool 再调",
+    "失败时看返回的 message：它会说清是「没这个动作」「没打开」还是「超时没回应」，照着改，别拿同一组参数重试",
+  ];
+  if (acts.some((a) => a.destructive)) {
+    rules.push("标了「会改动或清空数据」的动作，宿主会在执行前先问用户一次 —— 你不要再自己追一句「确定吗」");
+  }
+
+  const lines = acts.length
+    ? acts.map((a) => {
+        const params = (a.params ?? [])
+          .map((p) => `    · ${p.name}（${p.type ?? "string"}${p.required ? "，必填" : ""}）${p.description ?? ""}`)
+          .join("\n");
+        return [
+          `### ${toolActionName(t.id, a.name)}`,
+          a.description,
+          a.destructive ? "⚠️ 这个动作会改动或清空数据，执行前会先问用户一次。" : "",
+          params ? `参数：\n${params}` : "参数：无",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      })
+    : names.map((n) => `### ${toolActionName(t.id, n)}\n（老式 commands 声明，工具没有给出说明与参数）`);
+
+  return {
+    title: `驱动「${t.name}」`,
+    summary: `《${t.name}》注册给助手的 ${names.length} 个动作：${names.join("、")}`,
+    rules,
+    body: [
+      `# 驱动「${t.name}」`,
+      "",
+      `这个工具在 manifest 里注册了 ${names.length} 个动作，宿主为它们生成了同名的函数。`,
+      t.headless
+        ? "它声明了 headless，所以没被打开时宿主也会为它起一个隐藏实例执行命令。"
+        : "它**没有**声明 headless，所以只能驱动正在打开的那个实例。",
+      "",
+      ...lines,
+      "",
+      "## 返回值",
+      "",
+      "工具执行完会把结果原样回给你（`data` 字段）。它可能给任何 JSON 值，",
+      "也可能什么都不给 —— 那时就把「已经执行过了」告诉用户，别编造返回值。",
+    ].join("\n"),
+  };
+}
+
+/** 内置 + 助手自己写的 + 工具自带的。界面、提示词、read_skill 都看这一份 */
+export function allSkills(): Array<AgentSkill & { source?: "builtin" | "agent" | "tool" }> {
+  return [
+    ...SKILLS.map((s) => ({ ...s, source: "builtin" as const })),
+    ...CUSTOM,
+    ...toolSkills(),
+  ];
+}
+
+/** 按 id 取技能（内置 → 助手自己写的 → 工具自带的） */
 export function skillById(id: string): AgentSkill | undefined {
-  return SKILLS.find((s) => s.id === id) ?? CUSTOM.find((s) => s.id === id);
+  return (
+    SKILLS.find((s) => s.id === id) ??
+    CUSTOM.find((s) => s.id === id) ??
+    toolSkills().find((s) => s.id === id)
+  );
 }
 
 /**
@@ -624,8 +818,10 @@ export function skillById(id: string): AgentSkill | undefined {
 export function skillPromptBlock(): string {
   const parts = allSkills().map((s) => {
     const rules = s.rules.map((r) => `- ${r}`).join("\n");
-    // 标出来源：助手得知道哪几条是自己存的（也就知道哪几条可以被自己改掉）
-    const tag = s.source === "agent" ? "（你自己记的）" : "";
+    // 标出来源：助手得知道哪几条是自己存的（也就知道哪几条可以被自己改掉），
+    // 以及哪几条是**随工具来的**（工具卸了它们就没了，别拿 add_skill 去覆盖）
+    const tag =
+      s.source === "agent" ? "（你自己记的）" : s.source === "tool" ? "（工具自带，随工具装卸）" : "";
     return `### ${s.id} · ${s.title}${tag}\n${s.summary}\n${rules}`;
   });
   return [
@@ -644,7 +840,7 @@ export function skillsDigest(): Array<{
   title: string;
   summary: string;
   rules: number;
-  source: "builtin" | "agent";
+  source: "builtin" | "agent" | "tool";
 }> {
   return allSkills().map((s) => ({
     id: s.id,

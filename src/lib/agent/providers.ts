@@ -26,6 +26,45 @@
  * 所以过时的不是"用不了"，而是"下拉里的推荐项不再是最新的"。
  */
 
+/**
+ * 一家的"看图"能力。
+ *
+ * ------------------------------------------------------------------
+ * 为什么是**模型级**而不是服务商级
+ * ------------------------------------------------------------------
+ * "这一家支不支持图片"是个问错了的问题 —— 同一家上面能看图和不能看图的
+ * 型号是混在一起的：
+ *
+ *   · DeepSeek 官方说得最硬：**只有视觉模型收图**，别的型号一律
+ *     400 `This model does not support image`；
+ *   · 百炼那边 `qwen-plus` / `qwen-flash` 是纯文本，`qwen3-vl-plus`
+ *     才是视觉型号；
+ *   · 反过来 Agnes 全系文案都写了 "image URL input"。
+ *
+ * 所以能力挂在**具体型号**上，而不是挂在那家的招牌上。
+ *
+ * ------------------------------------------------------------------
+ * base64 是另一个独立维度
+ * ------------------------------------------------------------------
+ * 工作台里的图片是**本机文件**，它没有公网 URL，只能靠 base64 Data URI
+ * （`data:image/jpeg;base64,...`）塞进 `image_url.url` 里。
+ * 于是"支持图片"还不够 —— **必须支持 base64 这一条路**，否则这项功能
+ * 在那家就是残的（只能认公网链接，而用户手里没有链接，只有一张截图）。
+ */
+export interface ProviderVision {
+  /** 已知能收图的型号。下拉里的 label 会据此标上「视觉」 */
+  models: string[];
+  /**
+   * 它收不收 base64 Data URI。
+   *
+   * 为 true 的依据是官方文档明写了可以这么传；**没有官方依据的一律留 false，
+   * 并在 note 里说明** —— 宁可让界面说"不确定"，也不要替用户赌一家网关。
+   */
+  base64: boolean;
+  /** 一句备注，写给后来人：这个判断的依据是什么、什么时候要回来复核 */
+  note?: string;
+}
+
 /** 一家服务商的对话能力描述 */
 export interface AgentProvider {
   id: string;
@@ -48,6 +87,13 @@ export interface AgentProvider {
   chatPath: string;
   models: Array<{ id: string; label: string }>;
   defaultModel: string;
+  /**
+   * 看图能力。**只有真能看图的型号才需要填**，不能看图就不填这一项。
+   *
+   * 它的存在与否本身有意义：没填 = 这一家我们不认识任何能看图的型号
+   * （比如 custom 那条通道，网关是用户自己搭的，我们什么都不该假设）。
+   */
+  vision?: ProviderVision;
   /** 允许手填模型名。自建网关必须能填，官方站也留着 —— 新模型发布总比我们改代码快 */
   editableModel: boolean;
   /** 鉴权头 */
@@ -145,6 +191,29 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
       { id: "agnes-2.0-flash", label: "agnes-2.0-flash（旧版兼容）" },
     ],
     defaultModel: "agnes-3.0-flash",
+    /*
+     * 看图能力。
+     *
+     * 官方模型的介绍页对 2.0 / 2.5-flash / 3.0-flash 都写了 "image URL input"
+     * 或 "image understanding" —— 但示例里的 url 清一色是**公网 URL**
+     * （`https://example.com/image.jpg`）。
+     *
+     * ⚠️ 所以 base64 这里留 false：官方文档从没写过data URI 能用。
+     * 社区的 OpenAI Vision 兼容层确实传成功了（本地图片会自动转 base64），
+     * 但那是别人的实测，不是厂家的承诺 —— 这类"据说可以"最经不起网关改版。
+     *
+     * base64=false 的后果**不是禁用**：界面会说"这家对本地图片的支持不确定，
+     * 发送时才知道"，并且照发不误。真发了能用，用户在设置里勾一下那个
+     * 手动开关就永久亮绿。这比我们替他断定"能"要安全。
+     *
+     * agnes-2.5-pro 没进名单：它的介绍页只讲推理能力，没提图片。
+     * 不写进去的理由同上 —— 没依据就不标。
+     */
+    vision: {
+      models: ["agnes-3.0-flash", "agnes-2.5-flash", "agnes-2.0-flash"],
+      base64: false,
+      note: "官方只写了公网 URL；base64 未经官方承诺，建议实测一次再长期依赖",
+    },
     editableModel: true,
     maxTokens: 8192,
     auth: (key) => ({ Authorization: `Bearer ${key}` }),
@@ -175,9 +244,35 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
       { id: "qwen-flash", label: "qwen-flash（最快最省）" },
       { id: "qwen3-max", label: "qwen3-max（旗舰）" },
       { id: "qwen-long", label: "qwen-long（长上下文）" },
+      { id: "qwen3-vl-plus", label: "qwen3-vl-plus（视觉 · 能看图）" },
+      { id: "qwen3.7-plus", label: "qwen3.7-plus（视觉 · 原生多模态）" },
       { id: "deepseek-v3.2", label: "deepseek-v3.2（百炼上的第三方模型）" },
     ],
     defaultModel: "qwen-plus",
+    /*
+     * 看图能力：这几家里**文档写得最细**的一家，所以 base64 可以放心给 true。
+     *
+     * 官方把传入方式分成三种（公网 URL / 本地路径 / Base64 编码），并逐条给了
+     * 限制编号 —— 我们按最窄的那条走：
+     *
+     *   · base64 编码前原图：Qwen3.x-VL 系 ≤ 20MB，其他 ≤ 10MB；
+     *   · 编码后的 Data URI 字符串 ≤ 20MB；
+     *   · 单请求最多 250 张（我们用不到这个量级）；
+     *   · 宽高都要 ≥ 10px，宽高比不超过 200:1（异常细长的图会被拒）。
+     *
+     * 之所以这几条能一条条列出来，是因为它们写在公开的文档页面上；
+     * 换成 custom 那条通道就什么都没有 —— 这也是那里不填 vision 的原因。
+     *
+     * 哪些型号能看图：官方文档的图像限制段里点了名的 Qwen3.7 / Qwen3.8 /
+     * Qwen3.5 / Qwen3-VL 系列，以及 Qwen-VL 老型号。
+     * **qwen-plus / qwen-flash / qwen-long / deepseek-v3.2 都不在里面** ——
+     * 它们是纯文本型号，往它们发 content 块会被拒。
+     */
+    vision: {
+      models: ["qwen3-vl-plus", "qwen3.7-plus", "qwen3.8-max", "qwen-vl-plus", "qwen-vl-max"],
+      base64: true,
+      note: "官方文档明确写了三种传入方式含 Base64；原图≤20MB、编码后 Data URI≤20MB、单请求≤250 张",
+    },
     editableModel: true,
     maxTokens: 8192,
     auth: (key) => ({ Authorization: `Bearer ${key}` }),
@@ -207,10 +302,32 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     models: [
       { id: "deepseek-v4-flash", label: "deepseek-v4-flash（推荐 · 快）" },
       { id: "deepseek-v4-pro", label: "deepseek-v4-pro（更强 · 更贵）" },
+      { id: "deepseek-v4-flash-vision-exp", label: "deepseek-v4-flash-vision-exp（视觉 · 只有它能看图）" },
       { id: "deepseek-chat", label: "deepseek-chat（旧名，映射到 v4-flash）" },
       { id: "deepseek-reasoner", label: "deepseek-reasoner（旧名，思考模式）" },
     ],
     defaultModel: "deepseek-v4-flash",
+    /*
+     * 看图能力：这家**只有带 vision 后缀的那一个型号能收图**，别的通通不行。
+     *
+     * 官方写得很硬：非视觉模型收到带图请求会直接
+     * 400 `This model does not support image`。注意这句话的含义 ——
+     * 它不是"忽略图片"，而是**整次请求失败**。所以在这家我们必须认得准：
+     * 判断成"能"而实际不能，用户的代价是整轮对话发不出去。
+     *
+     * 另一条必须在代码里兑现的限制：**图片只能出现在 user 消息里**。
+     * system / assistant 带图同样返回 400。这条约束落在 runtime.buildWire
+     * 那里（只有 user 消息会被塞 image_url 块），这里只是把原因记下来。
+     *
+     * 好消息是视觉型号支持 Tool Calls，价格与 flash 同档 ——
+     * 传图多花的只是图片那几百个 token（单张图片按尺寸折算，**上限 384
+     * token**，约等于一张 800×800），传原图和传 1280 宽的花一样多。
+     */
+    vision: {
+      models: ["deepseek-v4-flash-vision-exp"],
+      base64: true,
+      note: "只有 vision 型号收图，其他型号会 400；图片仅限 user 消息；单图≤32MB、请求体≤48MB、单图最多 384 token",
+    },
     editableModel: true,
     maxTokens: 8192,
     auth: (key) => ({ Authorization: `Bearer ${key}` }),
@@ -241,6 +358,18 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     chatPath: "/chat/completions",
     models: [],
     defaultModel: "",
+    /*
+     * **故意不填 vision**。
+     *
+     * 网关是用户自己搭的（OpenAI 官方、硅基流动、本地 Ollama / vLLM、
+     * 公司内网），我们连它跑的是什么模型都不知道，更别说那个模型看不看得图。
+     * 填上任何一条名单都是**替用户下结论**：猜中了没功劳，猜错了他在界面上
+     * 看到"支持"然后整轮 400 —— 那是把我们的错算到用户头上。
+     *
+     * 所以这里的能力判定一律落到 "unknown"，由用户在设置里勾那个开关来说
+     * "我这个网关能看图"。这也是那条开关必须存在的根本理由：
+     * 它不是给已知名单打补丁，而是给**我们什么都不懂的那部分**留的出口。
+     */
     editableModel: true,
     maxTokens: 8192,
     auth: (key) => ({ Authorization: `Bearer ${key}` }),
@@ -263,6 +392,84 @@ export function customProvider(): AgentProvider {
  */
 export function agentProvider(id: string | undefined): AgentProvider {
   return AGENT_PROVIDERS.find((p) => p.id === id) ?? customProvider();
+}
+
+/**
+ * 一个型号的视觉能力判定结果。
+ *
+ * `support` 与 `base64` 是两个独立维度（见 ProviderVision 的说明）：
+ * 前者说它看不看得懂图，后者说我们手里的图能不能送到它面前。
+ * **两者都为真，图片上传才真的有用** —— 这也是为什么只答应一半的
+ * 那份备注（Agnes）要写得比"不支持"还啰嗦。
+ */
+export interface VisionVerdict {
+  support: "yes" | "no" | "unknown";
+  /** 能不能用 base64 Data URI 传本机图片 */
+  base64: boolean;
+  /** 这家已知能看图的型号，供界面给出"换一个试试"的建议 */
+  models: string[];
+  /** 给用户看的一句解释（为什么不/能不能） */
+  note: string;
+}
+
+/**
+ * 这个型号看不看得图。
+ *
+ * **三态，不是布尔。** 中间的 unknown 必须单独存在：
+ *
+ * editableModel 允许用户手填模型名（那是给新模型和自建网关留的出口），
+ * 对这类名字，答 yes 是赌运气、答 no 是替他做决定 —— 两者都会在
+ * DeepSeek 这种"说不能就不能，直接 400"的服务商上变成一次整轮失败。
+ * 所以正确答案是"我不知道"，并让用户用一个开关来回答。
+ *
+ * 判定的优先顺序：
+ *   1. 在 vision.models 名单里         → yes
+ *   2. 在 provider.models 下拉里（我们整理过，没标视觉就是不带视觉）→ no
+ *   3. 两个都不在（手填的）              → unknown
+ */
+export function agentVisionSupport(providerId: string, model: string): VisionVerdict {
+  const p = agentProvider(providerId);
+  const id = model.trim().toLowerCase();
+  const neither = { support: "unknown" as const, base64: false, models: [] as string[] };
+
+  if (!id) return { ...neither, note: "还没选模型" };
+  if (!p.vision) {
+    return {
+      ...neither,
+      note: `${p.name}这条通道我们不认识里面的型号${p.models.length ? "（下拉里的都不带视觉能力）" : ""}。它能不能看图，只有你自己填的那个网关知道。`,
+    };
+  }
+
+  const hit = p.vision.models.find((m) => m.toLowerCase() === id);
+  if (hit) {
+    return {
+      support: "yes",
+      base64: p.vision.base64,
+      models: p.vision.models,
+      note: p.vision.base64
+        ? `这个型号能看图，也支持 base64 —— 本机图片可以直接传`
+        : `这个型号能看图，但官方只演示了公网 URL 的传法；本机图片走的是 base64，${p.name} 没承诺过这条路`,
+    };
+  }
+
+  // 下拉里我们自己列出来的型号：没被标成视觉，就是这一代的纯文本型号
+  const known = p.models.find((m) => m.id.toLowerCase() === id);
+  if (known) {
+    return {
+      support: "no",
+      base64: false,
+      models: p.vision.models,
+      note: p.vision.models.length
+        ? `这个型号是纯文本的，看不了图。同一家换个带「视觉」的：${p.vision.models.slice(0, 2).join(" / ")}`
+        : `这个型号是纯文本的，看不了图`,
+    };
+  }
+
+  return {
+    ...neither,
+    models: p.vision.models,
+    note: `「${model.trim()}」不在${p.name}的推荐列表里，我们不知道它带不带视觉能力`,
+  };
 }
 
 /**

@@ -1,0 +1,122 @@
+<!doctype html>
+<!--
+  计数器（counter）—— e2e 夹具：**工具注册给助手的动作**那一半。
+
+  它是 tests/fixtures/tools/ 里的夹具（不进安装包、不出现在用户设置页），
+  存在的唯一目的是让「宿主真的驱动了一个工具」这件事能在浏览器里被断言：
+    · manifest 里声明 actions / headless / skill
+    · 源码在**解析阶段**就监听 tool:command，并且每条命令都回 tool:command:result
+    · 计数显示在 [data-count] 上，供 e2e 断言
+
+  对照文档：docs/tool-authoring-and-injection.md 第九节
+-->
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <title>计数器</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f6f4;
+        --card: #ffffff;
+        --text: #2c2a26;
+        --sub: #8a8578;
+        --line: #e6e2d8;
+        --accent: #6b5bd6;
+      }
+      html[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #1b1a18;
+        --card: #23211d;
+        --text: #e6e2d8;
+        --sub: #948e80;
+        --line: #3a3730;
+        --accent: #9b8ff5;
+      }
+      body {
+        margin: 0;
+        padding: 14px;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.6 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      .n { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
+      .sub { color: var(--sub); font-size: 12px; margin-top: 4px; }
+      ul { margin-top: 10px; padding-left: 18px; color: var(--sub); font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="n" data-count="0">0</div>
+    <div class="sub" data-cmd-last>还没有被驱动过</div>
+    <ul>
+      <li>add（n，默认 1）</li>
+      <li>read</li>
+      <li>reset（destructive，宿主会先问）</li>
+    </ul>
+
+    <script>
+      (function () {
+        "use strict";
+        var TOOL_SOURCE = "workbench-tool";
+        var HOST_SOURCE = "workbench-host";
+        var n = 0;
+
+        function paint(last) {
+          var box = document.querySelector("[data-count]");
+          var tip = document.querySelector("[data-cmd-last]");
+          if (box) {
+            box.textContent = String(n);
+            box.setAttribute("data-count", String(n));
+          }
+          if (tip && last) tip.textContent = last;
+        }
+
+        /*
+         * ⚠️ 监听必须挂在**解析阶段**（内联 script 顶层直接 addEventListener）。
+         * 等到 DOMContentLoaded 才挂的话，隐藏实例那条路上宿主可能已经把命令
+         * 发过来了 —— 那条消息会被丢进虚空：不报错，也没人收到。
+         */
+        window.addEventListener("message", function (e) {
+          var m = e.data;
+          if (!m || m.source !== HOST_SOURCE) return;
+          if (m.type !== "tool:command") return;
+
+          function reply(ok, data, error) {
+            parent.postMessage(
+              { source: TOOL_SOURCE, type: "tool:command:result", id: m.id, ok: ok, data: data, error: error },
+              "*",
+            );
+          }
+
+          try {
+            if (m.name === "add") {
+              var step = Number((m.params || {}).n);
+              n += Number.isFinite(step) && step !== 0 ? step : 1;
+              paint("助手让我加了 " + (Number.isFinite(step) && step !== 0 ? step : 1));
+              reply(true, { count: n });
+              return;
+            }
+            if (m.name === "read") {
+              paint("助手读了一次");
+              reply(true, { count: n });
+              return;
+            }
+            if (m.name === "reset") {
+              n = 0;
+              paint("助手让我归零了");
+              reply(true, { count: n });
+              return;
+            }
+            reply(false, null, "没有「" + m.name + "」这个动作。我注册的是：add、read、reset");
+          } catch (err) {
+            reply(false, null, String((err && err.message) || err));
+          }
+        });
+
+        // 报到：宿主收到这条就不必再等 iframe 的 load 事件
+        parent.postMessage({ source: TOOL_SOURCE, type: "tool:hello" }, "*");
+        paint("");
+      })();
+    </script>
+  </body>
+</html>

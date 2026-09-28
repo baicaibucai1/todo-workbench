@@ -13,7 +13,10 @@ import {
   Plug,
   ShieldCheck,
   Eraser,
+  Eye,
+  EyeOff,
   FolderOpen,
+  HelpCircle,
   KeyRound,
   BookOpen,
   Sparkles,
@@ -36,6 +39,7 @@ import {
   AGENT_PROVIDERS,
   agentConfigProblems,
   agentProvider,
+  agentVisionSupport,
   chatEndpoint,
   recommendedProvider,
 } from "../../lib/agent/providers";
@@ -370,7 +374,10 @@ export function AgentSection({
             value={cfg.model}
             placeholder={provider.defaultModel || "填模型名，如 gpt-4o-mini"}
             models={provider.models}
+            providerId={cfg.provider}
+            visionOverride={withDefaults(settings)[SETTINGS.agentVisionOverride] ?? ""}
             onCommit={commit(SETTINGS.agentModel)}
+            onToggleOverride={(on) => commit(SETTINGS.agentVisionOverride)(on ? "1" : "0")}
           />
 
           <TextField
@@ -558,16 +565,25 @@ function ModelField({
   value,
   placeholder,
   models,
+  providerId,
+  visionOverride,
   onCommit,
+  onToggleOverride,
 }: {
   value: string;
   placeholder?: string;
   models: Array<{ id: string; label: string }>;
+  providerId: string;
+  /** "1"/"0"。见 SETTINGS.agentVisionOverride 的说明 */
+  visionOverride: string;
   onCommit: (v: string) => void;
+  onToggleOverride: (on: boolean) => void;
 }) {
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);
   const listId = "agent-model-options";
+  const vision = agentVisionSupport(providerId, v);
+  const forced = (visionOverride ?? "").trim() === "1";
 
   return (
     <label className="block">
@@ -602,6 +618,57 @@ function ModelField({
       <span className="mt-1 block text-[11.5px] leading-relaxed text-fg-dim">
         可以从下拉里挑，也可以直接填。写工具是它的主力活，选一个编程向的模型效果差别很明显。
       </span>
+
+      {/*
+        这个型号看不看得图。
+
+        三态都要能分辨，因为它们的**成因与下一步动作完全不同**：
+          · 能看 —— 解除顾虑，用户可以直接粘截图进来；
+          · 不能 —— 必须给出"换哪一个"，否则用户只能自己去翻文档；
+          · 不确定 —— 只有用户自己知道，所以给一个开关让他回答。
+
+        ⚠️ 开关只在"不确定"时出现：一个用户声明不该有能力推翻名单上写明的事实，
+        那只会让人搞不清这个开关什么时候管用。
+      */}
+      <div
+        data-agent-vision={vision.support}
+        className={`mt-2 flex items-start gap-2 rounded-lg px-2.5 py-2 text-[11.5px] leading-relaxed ${
+          vision.support === "yes"
+            ? "bg-ok-soft text-ok"
+            : vision.support === "no"
+              ? "bg-warn-soft text-warn"
+              : "bg-chip text-fg-3"
+        }`}
+      >
+        {vision.support === "yes" ? (
+          <Eye size={13} className="mt-0.5 shrink-0" />
+        ) : vision.support === "no" ? (
+          <EyeOff size={13} className="mt-0.5 shrink-0" />
+        ) : (
+          <HelpCircle size={13} className="mt-0.5 shrink-0" />
+        )}
+        <div className="min-w-0 flex-1">
+          <span data-agent-vision-note>{vision.note}</span>
+          {vision.support === "yes" && !vision.base64 && (
+            <span className="mt-1 block">
+              图片仍会照常发出去。拒收的话模型会在对话里直接报错，那时换一个文档里明确写了
+              base64 的型号或服务商 —— 官方只对公网 URL 做过承诺，同一家换个型号通常也没用。
+            </span>
+          )}
+          {vision.support === "unknown" && (
+            <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 select-none">
+              <input
+                type="checkbox"
+                checked={forced}
+                onChange={(e) => onToggleOverride(e.target.checked)}
+                data-agent-vision-override=""
+                className="size-3.5 accent-[var(--color-accent)]"
+              />
+              这个型号能看图，把图片照发出去
+            </label>
+          )}
+        </div>
+      </div>
     </label>
   );
 }

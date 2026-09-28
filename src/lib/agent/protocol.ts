@@ -38,6 +38,9 @@
 
 import type { AgentPermissions } from "./types";
 import { SKILLS } from "./skills";
+import { listTools } from "../tools";
+import { exposedTools, toolActionName, toolSkillId } from "./toolActions";
+import type { ToolActionSpec } from "../../types";
 import type { RawToolCall } from "./providers";
 
 export interface AgentToolSpec {
@@ -545,6 +548,62 @@ export const AGENT_TOOLS: AgentToolSpec[] = [
           description:
             "已存在同名工具时是否覆盖。默认 false。用户明确要求更新那个工具时才给 true",
         }),
+        /*
+         * 注册给助手的动作。
+         *
+         * 有了它，装完**立刻**就多出几个 `tool_<id>_<action>` 的函数 ——
+         * 助手能直接驱动这个工具，不必先打开它，也不必自己拼命令名。
+         * 前提是源码里真的监听了 `tool:command`（写法见 read_skill 的
+         * tool-authoring），声明了却没实现，调用会拿到一句"超时没回应"。
+         */
+        actions: S({
+          type: "array",
+          description:
+            "这个工具注册给助手的动作：[{ name, description, params?: [{ name, type?, required?, description? }], destructive? }]。" +
+            "name 只用小写字母数字与连字符（字母开头，最长 24 位）；description 说清什么时候该调、调了会怎样；" +
+            "destructive: true 表示这个动作会改动或清空数据，执行前宿主会先问用户一次。最多 12 个",
+          items: S({
+            type: "object",
+            properties: {
+              name: S({ type: "string" }),
+              description: S({ type: "string" }),
+              destructive: S({ type: "boolean" }),
+              params: S({
+                type: "array",
+                items: S({
+                  type: "object",
+                  properties: {
+                    name: S({ type: "string" }),
+                    description: S({ type: "string" }),
+                    type: S({ type: "string", description: "string | number | boolean" }),
+                    required: S({ type: "boolean" }),
+                  },
+                  required: ["name"],
+                }),
+              }),
+            },
+            required: ["name", "description"],
+          }),
+        }),
+        headless: S({
+          type: "boolean",
+          description:
+            "允许助手在**这个工具没被打开**时也驱动它吗（宿主会为它起一个隐藏实例，执行完立刻回收）。" +
+            "只有确认它不弹窗、不依赖用户点确认、不读 DOM 尺寸时才给 true",
+        }),
+        skill: S({
+          type: "object",
+          description:
+            "自带的使用说明：{ title?, summary, rules?: string[], body }。它会变成一份技能（" +
+            "id 为 tool-use-<id>），进助手的常驻索引，全文由 read_skill 取。" +
+            "**注册了 actions 就该给一份** —— 没有说明书的动作，助手只能靠猜",
+          properties: {
+            title: S({ type: "string" }),
+            summary: S({ type: "string", description: "一句话说明它管什么" }),
+            rules: S({ type: "array", items: S({ type: "string" }), description: "常驻硬规则，每条一句话" }),
+            body: S({ type: "string", description: "全文：什么时候用、参数怎么给、返回值是什么" }),
+          },
+        }),
       },
       required: ["id", "name", "ticket"],
     }),
@@ -777,8 +836,67 @@ export const AGENT_TOOLS: AgentToolSpec[] = [
   },
 ];
 
+/* ------------------------------------------------------------------ */
+/* 工具自己注册的动作                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 装在这台机器上的工具**此刻**注册给助手的动作。
+ *
+ * ------------------------------------------------------------------
+ * 为什么它是"算出来的"而不是一张登记表
+ * ------------------------------------------------------------------
+ * 工具可以随时被装上、卸掉、停用。任何"装的时候登记一次"的做法，
+ * 都会在这三个时刻与真实状态错位，而错位时的表现是
+ * **模型调了一个没人能执行的函数**（返回一句看不懂的错误，用户以为助手坏了）。
+ * 所以这份清单每次都从 `listTools()` 现算 —— 它和侧边栏里看到的永远是同一批。
+ *
+ * ------------------------------------------------------------------
+ * 一个动作 = 一个真正的 function
+ * ------------------------------------------------------------------
+ * 名字是 `tool_<id>_<action>`（命名规则见 toolActions.ts），
+ * 参数是它声明的那些，说明里**点名配套的技能**，让模型知道去哪儿查用法。
+ * 模型因此不需要先 open_tool、也不需要自己拼命令名 —— 直接调就行。
+ */
+export function toolActionSpecs(): AgentToolSpec[] {
+  const out: AgentToolSpec[] = [];
+  for (const t of exposedTools(listTools())) {
+    for (const a of t.actions ?? []) {
+      out.push(actionToSpec(t.id, t.name, a));
+    }
+  }
+  return out;
+}
+
+/** 单独导出是为了可单测：toolActionSpecs() 依赖注册表，这一段才是要钉住的部分 */
+export function actionToSpec(toolId: string, toolName: string, a: ToolActionSpec): AgentToolSpec {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const p of a.params ?? []) {
+    properties[p.name] = S({
+      type: p.type ?? "string",
+      ...(p.description ? { description: p.description } : {}),
+    });
+    if (p.required) required.push(p.name);
+  }
+  return {
+    name: toolActionName(toolId, a.name),
+    label: `${toolName}·${a.name}`,
+    description:
+      `驱动工具「${toolName}」执行「${a.name}」：${a.description}` +
+      `用法见技能 ${toolSkillId(toolId)}（动手前先 read_skill 取全文）。` +
+      (a.destructive ? "⚠️ 它会改动或清空数据，执行前会先问用户一次。" : ""),
+    parameters: S({ type: "object", properties, ...(required.length ? { required } : {}) }),
+  };
+}
+
+/** 静态那批 + 工具此刻注册的那批 */
+export function allToolSpecs(): AgentToolSpec[] {
+  return [...AGENT_TOOLS, ...toolActionSpecs()];
+}
+
 export function toolSpec(name: string): AgentToolSpec | undefined {
-  return AGENT_TOOLS.find((t) => t.name === name);
+  return AGENT_TOOLS.find((t) => t.name === name) ?? toolActionSpecs().find((t) => t.name === name);
 }
 
 /**
@@ -797,14 +915,21 @@ export function isAskTool(name: string): boolean {
   return (ASK_TOOLS as readonly string[]).includes(name);
 }
 
-/** 发给模型的原生工具定义（OpenAI 形状） */
+/**
+ * 发给模型的原生工具定义（OpenAI 形状）。
+ *
+ * 注意它**包含工具注册的那批**（toolActionSpecs），所以"新装一个带 actions 的
+ * 工具，助手立刻就会用它"这件事不需要任何登记步骤 —— 下一轮对话自然就有。
+ */
 export function toolsForModel(
   allow: (spec: AgentToolSpec) => boolean = () => true,
 ): Array<Record<string, unknown>> {
-  return AGENT_TOOLS.filter(allow).map((t) => ({
-    type: "function",
-    function: { name: t.name, description: t.description, parameters: t.parameters },
-  }));
+  return allToolSpecs()
+    .filter(allow)
+    .map((t) => ({
+      type: "function",
+      function: { name: t.name, description: t.description, parameters: t.parameters },
+    }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1185,12 +1310,40 @@ export function toolCallsForEcho(
  * 而且模型在"要不要动手"这件事上的判断**几乎完全来自这段描述** ——
  * tools 定义里只有参数长相，没有"什么时候该用"。
  */
+/**
+ * 工具注册的那批动作，在**文本通道**里的那一段。
+ *
+ * 为什么这里只列函数名不列说明：文本通道是兜底（正常的路是函数定义，
+ * 说明已经在那里了），再抄一遍会让这一节随工具数量线性膨胀。
+ * 所以按工具聚成一行，用法指向配套的技能 —— 模型真要用会自己去取。
+ */
+function toolActionLines(): string[] {
+  const specs = toolActionSpecs();
+  if (!specs.length) return [];
+  const byTool = new Map<string, string[]>();
+  for (const s of specs) {
+    const idx = s.name.indexOf("_", "tool_".length);
+    const id = s.name.slice("tool_".length, idx);
+    const list = byTool.get(id) ?? [];
+    list.push(s.name);
+    byTool.set(id, list);
+  }
+  const out: string[] = ["", "## 工具自己注册的动作", ""];
+  for (const [id, names] of byTool) {
+    out.push(`- 工具 \`${id}\`：${names.map((n) => `\`${n}\``).join(" ")}（用法见技能 ${toolSkillId(id)}）`);
+  }
+  out.push("");
+  out.push("这几个函数是**工具装上来就有的**，不需要任何登记；工具卸掉或停用它们就没了。");
+  return out;
+}
+
 export function actionProtocolBlock(): string {
   const lines = AGENT_TOOLS.map((t) => `- \`${t.name}\` · ${t.label}：${t.description}`);
   return [
     "## 你能执行的动作",
     "",
     ...lines,
+    ...toolActionLines(),
     "",
     "调用方式：优先用工具调用（tool calls）。如果这次请求没有带上工具定义、",
     "或者你无法发起工具调用，就把动作写成下面这种代码块放在回复最后：",

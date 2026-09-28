@@ -23,9 +23,15 @@
 | ③ 私有表 | `schema.info`、`row.count` `row.select` `row.insert` `row.update` `row.delete` | 声明式 schema + 结构化 CRUD，没有 SQL |
 | ④ 图库 | `gallery.list` `gallery.get` `gallery.put` | 跨工具共享素材库；图库关着时**降级显示宿主的原话** |
 | ⑤ 工具联动 | `tools.list` `tools.open` `tools.send` | 拉起别的工具并转交数据；只投运行中的工具 |
+| ⑥ 让助手驱动我 | `tool:command` | 注册三个动作给助手直接调用（含一个 destructive），并声明 headless |
 
 它同时声明了三个注入位置（`detailSection` / `detailAction` / `rowAction`），
 装上之后会同时出现在待办详情面板底部、详情头部按钮、列表行内按钮。
+
+它还在 manifest 里注册了三个动作（`add-note` / `list-notes` / `clear-notes`），
+于是助手那一侧会多出 `tool_kitchen-sink_add-note` 等三个函数 —— 这是
+「工具不只是给人点的」那部分的端到端样本，写法见
+[docs/tool-authoring-and-injection.md 第九节](../docs/tool-authoring-and-injection.md#九让助手直接操作你的工具)。
 
 ### 怎么装
 
@@ -72,5 +78,7 @@ node scripts/verify-example.mjs
 - **关键状态挂 DOM**：`body[data-bind-state]`、按钮 `data-act`、
   行 `data-id` —— 这个项目的 e2e 靠这些属性断言。
 - **删除要二次确认**：点「删除」按钮变成「再点一次确认」，不用弹窗阻塞。
+- **助手驱动的那三条也不弹窗**：`clear-notes` 标了 `destructive`，由宿主在执行前
+  替它问用户 —— 所以它自己只管执行（声明了 `headless`，后台实例里没人能点弹窗）。
 - **整页模式下 `task.get` 是注定失败的**，它把那句拒绝照原话显示出来，
   并注明"整页模式下这是预期行为"——教学价值就在这句上。

@@ -53,6 +53,10 @@ const SUITES = [
   // 验"没票不许装"那道门，以及工具嵌进待办详情后能不能读到那一条。
   // 它自清本地库，且要跑好几次沙箱（每次约 300ms），所以排在最后。
   ["agent-sandbox.mjs", []],
+  // 助手的**工具注册**：工具在 manifest 里声明 actions 之后，助手立刻多出几个
+  // `tool_<id>_<action>` 函数，配套的 skill 一起进上下文，标了 destructive 的
+  // 走宿主确认门。同样拦掉模型端点、同样自清本地库，所以排在最后。
+  ["agent-tool-actions.mjs", []],
 ];
 
 const rows = [];

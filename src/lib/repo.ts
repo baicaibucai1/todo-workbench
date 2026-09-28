@@ -9,6 +9,9 @@ import { db, type Param } from "./db";
 import { toolTable } from "./tools";
 import { CURRENT_SCHEMA_VERSION } from "./migrations";
 import type { AgentAction } from "./agent/types";
+// 只用这条类型（编译期擦除，不引入运行时依赖）—— repo 不该碰 images 里的
+// canvas / DOM 代码，它只需要知道图片长什么样，好在读写时认出这一列
+import type { AgentImage } from "./agent/images";
 import type {
   AttachmentKind,
   PlanItem,
@@ -2727,8 +2730,8 @@ export async function fetchAgentChats(): Promise<AgentChatRow[]> {
     updated_at: string;
   }>(`SELECT * FROM core_agent_chats ORDER BY updated_at DESC`);
 
-  const msgs = await db().select<{ chat_id: string; role: string; content: string }>(
-    `SELECT chat_id, role, content FROM core_agent_messages ORDER BY seq ASC`,
+  const msgs = await db().select<{ chat_id: string; role: string; content: string; image_count: number }>(
+    `SELECT chat_id, role, content, image_count FROM core_agent_messages ORDER BY seq ASC`,
   );
 
   const stat = new Map<string, { n: number; preview: string }>();
@@ -2737,7 +2740,7 @@ export async function fetchAgentChats(): Promise<AgentChatRow[]> {
     const cur = stat.get(key) ?? { n: 0, preview: "" };
     cur.n++;
     // 顺序遍历 + 直接覆盖 = 最后一条留在 preview 里（不用再排序一次）
-    cur.preview = chatPreview(m.role, m.content);
+    cur.preview = chatPreview(m.role, m.content, Number(m.image_count) || 0);
     stat.set(key, cur);
   }
 
@@ -2761,10 +2764,20 @@ export async function fetchAgentChats(): Promise<AgentChatRow[]> {
  * 那段文字必须和重新读库算出来的**一模一样**，否则列表会在
  * "刚发完"和"刷新之后"显示两种样子。
  */
-export function chatPreview(role: string, content: string): string {
+/**
+ * 一条消息的摘要（历史列表那一行）。
+ *
+ * `imageCount` 是给"只传了图、没打字"的那种消息准备的：没有它，那一行会显示
+ * 成「你：（没有文字）」—— 而用户明明传了图。宁可如实说「1 张图片」。
+ *
+ * 这个数字来自 `image_count` 那一列而不是 `images` 的长度：
+ * 见 migrations v19 的说明 —— 拉全文只为数个数太贵了。
+ */
+export function chatPreview(role: string, content: string, imageCount = 0): string {
   const who = role === "user" ? "你" : "助手";
   const body = (content ?? "").replace(/\s+/g, " ").trim();
-  return body ? `${who}：${body.slice(0, 40)}` : `${who}：（没有文字）`;
+  const head = body ? `${who}：${body.slice(0, 40)}` : imageCount > 0 ? `${who}：` : `${who}：（没有文字）`;
+  return imageCount > 0 ? `${head}${head.endsWith("：") ? "" : " "}（${imageCount} 张图片）` : head;
 }
 
 /**
@@ -2838,6 +2851,14 @@ export interface AgentMessageRow {
   role: "user" | "assistant";
   content: string;
   actions: AgentAction[];
+  /**
+   * 这条消息附带的图（见 migrations 的 v19）。
+   *
+   * 只有 user 消息会有 —— 助手目前产不出图，而且不少服务商明确规定
+   * **图片只能出现在 user 消息里**（DeepSeek 会因此对整次请求返回 400），
+   * 所以这一列在 assistant 行上恒为空数组。
+   */
+  images: AgentImage[];
   /** 这一轮失败的说明（网络、密钥、限流…）。空串表示没出错 */
   error: string;
   /** 排序用。毫秒时间戳，同一毫秒内连写两条也不会打乱顺序 */
@@ -2858,6 +2879,7 @@ export async function fetchAgentMessages(chatId: string): Promise<AgentMessageRo
     role: string;
     content: string;
     actions: string;
+    images: string;
     error: string;
     seq: number;
     created_at: string;
@@ -2868,6 +2890,7 @@ export async function fetchAgentMessages(chatId: string): Promise<AgentMessageRo
     role: r.role === "user" ? "user" : "assistant",
     content: r.content ?? "",
     actions: parseActions(r.actions),
+    images: parseImages(r.images),
     error: r.error ?? "",
     seq: Number(r.seq) || 0,
     createdAt: r.created_at,
@@ -2891,17 +2914,50 @@ function parseActions(raw: string | null | undefined): AgentAction[] {
   }
 }
 
+/**
+ * 解析 images 列。
+ *
+ * 与 actions 用同一套坏数据策略（一律当空数组），但这里多一层顾虑：
+ * 这一列的值是**几百 KB 的字符串**，所以校验不能停在 Array.isArray ——
+ * 一条畸形记录里塞着几个 MB 的垃圾也会被当成"一条消息"渲染出来，
+ * 于是 UI 上挂着一张永远画不出来的图。
+ *
+ * 因此逐项查形状，任一项不对就整条丢掉而不是半残保留。丢图好过崩界面：
+ * 这段对话照样能读、能复读，只是少了那张图的预览。
+ */
+export function parseImages(raw: string | null | undefined): AgentImage[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isAgentImage) as AgentImage[];
+  } catch {
+    return [];
+  }
+}
+
+/** 最小形状检查。这一列经历过大改，库里可能存在形状不齐的旧记录 */
+function isAgentImage(v: unknown): v is AgentImage {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.id === "string" && typeof o.dataUrl === "string" && !!o.dataUrl;
+}
+
 /** 追加一条消息。id / seq / createdAt 由调用方给 —— 见 runtime 里的连号说明 */
 export async function appendAgentMessage(msg: AgentMessageRow): Promise<void> {
   await db().execute(
-    `INSERT INTO core_agent_messages (id, chat_id, role, content, actions, error, seq, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO core_agent_messages (id, chat_id, role, content, actions, images, image_count, error, seq, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       msg.id,
       msg.chatId,
       msg.role,
       msg.content,
       JSON.stringify(msg.actions ?? []),
+      // assistant 恒为空数组：见 AgentMessageRow.images —— 图片只允许出现在
+      // user 消息里，落库时就把这条规则守住，不要等请求发出去被服务端拒
+      JSON.stringify(msg.role === "user" ? msg.images ?? [] : []),
+      msg.role === "user" ? (msg.images?.length ?? 0) : 0,
       msg.error ?? "",
       msg.seq,
       msg.createdAt,

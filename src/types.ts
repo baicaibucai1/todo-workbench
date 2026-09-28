@@ -491,6 +491,66 @@ export interface ToolSchema {
   tables: ToolTableDef[];
 }
 
+/**
+ * 工具动作的一个**参数声明**。
+ *
+ * 只有 string / number / boolean 三种：够用，而且宿主能把模型给的值
+ * 强制转成它再交给工具 —— 工具因此不必自己做类型防御，
+ * 也不用担心收到 `{"minutes": "25"}` 这种字符串数字。
+ */
+export interface ToolActionParam {
+  name: string;
+  description?: string;
+  type?: "string" | "number" | "boolean";
+  required?: boolean;
+}
+
+/**
+ * 工具向助手**注册的一个动作**。
+ *
+ * 与老式 `commands: string[]` 的分工：
+ *   · `commands` 只说"我接受这几个名字"，没有说明、没有参数、没有危险标记；
+ *   · `actions` 是完整声明，宿主据此给模型生成**一个真正的 function**。
+ *
+ * 两个都写时宿主会把 commands 里没被 actions 覆盖的那些并进来
+ * （老工具的 manifest 因此不需要改），所以**新工具只写 actions 就够了**。
+ *
+ * **外部输入**：名字、说明、参数一律过白名单与长度上限，见 lib/tools.ts。
+ */
+export interface ToolActionSpec {
+  /** 动作名。小写字母开头，只允许小写字母数字与连字符（会拼进模型看到的函数名） */
+  name: string;
+  /** 给模型看的说明：什么时候该调、调了会怎样。必填，空说明的动作没有意义 */
+  description: string;
+  params?: ToolActionParam[];
+  /**
+   * 这个动作会**改坏或清掉**东西吗。
+   *
+   * 标了它，宿主会在执行前弹一张确认卡（与 uninstall_tool 同一道门）——
+   * 也就是说"要不要问"是**工具在 manifest 里声明**的，不是提示词里求来的。
+   */
+  destructive?: boolean;
+}
+
+/**
+ * 工具自带的一份**使用说明**，随它的动作一起交给助手。
+ *
+ * 为什么必须配套：只把 `tool_<id>_<action>` 这几个函数塞给模型，
+ * 它知道"能调什么"，但不知道"什么时候该调、调之前要做什么、失败了什么意思"。
+ * 那部分只能由**写这个工具的人**说 —— 所以它是 manifest 的一部分，
+ * 装上就会被读成一份技能（id 为 `tool-use-<id>`），进常驻索引，
+ * 全文由 read_skill 按需取。
+ */
+export interface ToolSkillSpec {
+  title: string;
+  /** 一句话说明它管什么（进常驻索引） */
+  summary: string;
+  /** 常驻硬规则，每条一句话 */
+  rules: string[];
+  /** 全文（read_skill 取） */
+  body: string;
+}
+
 /** 工具清单项（manifest.json 解析结果） */
 export interface ToolManifest {
   id: string;
@@ -546,6 +606,39 @@ export interface ToolManifest {
    * 只认小写字母数字与连字符，认不出来的丢掉。
    */
   commands?: string[];
+  /**
+   * 这个工具**注册给助手的动作**（完整声明，见 ToolActionSpec）。
+   *
+   * 宿主会为每个动作生成一个名字为 `tool_<id>_<action>` 的函数发给模型，
+   * 模型直接调它就能驱动这个工具 —— 不必先 open_tool、也不必自己拼命令名。
+   * 没写就是"这个工具不接受助手驱动"（多数纯展示型工具就是这样）。
+   *
+   * 与 commands 的关系见 ToolActionSpec：**两个都写时以 actions 为准**，
+   * commands 里多出来的那些会被并进来（保持老 manifest 可用）。
+   */
+  actions?: ToolActionSpec[];
+  /**
+   * 允许宿主在它**没被打开**的时候为它起一个隐藏实例执行命令吗。
+   *
+   * 默认 false 是刻意的：为此去后台偷偷起一个 iframe 是另一回事
+   * （不可见、不可控），所以这条通道必须由工具自己开门 ——
+   * 它声明了，就说明作者知道自己的工具在**没有界面**的情况下也能正确干活
+   * （不弹窗、不依赖用户点确认、不读 DOM 尺寸）。
+   *
+   * 开了之后：模型调 `tool_<id>_<action>` 时，若这个工具当前没打开，
+   * 宿主起一个隐藏 iframe，等它加载完把命令发过去，拿到结果就**立刻回收**。
+   * 工具已经开着时仍然优先发给那个正在跑的实例（用户看得见它在动）。
+   */
+  headless?: boolean;
+  /**
+   * 这个工具自带的**使用说明**（可选）。
+   *
+   * 写了就是一份 id 为 `tool-use-<id>` 的技能；没写但声明了 actions 时，
+   * 宿主按动作列表**自动生成一份**（把动作与参数列出来）。
+   * 也就是说：只要注册了动作，助手一定拿得到配套的说明书 ——
+   * 不会出现"有一堆函数但不知道该怎么用"的状态。
+   */
+  skill?: ToolSkillSpec;
   /**
    * 来源。**不是 manifest 里的字段**，由扫描器按"它是不是安装包里的"盖戳 ——
    * 和 gallery 的 origin 一样，来源必须由宿主判定，工具自报不算：

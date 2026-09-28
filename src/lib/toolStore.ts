@@ -31,7 +31,7 @@
  */
 
 import { isTauri } from "./db";
-import { loadBundledTools, validateManifest } from "./tools";
+import { loadBundledTools, normalizeActions, normalizeSkill, validateManifest } from "./tools";
 import { CAPABILITY_NAMES } from "./extensions/registry";
 import { normalizeInjects } from "./extensions/types";
 import { validateToolSchema } from "./toolSchema";
@@ -151,6 +151,18 @@ export function buildManifest(input: {
   capabilities?: string[];
   /** 要嵌进宿主界面的位置（注入组件）。同样是外部输入，走 normalizeInjects */
   injects?: unknown;
+  /**
+   * 注册给助手的动作（外部输入，走 normalizeActions）。
+   *
+   * 有了它，助手装完这个工具**立刻就能驱动它** —— 不必等用户打开，
+   * 也不必自己拼命令名。它和 schema / capabilities 一样是"声明"：
+   * 写在 manifest 里，由宿主读，源码里必须真的监听 `tool:command` 才作数。
+   */
+  actions?: unknown;
+  /** 允许宿主在它没打开时起隐藏实例执行动作吗。默认关，见 types.ts 的 headless */
+  headless?: boolean;
+  /** 自带的使用说明（外部输入，走 normalizeSkill） */
+  skill?: unknown;
   /** 作者。默认「导入」；AI 助手造的工具记「AI 助手」，出处要能查 */
   author?: string;
   dbVersion?: number;
@@ -160,6 +172,8 @@ export function buildManifest(input: {
     .map((c) => String(c).trim())
     .filter((c) => (CAPABILITY_NAMES as string[]).includes(c));
   const injects = normalizeInjects(input.injects);
+  const actions = normalizeActions(input.actions);
+  const skill = normalizeSkill(input.skill, input.name.trim());
   return {
     id: input.id.trim(),
     name: input.name.trim(),
@@ -174,6 +188,9 @@ export function buildManifest(input: {
     ...(schema ? { schema } : {}),
     ...(caps.length ? { capabilities: caps } : {}),
     ...(injects.length ? { injects } : {}),
+    ...(actions.length ? { actions } : {}),
+    ...(input.headless === true ? { headless: true } : {}),
+    ...(skill ? { skill } : {}),
   };
 }
 

@@ -7,6 +7,8 @@
  * （见 migrations 的 v15），其余都是运行时的形状。
  */
 
+import type { AgentImage } from "./images";
+
 /** 一次对话里，助手**真做过的一件事**（而不是它说自己做了） */
 export interface AgentAction {
   /** 动作名，与 actions.ts 里的注册表同名 */
@@ -28,6 +30,13 @@ export interface AgentMessage {
   role: "user" | "assistant";
   content: string;
   actions: AgentAction[];
+  /**
+   * 这条消息附带的图（完整形状见 lib/agent/images.ts 的 AgentImage）。
+   *
+   * **只有 user 消息会有**：助手这一侧目前产不出图，而且多家服务商规定
+   * 图片只能出现在 user 消息里，所以 assistant 恒为空数组。
+   */
+  images: AgentImage[];
   error: string;
   seq: number;
   createdAt: string;

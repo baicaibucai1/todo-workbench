@@ -30,7 +30,7 @@
  * 全部用 data-* 而不是文案匹配：文案会改，选择器不该跟着一起改。
  */
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   AlertTriangle,
   ArrowUp,
@@ -39,6 +39,7 @@ import {
   ChevronRight,
   Copy,
   HelpCircle,
+  ImagePlus,
   Loader2,
   MessageSquarePlus,
   Settings2,
@@ -59,11 +60,13 @@ import * as repo from "../lib/repo";
 import {
   agentConfigProblems,
   agentProvider,
+  agentVisionSupport,
   recommendedProvider,
 } from "../lib/agent/providers";
+import { imageFilesFrom, prepareImages, type AgentImage } from "../lib/agent/images";
 import { openExternal } from "../lib/attachments";
 import { actionLabel } from "../lib/agent/actions";
-import { parseAgentPermissions, readAgentConfig, withDefaults } from "../lib/settings";
+import { parseAgentPermissions, readAgentConfig, withDefaults, SETTINGS } from "../lib/settings";
 import type { AgentAction, AgentAsk, AgentMessage } from "../lib/agent/types";
 
 /** 空对话时摆在输入框上面的几句话。它们的价值是"让人知道这东西能干什么" */
@@ -84,7 +87,61 @@ export default function AgentView({ onClose }: { onClose?: () => void }) {
 
   const [draft, setDraft] = useState("");
   const [skillsOpen, setSkillsOpen] = useState(false);
+  /** 粘好还没发出去的图 */
+  const [pending, setPending] = useState<AgentImage[]>([]);
+  /** 忙的时候（解码/压缩）显示一个小指示 */
+  const [prepping, setPrepping] = useState(false);
+  /** 上次批次里被跳过的图，说清为什么 —— 沉默地丢掉一张图是最坏的结果 */
+  const [rejects, setRejects] = useState<string[]>([]);
+  const [dropping, setDropping] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+
+  // 这几行得排在 addFiles / vision 之前：它们要用 cfg 去问"当前型号能不能看图"
+  const cfg = readAgentConfig(withDefaults(settings));
+  const problems = agentConfigProblems(cfg);
+  const configured = problems.length === 0;
+  const provider = agentProvider(cfg.provider);
+
+  /*
+   * 一次最多带几张图。
+   *
+   * 不是随手填的数：多数 OpenAI 兼容网关一次请求认的图像在 10 张上下，
+   * 而且每张图都要占 token —— 一次性丢二十张截图进去，先烧钱、再超时，
+   * 最后还得从头再来。定在这个数以下是"够用且不至于把请求撑爆"。
+   */
+  const MAX_PER_SEND = 6;
+
+  /**
+   * 当前模型看不看得图。
+   *
+   * **它不会拦住发送** —— 按定下来的策略，不支持时照发不误，只是提前把话
+   * 说明白。真正挡枪的判断（决定要不要在请求里放图片块）在 runtime 里，
+   * 因为判断错一次的代价是整次请求 400，那里离请求最近、也最好改。
+   */
+  const vision = agentVisionSupport(cfg.provider, cfg.model);
+  const forcedOn = (settings[SETTINGS.agentVisionOverride] ?? "").trim() === "1";
+  const canSee = vision.support === "yes" || (vision.support === "unknown" && forcedOn);
+
+  const addFiles = useCallback(
+    async (sources: Array<{ name: string; blob: Blob }>) => {
+      if (!sources.length) return;
+      setPrepping(true);
+      try {
+        const room = Math.max(0, MAX_PER_SEND - pending.length);
+        const batch = sources.slice(0, room);
+        const dropped = sources.length - batch.length;
+        const { images, skipped } = await prepareImages(batch);
+        const notes = skipped.map((s) => `${s.name}：${s.reason}`);
+        if (dropped) notes.push(`只处理了前 ${room} 张（一次最多 ${MAX_PER_SEND} 张）`);
+        setRejects(notes);
+        if (images.length) setPending((prev) => [...prev, ...images]);
+      } finally {
+        setPrepping(false);
+      }
+    },
+    [pending.length],
+  );
 
   useEffect(() => {
     void runtime.ensureLoaded();
@@ -95,11 +152,6 @@ export default function AgentView({ onClose }: { onClose?: () => void }) {
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [state.messages.length, state.streaming, state.phase]);
-
-  const cfg = readAgentConfig(withDefaults(settings));
-  const problems = agentConfigProblems(cfg);
-  const configured = problems.length === 0;
-  const provider = agentProvider(cfg.provider);
 
   /**
    * 权限关掉时必须能在**助手界面上**看见。
@@ -148,9 +200,13 @@ export default function AgentView({ onClose }: { onClose?: () => void }) {
 
   const sendNow = (text: string) => {
     const t = text.trim();
-    if (!t) return;
+    // 只有图没有文字也算一句完整的话 —— 「看看这张图」是可以不打字的
+    if (!t && !pending.length) return;
     setDraft("");
-    void runtime.send(t, host);
+    setRejects([]);
+    const images = pending;
+    setPending([]);
+    void runtime.send(t, host, { images });
   };
 
   const hasContent = state.messages.length > 0;
@@ -304,7 +360,39 @@ export default function AgentView({ onClose }: { onClose?: () => void }) {
       {state.ask && <AskCard ask={state.ask} />}
 
       {/* 输入区 */}
-      <div className="shrink-0 border-t border-line px-5 py-3">
+      <div
+        data-agent-dropzone=""
+        data-agent-drop-active={dropping ? "1" : "0"}
+        onDragOver={(e) => {
+          // 必须 preventDefault：不拦的话浏览器会"好心"把这个文件当成导航打开，
+          // 整页被换成那张图片 —— 用户会以为程序崩了
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          setDropping(true);
+        }}
+        onDragLeave={(e) => {
+          // 子元素的 dragleave 也会冒泡上来，直接关会出现"拖过边界就闪"的花屏。
+          // 只在这一层真的离开了（relatedTarget 不在容器内）才关。
+          if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+          setDropping(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDropping(false);
+          void addFiles(imageFilesFrom(e.dataTransfer));
+        }}
+        className={`shrink-0 border-t px-5 py-3 ${
+          dropping ? "border-t-accent bg-accent/[0.06]" : "border-t-line"
+        }`}
+      >
+        {dropping && (
+          <p
+            data-agent-drop-hint=""
+            className="mx-auto mb-2 max-w-[720px] rounded-lg border border-dashed border-accent px-3 py-2 text-center text-[12px] text-accent"
+          >
+            松手就把图加进来
+          </p>
+        )}
         {/* 卡着问题的时候不让他发新话：send 会被 busy 挡掉，与其让他
             打完字才发现发不出去，不如一开始就把框说清楚。 */}
         {state.ask && (
@@ -313,10 +401,84 @@ export default function AgentView({ onClose }: { onClose?: () => void }) {
           </p>
         )}
         <div className="mx-auto max-w-[720px]">
+          {/* 已选未发的图 */}
+          {pending.length > 0 && (
+            <div data-agent-pending={pending.length} className="mb-2 flex flex-wrap gap-1.5">
+              {pending.map((img) => (
+                <div key={img.id} className="relative">
+                  <img
+                    src={img.thumb}
+                    alt={img.name}
+                    data-agent-pending-image={img.name}
+                    className="h-14 w-14 rounded-lg border border-line object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setPending((prev) => prev.filter((x) => x.id !== img.id))}
+                    data-agent-pending-remove={img.name}
+                    title={`去掉 ${img.name}`}
+                    className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full border border-line bg-card text-fg-3 hover:text-danger"
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+              {prepping && (
+                <div className="grid h-14 w-14 place-items-center rounded-lg border border-dashed border-line text-fg-dim">
+                  <Loader2 size={14} className="animate-spin" />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 图片类型 / 视觉能力的说明。它不拦操作，只把话放在会看到的地方 */}
+          {rejects.length > 0 && (
+            <div data-agent-image-rejects="" className="mb-2 rounded-lg bg-warn-soft px-2.5 py-1.5 text-[11.5px] leading-relaxed text-warn">
+              {rejects.map((r) => (
+                <div key={r}>{r}</div>
+              ))}
+            </div>
+          )}
+
           <div className="flex items-end gap-2 rounded-xl border border-line bg-card px-2.5 py-2 focus-within:border-accent">
+            {/*
+              选图按钮。**桌面端与浏览器走同一条路**（隐藏 input，而不是 Tauri 的
+              文件对话框）：`<input type=file>` 给的是 File 对象，自带字节、
+              不经过文件系统，因此不需要 `fs:scope` 放开 `APPDATA` 之外的目录。
+              项目里的「导入工具」也是这个做法（见 settings/ToolsSection.tsx）。
+            */}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const files = e.target.files ? [...e.target.files] : [];
+                // 清空 value：否则连着选同一个文件第二次不会触发 change
+                e.target.value = "";
+                void addFiles(files.map((f) => ({ name: f.name, blob: f })));
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              data-agent-pick-image=""
+              title="加一张图片（也可以直接粘贴或拖进来）"
+              className="grid size-7 shrink-0 place-items-center rounded-lg text-fg-3 hover:bg-hover hover:text-accent"
+            >
+              <ImagePlus size={15} />
+            </button>
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
+              onPaste={(e) => {
+                const picked = imageFilesFrom(e.clipboardData);
+                if (!picked.length) return;
+                // 有图就吃掉这次粘贴：否则会把剪贴板里的文件名/alt 文本当成话发出去
+                e.preventDefault();
+                void addFiles(picked);
+              }}
               onKeyDown={(e) => {
                 // Enter 发送、Shift+Enter 换行 —— 输入多行内容（比如让它照一段格式写工具）时很需要后者
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -326,7 +488,7 @@ export default function AgentView({ onClose }: { onClose?: () => void }) {
               }}
               rows={Math.min(6, Math.max(1, draft.split("\n").length))}
               data-agent-input=""
-              placeholder={configured ? "说点什么，或者让它做个工具…（Enter 发送，Shift+Enter 换行）" : "先在设置里配好接口地址和 Key"}
+              placeholder={configured ? "说点什么，或者让它做个工具…（Enter 发送，Shift+Enter 换行，可直接粘贴图片）" : "先在设置里配好接口地址和 Key"}
               className="max-h-[160px] min-w-0 flex-1 resize-none border-0 bg-transparent py-1 text-[13px] text-fg-2 outline-none placeholder:text-fg-dim"
             />
             {state.busy ? (
@@ -341,7 +503,7 @@ export default function AgentView({ onClose }: { onClose?: () => void }) {
             ) : (
               <button
                 onClick={() => sendNow(draft)}
-                disabled={!draft.trim() || !configured}
+                disabled={(!draft.trim() && !pending.length) || !configured}
                 data-agent-send=""
                 title="发送"
                 className="grid size-7 shrink-0 place-items-center rounded-lg bg-accent text-white disabled:opacity-35"
@@ -351,7 +513,12 @@ export default function AgentView({ onClose }: { onClose?: () => void }) {
             )}
           </div>
           <p className="mt-1.5 px-1 text-[11px] leading-relaxed text-fg-dim">
-            对话只存在本机（设置 → AI 助手 里可以清空）。它做的每一件事都会列在消息下面 ——
+            {canSee
+              ? "可以粘贴、拖拽或点 + 加图（会压缩后发给模型）。"
+              : vision.support === "unknown"
+                ? "这个模型我们不确定能不能看图 —— 图片会照发，不行的话在「设置 → AI 助手」里勾选「能看图」。"
+                : `${vision.note}。图片仍会上传并存下来，但这次它看不到内容。`}
+            {" "}对话只存在本机（设置 → AI 助手 里可以清空）。它做的每一件事都会列在消息下面 ——
             装了什么工具、建了哪几条日程，都能对得上。
           </p>
         </div>
@@ -632,8 +799,13 @@ function MessageBubble({ msg }: { msg: AgentMessage }) {
   if (msg.role === "user") {
     return (
       <div data-agent-msg="user" className="mb-4 flex justify-end">
-        <div className="max-w-[85%] rounded-xl rounded-br-sm bg-accent/12 px-3.5 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap text-fg">
-          {msg.content}
+        <div className="max-w-[85%]">
+          {msg.images.length > 0 && <SentImages images={msg.images} />}
+          {msg.content && (
+            <div className="rounded-xl rounded-br-sm bg-accent/12 px-3.5 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap text-fg">
+              {msg.content}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -662,6 +834,72 @@ function MessageBubble({ msg }: { msg: AgentMessage }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * 一条已发出的消息下面挂的那几张缩略图。
+ *
+ * **用 thumb 而不是 dataUrl 渲染**：这里是回显，一段长对话里可能有几十条
+ * 带图消息同时挂在 DOM 上。拿几百 KB 一份的原图当 `<img src>`，内存会涨到
+ * 几百 MB —— 而屏幕上一格只有几十像素。真正要用时（点开大图）才去取 dataUrl。
+ */
+function SentImages({ images }: { images: AgentImage[] }) {
+  const [zoom, setZoom] = useState<string | null>(null);
+  return (
+    <div data-agent-sent-images={images.length} className="mb-1.5 flex flex-wrap justify-end gap-1.5">
+      {images.map((img) => (
+        <button
+          key={img.id}
+          type="button"
+          onClick={() => setZoom(img.id)}
+          title={`${img.name}（点开看大图）`}
+          className="cursor-zoom-in overflow-hidden rounded-lg border border-line"
+        >
+          <img
+            src={img.thumb}
+            alt={img.name}
+            data-agent-sent-image={img.name}
+            className="h-16 w-16 object-cover"
+          />
+        </button>
+      ))}
+      {zoom && <ImageZoom images={images} id={zoom} onClose={() => setZoom(null)} />}
+    </div>
+  );
+}
+
+/**
+ * 看大图的那层。
+ *
+ * 桌上 caption 里没有"新开标签页"这回事（webview 不允许），所以不能靠
+ * `target="_blank"` 把 dataUrl 交给浏览器；只能自己在界面上开一层。
+ * 点任意处关闭 —— 只做放大，不做翻页（这不是相册，一次也就看那一张）。
+ */
+function ImageZoom({
+  images,
+  id,
+  onClose,
+}: {
+  images: AgentImage[];
+  id: string;
+  onClose: () => void;
+}) {
+  const img = images.find((x) => x.id === id);
+  if (!img) return null;
+  return (
+    <div
+      data-agent-image-zoom=""
+      onClick={onClose}
+      role="presentation"
+      className="fixed inset-0 z-50 grid cursor-zoom-out place-items-center bg-black/55 p-8"
+    >
+      <img
+        src={img.dataUrl}
+        alt={img.name}
+        className="max-h-full max-w-full rounded-xl bg-white object-contain shadow-xl"
+      />
     </div>
   );
 }
@@ -806,11 +1044,12 @@ function SkillDrawer({ onClose }: { onClose: () => void }) {
           {allSkills().map((s) => {
             const open = openId === s.id;
             const mine = s.source === "agent";
+            const fromTool = s.source === "tool";
             return (
               <div
                 key={s.id}
                 data-agent-skill={s.id}
-                data-source={mine ? "agent" : "builtin"}
+                data-source={mine ? "agent" : fromTool ? "tool" : "builtin"}
                 className="mb-2 rounded-xl border border-line bg-card px-3.5 py-3"
               >
                 <div className="flex w-full items-start gap-2">
@@ -845,6 +1084,11 @@ function SkillDrawer({ onClose }: { onClose: () => void }) {
                 </div>
                 {mine && (
                   <div className="ml-5 mt-1 text-[11px] text-accent">它自己记下的 · 可删</div>
+                )}
+                {fromTool && (
+                  // 工具自带的那份：**随工具装卸**。说清来源，用户才知道
+                  // 卸掉那个工具之后这几条规则会自己消失，不是被谁删了
+                  <div className="ml-5 mt-1 text-[11px] text-fg-dim">工具自带的 · 随工具装卸</div>
                 )}
                 <ul className="mt-2 ml-5 list-disc space-y-0.5">
                   {s.rules.map((r) => (

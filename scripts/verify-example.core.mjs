@@ -34,6 +34,8 @@ const toolStore = await import("../src/lib/toolStore.ts");
 const toolSchema = await import("../src/lib/toolSchema.ts");
 const toolBridgeMod = await import("../src/lib/toolBridge.ts");
 const registry = await import("../src/lib/extensions/registry.ts");
+const toolsMod = await import("../src/lib/tools.ts");
+const toolActions = await import("../src/lib/agent/toolActions.ts");
 
 await db.initDb();
 Object.defineProperty(dom.window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
@@ -64,6 +66,9 @@ const inst = await toolStore.installFromHtml({
   schema: mf.schema,
   capabilities: mf.capabilities,
   injects: mf.injects,
+  actions: mf.actions,
+  headless: mf.headless,
+  skill: mf.skill,
   author: mf.author,
   overwrite: true,
 });
@@ -76,6 +81,13 @@ check("schema 通过校验", !!inst.manifest.schema, JSON.stringify(inst.manifes
 const reread = await toolStore.readInstalledManifest(mf.id);
 check("落盘的 manifest 能被读回", !!reread && reread.id === mf.id);
 check("index.html 已落盘", fs.existsSync(path.join(process.env.TW_APPDATA || "", "tools", mf.id, "index.html")));
+check(
+  "注册给助手的动作一路没丢",
+  JSON.stringify((reread?.actions || []).map((a) => a.name)) === JSON.stringify((mf.actions || []).map((a) => a.name)),
+  JSON.stringify((reread?.actions || []).map((a) => a.name)),
+);
+check("headless 一路没丢", reread?.headless === true);
+check("自带 skill 一路没丢", !!reread?.skill);
 
 /* ---------------- 2. 建表 ---------------- */
 const validated = toolSchema.validateToolSchema(mf.id, mf.schema);
@@ -217,6 +229,44 @@ const tsend = await ask("tools.send", { tool: "not-here", event: "demo", data: {
 check("tools.send 给没在跑的工具 → 明确报错", tsend.ok === false, String(tsend.error));
 const tself = await ask("tools.open", { tool: mf.id, data: {} });
 check("tools.open 拉起自己被拒", tself.ok === false, String(tself.error));
+
+/* ---------------- 5. 注册给助手的动作 ---------------- */
+/*
+ * 这一段是"工具注册"最容易坏的地方：**声明了却没实现**。
+ * 声明在 manifest 里（宿主读得到），实现在 HTML 里（宿主读不到），
+ * 于是"宿主以为能调、工具其实没在听"就成了一种谁也说不清的失败：
+ * 助手只拿到一句「超时没回应」。所以这里两头都查一遍。
+ */
+say("");
+say("【注册给助手的动作】");
+
+const acts = toolsMod.normalizeActions(mf.actions, mf.commands);
+check("actions 全部通过校验", acts.length === (mf.actions || []).length && acts.length > 0, acts.map((a) => a.name).join("、"));
+check(
+  "destructive 只标在真正会清数据的那个上",
+  acts.filter((a) => a.destructive).map((a) => a.name).join(",") === "clear-notes",
+  acts.filter((a) => a.destructive).map((a) => a.name).join(",") || "（一个都没标）",
+);
+const addNote = acts.find((a) => a.name === "add-note");
+check("必填参数保留", (addNote?.params || []).find((p) => p.name === "title")?.required === true);
+check("参数类型保留", (addNote?.params || []).find((p) => p.name === "title")?.type === "string");
+
+for (const a of acts) {
+  const fn = toolActions.toolActionName(mf.id, a.name);
+  const back = toolActions.parseToolActionName(fn);
+  check(`函数名可反解：${fn}`, !!back && back.toolId === mf.id && back.action === a.name);
+  check(`函数名在 64 字符内：${fn}`, fn.length <= 64, `${fn.length}`);
+}
+check("别人的函数名不会被误认", toolActions.parseToolActionName("create_schedules") === null);
+check("工具 id 里带连字符也能反解", toolActions.parseToolActionName("tool_kitchen-sink_list-notes")?.action === "list-notes");
+
+const sk = toolsMod.normalizeSkill(mf.skill, mf.name);
+check("skill 通过校验", !!sk && sk.rules.length > 0, sk ? `${sk.rules.length} 条规则` : "null");
+check("skill 的 id 落在工具命名空间", toolActions.isToolSkillId(toolActions.toolSkillId(mf.id)));
+
+check("源码里真的监听了 tool:command", html.includes('"tool:command"'));
+check("源码里每条命令都回 tool:command:result", html.includes('"tool:command:result"'));
+check("源码里报到了 tool:hello（不必等 load）", html.includes('"tool:hello"'));
 
 line();
 say(failed === 0 ? `全部通过（${seq} 次调用）` : `有 ${failed} 项没通过（共 ${seq} 次调用）`);
