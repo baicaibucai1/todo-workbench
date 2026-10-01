@@ -148,6 +148,26 @@ function api(method, p, body, token, opts = {}) {
       },
       (res) => {
         /*
+         * 资产端点（/releases/assets/:id）是 **302 到 CDN** 的，不是直接吐字节。
+         * 不跟着跳的话拿回一段空 body，而 status 302 又不算错 —— 于是"取到了"
+         * 其实是"取了个空"，后面读版本号就读到 undefined。
+         * 2026-10-01 发 v0.2.6 时就是这个假警报：资产都传齐了，脚本却报
+         * "update.json 里版本是 undefined"。
+         *
+         * 跳过去之后**不带凭据**：CDN 不需要 Authorization，带上反而可能 400。
+         */
+        if (opts.follow && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume();
+          const loc = new URL(res.headers.location);
+          return api(method, loc.pathname + loc.search, null, token, {
+            ...opts,
+            hostname: loc.hostname,
+            anon: true,
+            follow: opts.follow - 1,
+          }).then(resolve, reject);
+        }
+
+        /*
          * 二进制资产必须按 **Buffer 收集**：`buf += c` 那种字符串累加会把
          * zip / exe 当 utf8 转一遍，字节全毁，而它看起来仍然"取到了东西"。
          */
@@ -495,6 +515,7 @@ async function anonPeekViaApi(assetName) {
       accept: "application/octet-stream",
       anon: true,
       raw: true,
+      follow: 3,
     });
     return { ok: r.status === 200, bytes: r.bytes || Buffer.alloc(0), via: "api" };
   } catch (e) {
@@ -515,11 +536,18 @@ try {
   const rel2 = await api("GET", `/repos/${owner}/${repo}/releases/latest`, null, token);
   const hit = (rel2.json?.assets || []).find((a) => a.name === "update.json");
   if (!hit) die(`匿名验证失败：github.com 取不到（${e.message}），API 上也没有 update.json`);
+  // 三个选项一个都不能少：
+  //   raw    —— 按字节收集，不然 JSON 会被当成字符串再转一遍；
+  //   anon   —— 说好匿名验，就真的不带凭据；
+  //   follow —— 资产端点 302 到 CDN，不跟着跳就是空 body（见 api() 里的注释）。
   const raw = await api("GET", `/repos/${owner}/${repo}/releases/assets/${hit.id}`, null, token, {
     hostname: "api.github.com",
     accept: "application/octet-stream",
+    raw: true,
+    anon: true,
+    follow: 3,
   });
-  manifest = JSON.parse(raw.raw || "{}");
+  manifest = JSON.parse((raw.bytes || Buffer.alloc(0)).toString("utf8") || "{}");
   warn(
     `github.com 在本机不可达（${e.message}），清单改用 API 匿名读取 —— 验的是同一份文件，但没有验到用户实际会点的那个域名。`,
     "换一台能连 github.com 的机器再跑一次 `releases/latest/download/update.json` 更保险。",
