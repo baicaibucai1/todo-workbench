@@ -65,7 +65,7 @@ const { loadTools, listTools, toolTable, validateManifest } = await import(
 const { fetchToolDemoData } = await import("../src/lib/toolDemo.ts");
 const { groupRows, firstVisibleRow } = await import("../src/lib/rows.ts");
 const { collectUrgent, taskDeadline, orderDeadline } = await import("../src/lib/urgent.ts");
-const { parseUrgentMinutes } = await import("../src/lib/settings.ts");
+const { parseUrgentMinutes, SETTINGS } = await import("../src/lib/settings.ts");
 const wp = await import("../src/lib/wallpapers.ts");
 
 /* ---------- 1. 数据库初始化与迁移 ---------- */
@@ -143,28 +143,49 @@ check("重复初始化幂等", info2.schemaVersion === CURRENT_SCHEMA_VERSION);
 
 section("2. 首次运行种子数据");
 
+// v20 起示例数据是**选装、默认关**：空库启动就该是空的，
+// 用户不该在自己库里发现别人的待办（见 SETTINGS.seedSampleData 的注释）。
 await repo.seedIfEmpty();
-const lists = await repo.fetchLists();
-check("自动创建了列表", lists.length >= 2, `实际: ${lists.length} 个`);
-check("列表名称正确", lists.some((l) => l.name === "工作"), lists.map((l) => l.name).join(","));
+const noSeed = await repo.fetchLists();
+check("默认不种示例数据", noSeed.length === 0, `实际: ${noSeed.length} 个清单`);
 
-const allTasks = await repo.fetchTasks({ view: "all", includeDone: true });
-check("种子任务已写入", allTasks.length >= 4, `实际: ${allTasks.length} 条`);
-check("存在已完成任务", allTasks.some((t) => t.done));
-check("存在「我的一天」任务", allTasks.some((t) => t.myDay));
-check("存在重要任务", allTasks.some((t) => t.important));
-check("存在每日任务", allTasks.some((t) => t.repeat === "daily"));
+// 关掉之后，流程与示例流程任务同样不该出现
+await repo.seedWorkOrderFlowsIfEmpty();
+await repo.seedDemoWorkOrdersIfEmpty();
+check("默认不种流程模板", (await repo.fetchFlows()).length === 0);
+check("默认不种示例流程任务", (await repo.fetchWorkOrders({ view: "orders", includeDone: true })).length === 0);
 
-// 再次调用不应重复插入
+/*
+ * 打开开关后**要能种上** —— 这是那个开关存在的全部意义。
+ *
+ * ⚠️ 这一段不在本进程里做，自己也不起子进程：
+ *
+ * ① 本进程做不了 —— repo 的三个 seed*IfEmpty 用模块级 Promise 做了串行锁
+ *    （为 StrictMode 双跑准备的，见 repo 里 seedPromise 的注释），上面
+ *    "默认不种"那一轮已经被缓存住，再调拿到的还是同一个已完成的 Promise。
+ *
+ * ② 也不在这里 spawnSync —— 本机沙箱下 spawnSync 会 EBUSY（errno -4082，
+ *    见 MEMORY.md 记的那条环境坑），报出来是 "探针未返回结果"，
+ *    看着像功能坏了，其实是我们自己的调用方式在沙箱里不成立。
+ *
+ * 所以开关那条路径**单独一个测试入口**跑：tests/seed-opt-in.mjs，
+ * 由 `npm run smoke` 在同一批构建里编译，然后在 smoke 之后单独执行。
+ * 它自己进程、自己模块实例，锁是干净的。
+ */
+
+// 库里已有数据时不该重复插入：直接再调一次 seedIfEmpty，数量不能变
+const beforeReplay = (await repo.fetchTasks({ view: "all", includeDone: true })).length;
 await repo.seedIfEmpty();
-const after = await repo.fetchTasks({ view: "all", includeDone: true });
-check("种子数据不重复插入", after.length === allTasks.length, `${allTasks.length} -> ${after.length}`);
+const afterReplay = (await repo.fetchTasks({ view: "all", includeDone: true })).length;
+check("种子数据不重复插入", afterReplay === beforeReplay, `${beforeReplay} -> ${afterReplay}`);
 
 /* ---------- 3. 任务 CRUD ---------- */
 
 section("3. 任务增删改查");
 
-const workList = lists.find((l) => l.name === "工作");
+// 这一段自己建清单，不再依赖上一条的种子数据 —— 示例数据改成选装之后，
+// 一个默认状态的库是**空的**，测试不该假设里面有东西可用。
+const workList = await repo.createList("工作", "#d4537e");
 const created = await repo.createTask({
   listId: workList.id,
   title: "冒烟测试任务",
@@ -209,11 +230,17 @@ check("软删除后查询不到", !afterDelete.some((t) => t.id === created.id))
 
 section("4. 智能视图筛选");
 
+// 这一节同样自带夹具：示例数据默认关，空库里原本没有任何任务可筛。
+// 造一条"手动加入我的一天"和一条带关键词的，覆盖两个断言需要的形态。
+const dayTask = await repo.createTask({ listId: workList.id, title: "手动加入今天", myDay: true });
+await repo.createTask({ listId: workList.id, title: "整理本周订单记录" });
+
 const myDayTasks = await repo.fetchTasks({ view: "myday" });
 // 「我的一天」= 手动加入 + 今天到期 + 每日任务，三者并集（见第 11 节的专项验证）
 check("我的一天包含手动加入的任务",
   myDayTasks.every((t) => t.myDay || t.dueDate === repo.today() || t.repeat === "daily") &&
     myDayTasks.some((t) => t.myDay));
+check("手动加入的任务确实在结果里", myDayTasks.some((t) => t.id === dayTask.id));
 
 const importantTasks = await repo.fetchTasks({ view: "important" });
 check("重要视图只返回标记任务", importantTasks.every((t) => t.important));
@@ -567,16 +594,54 @@ section("14. 流程模板与过程态");
 // 它不支持 JOIN、子查询，也只认单个聚合函数（都会**静默返回空/0**）。
 // 流程任务查询最初就用了 JOIN，浏览器里表现为"流程任务列表永远空白"，而桌面端正常。
 // 所以这里必须在 memory 驱动上真跑一遍。
+//
+// ⚠️ v20 起"三套默认流程"是**示例数据的一部分**（示例数据默认关），
+// 而它的种子函数用模块级 Promise 上了锁 —— 第 2 节已经调过一次并被缓存，
+// 这里再调拿到的是那个已完成的 Promise，什么都不会发生。
+//
+// 所以这一段自己建流程，**而不是**靠 seedWorkOrderFlowsIfEmpty。
+// 这样反而更对：本节要验的是"流程模板与过程态这套表结构在 memory 驱动上
+// 能不能正常读写"，它本来就不该依赖"示例数据开关"这种产品层面的状态。
+// 三套默认流程的内容对不对，由 tests/seed-opt-in.mjs 专门去验。
 await repo.clearAllData();
-await repo.seedWorkOrderFlowsIfEmpty();
+
+// 标准流程：五步，只有最后一步是终态（与内置默认一致）
+const stdFlow = await repo.createFlow("标准流程");
+{
+  const init = (await repo.fetchStages())
+    .filter((s) => s.flowId === stdFlow.id)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+  const placeholderDone = init.find((s) => s.isTerminal);
+  const first = init.find((s) => !s.isTerminal);
+  if (placeholderDone) await repo.deleteStage(placeholderDone.id);
+  if (first) await repo.updateStage(first.id, { name: "待接单", color: "#888780" });
+}
+await repo.createStage(stdFlow.id, "已受理", "#378add");
+await repo.createStage(stdFlow.id, "处理中", "#ba7517");
+await repo.createStage(stdFlow.id, "待验收", "#534ab7");
+await repo.createStage(stdFlow.id, "已完成", "#1d9e75", true);
+
+// 特殊单号流程：每一步带默认时效，终态不带
+const spFlow0 = await repo.createFlow("特殊单号处理");
+{
+  const init = (await repo.fetchStages())
+    .filter((s) => s.flowId === spFlow0.id)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+  const done = init.find((s) => s.isTerminal);
+  const first = init.find((s) => !s.isTerminal);
+  if (done) await repo.deleteStage(done.id);
+  if (first) await repo.updateStage(first.id, { name: "待处理", color: "#d4537e", defaultMinutes: 30 });
+}
+await repo.createStage(spFlow0.id, "处理中", "#ba7517", false, 240);
+await repo.createStage(spFlow0.id, "待确认", "#534ab7", false, 1440);
+await repo.createStage(spFlow0.id, "已完成", "#1d9e75", true);
 
 const flows0 = await repo.fetchFlows();
-check("种下三套流程", flows0.length === 3, `实际 ${flows0.length}`);
+check("建好两套流程", flows0.length === 2, `实际 ${flows0.length}`);
 check("有且只有一个默认流程", flows0.filter((f) => f.isDefault).length === 1);
 check("默认流程是「标准流程」", flows0.find((f) => f.isDefault)?.name === "标准流程");
 // 「特殊单号」那套是给带处理时效的单子用的：它的每一步都带着默认时长
-const spFlow0 = flows0.find((f) => f.name.includes("特殊单号"));
-check("种下了「特殊单号处理」流程", !!spFlow0);
+check("建好了「特殊单号处理」流程", !!spFlow0);
 const spStages0 = (await repo.fetchStages())
   .filter((s) => s.flowId === spFlow0?.id)
   .sort((a, b) => a.sortOrder - b.sortOrder);
@@ -590,7 +655,6 @@ check("非终态的步骤都配了默认时效",
 check("终态不配默认时效（走到就结束了，没有「下一步之前」）",
   spStages0.filter((s) => s.isTerminal).every((s) => s.defaultMinutes === 0));
 
-const stdFlow = flows0.find((f) => f.isDefault);
 const stdStages = (await repo.fetchStages())
   .filter((s) => s.flowId === stdFlow.id)
   .sort((a, b) => a.sortOrder - b.sortOrder);
@@ -1837,6 +1901,14 @@ section("25. 工具的启用、状态保持与单文件导入");
   check("缺键按保持处理", st.parseToolKeepState(undefined) === true);
   check("读不懂的值也按保持处理", st.parseToolKeepState("yes") === true);
   check("显式 0 才是关", st.parseToolKeepState("0") === false);
+
+  /* --- 示例数据：默认关；只有显式 "1" 才算开 ---
+     ⚠️ 方向与上面那条**相反**，这是刻意的，别照着 toolKeepState 抄：
+       · 保持状态读不懂时按"开"，因为失败模式是"用户白调了一趟"；
+       · 示例数据读不懂时按"关"，因为失败模式是"往人空库里塞别人的待办"。
+     两者的正确默认值不同，所以容错方向必须不同。 */
+  check("示例数据默认关", st.DEFAULT_SETTINGS[st.SETTINGS.seedSampleData] === "0");
+  check("示例数据键名带 behavior 前缀", st.SETTINGS.seedSampleData.startsWith("behavior."));
 
   /* --- 过滤与选中：App 与工具区共用同一个判断 --- */
   const fake = [

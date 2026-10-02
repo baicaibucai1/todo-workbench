@@ -35,6 +35,7 @@
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import { makePng } from "./png.mjs";
+import { prepareFreshWithSampleData } from "./_seed-sample-data.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -123,11 +124,17 @@ page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
 
 const shot = (name) => page.screenshot({ path: `${SHOT_DIR}/${name}.png` });
 
-/* 从空库开始 —— 助手要建的日程、要落的对话，都在这一份干净数据上 */
+/* 从空库开始 —— 助手要建的日程、要落的对话，都在这一份干净数据上。
+ *
+ * ⚠️ v20 起不能再用裸 localStorage.clear()：示例数据改成选装后，清出来的
+ * 是**真空库**，而第 8 节那条「待办没有被连带清掉 >= 2」是按"种子的 6 条
+ * + 助手建的两条"校准的（v20 前清完重启，种子会自动回来，基线其实一直是
+ * 种子数据）。改用 helper 拿回「新装 + 种子」的基线；结尾那道 clear 保留，
+ * 这一轮的痕迹照旧不留给别人。 */
 await page.goto(BASE, { waitUntil: "load" });
 await page.waitForSelector("aside", { timeout: 20000 });
-await page.evaluate(() => localStorage.clear());
-await page.reload({ waitUntil: "load" });
+const agentPrepared = await prepareFreshWithSampleData(page);
+console.log(`    · 演示库准备: ${agentPrepared}`);
 await page.waitForSelector("aside", { timeout: 20000 });
 await page.waitForTimeout(600);
 
@@ -390,19 +397,26 @@ console.log("\n4. 整条工具循环：模型调用动作 → 真建日程 → �
 {
   captured.length = 0;
   const TITLE = "给客户回电话（e2e）";
+  // ⚠️ 日期必须**动态生成**，不许写死：这条夹具曾经硬编码 2026-10-01 15:00，
+  // 10-02 一过提醒时间落进过去，30 秒一轮的 checkReminders 就会把提醒卡弹在
+  // 右下角，正好盖住悬浮球 —— 症状是第 8 节刷新后点球超时，与功能毫无关系。
+  // 明天同一时刻永远在未来，套件从此不再随日历腐烂。
+  const tomorrow = new Date(Date.now() + 24 * 3600_000);
+  const dueDate = tomorrow.toISOString().slice(0, 10);
+  const dueAt = `${dueDate}T${String(tomorrow.getHours()).padStart(2, "0")}:00`;
   queue.push(
     toolReply("create_schedules", {
       items: [
         {
           title: TITLE,
           list: "工作",
-          due_date: "2026-10-01",
-          due_time: "15:00",
-          steps: [{ title: "找出合同", due_at: "2026-10-01T14:00" }],
+          due_date: dueDate,
+          due_time: dueAt.slice(11),
+          steps: [{ title: "找出合同", due_at: dueAt }],
         },
       ],
     }),
-    textReply("已经记到工作清单里了，10 月 1 日下午 3 点提醒你。"),
+    textReply("已经记到工作清单里了，明天下午 3 点提醒你。"),
   );
 
   await gotoAgent();

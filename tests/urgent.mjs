@@ -49,6 +49,9 @@ page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
 
 await page.goto(URL, { waitUntil: "domcontentloaded" });
 if (FRESH) {
+  // v20 起示例数据默认关，而本套件第 1 节要的是"库够空、没有临期条目"，
+  // 第 2 节自己造数据、流程也自己建 —— 所以这里**不需要**示例数据开关，
+  // 清干净反而更贴合"空库"这个前提。用 localStorage.clear() 就够。
   await page.evaluate(() => localStorage.clear());
   await page.reload({ waitUntil: "networkidle" });
 }
@@ -77,7 +80,7 @@ const threshold = () =>
 
 /* ------------------------------ 1. 空态 ------------------------------ */
 
-section("1. 阈值收到最小时，种子数据不该被算成紧急");
+section("1. 阈值收到最小时不该有临期条目");
 
 await setThreshold(5);
 check("紧急区挂在侧边栏底部", (await panel().count()) === 1);
@@ -116,7 +119,12 @@ const ids = await page.evaluate(async () => {
   const b = await mk("已经超时四十分钟", { remindAt: at(-40 * 60_000) });
   const c = await mk("三天后才提醒", { remindAt: at(3 * 24 * 60 * 60_000) });
 
-  const flow = (await repo.fetchFlows())[0];
+  // 流程任务那几条需要一个流程。以前这里拿的是**种子数据**里的第一套，
+  // 但 v20 起示例数据默认关（见 SETTINGS.seedSampleData）——
+  // 而且上面用的是 localStorage.clear()，连开关本身都被抹了。
+  // 所以自己建一套：本节验的是"紧急区怎么算时效"，不关心流程从哪来。
+  const flow =
+    (await repo.fetchFlows())[0] ?? (await repo.createFlow("紧急验证流程"));
   // 交付日在五天后，但当前步骤 50 分钟后就到点 —— 该按步骤时效算
   const e = (
     await repo.createWorkOrder({

@@ -8,6 +8,7 @@
 import { db, type Param } from "./db";
 import { toolTable } from "./tools";
 import { CURRENT_SCHEMA_VERSION } from "./migrations";
+import { SETTINGS } from "./settings";
 import type { AgentAction } from "./agent/types";
 // 只用这条类型（编译期擦除，不引入运行时依赖）—— repo 不该碰 images 里的
 // canvas / DOM 代码，它只需要知道图片长什么样，好在读写时认出这一列
@@ -476,6 +477,30 @@ export async function fetchCounts(): Promise<{
 /* --------------------------- 首次运行种子数据 --------------------------- */
 
 /**
+ * 首次运行要不要填示例数据。
+ *
+ * **缺键 / 空串 / 任何非 "1" 的值一律按"不要"处理** —— 这个方向刻意与
+ * registry 的 isEnabled 相反：
+ *   · 那边的失败模式是"少显示一个模块"，用户以为数据丢了 → 宁可多显示一次；
+ *   · 这边的失败模式是"往人空的库里塞六条别人的待办" → 宁可少塞一次。
+ *
+ * 读取时直接问 core_settings，不经过 withDefaults：那个函数是给界面用的
+ * （它会把默认值叠上去），而这里要的是"用户显式打开过没有"这个事实。
+ */
+async function wantSampleData(): Promise<boolean> {
+  try {
+    const rows = await db().select<{ value: string }>(
+      `SELECT value FROM core_settings WHERE key = ?`,
+      [SETTINGS.seedSampleData],
+    );
+    return rows[0]?.value === "1";
+  } catch {
+    // 读不出来（表还没建/驱动异常）就当作不要 —— 播种失败不该拦住启动
+    return false;
+  }
+}
+
+/**
  * 种子数据写入锁。
  *
  * React StrictMode 下初始化 effect 会跑两次，若两个流程并发进入这里，
@@ -494,6 +519,8 @@ export function seedIfEmpty(): Promise<void> {
 }
 
 async function seedIfEmptyInner(): Promise<void> {
+  if (!(await wantSampleData())) return;
+
   const lists = await fetchLists();
   if (lists.length) return;
 
@@ -1745,6 +1772,7 @@ export function seedWorkOrderFlowsIfEmpty(): Promise<void> {
 }
 
 async function seedFlowsInner(): Promise<void> {
+  if (!(await wantSampleData())) return;
   if ((await fetchFlows()).length) return;
 
   // 两套流程，用来体现「流程可自定义、且可以有多套」。
@@ -1821,6 +1849,8 @@ export function seedDemoWorkOrdersIfEmpty(): Promise<void> {
 }
 
 async function seedDemoOrdersInner(): Promise<void> {
+  if (!(await wantSampleData())) return;
+
   // 数全部（含软删除）：用户删过示例之后，不应该再被种一遍
   const rows = await db().select<{ c: number }>(`SELECT COUNT(*) AS c FROM core_work_orders`);
   if ((rows[0]?.c ?? 0) > 0) return;

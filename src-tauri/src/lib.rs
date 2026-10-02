@@ -57,7 +57,29 @@ fn sync_builtin_tools(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::
 
     // 开发模式下 resource_dir() 指向 target/debug，工具其实在项目源码目录里，
     // 由 CARGO_MANIFEST_DIR 往上找到 tools/，否则 dev 时看不到内置工具。
+    //
+    // ⛔ 这条候选路径**只在 debug 构建里成立**。
+    //
+    // 原先它是无条件的，后果实测踩到过：release 版的 resource_dir() 里
+    // `_up_/tools` 是空的（0.2.0 起安装包不再带工具），于是 find() 一路
+    // 落到源码树这条 —— 只要这台机器上碰巧有 `../tools`（开发者机器必然有），
+    // release 包就会把源码树里的四个工具拷进用户数据区。
+    //
+    // 更糟的是它**伪装成"随包分发"**：tools.ts 的 scanTauriTools 用
+    // 「安装包里有没有这个 id」判定 source，而安装包里一个都没有，
+    // 这四个就被归进 user —— 界面上出现"内置工具"，卸载按钮也在，
+    // 但删了下次启动又被拷回来（卸载清单只对真正的 bundled 生效，
+    // 见 toolStore.ts 的 uninstallTool）。用户机器上必然只有一个 dev 副本
+    // 都没有，症状只在开发机复现，是最难查的那一类。
+    //
+    // 用 cfg 而不是 cfg!(debug_assertions) 的运行时判断：这里要的是
+    // **这段代码在 release 里根本不存在**，而不是它跑起来后返回 false。
+    #[cfg(debug_assertions)]
     let mut candidates = candidates;
+    #[cfg(not(debug_assertions))]
+    let candidates = candidates;
+
+    #[cfg(debug_assertions)]
     if let Some(manifest) = option_env!("CARGO_MANIFEST_DIR") {
         candidates.push(Path::new(manifest).join("..").join("tools"));
     }

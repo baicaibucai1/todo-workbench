@@ -9,6 +9,7 @@
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
+import { prepareFreshWithSampleData } from "./_seed-sample-data.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -40,8 +41,12 @@ page.on("console", (m) => {
 
 await page.goto(URL, { waitUntil: "domcontentloaded" });
 if (FRESH) {
-  await page.evaluate(() => localStorage.clear());
-  await page.reload({ waitUntil: "networkidle" });
+  // ⚠️ 不能只 localStorage.clear()：清完是个**空库**，而应用默认落在
+  // 「我的一天」—— 下面新造的那条任务既没加我的一天、也没到期日，
+  // 它不会出现在当前视图里，第 56 行会一直等到超时。
+  // 用 _seed-sample-data.mjs：清库之外还打开示例数据开关，
+  // 让应用种回一批待办，「我的一天」里就有得可点。
+  await prepareFreshWithSampleData(page);
 }
 await page.waitForTimeout(1200);
 

@@ -13,6 +13,7 @@
 
 import { createRequire } from "node:module";
 import fs from "node:fs";
+import { prepareFreshWithSampleData } from "./_seed-sample-data.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -61,6 +62,14 @@ async function boot() {
   await page.waitForSelector("aside", { timeout: 20000 });
   await page.waitForTimeout(800);
 }
+
+/*
+ * 这个套件第 1 节直接断言"种子里有每日任务"，所以库必须是**开了示例数据开关**
+ * 的那一份。v20 起示例数据默认关（见 SETTINGS.seedSampleData），
+ * 不清库直接跑会受上一轮残留影响 —— 看着时绿时红，最难查。
+ * 这里统一先准备一遍，让每轮起点一致。
+ */
+await prepareFreshWithSampleData(page);
 
 console.log("\n1. 我的一天分成「今日任务」和「每日任务」");
 await boot();

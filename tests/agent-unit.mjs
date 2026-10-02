@@ -2334,8 +2334,14 @@ section("15. 上传图片：谁能看图、图怎么进请求、以及看不了�
 
   /* -- 2. 名单本身要经得起检查 -- */
   {
-    check("schema 已推进到 v19（core_agent_messages 多了 images 列）", CURRENT_SCHEMA_VERSION === 19, String(CURRENT_SCHEMA_VERSION));
+    // v19 是助手图片上传那一版；v20 是示例数据改成选装 —— 那一条与助手无关，
+    // 但它同样是"当前最新版本"，所以这里的判据跟着推进。
+    // ⚠️ 这里钉的是**具体数字**而不是"等于最新"，是为了让每次加迁移都必须
+    // 显式回来改一行 —— 顺带逼人检查新迁移有没有被别的断言覆盖到。
+    // 具体断言留给各自的测试：v19 在下面，v20 在 smoke.mjs 里。
+    check("schema 已推进到 v20（示例数据改成选装）", CURRENT_SCHEMA_VERSION === 20, String(CURRENT_SCHEMA_VERSION));
     check("v19 这条迁移存在且叫得出名字", migrations.some((m) => m.version === 19 && m.name === "agent_message_images"));
+    check("v20 这条迁移存在且叫得出名字", migrations.some((m) => m.version === 20 && m.name === "sample_data_opt_in"));
 
     for (const prv of P.AGENT_PROVIDERS) {
       if (!prv.vision) continue;

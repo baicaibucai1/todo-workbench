@@ -180,6 +180,10 @@ const cardCountNow = () => cards().count();
 console.log("\n0. 打开工作台");
 await page.goto(BASE, { waitUntil: "load" });
 if (FRESH) {
+  // 这里**故意**不走 _seed-sample-data.mjs：图库这一套的数据全部由下面的
+  // seed() 自己往图库里塞（addToGallery），跟示例清单/示例待办没有任何关系。
+  // 上面第 214 行那条「图库不显示待办列表」要的恰恰是"库里一条待办都没有"，
+  // 开了示例数据反而不干净。所以保持直接清空。
   await page.evaluate(() => {
     localStorage.removeItem("todo-workbench:demo-db");
     return new Promise((r) => {

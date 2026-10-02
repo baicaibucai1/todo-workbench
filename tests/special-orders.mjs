@@ -25,6 +25,7 @@
 
 import { createRequire } from "node:module";
 import fs from "node:fs";
+import { prepareFreshWithSampleData } from "./_seed-sample-data.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -72,10 +73,14 @@ await page.goto(BASE, { waitUntil: "networkidle" });
 await page.locator("aside").first().waitFor({ timeout: 20000 });
 
 if (FRESH) {
-  await page.evaluate(() => localStorage.removeItem("todo-workbench:demo-db"));
-  await page.reload({ waitUntil: "networkidle" });
-  await page.locator("aside").first().waitFor({ timeout: 20000 });
-  console.log("已重置演示库\n");
+  // v20 起示例数据是选装（默认关），不能再直接 removeItem —— 那样拿到的是
+  // **一个清单都没有的空库**，而下面的「过程态默认时效」一节要靠
+  // 种子里的「特殊单号处理」流程（带 defaultMinutes 的那套）。
+  // 空库的表现是建单弹窗里写着「还没有任何流程，先去「编辑流程」建一套」，
+  // 然后卡在 aside[data-task-detail] [data-edit-flows] 上超时 ——
+  // 看着像功能崩了，其实只是没开那个开关。
+  const prepared = await prepareFreshWithSampleData(page);
+  console.log(`已重置演示库（示例数据开关打开）：${prepared}\n`);
 }
 await page.waitForTimeout(900);
 

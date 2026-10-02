@@ -25,6 +25,7 @@
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import { enableModule } from "./_enable-module.mjs";
+import { prepareFreshWithSampleData } from "./_seed-sample-data.mjs";
 import path from "node:path";
 import { pngDataUrl } from "./png.mjs";
 
@@ -115,11 +116,19 @@ console.log(`\n视口 ${VIEWPORT.width}x${VIEWPORT.height}  →  ${OUT}\n`);
 await page.goto(BASE, { waitUntil: "networkidle" });
 
 // 浏览器演示模式的数据存在 localStorage 里。想看"全新安装"的样子
-// （种子数据 + 默认流程 + 特殊单号），就得先把它清掉再重载。
+// （示例数据 + 默认流程 + 特殊单号），就得先把它清掉再重载。
+//
+// ⚠️ v20 起示例数据是**选装、默认关**：光清库会得到一个什么都没有的空壳，
+// 于是 40-mixed-list 那屏会"看不到流程任务行"、图库/特殊单号也无所指。
+// 所以这里要用 _seed-sample-data.mjs —— 它清库之外还**把开关打开**，
+// 让应用自己把示例种回来（也正是新装用户打开开关后该看到的样子）。
 if (FRESH) {
-  await page.evaluate(() => localStorage.removeItem("todo-workbench:demo-db"));
-  await page.reload({ waitUntil: "networkidle" });
-  console.log("已重置演示库，重新种入种子数据\n");
+  const r = await prepareFreshWithSampleData(page);
+  console.log(
+    r === "ok"
+      ? "已重置演示库并打开示例数据开关，重新种入种子数据\n"
+      : `⚠️ 准备演示库时出问题：${r}\n`,
+  );
 }
 
 // MemoryDb 建表 + 种子数据是异步的，等侧边栏渲染出来再动

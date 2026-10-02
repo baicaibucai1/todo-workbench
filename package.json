@@ -1,7 +1,7 @@
 {
   "name": "todo-workbench",
   "private": true,
-  "version": "0.2.6",
+  "version": "0.2.7",
   "type": "module",
   "description": "待办工作台 - 以 Microsoft To Do 为原型的可扩展桌面工作台",
   "license": "MIT",
@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "smoke": "esbuild tests/smoke.mjs --bundle --platform=node --format=esm --target=node22 --outfile=tests/.smoke.bundle.mjs --external:jsdom --log-level=warning && node tests/.smoke.bundle.mjs",
+    "smoke": "esbuild tests/smoke.mjs --bundle --platform=node --format=esm --target=node22 --outfile=tests/.smoke.bundle.mjs --external:jsdom --log-level=warning && esbuild tests/seed-opt-in.mjs --bundle --platform=node --format=esm --target=node22 --outfile=tests/.seed-opt-in.bundle.mjs --external:jsdom --log-level=warning && node tests/.smoke.bundle.mjs && node tests/.seed-opt-in.bundle.mjs",
     "sync:test": "esbuild tests/sync.mjs --bundle --platform=node --format=esm --target=node22 --outfile=tests/.sync.bundle.mjs --external:jsdom --log-level=warning && node tests/.sync.bundle.mjs",
     "agent:test": "esbuild tests/agent-unit.mjs --bundle --platform=node --format=esm --target=node22 --outfile=tests/.agent-unit.bundle.mjs --external:jsdom --log-level=warning && node tests/.agent-unit.bundle.mjs",
     "agent:author": "node scripts/agent-author.mjs",

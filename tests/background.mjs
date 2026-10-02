@@ -19,6 +19,7 @@ import fs from "node:fs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
+import { prepareFreshWithSampleData } from "./_seed-sample-data.mjs";
 
 const EDGE = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 const SHOT_DIR = "C:/AI_Production/Tools/.workbuddy/tools/out";
@@ -79,6 +80,12 @@ async function backToTodo() {
 
 console.log("\n1. 打开设置 → 外观");
 await page.goto(BASE, { waitUntil: "load" });
+// v20 起示例数据默认关。本套件第 2 节那条「列表行仍然可点」要**屏幕上真的有一行
+// 待办**（elementFromPoint 命中 [data-task-id]），而这个套件复用当前演示库 ——
+// 只要前面跑过 urgent/agent 这类"清空不补种"的套件，myday 就是空的，
+// 那条断言会红成 rowAbove:null。所以开头固定准备成「新装 + 示例数据」。
+const prepared = await prepareFreshWithSampleData(page);
+info("演示库准备", prepared);
 await page.waitForSelector("aside", { timeout: 20000 });
 await page.waitForTimeout(800);
 await openAppearance();

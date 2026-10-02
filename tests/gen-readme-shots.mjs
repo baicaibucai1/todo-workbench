@@ -27,6 +27,7 @@
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
+import { prepareFreshWithSampleData } from "./_seed-sample-data.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -64,18 +65,14 @@ const shot = async (name) => {
   console.log(`  ${name}.png`);
 };
 
-/** 清掉演示库再刷新：截图要的是种子数据的样子，不是上一条用例残留的状态 */
+/** 清掉演示库再刷新：截图要的是种子数据的样子，不是上一条用例残留的状态。
+ *  v20 起示例数据选装，裸清出来的是真空库（连「工作」清单都没有），
+ *  必须走 helper 把开关打开，种子的样子才会回来。 */
 console.log("准备干净的演示库…");
 await page.goto(BASE, { waitUntil: "load" });
 await page.waitForSelector("aside", { timeout: 20000 });
-await page.evaluate(() => {
-  for (const k of Object.keys(localStorage)) {
-    if (k.startsWith("todo-workbench")) localStorage.removeItem(k);
-  }
-});
-await page.reload({ waitUntil: "load" });
-await page.waitForSelector("aside", { timeout: 20000 });
-await page.waitForTimeout(1200);
+const shotPrepared = await prepareFreshWithSampleData(page);
+console.log(`  演示库准备: ${shotPrepared}`);
 
 /** 点侧边栏某个导航项；工具与视图都用 data-nav。
  *  选装模块没开时侧栏里就没有那一项 —— 不是"点了没反应"，是压根不存在，

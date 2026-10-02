@@ -750,6 +750,37 @@ export const migrations: Migration[] = [
       ALTER TABLE core_agent_messages ADD COLUMN image_count INTEGER NOT NULL DEFAULT 0;
     `,
   },
+
+  {
+    /*
+     * v20：示例数据改成选装（`behavior.seedSampleData`，默认关）。
+     *
+     * ============================ 为什么这个迁移是必需的 ============================
+     * 新默认值管的是**新建的库**（DEFAULT_SETTINGS），迁移管的是**已有的库**。
+     * 老库里没有这个键，而 repo 的 wantSampleData 把"缺键"读成"不要"——
+     * 于是如果不补这一笔，一个已经种过示例数据的老用户什么都看不出问题，
+     * 但**老库里的示例还在**，他永远找不到开关去关它们；更糟的是
+     * 数据库一旦被清空（设置 → 数据库 的重置），示例数据也不会再种回来，
+     * 而界面上的开关还写着"关"——用户会以为开关坏了。
+     *
+     * 所以这里按**库里有没有东西**回填：
+     *   · 有清单（说明当初种过，或者他自己建的）→ 写 1，维持"打开"的样子，
+     *     他的库照原样，示例数据下次被清掉后还能再种回来；
+     *   · 空库（全新机器、或者刚重置过）→ 不写，让默认值"关"生效。
+     *
+     * ⛔ 别写成 `INSERT ... SELECT ... WHERE NOT EXISTS(...) AND EXISTS(SELECT 1
+     * FROM core_lists)` 之外的聚合形态：无 GROUP BY 的聚合**恒返回一行**，
+     * 空表也会插一条（v16 踩过一次，见 PITFALLS 七十三）。EXISTS 没这个毛病。
+     */
+    version: 20,
+    name: "sample_data_opt_in",
+    sql: `
+      INSERT INTO core_settings (key, value)
+        SELECT 'behavior.seedSampleData', '1'
+        WHERE NOT EXISTS (SELECT 1 FROM core_settings WHERE key = 'behavior.seedSampleData')
+          AND EXISTS (SELECT 1 FROM core_lists);
+    `,
+  },
 ];
 
 /** 当前代码期望的 schema 版本 */

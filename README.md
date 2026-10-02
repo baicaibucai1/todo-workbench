@@ -1,6 +1,6 @@
 # 待办工作台
 
-![版本](https://img.shields.io/badge/版本-v0.2.6-blue) ![许可](https://img.shields.io/badge/license-MIT-green) ![平台](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
+![版本](https://img.shields.io/badge/版本-v0.2.7-blue) ![许可](https://img.shields.io/badge/license-MIT-green) ![平台](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
 
 以 Microsoft To Do 为原型的 Windows 桌面应用，但定位不止于待办——
 它是一个**可扩展的工作台**：待办是核心，流程任务、特殊单号、图库、工具等作为模块插进来，
@@ -20,7 +20,7 @@
 
 作者：**Sogapopo**
 
-> **当前版本：`v0.2.6`** —— [**下载安装包**](https://github.com/baicaibucai1/todo-workbench/releases/latest)
+> **当前版本：`v0.2.7`** —— [**下载安装包**](https://github.com/baicaibucai1/todo-workbench/releases/latest)
 > （**7.35 MB**，Windows x64）。桌面版已打包成功、实机跑通，采用 GNU 工具链
 > （MSYS2 + MinGW-w64），**全程不需要管理员权限，也不需要 2–4 GB 的 Visual Studio**。
 >
@@ -32,11 +32,12 @@
 > Release 上的一份**独立资产**（`todo-workbench-tools_0.2.6.zip`，29.6 MB）提供：
 > 想要就下载解压，不想装就一个都不占。宿主本体因此回到 7 MB 量级。
 >
-> v0.2.6 的重点：**AI 助手能看图了**（粘贴 / 拖拽 / 选文件三种入口，原图落库，
-> 会先判断这个模型到底吃不吃图片），以及**工具能把自己注册给助手** —— 工具在
-> manifest 里声明 `actions` / `skill` / `destructive`，助手立刻多出一组可以直接
-> 调用的函数，并带上这份工具自己写的说明书
-> （详见 [Release 说明](https://github.com/baicaibucai1/todo-workbench/releases/tag/v0.2.6)）。
+> v0.2.7 的重点：**修掉一个"release 版偷读源码树"的缺陷** —— 0.2.6 的安装包在
+> 开发者机器上会把源码里的四个工具悄悄拷进用户数据区，还伪装成"随包分发"
+> （普通用户的机器上没有源码，所以只在开发机复现，是最难查的一类）；同时
+> **示例数据改成选装**：新装用户面对空库，不再凭空多出"这软件自己派活"的
+> 六条待办，想要示例的在 设置 → 行为 里自己打开
+> （详见 [Release 说明](https://github.com/baicaibucai1/todo-workbench/releases/tag/v0.2.7)）。
 
 ---
 

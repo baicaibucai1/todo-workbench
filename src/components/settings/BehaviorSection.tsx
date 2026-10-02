@@ -48,6 +48,9 @@ export function BehaviorSection({
 }) {
   const startup = settings[SETTINGS.startupView] ?? "myday";
   const sidebarDefault = (settings[SETTINGS.sidebarOpen] ?? "1") !== "0";
+  // 缺键按"关"处理：与 SETTINGS.seedSampleData 的默认值同一个方向。
+  // ⚠️ 不能写成 `!== "0"`（那是"默认开"的写法），这里只有显式 "1" 才算开
+  const sampleData = settings[SETTINGS.seedSampleData] === "1";
   const reminderOn = (settings[SETTINGS.reminderEnabled] ?? "1") !== "0";
   const systemNotify = (settings[SETTINGS.reminderSystem] ?? "0") === "1";
   const snooze = settings[SETTINGS.reminderSnooze] ?? "10";
@@ -131,6 +134,31 @@ export function BehaviorSection({
             onToggle={() =>
               void saveSettings({ [SETTINGS.sidebarOpen]: sidebarDefault ? "0" : "1" })
             }
+          />
+        </FieldRow>
+
+        <div className="my-3 border-t border-line" />
+
+        {/*
+          示例数据默认关。打开它**不会**立刻种一份进来 —— 播种只在"库是空的"
+          那一次发生（见 repo 的 seed*IfEmpty）。所以这个开关的实际语义是
+          "下次库空的时候要不要填"，hint 必须把这件事说清楚，否则用户按了
+          没反应会以为坏了。
+        */}
+        <FieldRow
+          label="填入示例数据"
+          hint={
+            sampleData
+              ? "库里为空时会填入两个清单、几条示例待办与两张示例流程任务"
+              : "已关闭。开启后仅在库为空时填入，不会动你现有的数据"
+          }
+        >
+          <Switch
+            on={sampleData}
+            onToggle={() =>
+              void saveSettings({ [SETTINGS.seedSampleData]: sampleData ? "0" : "1" })
+            }
+            testId="seed-sample-data"
           />
         </FieldRow>
       </Card>

@@ -22,6 +22,7 @@
 
 import { createRequire } from "node:module";
 import fs from "node:fs";
+import { prepareFreshWithSampleData } from "./_seed-sample-data.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -157,9 +158,16 @@ console.log("\n0. 打开待办 → 选一张流程任务");
 await page.goto(BASE, { waitUntil: "load" });
 if (FRESH) {
   // 演示库是 localStorage 快照，不清干净的话上一次跑的附件会留在里面，
-  // 断言"第一次添加"之类的东西就不可靠了
+  // 断言"第一次添加"之类的东西就不可靠了。
+  //
+  // ⚠️ v20 起不能只 removeItem：示例数据是选装、默认关，直接清出来的是
+  // **一个流程任务都没有的空库**，而本套件第 0 节就要 openFirstOrder()
+  // 去点第一张流程任务的行（还记得它考的是附件，不是流程任务列表）。
+  // 空库的表现是 [data-order-id] 一直等不到然后超时，看着像附件功能崩了。
+  // 用 helper 拿到「空库 + 开关打开」，让种子把示例流程任务种回来。
+  const prepared = await prepareFreshWithSampleData(page);
+  info("演示库准备", prepared);
   await page.evaluate(() => {
-    localStorage.removeItem("todo-workbench:demo-db");
     return new Promise((r) => {
       const req = indexedDB.deleteDatabase("todo-workbench:attachments");
       req.onsuccess = req.onerror = req.onblocked = () => r(true);

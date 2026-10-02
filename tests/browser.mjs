@@ -8,6 +8,8 @@
  */
 
 import { createRequire } from "node:module";
+import { prepareFreshWithSampleData } from "./_seed-sample-data.mjs";
+import { enableModule } from "./_enable-module.mjs";
 
 // playwright 装在隔壁 QQbot 项目里，直接复用，避免重复下载 Chromium。
 // 它是 CJS 包，用 createRequire 引入才能拿到具名导出。
@@ -60,8 +62,19 @@ page.on("console", (m) => {
 page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
 
 console.log("\n1. 页面加载");
-await page.goto(BASE, { waitUntil: "networkidle" });
-await page.waitForTimeout(700);
+
+/*
+ * 先把库准备成「新装 + 示例数据开关打开」，再让应用启动。
+ *
+ * v20 起示例数据是选装、默认关：空库进来干干净净，一个清单都没有。
+ * 而本套件后面的跨列表搜索、混排渲染这些断言天然需要一批数据 ——
+ * 与其自己造（那验的就不是真实首跑的样子），不如**打开那个开关**，
+ * 让应用自己种。顺带这也把"开关真的能让种子跑起来"验在了浏览器里。
+ *
+ * 具体怎么做（为什么要跑两轮）见 _seed-sample-data.mjs 的文件头。
+ */
+const prepared = await prepareFreshWithSampleData(page);
+check("已准备「新装 + 示例数据」的库", prepared === "ok", prepared);
 
 check("标题正确", (await page.title()) === "待办工作台");
 check("应用已挂载（非空白页）", (await page.locator("aside").count()) > 0);
@@ -143,6 +156,22 @@ check(
 console.log("\n8. 底部区块：图库在设置正上方");
 // 「计划内」整个视图已删（侧边栏入口也一起没了），这里顺手守住"它不会再回来"
 check("侧边栏不再有计划内", !sidebarText.includes("计划内"));
+
+/*
+ * ⚠️ 图库是**选装模块**（v18 起，默认关），侧边栏里默认没有它。
+ *
+ * 这里原先直接断言"图库与设置都在侧边栏底部"，在选装改版之后就一直是红的
+ * —— 而这条红是"没人去按那个开关"，不是功能坏了。修它的正确做法是
+ * **先按开关**，而不是把断言删掉或改成"允许没有"：
+ * 后两者都会让"图库紧挨设置上面"这个真的会被改坏的顺序约束失去守卫。
+ *
+ * 用 _enable-module.mjs 走真实界面（它顺带验了"设置页里找得到这个开关"），
+ * 然后回到待办视图 —— 启用完人会站在设置页上。
+ */
+await enableModule(page, "gallery");
+await page.locator('aside [data-nav="myday"]').first().click();
+await page.waitForTimeout(600);
+
 const bottomNav = await page
   .locator("aside[data-sidebar-width] [data-nav]")
   .evaluateAll((els) => els.map((e) => e.getAttribute("data-nav")));
@@ -215,13 +244,17 @@ check("返回后仍在进入工具前的列表", (await page.locator("h1").first
 check("之前新建的列表仍在", (await page.locator("body").innerText()).includes("测试清单"));
 
 // 通过搜索确认已完成的任务没有被工具操作影响（搜索跨列表，不受当前视图限制）
-await page.getByPlaceholder("搜索").fill("浏览器测试任务");
+//
+// 用上面那个已经圈定侧边栏的 searchBox，不用 getByPlaceholder("搜索")：
+// 详情面板里还有一个「搜索要关联的任务」，裸写会同时命中两个
+// （strict mode 直接报错，而且报得莫名其妙 —— 见第 15 节那处的长注释）。
+await searchBox.fill("浏览器测试任务");
 await page.waitForTimeout(600);
 check(
   "搜索能找回该任务，证明工具未污染待办数据",
   (await page.locator("body").innerText()).includes("浏览器测试任务"),
 );
-await page.getByPlaceholder("搜索").fill("");
+await searchBox.fill("");
 await page.waitForTimeout(500);
 
 console.log("\n15. 数据持久化（刷新页面）");
@@ -232,7 +265,16 @@ check("刷新后列表仍在", reloadText.includes("测试清单"));
 check("刷新后未完成任务仍在", reloadText.includes("1027 改码发货"));
 
 // 完成任务后刷新，应从「我的一天」消失（To Do 的既有行为），但数据不能丢
-await page.getByPlaceholder("搜索").fill("浏览器测试任务");
+//
+// ⚠️ 这里必须圈定侧边栏的那个搜索框：详情面板里还有一个
+// 「搜索要关联的任务」（也是 placeholder 含"搜索"），刷新后它就在 DOM 里，
+// getByPlaceholder("搜索") 会同时命中两个，strict mode 直接报错。
+// 前面几处之所以没炸，是因为那时详情面板还没展开 —— 这种"看运气"的写法
+// 迟早会在某次改动后集中爆发，所以这里一次性改成和上面同一套定位。
+const searchAfterReload = page
+  .locator("aside[data-sidebar-width]")
+  .getByPlaceholder("搜索");
+await searchAfterReload.fill("浏览器测试任务");
 await page.waitForTimeout(600);
 check(
   "刷新后已完成任务可通过搜索找回",

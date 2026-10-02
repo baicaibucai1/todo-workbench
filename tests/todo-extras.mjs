@@ -11,6 +11,7 @@
 
 import { createRequire } from "node:module";
 import fs from "node:fs";
+import { prepareFreshWithSampleData } from "./_seed-sample-data.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -90,6 +91,13 @@ const pokeReminders = () =>
   page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
 
 console.log("\n1. 子任务（步骤）");
+/*
+ * ⚠️ 这个套件到处 `rows().nth(0)` 点第一条待办，所以库里**必须有待办**。
+ * v20 起示例数据默认关（见 SETTINGS.seedSampleData），空库直接跑会卡在
+ * openRow 上等 30 秒然后超时 —— 而且报的是"元素找不到"，
+ * 看着像详情面板坏了。这里统一先把带示例数据的库准备好。
+ */
+await prepareFreshWithSampleData(page);
 await page.goto(BASE, { waitUntil: "load" });
 await page.waitForSelector("aside", { timeout: 20000 });
 await page.waitForTimeout(800);

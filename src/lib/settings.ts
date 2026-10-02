@@ -77,6 +77,25 @@ export const SETTINGS = {
    */
   toolKeepState: "tools.keepState",
   /**
+   * 首次运行要不要填入示例数据（清单 / 任务 / 示例流程任务）。
+   *
+   * ============================ 为什么默认关 ============================
+   * 原先它是无条件的：新装机器打开就是「工作 / 个人」两个清单 + 六条任务
+   * （其中一条还是已完成的）+ 两张示例流程任务。理由是"空白界面看不出
+   * 这软件能干什么"。但用户看到的不是"示例"三个字，是**他自己库里
+   * 凭空多出来的六条待办** —— 第一反应是"这软件怎么自己给我派活"，
+   * 然后逐条删掉。教一次话的收益，抵不上每次都让人清理一遍的成本。
+   *
+   * 所以改成选装：默认关，想要的人自己打开（设置 → 行为）。
+   * ⚠️ 它**只影响"空库首次运行"那一次**，不是"关掉就把已有示例删掉" ——
+   * 用户已经有的数据一律不动，见 repo 里三个 seed*IfEmpty 的空判据。
+   *
+   * 空串 / 缺键一律按"关"处理（见 repo 的 seedIfEmpty 读法），
+   * 与 `enabledByDefault: false` 的解析方向相反 —— 那里是"宁可多显示一次，
+   * 不可让人以为数据丢了"，而这里是"宁可少显示一次，不可往人库里塞东西"。
+   */
+  seedSampleData: "behavior.seedSampleData",
+  /**
    * 被停用的工具 id（逗号分隔）。
    *
    * 与「卸载」分开：停用只是不在侧边栏出现、不加载，文件还在；
@@ -349,6 +368,8 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.reminderSnooze]: "10",
   [SETTINGS.urgentMinutes]: String(URGENT_MINUTES.default),
   [SETTINGS.toolKeepState]: "1",
+  // 示例数据默认关：理由见 SETTINGS.seedSampleData 的注释
+  [SETTINGS.seedSampleData]: "0",
   [SETTINGS.toolsDisabled]: "",
   [SETTINGS.specialEnabled]: "0",
   [SETTINGS.galleryEnabled]: "0",

@@ -25,6 +25,7 @@
 
 import { createRequire } from "node:module";
 import path from "node:path";
+import { prepareFreshWithSampleData } from "./_seed-sample-data.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -59,11 +60,17 @@ page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
 await page.goto(BASE, { waitUntil: "networkidle" });
 await page.locator("aside").first().waitFor({ timeout: 15000 });
 
+/*
+ * `--fresh` 的语义是"看全新安装的样子"，也就是**有示例流程任务**的那一屏。
+ *
+ * ⚠️ v20 起示例数据是选装、默认关：只清库会得到一个空壳，
+ * 下面「视图里有流程任务」那条必然红，而那是准备数据的问题、不是功能坏了。
+ * 所以走 _seed-sample-data.mjs —— 它清库之外还打开开关，让应用自己种回来。
+ */
 if (FRESH) {
-  await page.evaluate(() => localStorage.removeItem("todo-workbench:demo-db"));
-  await page.reload({ waitUntil: "networkidle" });
+  const r = await prepareFreshWithSampleData(page);
   await page.locator("aside").first().waitFor({ timeout: 15000 });
-  console.log("已重置演示库\n");
+  console.log(r === "ok" ? "已重置演示库并打开示例数据开关\n" : `⚠️ 准备演示库出错：${r}\n`);
 }
 await page.waitForTimeout(900);
 
