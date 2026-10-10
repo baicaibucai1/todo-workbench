@@ -393,6 +393,31 @@ store.ts:132 注释说 `from = null` 表示宿主自己（比如"图床里用某
 但全局 `openToolWithIntent` 只在 ToolHost.tsx:154 被调用，`ImagebedView.tsx` 里没有任何相关代码。
 助手侧 `open_tool`（agent/actions.ts:1210-1224）也**只能开、不能带数据**。
 
+**⑪ 「脱离工作台也是 web 工具」原来只做了一半**（中 · 2026-10-10 已修）
+契约文档一直写着「自包含是硬要求」，但那只保证了"装得进去"，没管"单独打开能不能用"。
+2026-10-10 用 `file://` 逐个打开实测（等于双击），五个工具的实况：
+
+| 工具 | bindState | 独立运行提示 | 宿主控件 | 独立态可用性 |
+|---|---|---|---|---|
+| `ai-gen` | ✅ `standalone` | ✅ 横幅 | ⚠️「从图床选」灰着 + 提示"先升级工作台"（**独立打开时没有工作台可升级，句错话**） | ✅ 直连服务商，配置在内存里（已明说） |
+| `image-crop` | ❌ 没写 | ✅ 状态条 | ❌ 四个图床按钮 `hidden` **失效**、照常露着 | ✅ 纯前端编辑器 |
+| `size-chart` | ❌ 没写 | ❌ 完全没有 | ❌「存进图床」`hidden` 失效、露着 | ✅ 纯前端生成器 |
+| `notes` | ❌ 没写 | ❌ 无 | — | ❌ 20 秒后报「读不到数据：宿主没有回应（row.select）」，**写不进去** |
+| `scratchpad` | ❌ 没写 | ⚠️ 永远停在「正在连接宿主…」 | — | ❌ **完全不能用**（数据层直接顶到 `row.*`） |
+
+`hidden` 那两处是同一个根因，也是这份文档里最值得记的一条：
+**作者样式里的 `display:inline-flex` / `flex` 会盖掉浏览器默认的 `[hidden]{display:none}`
+（与权重无关，作者样式一律压过 UA 样式）** —— 光设 `hidden` 属性，按钮照样在。
+
+现在统一成四条约定（四态 `bindState` / 宿主专属控件标 `data-host-only`·`data-host-gallery`
+交 CSS 藏 / 数据层留 `localStorage` 兜底 / 内联 favicon 与跟随系统深浅色），
+写在 `docs/tool-authoring-and-injection.md`「脱离工作台也能跑」，
+样板是 `tools/scratchpad`，回归是 `tests/tools-standalone.mjs`（76 项，
+逐个用 `file://` 与 `http://` 打开，验 0 报错 / 状态正确 / 宿主控件不露 / 核心动作能落地）。
+
+残留：`image-crop` 到现在**没有深色主题**（全仓 0 处 `data-theme`），
+"独立态跟系统走"那条对它无效 —— 它 6500 行 CSS 全是硬编码浅色，要单独一轮才动得了。
+
 ### 5.5 改动时不能弄坏的测试
 
 | 测试 | 保护什么 |

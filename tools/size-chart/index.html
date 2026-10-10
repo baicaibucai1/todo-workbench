@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>尺码表生成器 — Size Studio</title>
+<!-- 内联 favicon：不写浏览器会去要 /favicon.ico，控制台留一条 404 红字 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23EA580C'/%3E%3Cstop offset='1' stop-color='%23FACC15'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='1' y='1' width='30' height='30' rx='6.6' fill='url(%23g)'/%3E%3Crect x='4' y='4.7' width='24' height='22.6' rx='4.4' fill='%23fff'/%3E%3Cg stroke='%23D9480F' stroke-width='1.9' stroke-linecap='round'%3E%3Cpath d='M9 11.5h14M9 16h14M9 20.5h9'/%3E%3Cpath d='M12 9.6v3.8M17 14.1v3.8' opacity='.45'/%3E%3C/g%3E%3C/svg%3E" />
 
 <style>
   /* ================================================================
@@ -914,9 +916,28 @@
     .stb-group { justify-content: space-between; }
     .stb-sep { display: none; }
   }
+
+  /* ------------------------------------------------------------------
+     独立运行（双击打开这份 HTML / 挂到任意静态服务器上）
+     ------------------------------------------------------------------
+     ★ 宿主专属的东西靠属性藏，不靠逐个 el.hidden = true ——
+       作者样式里的 display:inline-flex / flex 会盖掉浏览器默认的
+       [hidden]{display:none}，光设 hidden 属性按钮照样露着（本工具就踩过）。
+     · data-host-only     —— 只有连着宿主才有意义
+     · data-host-gallery  —— 还要宿主把图床通道开着（图床是选装模块）
+     藏而不是禁用：独立打开时没有工作台可升级，"先升级工作台"在那儿是句错话。
+     约定全文见 docs/tool-authoring-and-injection.md「脱离工作台也能跑」。 */
+  body:not([data-bind-state="bound"]) [data-host-only],
+  body:not([data-gallery="on"]) [data-host-gallery] { display: none !important; }
+
+  /* 宿主状态位：连接中… / 已连工作台 / 独立运行 / 未连接宿主 */
+  .host-dot { display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; font-size: 10.5px; letter-spacing: 0; color: #9a958c; white-space: nowrap; }
+  .host-dot::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #c9c4bb; }
+  .host-dot.ok::before { background: #3fa46a; }
+  .host-dot.warn::before { background: #d09327; }
 </style>
 </head>
-<body>
+<body data-bind-state="booting">
 
 <div id="toast" class="toast"></div>
 
@@ -926,6 +947,7 @@
     <span class="app-logo-mark">S</span>
     <span>SIZE STUDIO</span>
     <span class="app-logo-sub">尺码表生成器</span>
+    <span class="host-dot" id="hostState">连接中…</span>
   </div>
   <div class="nav-actions">
     <button class="nav-btn-text" onclick="openHelpPanel()" title="帮助 (Ctrl + ?)">?</button>
@@ -1113,16 +1135,18 @@
             下载图片
           </button>
           <!-- 「下载图片」的兄弟动作：不落盘，直接进工作台图床当素材。
-               默认 hidden，只有被工作台嵌进去（宿主推来 gallery 标记）才出现 -->
-          <button class="stb-btn" id="btnChartToImagebed" onclick="exportToImagebed()" hidden
+               宿主专属 + 要图床通道：两个属性一起标，可见性交给 CSS
+               （独立打开 / 图床模块没开时都不出现） -->
+          <button class="stb-btn" id="btnChartToImagebed" data-host-only data-host-gallery onclick="exportToImagebed()"
                   title="直接存进工作台图床，不再落一份到下载目录">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
             存进图床
           </button>
           <!-- 「导出自动存图床」：默认开。下载与复制都算「产出」，都按同一条规则
                在图床留一份；字节相同的内容不会重复占一条记录（宿主按 hash 去重）。
-               同样默认 hidden —— 单机打开时没有图床可言。 -->
-          <label class="stb-check" id="chkAutoImagebedLine" hidden
+               同样宿主专属 + 要图床通道，同样交给 CSS 决定可见性（原来靠 hidden
+               属性，被 .stb-check 的 display:flex 盖掉过一次，别再走那条路） -->
+          <label class="stb-check" id="chkAutoImagebedLine" data-host-only data-host-gallery
                  title="导出/复制的图默认在工作台图床留一份；同一份内容不会重复占一条">
             <input type="checkbox" id="chkAutoImagebed" checked>
             导出自动存图床
@@ -1251,6 +1275,46 @@
 </div>
 
 <script>
+// ============================================================
+// 我到底在哪：宿主状态机
+// ------------------------------------------------------------
+//   booting    —— 开机，还不知道自己在哪
+//   bound      —— 收到 tool:context，在工作台里
+//   standalone —— 超时没等到，且 parent === window：独立打开
+//   error      —— 超时没等到，但确实被嵌在某页里：桥没接上
+//
+// parent === window 是唯一能**同步**判定的信号，所以只在超时兜底时用它把
+// 「独立打开」和「嵌了却没接上」分开。这个工具的生成能力全在本地
+// （表格、主题、导出都是纯前端），所以独立打开时只是少了「存进图床」一个出口，
+// 主体照常用 —— 但也得**说清楚**自己在独立运行，否则用户会对着一个
+// 时有时无的按钮发懵。
+// 约定全文见 docs/tool-authoring-and-injection.md「脱离工作台也能跑」。
+// ============================================================
+var HOST_LABEL = { booting: '连接中…', bound: '已连工作台', standalone: '独立运行', error: '未连接宿主' };
+var hostState = 'booting';
+
+function setHostState(next) {
+  hostState = next;
+  document.body.dataset.bindState = next;
+  var dot = document.getElementById('hostState');
+  if (dot) {
+    dot.textContent = HOST_LABEL[next] || next;
+    dot.className = 'host-dot' + (next === 'bound' ? ' ok' : next === 'booting' ? '' : ' warn');
+  }
+}
+// 独立打开时没有宿主推主题，跟系统走。这个工具自己的主题是"表格外观"，
+// 跟界面深浅色不是一回事，所以只影响界面外壳，不动 currentTheme。
+try {
+  if (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) {
+    document.documentElement.dataset.theme = 'dark';
+  }
+} catch (e) { /* 老浏览器没 matchMedia，保持浅色 */ }
+// 超时兜底
+setTimeout(function () {
+  if (hostState !== 'booting') return;
+  setHostState(parent === window ? 'standalone' : 'error');
+}, 1200);
+
 // ============================================================
 // 预设数据模板
 // ============================================================
@@ -3416,6 +3480,11 @@ var Imagebed = (function () {
     if (e.source === parent && e.origin && e.origin !== 'null') hostOrigin = e.origin;
     if (d.type === 'tool:context') {
       ctx = d.data;
+      setHostState('bound');
+      // 图床通道开没开挂到 body 上，交给 CSS 决定「存进图床」那几个入口的生死。
+      // 不逐个 el.hidden = true：.stb-btn 的 display:inline-flex 会盖掉
+      // 浏览器默认的 [hidden]{display:none}，按钮会照常露着（原来就踩过）。
+      document.body.dataset.gallery = (ctx && ctx.gallery) ? 'on' : 'off';
       syncImagebedUI();
       // 偏好存在宿主（工具私有 KV）里，必须等连接确认后再读 ——
       // 双击打开时 kv 请求注定失败，提前发只会多一条无用报错
@@ -3443,10 +3512,10 @@ var Imagebed = (function () {
   };
 })();
 
+/** 可见性由 CSS 按 body[data-bind-state] 与 body[data-gallery] 决定，
+    这里只负责把「连上了没」「图床开着没」这两个事实挂到 body 上。 */
 function syncImagebedUI() {
-  var ok = Imagebed.supports();
-  var btn = document.getElementById('btnChartToImagebed');
-  if (btn) btn.hidden = !ok;
+  document.body.dataset.gallery = Imagebed.supports() ? 'on' : 'off';
   syncAutoImagebedUI();
 }
 
@@ -3525,11 +3594,9 @@ function exportToImagebed() {
   doExport(false);
 }
 
-/** 开关只在连上宿主时出现；改动立刻写库，不等别的保存动作 */
+/** 开关只在图床通道开着时出现（可见性走 CSS 的 data-host-gallery），
+    改动立刻写库，不等别的保存动作 */
 function syncAutoImagebedUI() {
-  var line = document.getElementById('chkAutoImagebedLine');
-  if (!line) return;
-  line.hidden = !Imagebed.supports();
   var box = document.getElementById('chkAutoImagebed');
   if (box) box.checked = autoImagebed !== false;
   // 供 e2e 断言：单机打开时这两个 data-* 不会出现

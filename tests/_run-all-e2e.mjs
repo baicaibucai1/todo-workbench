@@ -41,6 +41,10 @@ const SUITES = [
   // 所以上面那句 gallery.put 是对的、不必跟着改名。
   ["notes-tool.mjs", []],
   ["imagebed.mjs", ["--fresh"]],
+  // 「脱离工作台也是 web 工具」：把每个工具的 index.html 用 file:// 与 http://
+  // 各打开一次。**不依赖 dev server**（它自带一个静态服务器），
+  // 排这儿是因为它会写 localStorage 里 wbtool:<id>: 那一段，位置靠后免得打扰别人。
+  ["tools-standalone.mjs", []],
   ["wallpapers.mjs", []],
   ["attachments.mjs", ["--fresh"]],
   ["orders-view.mjs", ["--fresh"]],

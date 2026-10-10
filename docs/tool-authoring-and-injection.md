@@ -70,6 +70,112 @@ tools/<id>/
 所以 `src="ai/ort.js"` 这类相对引用会被解析到**站点根**。目录型工具要拼绝对 URL，
 单文件工具则干脆把东西内联。
 
+### 脱离工作台也能跑：独立运行这一档
+
+「自包含」不只是为了能装进工作台，也是为了**它自己能当一份普通的单文件网页用** ——
+双击打开、丢到任意静态服务器上、发给同事打开，都该能用。这是**硬要求**，不是加分项：
+工作台被卸载、被换掉、用户只想单独用这个工具，都不该让它变成一张废纸。
+
+但"能用"有两层，别只做了第一层：
+
+- **第一层：打开不报错。** 五个内置工具都做到了（`file://` 打开无 `pageerror`、无 `console.error`）。
+- **第二层：核心功能真的能用。** 卡住的地方只有一个 —— **数据往哪写**。
+  宿主给的 `row.*` / `kv.*` / `gallery.*` 在独立打开时全都不存在，
+  所以"数据层直接顶到宿主"的工具，独立打开后会卡在超时上。
+
+约定四条。
+
+#### 1. 状态挂 `document.body.dataset.bindState`，四态
+
+| 值 | 什么时候 | 界面上该是什么 |
+| --- | --- | --- |
+| `booting` | 脚本一开始（HTML 里就写死，别留空窗） | 「连接中…」 |
+| `bound` | 收到 `tool:context` 或 `info` 回包 | 「已连工作台」 |
+| `standalone` | 超时没收到，且 `parent === window` | 「独立运行」 |
+| `error` | 超时没收到，但 `parent !== window`（被嵌了却没接上） | 「未连接宿主」 |
+
+`parent === window` 是唯一能**同步**判定的信号，用它在超时兜底时区分
+`standalone` 与 `error`。超时取 **1200ms** —— 宿主是在 iframe 的 `load` 之后才推
+`tool:context` 的，判得太早会把"还没到"误报成"独立运行"。
+
+```js
+document.body.dataset.bindState = "booting";      // 开机（最好连 HTML 一起写上）
+setTimeout(function () {
+  if (document.body.dataset.bindState !== "booting") return;   // 已经 bound 了
+  setState(parent === window ? "standalone" : "error");
+}, 1200);
+```
+
+#### 2. 宿主专属控件标 `data-host-only`，一条 CSS 兜住
+
+**不要**靠 JS 逐个 `.hidden = true`：作者样式里的 `.btn{display:inline-flex}`
+会盖掉浏览器默认的 `[hidden]{display:none}`，按钮会照常露在界面上
+（`image-crop` 的四个图床按钮、`size-chart` 的「存进图床」都踩过这个坑）。
+
+改成标属性 + 两条全局规则：
+
+```html
+<button data-host-only id="btnSaveToImagebed">存进图床</button>
+<!-- 图床那类：既要有宿主、又要图床模块开着 -->
+<button data-host-only data-host-gallery id="btnChartToImagebed">存进图床</button>
+```
+
+```css
+/* 没连上宿主 → 宿主专属的一律不出现。!important 专门用来压住 .btn{display:inline-flex} */
+body:not([data-bind-state="bound"]) [data-host-only],
+/* 连上了、但图床通道没开 → 依赖图床的那些也不出现（模块是选装的） */
+body:not([data-gallery="on"]) [data-host-gallery] { display: none !important; }
+```
+
+`data-gallery` 由工具在收到上下文后自己盖：
+`document.body.dataset.gallery = (ctx && ctx.gallery) ? "on" : "off"`。
+**别再逐个 `el.hidden = true`** —— 那正是被 `.btn{display:inline-flex}` 盖掉的那个坑。
+
+**独立运行时是"藏起来"，不是"禁用 + 解释"** —— 独立态没有工作台可升级，
+"先升级工作台"这种话在那儿是句错话（`ai-gen` 的「从图床选」原来就是这么写的）。
+
+#### 3. 数据层要留一个"本地兜底"
+
+工具的数据请求统一收口到一个门面，背后两套实现：
+
+```js
+var Db = {
+  select: function (a) { return bound() ? call("row.select", a) : Local.select(a); },
+  insert: function (a) { return bound() ? call("row.insert", a) : Local.insert(a); },
+  update: function (a) { return bound() ? call("row.update", a) : Local.update(a); },
+  del:    function (a) { return bound() ? call("row.delete", a) : Local.del(a); },
+};
+```
+
+本地兜底就用 `localStorage`（`file://` 下可用，且同一个 `file://` 源**跨页共享**，
+所以 **key 必须带工具 id**：`wbtool:<id>:t:<table>`）。
+只实现这个工具真正用到的那几个查询形态（等值 where / orderBy / limit），别写通用 SQL。
+写不进去（隐私模式等）就退到内存里并**在界面上说明**，不要静默丢数据。
+
+界面上要说清数据在哪：独立态显示「数据存在这个浏览器里」，
+而不是让用户对着"读不到数据：宿主没有回应"发懵。
+
+> `gallery` 是例外：独立打开时**不给本地兜底** —— 它不是"存数据"，是"存图给别人用"，
+> 本地存了也没人取得到。整块入口藏掉就行。
+> `notes` 那条"图床没开就把图内联进自己表里"的降级路径正好可以复用到独立态。
+
+#### 4. 顺手的两件小事
+
+- **favicon**：`<link rel="icon" href="data:image/svg+xml,…">` 内联一个。
+  不写的话浏览器会去要 `/favicon.ico`，控制台留一条 404 —— 不影响功能，
+  但一条红字会让人以为工具坏了。
+- **主题**：独立态没有宿主推主题，跟系统走：
+  ```js
+  if (state === "standalone") document.documentElement.dataset.theme =
+    matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  ```
+
+#### 样板与回归
+
+`tools/scratchpad/index.html` 是这套约定的样板（它本来就是"照着抄"用的），
+`tests/tools-standalone.mjs` 逐个把工具用 `file://` 打开，
+钉住"0 报错 / `bindState` 正确 / 宿主专属控件不可见 / 核心动作能落地"这几条。
+
 ### 装入方式有两种，效果不同
 
 | 方式 | manifest 从哪来 | 结果 |
@@ -544,10 +650,14 @@ if (m.type === "tool:context") {
 - **关键状态挂 DOM**。这个项目每一个功能的 e2e 都靠 `data-*` 断言：
 
   ```js
-  document.body.dataset.bindState = "bound";   // booting / bound / error
+  document.body.dataset.bindState = "bound";   // booting / bound / standalone / error
   button.dataset.act = "save";
   li.dataset.id = row.id;
   ```
+
+- **独立打开也得能用**。四个状态、宿主专属控件、本地兜底怎么写，
+  见 [§二 · 脱离工作台也能跑](#脱离工作台也能跑独立运行这一档)。一句话：**藏掉宿主专属的、
+  给数据留个本地兜底、界面上说清数据在哪**。
 
 - **不写假按钮**。点了没反应的按钮、永远走不到的空状态、写死的假数据，
   都会让人以为工具坏了。功能没做就不放那个入口。
@@ -750,6 +860,9 @@ install_tool（先验票，无票直接回绝）
 - [ ] 能力不可用时有降级路径，而不是一句"失败"
 - [ ] 会写数据的地方都有失败提示，且显示的是宿主的原话
 - [ ] 深浅色都试过（把 `<html data-theme>` 手动改成 `dark` 看一眼）
+- [ ] **把这份 HTML 用 `file://` 单独打开过**（等于双击）：0 报错、`bindState` 落到
+      `standalone`、宿主专属控件全藏起来、能新建一条并刷新后还在 ——
+      跑 `node tests/tools-standalone.mjs` 就有这一份体检
 - [ ] 关键状态挂了 `data-*`，按钮有 `data-act`
 - [ ] 没有假按钮、没有写死的假数据
 - [ ] 注入组件：不假设 `tool:context` 先到；不用全局变量记上一条；按钮型能在 320px 里用

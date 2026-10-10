@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>图片编辑器 — Image Studio</title>
+<!-- 内联 favicon：不写浏览器会去要 /favicon.ico，控制台留一条 404 红字 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23EA580C'/%3E%3Cstop offset='1' stop-color='%23FACC15'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='1' y='1' width='30' height='30' rx='6.6' fill='url(%23g)'/%3E%3Crect x='4' y='4.7' width='24' height='22.6' rx='4.4' fill='%23fff'/%3E%3Cg fill='none' stroke='%23D9480F' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M10.4 13.2v-2.2a.6.6 0 01.6-.6h2.2M21.6 13.2v-2.2a.6.6 0 00-.6-.6h-2.2M10.4 18.8v2.2a.6.6 0 00.6.6h2.2M21.6 18.8v2.2a.6.6 0 01-.6.6h-2.2'/%3E%3Cpath d='M16 12v8M12 16h8' opacity='.35'/%3E%3C/g%3E%3C/svg%3E" />
 <style>
   :root{
     --bg:#f4f5f7; --card:#fff; --line:#e7e9ee; --line-soft:#f0f1f4;
@@ -209,6 +211,20 @@
   /* ⚠️ 必须显式写：作者样式里的 display:flex 会盖掉 UA 的 [hidden]{display:none}
      （与权重无关，作者样式一律压过 UA 样式）。少了这句，隐藏的开关会照常铺在那儿。 */
   .check[hidden]{display:none;}
+
+  /* ------------------------------------------------------------------
+     独立运行（双击打开这份 HTML / 挂到任意静态服务器上）
+     ------------------------------------------------------------------
+     ★ 宿主专属的东西靠属性藏，不靠逐个 el.hidden = true ——
+       作者样式里的 display:flex / inline-flex 会盖掉浏览器默认的
+       [hidden]{display:none}（与权重无关，作者样式一律压过 UA 样式）。
+       本工具的四个图床按钮当初就是这么漏出来的。
+     · data-host-only     —— 只有连着宿主才有意义
+     · data-host-gallery  —— 还要宿主把图床通道开着（图床是选装模块）
+     藏而不是禁用：独立打开时没有工作台可升级，"先升级工作台"在那儿是句错话。
+     约定全文见 docs/tool-authoring-and-injection.md「脱离工作台也能跑」。 */
+  body:not([data-bind-state="bound"]) [data-host-only],
+  body:not([data-gallery="on"]) [data-host-gallery]{display:none !important;}
 
   /* 滑块 */
   .slider-row{margin-bottom:11px;}
@@ -608,7 +624,7 @@
   .host-dot.ok::before{background:var(--ok);}
 </style>
 </head>
-<body>
+<body data-bind-state="booting">
 
 <!-- ===================== 顶栏 ===================== -->
 <header class="topbar">
@@ -649,14 +665,14 @@
     导出当前
   </button>
   <!-- 「导出到本机」的兄弟动作：不落盘，直接进图床当素材 -->
-  <button class="btn" id="btnSaveToImagebed" disabled onclick="saveToImagebed()" hidden
+  <button class="btn" id="btnSaveToImagebed" data-host-only data-host-gallery disabled onclick="saveToImagebed()"
           title="把当前结果存进工作台图床（不再落一份到下载目录）">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
     存进图床
   </button>
   <!-- 自动存档：与图床入口同命运，只有连上工作台才出现。
        默认开 —— 导出一次就在图床留一份，用户不必记得去点「存进图床」。 -->
-  <label class="check" id="chkAutoImagebedLine" hidden
+  <label class="check" id="chkAutoImagebedLine" data-host-only data-host-gallery
          title="导出的图默认在工作台图床留一份；同一份内容不会重复占一条">
     <input type="checkbox" id="chkAutoImagebed" checked>
     <span>导出自动存图床</span>
@@ -683,7 +699,7 @@
           <div class="t1">点击选择图片，或直接拖进来</div>
           <div class="t2">支持 JPG / PNG / WebP · 多选进入批量 · <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴</div>
           <!-- 图床入口的第二处：空态是最需要它的时刻（手上还没有图） -->
-          <button class="btn sm" id="btnEmptyFromImagebed" onclick="openImagebedPicker()" hidden
+          <button class="btn sm" id="btnEmptyFromImagebed" data-host-only data-host-gallery onclick="openImagebedPicker()"
                   style="margin-top:12px;">从工作台图床打开</button>
         </div>
       </div>
@@ -1195,7 +1211,7 @@
         <span class="lbl-wide">加入图片</span><span class="lbl-narrow">加入</span>
       </button>
       <!-- 图床入口：默认隐藏，只有工作台宿主说「我支持图床」才出现（见 H 节） -->
-      <button class="btn sm" id="btnOpenFromImagebed" onclick="openImagebedPicker()" hidden
+      <button class="btn sm" id="btnOpenFromImagebed" data-host-only data-host-gallery onclick="openImagebedPicker()"
               title="直接从工作台图床取图加进列表，不必先下载到本机再上传">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
         <span class="lbl-wide">从图床加入</span><span class="lbl-narrow">图床</span>
@@ -1230,7 +1246,7 @@
   <span class="st" id="statusMsg">就绪</span>
   <!-- 这个工具两种活法：双击单开 / 被工作台嵌进来。指示灯把当前是哪种说清楚，
        否则用户会疑惑「图床按钮为什么时有时无」 -->
-  <span class="host-dot" id="hostState" title="这个工具可以单独双击打开，也可以在工作台里打开">独立运行</span>
+  <span class="host-dot" id="hostState" title="这个工具可以单独双击打开，也可以在工作台里打开">连接中…</span>
   <div class="spacer"></div>
   <span><kbd>Ctrl</kbd><kbd>V</kbd> 粘贴</span>
   <span><kbd>Alt</kbd>拖 / <kbd>中键</kbd> 平移</span>
@@ -1255,7 +1271,7 @@
     <div class="modal-bd"><img id="modalImg" alt="预览"></div>
     <div class="modal-ft">
       <div class="info" id="modalInfo"></div>
-      <button class="btn" id="btnModalToImagebed" onclick="saveToImagebed('last')" hidden>存入图床</button>
+      <button class="btn" id="btnModalToImagebed" data-host-only data-host-gallery onclick="saveToImagebed('last')">存入图床</button>
       <button class="btn" onclick="closeModal()">关闭</button>
       <button class="btn primary" onclick="downloadLast()">下载这张</button>
     </div>
@@ -1298,6 +1314,37 @@
 'use strict';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.prototype.slice.call(document.querySelectorAll(s));
+
+/* ============================================================
+   我到底在哪：宿主状态机
+   ------------------------------------------------------------
+     booting    —— 开机，还不知道自己在哪
+     bound      —— 收到 tool:context，在工作台里
+     standalone —— 超时没等到，且 parent === window：独立打开
+     error      —— 超时没等到，但确实被嵌在某页里：桥没接上
+
+   parent === window 是唯一能**同步**判定的信号，所以只在超时兜底时用它把
+   「独立打开」和「嵌了却没接上」分开。本工具的编辑能力全在本地，独立打开
+   时只是少了图床那两个出口 —— 但状态条上必须说清楚（否则用户会疑惑
+   「图床按钮为什么时有时无」）。
+   约定全文见 docs/tool-authoring-and-injection.md「脱离工作台也能跑」。
+   ============================================================ */
+const HOST_LABEL = { booting: '连接中…', bound: '已连工作台', standalone: '独立运行', error: '未连接宿主' };
+let hostState = 'booting';
+
+function setHostState(next) {
+  hostState = next;
+  document.body.dataset.bindState = next;
+  const dot = $('#hostState');
+  if (dot) {
+    dot.textContent = HOST_LABEL[next] || next;
+    dot.classList.toggle('ok', next === 'bound');
+  }
+}
+setTimeout(() => {
+  if (hostState !== 'booting') return;
+  setHostState(parent === window ? 'standalone' : 'error');
+}, 1200);
 
 const S = {
   // 当前编辑的原图
@@ -6232,17 +6279,14 @@ var Imagebed = (function () {
   };
 })();
 
-/** 宿主连上（或没连上）后，决定图床入口的可见性 */
+/** 宿主连上（或没连上）后，决定图床入口的可见性。
+    可见性交给 CSS 的 data-host-only / data-host-gallery（读 body 上那两个
+    dataset），这里只负责把「连上了没」「图床开着没」这两个事实挂上去 ——
+    以前是逐个 el.hidden = true，而 .btn{display:inline-flex} 会把
+    浏览器默认的 [hidden]{display:none} 盖掉，四个按钮于是照常露着。 */
 function syncImagebedUI() {
   var ok = Imagebed.supports();
-  $('#btnOpenFromImagebed').hidden = !ok;
-  $('#btnEmptyFromImagebed').hidden = !ok;
-  $('#btnSaveToImagebed').hidden = !ok;
-  $('#btnModalToImagebed').hidden = !ok;
-  if (ok) {
-    $('#hostState').textContent = '已连工作台';
-    $('#hostState').classList.add('ok');
-  }
+  document.body.dataset.gallery = ok ? 'on' : 'off';
   // 有图才能存。「有没有图」这件事 renderThumbs 每次都会重算，
   // 所以这里跟着它走，不另设状态
   $('#btnSaveToImagebed').disabled = !ok || !S.img;
@@ -6251,6 +6295,7 @@ function syncImagebedUI() {
   syncAutoImagebedUI();
 }
 document.addEventListener('host-ready', function () {
+  setHostState('bound');
   syncImagebedUI();
   loadAutoImagebedPref();      // 偏好存在宿主 KV 里，读到之后再刷一次开关
 });
@@ -6452,9 +6497,8 @@ async function archiveManyToImagebed(items) {
 
 /** 开关只在连上宿主时出现；改动立刻写库，不等别的保存动作 */
 function syncAutoImagebedUI() {
-  var line = $('#chkAutoImagebedLine');
-  if (!line) return;
-  line.hidden = !Imagebed.supports();
+  // 可见性走 CSS 的 data-host-gallery（body[data-gallery="on"]），不再动 hidden ——
+  // .check{display:flex} 会把 [hidden]{display:none} 盖掉
   $('#chkAutoImagebed').checked = autoImagebed !== false;
   document.body.dataset.autoImagebed = String(autoImagebed !== false);
 }

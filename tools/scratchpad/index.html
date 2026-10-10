@@ -4,26 +4,33 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>模板</title>
+<!-- 内联 favicon：不写的话浏览器会去要 /favicon.ico，控制台留一条 404 红字 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23EA580C'/%3E%3Cstop offset='1' stop-color='%23FACC15'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='1' y='1' width='30' height='30' rx='6.6' fill='url(%23g)'/%3E%3Crect x='4' y='4.7' width='24' height='22.6' rx='4.4' fill='%23fff'/%3E%3Cpath d='M10 12h12M10 16h12M10 20h7' stroke='%23D9480F' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E" />
 <!--
-  这个工具存在的第二个身份：**「工具怎么用宿主的数据表」的样板**。
+  这个工具存在的第二个身份：**「工具怎么写」的样板**。它同时演示两件事：
 
-  它自己不碰 SQL —— 全部通过 postMessage 请求宿主代办（见下面的 call()）。
-  宿主拿着 manifest 里声明的那份 schema 去建表、去校验列名和类型，
-  所以这里能出错的地方很少，而真出错时报的是「哪一行不对」这种能改的话。
+  1. 怎么用宿主的数据表 —— 自己不碰 SQL，全部通过 postMessage 请宿主代办。
+     宿主拿着 manifest 里声明的那份 schema 去建表、去校验列名和类型，
+     所以这里能出错的地方很少，而真出错时报的是「哪一行不对」这种能改的话。
+     表名用裸名（"notes"），宿主会自动拼成 tool_scratchpad_notes。
 
-  三个要点，写工具时照搬即可：
-    1. 表名用裸名（"notes"），宿主会自动拼成 tool_scratchpad_notes；
-    2. row.insert 必须带上主键值 id；
-    3. 自己被别的工具拉起时收的是 tool:intent 消息（底部有演示）。
+  2. **怎么在脱离工作台时也能用** —— 双击这份 HTML、或者把它丢到任意静态服务器上，
+     它仍然是一个能记事的单文件网页。四条约定（状态机 / data-host-only /
+     本地兜底 / favicon 与主题）见 docs/tool-authoring-and-injection.md
+     「脱离工作台也能跑：独立运行这一档」，下面的实现就是照那份约定写的。
+
+  自己被别的工具拉起时收的是 tool:intent 消息（底部有演示）。
 -->
 <style>
   :root {
     --bg: #ffffff; --fg: #2c2c2a; --fg2: #5f5e5b; --dim: #918f89;
     --line: #e6e4dd; --chip: #f2f0ea; --accent: #378add; --danger: #a32d2d;
+    --ok: #2f9e63; --warn: #c9820b;
   }
   html[data-theme="dark"] {
     --bg: #1c1c1a; --fg: #e8e6e0; --fg2: #b3b0a8; --dim: #8a8780;
     --line: #35342f; --chip: #2a2925; --accent: #5b9de8; --danger: #e07272;
+    --ok: #4ec78a; --warn: #e0b458;
   }
   * { box-sizing: border-box; }
   body {
@@ -31,8 +38,25 @@
     background: var(--bg); color: var(--fg);
     font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
   }
+  /* ★ 约定之二：宿主专属的东西标 data-host-only，这两条 CSS 负责藏。
+     · data-host-only        —— 只有连着宿主才有意义（这里是「交给别的工具」）
+     · data-host-gallery     —— 还要宿主把图床通道开着（模块是选装的）
+     用 !important 是因为作者样式里的 display:inline-flex / flex 会盖掉
+     浏览器默认的 [hidden]{display:none} —— 光设 hidden 属性按钮照样露着。 */
+  body:not([data-bind-state="bound"]) [data-host-only],
+  body:not([data-gallery="on"]) [data-host-gallery] { display: none !important; }
+
   .wrap { display: flex; flex-direction: column; height: 100%; max-width: 760px; margin: 0 auto; padding: 18px 20px; }
+  .head { display: flex; align-items: center; gap: 10px; }
   h1 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
+  /* ★ 约定之一：宿主状态位。四态文案由 JS 填 */
+  .host-dot {
+    display: inline-flex; align-items: center; gap: 5px; margin-left: auto;
+    font-size: 11.5px; color: var(--dim); white-space: nowrap;
+  }
+  .host-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+  .host-dot.ok::before { background: var(--ok); }
+  .host-dot.warn::before { background: var(--warn); }
   .sub { color: var(--dim); font-size: 12px; }
   .bar { display: flex; gap: 8px; margin: 14px 0 10px; }
   input, select, textarea {
@@ -70,10 +94,14 @@
   pre { background: var(--chip); padding: 8px 10px; border-radius: 7px; overflow-x: auto; font-size: 11.5px; color: var(--fg2); }
 </style>
 </head>
-<body>
+<!-- data-bind-state 在 HTML 里就写上，别留"还没设"的空窗 -->
+<body data-bind-state="booting">
 <div class="wrap">
-  <h1>模板</h1>
-  <div class="sub" id="meta">正在连接宿主…</div>
+  <div class="head">
+    <h1>模板</h1>
+    <span class="host-dot" id="hostState">连接中…</span>
+  </div>
+  <div class="sub" id="meta">连接中…</div>
 
   <div class="bar">
     <input id="title" placeholder="标题" />
@@ -87,8 +115,9 @@
 
   <div class="list" id="list"></div>
 
-  <div class="peers" id="peers"></div>
-  <details>
+  <!-- 「别的工具」这件事只有连着工作台才存在 -->
+  <div class="peers" id="peers" data-host-only></div>
+  <details data-host-only>
     <summary>这张表在数据库里是什么样</summary>
     <pre id="schema">…</pre>
   </details>
@@ -99,6 +128,7 @@
 (function () {
   "use strict";
 
+  var TOOL_ID = "scratchpad";          // 独立运行时的 localStorage 前缀要带它
   var TOOL_SOURCE = "workbench-tool";
   var HOST_SOURCE = "workbench-host";
   var seq = 0;
@@ -106,7 +136,44 @@
   var ctx = null;
   var peers = [];
 
-  /* ---------------- 与宿主通信 ---------------- */
+  /* ==================================================================
+   * 一、宿主状态机
+   * ------------------------------------------------------------------
+   *   booting    —— 开机，还不知道自己在哪
+   *   bound      —— 收到 tool:context（或 info 的回包），在工作台里
+   *   standalone —— 超时没等到，且 parent === window：独立打开
+   *   error      —— 超时没等到，但确实被嵌在某页里：桥没接上
+   *
+   * parent === window 是唯一能**同步**判定的信号，所以只在超时兜底时，
+   * 用它把「独立打开」和「嵌了却没接上」分开 —— 这两种的处理不一样：
+   * 前者藏掉宿主专属功能照常用，后者要报错（用户明显是期望它连上的）。
+   * ================================================================== */
+  var LABEL = { booting: "连接中…", bound: "已连工作台", standalone: "独立运行", error: "未连接宿主" };
+  var state = "booting";
+
+  var settleResolve = null;
+  /** 状态落定（不再是 booting）时兑现，data 层要等它 */
+  var settle = new Promise(function (res) { settleResolve = res; });
+
+  function setState(next) {
+    state = next;
+    document.body.dataset.bindState = next;
+    paintHostDot();
+    showMeta();
+    if (next !== "booting" && settleResolve) { var r = settleResolve; settleResolve = null; r(); }
+  }
+
+  function paintHostDot() {
+    var dot = document.getElementById("hostState");
+    if (!dot) return;
+    dot.textContent = LABEL[state] || state;
+    dot.className = "host-dot" + (state === "bound" ? " ok" : state === "booting" ? "" : " warn");
+  }
+
+  /** 只在连着宿主时才发请求；独立态发出去也只会等到超时 */
+  function bound() { return state === "bound"; }
+
+  /* ================= 与宿主通信 ================= */
 
   function call(op, payload) {
     var id = "r" + ++seq;
@@ -133,8 +200,10 @@
     }
     if (m.type === "tool:context") {
       ctx = m.data;
-      if (ctx) document.documentElement.dataset.theme = ctx.theme || "light";
-      showMeta();
+      // 主题：宿主推什么用什么。独立打开时下面的 fallback 跟系统走
+      if (ctx && ctx.theme) document.documentElement.dataset.theme = ctx.theme;
+      setState("bound");
+      bootstrapHostBits();
       return;
     }
     // 被别的工具拉起时收到的数据
@@ -150,7 +219,6 @@
       // 表会被立刻重建（空表），但**界面上摆的仍是旧列表** ——
       // 不重新拉一次的话，用户清完数据看到的还是原来那几行。
       if (m.event === "schema:reset") {
-        shown = [];
         void load();
         toast("这段数据已被清空");
         return;
@@ -158,6 +226,82 @@
       toast("收到事件：" + m.event);
     }
   });
+
+  /* ==================================================================
+   * 二、数据门面：一套接口，两套实现
+   * ------------------------------------------------------------------
+   * 上面那半边是宿主（row.*），下面那半边是独立运行时的 localStorage。
+   * 调用方（load / add / del）只认这个门面，不关心自己在哪跑。
+   * ================================================================== */
+
+  /* 本地表：独立运行时数据就落在这儿。
+     用 localStorage 而不是内存，是为了"关掉再打开还在" ——
+     一个记不住东西的记事本不算能用。
+     ⚠️ file:// 下所有页面共享同一个源，所以 key 必须带工具 id，
+     否则两个工具的表会互相盖。 */
+  var memFallback = Object.create(null);
+  var storageOk = true;
+  function keyOf(table) { return "wbtool:" + TOOL_ID + ":t:" + table; }
+
+  function readTable(table) {
+    try {
+      var raw = localStorage.getItem(keyOf(table));
+      storageOk = true;
+      return raw ? (JSON.parse(raw) || []) : [];
+    } catch (e) {
+      // 隐私模式 / 存储被禁：退到内存，界面上会说明"刷新即丢"
+      storageOk = false;
+      return memFallback[table] || [];
+    }
+  }
+  function writeTable(table, rows) {
+    memFallback[table] = rows;
+    try { localStorage.setItem(keyOf(table), JSON.stringify(rows)); storageOk = true; }
+    catch (e) { storageOk = false; }
+  }
+
+  var Local = {
+    select: function (a) {
+      var rows = readTable(a.table).slice();
+      var col = a.orderBy || "created_at";
+      var dir = a.orderDir === "asc" ? 1 : -1;
+      rows.sort(function (x, y) {
+        var vx = String(x[col] == null ? "" : x[col]);
+        var vy = String(y[col] == null ? "" : y[col]);
+        return vx < vy ? -dir : vx > vy ? dir : 0;
+      });
+      return { rows: rows.slice(0, a.limit || rows.length) };
+    },
+    insert: function (a) {
+      var rows = readTable(a.table);
+      var at = rows.findIndex(function (r) { return r.id === a.row.id; });
+      if (at >= 0) rows[at] = a.row; else rows.push(a.row);
+      writeTable(a.table, rows);
+      return { ok: true };
+    },
+    del: function (a) {
+      writeTable(a.table, readTable(a.table).filter(function (r) { return r.id !== a.id; }));
+      return { ok: true };
+    },
+  };
+
+  /** 门面。等状态落定再决定走哪条路 —— booting 期间就发请求会白等一次超时 */
+  function route(hostOp, localFn) {
+    return function (arg) {
+      return settle.then(function () {
+        if (bound()) return call(hostOp, arg);
+        // 被嵌在某页里却没接到宿主：这时候往浏览器本地写是**悄悄换了个地方存**，
+        // 用户以为是工作台的数据。宁可报错也不静默改落点。
+        if (state === "error") throw new Error("没接到工作台的回应，这条数据没有落点");
+        return localFn(arg);
+      });
+    };
+  }
+  var Db = {
+    select: route("row.select", Local.select),
+    insert: route("row.insert", Local.insert),
+    del: route("row.delete", Local.del),
+  };
 
   /* ---------------- 渲染 ---------------- */
 
@@ -184,9 +328,21 @@
     toastTimer = setTimeout(function () { el.classList.remove("on"); }, 2600);
   }
 
+  /** 副标题：把"数据现在存在哪"说清楚 —— 独立态说"浏览器里"，而不是让用户对着报错发懵 */
   function showMeta() {
-    if (!ctx) { document.getElementById("meta").textContent = "还没收到宿主的运行上下文"; return; }
-    document.getElementById("meta").textContent =
+    var el = document.getElementById("meta");
+    if (state === "standalone") {
+      el.textContent = "独立运行 · 数据存在这个浏览器里（" +
+        (storageOk ? "localStorage" : "内存，刷新即丢") + "）";
+      return;
+    }
+    if (state === "error") {
+      el.textContent = "被嵌进了某个页面，但一直没接到工作台的回应";
+      return;
+    }
+    if (state === "booting") { el.textContent = "连接中…"; return; }
+    if (!ctx) { el.textContent = "还没收到宿主的运行上下文"; return; }
+    el.textContent =
       "存在 " + ctx.tablePrefix + "notes · " +
       (ctx.driver === "sqlite" ? "SQLite" : "内存库") +
       " · schema v" + ctx.schemaVersion + " · " + (ctx.runtime === "desktop" ? "桌面版" : "浏览器");
@@ -214,7 +370,8 @@
         '<div class="ops">' +
           '<button data-act="del" data-id="' + esc(r.id) + '">删除</button>' +
           '<button data-act="copy" data-id="' + esc(r.id) + '">复制内容</button>' +
-          '<select data-act="send" data-id="' + esc(r.id) + '">' +
+          // 「交给别的工具」也是宿主专属的：独立打开时没有"别的工具"
+          '<select data-host-only data-act="send" data-id="' + esc(r.id) + '">' +
             '<option value="">交给…</option>' +
             peers.map(function (p) { return '<option value="' + esc(p.id) + '">' + esc(p.name) + "</option>"; }).join("") +
           "</select>" +
@@ -228,13 +385,13 @@
   async function load() {
     var q = document.getElementById("search").value.trim();
     try {
-      var res = await call("row.select", {
+      var res = await Db.select({
         table: "notes",
         orderBy: "created_at",
         orderDir: "desc",
         limit: 100,
       });
-      shown = res.rows || [];
+      shown = (res && res.rows) || [];
       var low = q.toLowerCase();
       render(shown.filter(function (r) {
         if (!q) return true;
@@ -242,6 +399,7 @@
           return String(v || "").toLowerCase().indexOf(low) >= 0;
         });
       }));
+      if (state === "standalone") showMeta();   // 读到之后才知道 localStorage 通不通，副标题要跟上
     } catch (err) {
       document.getElementById("list").innerHTML =
         '<div class="empty">读不到数据：' + esc(err.message) + "</div>";
@@ -254,7 +412,7 @@
     var tag = document.getElementById("tag").value.trim();
     if (!title && !body.trim()) { toast("至少写点东西"); return; }
     try {
-      await call("row.insert", {
+      await Db.insert({
         table: "notes",
         row: {
           id: "n-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),
@@ -267,7 +425,8 @@
       document.getElementById("title").value = "";
       document.getElementById("body").value = "";
       await load();
-      toast("已存进工具自己的表里");
+      toast(bound() ? "已存进工具自己的表里" : "已存在这个浏览器里");
+      if (state === "standalone") showMeta();
     } catch (err) {
       toast("存不进去：" + err.message);
     }
@@ -290,7 +449,7 @@
 
     if (btn.getAttribute("data-act") === "del") {
       try {
-        await call("row.delete", { table: "notes", id: id });
+        await Db.del({ table: "notes", id: id });
         await load();
         toast("已删除");
       } catch (err) { toast("删不掉：" + err.message); }
@@ -300,7 +459,7 @@
       try {
         await navigator.clipboard.writeText(String(row.body || row.title || ""));
         toast("已复制");
-      } catch { toast("这个环境下复制不了，手动选一下吧"); }
+      } catch (err) { toast("这个环境下复制不了，手动选一下吧"); }
     }
   });
 
@@ -323,21 +482,51 @@
     } catch (err) { toast("交不过去：" + err.message); }
   });
 
+  /* ---------------- 只有连着宿主才有的那点东西 ---------------- */
+
+  function bootstrapHostBits() {
+    void (async function () {
+      try {
+        var info = await call("schema.info", {});
+        document.getElementById("schema").textContent = JSON.stringify(info, null, 2);
+      } catch (err) {
+        document.getElementById("schema").textContent = "读不到表结构：" + err.message;
+      }
+      try {
+        var listed = await call("tools.list", {});
+        peers = listed.tools || [];
+      } catch (err) { peers = []; }
+      renderPeers();
+      await load();   // peers 变了，行里的「交给…」下拉要重画一遍
+    })();
+  }
+
   /* ---------------- 启动 ---------------- */
 
-  (async function boot() {
+  (function boot() {
+    paintHostDot();
+    showMeta();
+
+    // 独立打开时没有宿主推主题，跟系统走。宿主一旦连上会用 ctx.theme 覆盖掉
     try {
-      var info = await call("schema.info", {});
-      document.getElementById("schema").textContent = JSON.stringify(info, null, 2);
-    } catch (err) {
-      document.getElementById("schema").textContent = "读不到表结构：" + err.message;
-    }
-    try {
-      var listed = await call("tools.list", {});
-      peers = listed.tools || [];
-      renderPeers();
-    } catch { peers = []; renderPeers(); }
-    await load();
+      if (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) {
+        document.documentElement.dataset.theme = "dark";
+      }
+    } catch (err) { /* 老浏览器没有 matchMedia，保持浅色 */ }
+
+    // 超时兜底：到点还没有上下文，就按"在不在 iframe 里"分类
+    setTimeout(function () {
+      if (state !== "booting") return;
+      setState(parent === window ? "standalone" : "error");
+      void load();
+    }, 1200);
+
+    // 连上宿主那一次：上面那个超时器不会再开火，改成从宿主拉数据。
+    // 宿主是在 iframe 的 load 之后才推 context 的，而本脚本在 load 之前就跑完了，
+    // 所以"这里还没收到"是正常时序，不是异常。
+    void settle.then(function () {
+      if (bound()) bootstrapHostBits();
+    });
   })();
 })();
 </script>
