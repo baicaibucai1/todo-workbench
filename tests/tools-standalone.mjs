@@ -299,6 +299,92 @@ console.log("\n=== 5. AI 生成 ai-gen ===");
   await expectCommon("ai-gen", "AI 生成", "http");
 }
 
+/* ==================================================================
+ * 6. 深浅色：独立打开时跟系统走
+ *
+ * 独立态没有宿主推主题，只能看 prefers-color-scheme。这里强制两种配色
+ * 各开一遍，然后**按面积**算底色到底翻没翻过来 ——
+ * 「半深半浅」这种事看截图很容易漏（尤其是边框、分隔线这种细东西），
+ * 按面积算百分比反而抓得准。
+ *
+ * 判据是两头的占比，不是具体色值：色值会随设计变，占比不会。
+ * ================================================================== */
+console.log("\n=== 6. 深浅色（独立打开跟系统走）===");
+
+const THEME_TOOLS = [
+  ["image-crop", "图片裁剪"],
+  ["size-chart", "尺码表"],
+  ["scratchpad", "模板"],
+  ["notes", "便签"],
+  ["ai-gen", "AI 生成"],
+];
+
+/**
+ * 按面积统计页面上不透明底色的明暗占比。
+ * bright 里只收**大块**（>4000px²）的亮色元素：小面积的亮色是合法的，
+ * 比如尺码表里那个"成品颜色预览"的小方块 —— 它显示的是用户给表格选的
+ * 颜色（数据），不是界面底色，本来就不该跟着主题变暗。
+ */
+function colorStats() {
+  return page.evaluate(() => {
+    const lum = (s) => {
+      const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.%]+))?\s*\)/.exec(s || "");
+      if (!m) return null;
+      const a = m[4] === undefined ? 1 : m[4].endsWith("%") ? parseFloat(m[4]) / 100 : parseFloat(m[4]);
+      if (a < 0.5) return null;               // 半透明的（蒙层、阴影）不算
+      const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+      return 0.2126 * f(+m[1]) + 0.7152 * f(+m[2]) + 0.0722 * f(+m[3]);
+    };
+    let light = 0;
+    let dark = 0;
+    let total = 0;
+    let n = 0;
+    const bright = [];
+    for (const el of document.querySelectorAll("*")) {
+      if (++n > 6000) break;
+      const L = lum(getComputedStyle(el).backgroundColor);
+      if (L === null) continue;
+      const r = el.getBoundingClientRect();
+      const area = Math.max(0, r.width * r.height);
+      total += area;
+      if (L > 0.6) {
+        light += area;
+        if (area > 4000) bright.push(`${el.id || el.className || el.tagName.toLowerCase()}(${Math.round(area)})`);
+      } else if (L < 0.3) {
+        dark += area;
+      }
+    }
+    const bs = getComputedStyle(document.body);
+    return {
+      theme: document.documentElement.getAttribute("data-theme"),
+      lightPct: total ? light / total : 0,
+      darkPct: total ? dark / total : 0,
+      bodyBg: bs.backgroundColor,
+      bodyTextLum: lum(bs.color),
+      bright: bright.slice(0, 4),
+    };
+  });
+}
+
+for (const [id, label] of THEME_TOOLS) {
+  await page.emulateMedia({ colorScheme: "light" });
+  await openStandalone(id, "file");
+  const lt = await colorStats();
+  check(`${label} [浅色]：界面是浅的`, lt.lightPct >= 0.9, `浅色面积 ${(lt.lightPct * 100).toFixed(1)}%`);
+  check(`${label} [浅色]：html[data-theme] 没落成 dark`, lt.theme !== "dark", String(lt.theme));
+
+  await page.emulateMedia({ colorScheme: "dark" });
+  await openStandalone(id, "file");
+  const dk = await colorStats();
+  check(`${label} [深色]：html[data-theme] 落到 dark`, dk.theme === "dark", String(dk.theme));
+  check(`${label} [深色]：底色翻过来了（深色面积 ≥90%）`, dk.darkPct >= 0.9,
+    `深色面积 ${(dk.darkPct * 100).toFixed(1)}%`);
+  check(`${label} [深色]：没有大块漏白的元素`, dk.bright.length === 0, JSON.stringify(dk.bright));
+  check(`${label} [深色]：正文色也跟着变浅`, (dk.bodyTextLum || 0) > 0.5, `亮度 ${dk.bodyTextLum}`);
+  info(`${label} 底色`, `${lt.bodyBg} → ${dk.bodyBg}`);
+}
+await page.emulateMedia({ colorScheme: "light" });
+
 /* ---------------- 汇总 ---------------- */
 await browser.close();
 await new Promise((r) => server.close(r));

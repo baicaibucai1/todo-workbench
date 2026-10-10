@@ -527,6 +527,66 @@ console.log("\n8. 直达链接 ?tool=<id>");
   await p2.close();
 }
 
+/* ------------------------------------------------------------------
+ * 8.5 宿主切深浅色，iframe 里的工具要跟着切
+ *
+ * 工具的界面深浅色有两个来源。独立打开时跟系统的 prefers-color-scheme
+ * （那一条在 tools-standalone.mjs 里验）；**嵌在工作台里时跟宿主推来的
+ * ctx.theme** —— 后者只有"工具真的挂在宿主里"才验得到，所以钉在这儿。
+ *
+ * 宿主侧是靠 MutationObserver 盯着 <html data-theme>，一变就重推一次上下文
+ * （见 src/components/ToolHost.tsx），所以这里改的是宿主自己的主题，
+ * 再回来看 iframe 里跟没跟上。
+ * ------------------------------------------------------------------ */
+console.log("\n8.5 宿主切深浅色，工具跟着切");
+{
+  const frameTheme = () =>
+    page.evaluate(() => {
+      const f = document.querySelector("iframe");
+      if (!f || !f.contentDocument) return "no-iframe";
+      return f.contentDocument.documentElement.getAttribute("data-theme");
+    });
+  const frameBodyBg = () =>
+    page.evaluate(() => {
+      const f = document.querySelector("iframe");
+      if (!f || !f.contentDocument) return "";
+      return getComputedStyle(f.contentDocument.body).backgroundColor;
+    });
+  const lum = (s) => {
+    const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(s || "");
+    if (!m) return null;
+    const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(+m[1]) + 0.7152 * f(+m[2]) + 0.0722 * f(+m[3]);
+  };
+  const setHostTheme = async (want) => {
+    await page.locator('aside [data-nav="settings"]').click();
+    await page.waitForTimeout(400);
+    await page.locator('[data-section="appearance"]').click();
+    await page.waitForTimeout(300);
+    await page.locator(`[data-theme-option="${want}"]`).click();
+    await page.waitForTimeout(500);
+    const attr = await page.evaluate(() => document.documentElement.dataset.theme);
+    check(`宿主主题切到 ${want}`, attr === want, String(attr));
+  };
+
+  await setHostTheme("dark");
+  await toolRow.click();
+  await page.waitForTimeout(1500); // 等 iframe 起来 + 上下文推过来
+  const darkTheme = await frameTheme();
+  const darkBg = await frameBodyBg();
+  check("工具 iframe 里 html[data-theme] 跟着变成 dark", darkTheme === "dark", String(darkTheme));
+  check("工具界面真的暗了（body 底色亮度 < 0.3）", (lum(darkBg) ?? 1) < 0.3, String(darkBg));
+
+  await setHostTheme("light");
+  await toolRow.click();
+  await page.waitForTimeout(1500);
+  const lightTheme = await frameTheme();
+  const lightBg = await frameBodyBg();
+  check("切回浅色后工具也跟着回浅色", lightTheme === "light", String(lightTheme));
+  check("工具界面真的回浅色了（body 底色亮度 > 0.6）", (lum(lightBg) ?? 0) > 0.6, String(lightBg));
+  info("工具底色", `${darkBg} → ${lightBg}`);
+}
+
 console.log("\n9. 收尾");
 check("全程无控制台错误", errors.length === 0, errors.slice(0, 5).join(" | "));
 

@@ -164,17 +164,44 @@ var Db = {
 - **favicon**：`<link rel="icon" href="data:image/svg+xml,…">` 内联一个。
   不写的话浏览器会去要 `/favicon.ico`，控制台留一条 404 —— 不影响功能，
   但一条红字会让人以为工具坏了。
-- **主题**：独立态没有宿主推主题，跟系统走：
+- **主题**：界面深浅色只认 `<html data-theme>` 一处，**两路来源都要接**：
   ```js
-  if (state === "standalone") document.documentElement.dataset.theme =
-    matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  function applyTheme(theme) {   // "dark" / "light"；传别的＝交还给系统
+    if (theme === "dark" || theme === "light") document.documentElement.dataset.theme = theme;
+    else delete document.documentElement.dataset.theme;
+  }
+  // ① 装在宿主里时，宿主推来的 ctx.theme 是**唯一**来源
+  //    在 tool:context 分支里： applyTheme(ctx && ctx.theme)
+  // ② 独立打开时没有宿主可问，跟系统走
+  applyTheme(matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   ```
+  两条缺一不可：只写①，独立打开会停在浅色；只写②，宿主切主题工具不跟。
+  宿主切深浅色时会**重推一次 `tool:context`**（`ToolHost` 用 MutationObserver
+  盯着宿主的 `data-theme`），所以①接好了就自动生效，不用自己轮询。
+- **`color-scheme` 别忘**：`html` 上写 `color-scheme: light`、深色块里写
+  `color-scheme: dark`。不写的话浏览器**自带控件**（取色器、滑杆、下拉、原生滚动条）
+  在深色下还是浅色的一坨 —— 自己写的按钮全变暗了，就这几个没变，特别扎眼。
+- **压在内容上的东西要故意留亮**：裁剪/贴纸的手柄、透明棋盘格、压在照片上的网格线。
+  用户可能在编辑一张深色照片，这些跟着主题变暗就找不着了。
+  它们是**例外**，写死白色并在代码里注明原因，别一起收进变量。
+- **收口方式**：把写死的浅色收成变量时，**浅色值保持原样**（新变量的默认值就等于
+  原来的字面量），深色只覆盖变量。这样浅色是零回归的（`tools-standalone.mjs` 里
+  按面积逐值比对，能证到"一模一样"），深色也只需要十几行。
 
 #### 样板与回归
 
-`tools/scratchpad/index.html` 是这套约定的样板（它本来就是"照着抄"用的），
-`tests/tools-standalone.mjs` 逐个把工具用 `file://` 打开，
-钉住"0 报错 / `bindState` 正确 / 宿主专属控件不可见 / 核心动作能落地"这几条。
+`tools/scratchpad/index.html` 是这套约定的样板（它本来就是"照着抄"用的）。
+
+回归分两处，因为它们覆盖的是两条不同的路：
+
+| 套件 | 验什么 | 判据 |
+| --- | --- | --- |
+| `tests/tools-standalone.mjs` | 用 `file://`（等于双击）与 `http://` 各开一遍：0 报错 / `bindState` 正确 / 宿主专属控件不可见 / 核心动作能落地；**外加深浅色** | 深浅色那条按**面积**算明暗占比：深色下深色面积 ≥90%、没有大块漏白，浅色下反过来。占比比具体色值稳，不会因为配色微调就红 |
+| `tests/tool-browser.mjs` §8.5 | 工具**挂在工作台里**时，宿主切深浅色，iframe 里要跟着切 | 切到深色后 iframe 的 `html[data-theme]=dark` 且 body 底色亮度 < 0.3，切回来同理 |
+
+「浅色零回归」不是靠嘴说的：`tests/tools-standalone.mjs` 会把页面上**所有元素**的背景色按面积
+汇总，改动前后逐值比对，浅色那一趟必须一字不差。收 60 多处硬编码色进变量、
+浅色一个像素不动，靠的就是这条。
 
 ### 装入方式有两种，效果不同
 

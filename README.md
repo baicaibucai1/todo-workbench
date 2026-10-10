@@ -658,11 +658,21 @@ CSS/JS 必须内联，相对引用不会跟着进来（原因见 `ToolHost` 里�
   光设 `hidden` 按钮照常露着（`image-crop` 与 `size-chart` 都踩过这个坑）；
 - 数据层留一个 `localStorage` 兜底（`wbtool:<id>:…`，同一个 `file://` 源跨页共享，
   所以键要带工具 id），界面上说清「数据存在这个浏览器里」；
-- 内联一个 SVG favicon、独立态跟系统深浅色走。
+- 内联一个 SVG favicon；
+- **深浅色两路都要接**：装在宿主里跟宿主推来的 `ctx.theme`，独立打开跟系统的
+  `prefers-color-scheme`。另外 `html` 上要写 `color-scheme: light` / 深色块里写
+  `color-scheme: dark`，否则浏览器自带控件（取色器、滑杆）在深色下还是浅色的一坨。
+
+五个工具现在**浅深两套都是齐的**，而且浅色那一套是零改动 —— 收变量时把浅色值原样
+留在变量默认值里，深色只覆盖变量，所以 `image-crop`（原来 6500 行里一处 `data-theme`
+都没有）和 `size-chart`（`theme=dark` 设了但 CSS 里没有对应规则，等于空转）这次是
+**只加深色、不动浅色**地补齐的。
 
 约定全文见《工具编写与注入》的「脱离工作台也能跑」一节；`tools/scratchpad` 是照着抄的
-样板；`node tests/tools-standalone.mjs` 把这几条钉死（76 项：逐个用 `file://` 与 `http://`
-打开，验 0 报错 / 状态正确 / 宿主专属控件一个不露 / 核心动作真的能落地）。
+样板。回归分两处：`node tests/tools-standalone.mjs`（**106 项**：逐个用 `file://` 与
+`http://` 打开，验 0 报错 / 状态正确 / 宿主专属控件一个不露 / 核心动作真的能落地 /
+深浅色按面积翻没翻过来）；`tests/tool-browser.mjs` §8.5 补上「工具挂在工作台里时
+宿主切主题、iframe 跟着切」这一路。
 
 ### 数据隔离
 
@@ -1109,6 +1119,11 @@ npm run icons:check  # 校验 PNG 结构、ICO 各帧、配置引用，以及 lo
 - [x] **五个内置工具都能脱离工作台单独当网页用**：统一状态机 + 宿主专属控件交 CSS 藏 +
       数据层 localStorage 兜底（便签与模板原来独立打开是"读不到数据"，现在是真能记事）；
       `tests/tools-standalone.mjs` 76 项钉住
+- [x] **五个工具的深色主题补齐**：`image-crop` 原来一处 `data-theme` 都没有、
+      `size-chart` 设了属性但 CSS 里没有对应规则（等于空转），现在都真的能切；
+      外壳写死的 60 多处浅色收成变量，**浅色值原样保留**所以浅色零回归；
+      嵌在工作台里跟宿主 `ctx.theme`、独立打开跟系统偏好，两路都接；
+      `tools-standalone.mjs` 加 30 项（共 106）、`tool-browser.mjs` §8.5 补嵌态那一路
 - [ ] 列表内拖拽排序（当前排序规则固定：重要 / 到期 / 创建）
 
 ---

@@ -410,13 +410,40 @@ store.ts:132 注释说 `from = null` 表示宿主自己（比如"图床里用某
 （与权重无关，作者样式一律压过 UA 样式）** —— 光设 `hidden` 属性，按钮照样在。
 
 现在统一成四条约定（四态 `bindState` / 宿主专属控件标 `data-host-only`·`data-host-gallery`
-交 CSS 藏 / 数据层留 `localStorage` 兜底 / 内联 favicon 与跟随系统深浅色），
+交 CSS 藏 / 数据层留 `localStorage` 兜底 / 内联 favicon 与深浅色两路都接），
 写在 `docs/tool-authoring-and-injection.md`「脱离工作台也能跑」，
-样板是 `tools/scratchpad`，回归是 `tests/tools-standalone.mjs`（76 项，
-逐个用 `file://` 与 `http://` 打开，验 0 报错 / 状态正确 / 宿主控件不露 / 核心动作能落地）。
+样板是 `tools/scratchpad`，回归是 `tests/tools-standalone.mjs`（106 项，
+逐个用 `file://` 与 `http://` 打开，验 0 报错 / 状态正确 / 宿主控件不露 / 核心动作能落地 /
+深浅色按面积翻没翻过来）。
 
-残留：`image-crop` 到现在**没有深色主题**（全仓 0 处 `data-theme`），
-"独立态跟系统走"那条对它无效 —— 它 6500 行 CSS 全是硬编码浅色，要单独一轮才动得了。
+**深色主题这一条后来单独补了一轮**（2026-10-10，同一批）。当时的实况比预想的差：
+
+| 工具 | 症状 |
+|---|---|
+| `notes` / `scratchpad` / `ai-gen` | 本来就有 `[data-theme="dark"]` 那套，是好的 |
+| `size-chart` | **空转** —— `<script>` 顶部确实按 `prefers-color-scheme` 设了 `documentElement.dataset.theme='dark'`，但 `:root` 里十几行变量一个深色覆盖都没有，全文件也没有 `html[data-theme="dark"]` 规则。实测深色下仍是 **99.8% 亮色面积** |
+| `image-crop` | **完全没有** —— 全仓 0 处 `data-theme` / 0 处 `prefers-color-scheme` |
+
+补法是**只加不改**：外壳里写死的浅色（`size-chart` 60 多种、`image-crop` 24 种）逐个收成变量，
+**浅色值原样搬进变量的默认值**，深色只覆盖变量。于是：
+
+- 浅色是**逐值可证的一模一样** —— `tools-standalone.mjs` 把页面上所有元素的背景色按面积汇总，
+  改动前后比对，五个工具全部「完全一致」；
+- 深色只需十几行，且判据是**面积占比**（深色下深色面积 ≥90%、没有大块漏白），
+  比对着截图找漏白可靠得多。
+
+两个额外踩到的点，都写进契约了：
+
+1. **边框要反过来**。浅色里边框比面板**暗**、画布比面板**暗**、悬停底比面板**亮** ——
+   这三种关系在深色下不能按同一列亮度带顺下来（否则边框会比面板还暗，等于整条线消失）。
+   得按实际用途逐类定。
+2. **`color-scheme` 不能省**。`size-chart` 里那些没写背景的表单控件（`input`、取色器）
+   靠的是浏览器默认样式，光改 CSS 变量它们不变 —— 深色下就剩这几个是浅色的一坨。
+   `html` 上写 `color-scheme: light`、深色块里写 `color-scheme: dark` 才行。
+
+三类东西**故意留亮**，不属于漏改：`image-crop` 的裁剪/贴纸手柄与透明棋盘格
+（用户可能在编辑深色照片）、压在照片上的网格线、`size-chart` 里那个显示"表格成品颜色"的
+小色块（那是数据不是界面）。
 
 ### 5.5 改动时不能弄坏的测试
 
