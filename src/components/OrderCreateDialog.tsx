@@ -5,16 +5,11 @@ import {
   Star,
   Settings2,
   AlertTriangle,
-  Timer,
   Plus,
   Trash2,
 } from "lucide-react";
 import { useStore } from "../store";
 import { addDays, today } from "../lib/repo";
-import { isEnabled } from "../lib/extensions/registry";
-import { DUE_PRESETS, dueAtText } from "../lib/due";
-import { COURIERS, courierName, detectCourier } from "../lib/couriers";
-import type { WorkOrderKind } from "../types";
 import DateTimePicker from "./DateTimePicker";
 
 /**
@@ -25,28 +20,17 @@ import DateTimePicker from "./DateTimePicker";
  * 得再点进去删的垃圾数据。开流程任务本来就不是一件"随手记一笔"的事，
  * 所以这里走弹窗：填完再建，取消就什么都不留。
  *
- * 普通流程任务填的是「描述」而不是单号 —— 从 schema v13 起不再自动编号
+ * 流程任务填的是「描述」而不是单号 —— 从 schema v13 起不再自动编号
  * （那个 WO- 号用户手上没有对应的单据，对不上账，见 types.ts）。
- * 特殊单号那边仍然是快递单号 + 处理时效，两者互不影响。
+ * 「特殊单号」删掉后，快递单号与处理时效这两个入口也一并没了。
  */
 export default function OrderCreateDialog({
   initialTitle = "",
-  initialNo = "",
-  initialKind = "normal",
   onClose,
   onCreated,
 }: {
   /** 底部输入框里已经打的字，带进来免得重打一遍 */
   initialTitle?: string;
-  /**
-   * 底部输入框里的字该落到哪个字段上。
-   *
-   * 在「特殊单号」视图里，人在那个框里粘的是**快递单号**（那是这类单子的起点），
-   * 不是标题 —— 同一个输入框，两种视图下语义不同，所以由调用方决定往哪灌。
-   */
-  initialNo?: string;
-  /** 按哪种单来开：从「特殊单号」视图进来就是 special */
-  initialKind?: WorkOrderKind;
   onClose: () => void;
   onCreated?: () => void;
 }) {
@@ -54,38 +38,18 @@ export default function OrderCreateDialog({
     flows,
     stages,
     allWoFields,
-    orders,
     createOrder,
     openFlowEditor,
-    openOrder,
-    settings,
   } = useStore();
 
-  const specialOn = isEnabled(settings, "special");
-
-  /**
-   * 关掉「特殊单号」后不该还能开出这类单子。
-   *
-   * initialKind 由调用方（从哪个视图点进来的）决定，关掉后那个视图本来就不该
-   * 存在，但这里仍要自己挡一道：一个过期的调用点、或者以后新加的入口，
-   * 就能绕过开关造出一张界面上再也看不见的单。
-   */
-  const [kind, setKind] = useState<WorkOrderKind>(
-    initialKind === "special" && !specialOn ? "normal" : initialKind,
-  );
   const [title, setTitle] = useState(initialTitle);
   const [description, setDescription] = useState("");
-  const [no, setNo] = useState(initialNo);
   const [flowId, setFlowId] = useState("");
   const [stageId, setStageId] = useState("");
   const [startDate, setStartDate] = useState(today());
   const [dueDate, setDueDate] = useState<string | null>(null);
   const [important, setImportant] = useState(false);
   const [note, setNote] = useState("");
-  /** 处理时效（ISO）。空字符串表示还没设 */
-  const [stageDueAt, setStageDueAt] = useState("");
-  /** 用户是否手动碰过时效。碰过之后换过程态就不再自动覆盖 */
-  const [dueTouched, setDueTouched] = useState(false);
   /**
    * 建单时一起绑上的相关信息。
    *
@@ -99,22 +63,6 @@ export default function OrderCreateDialog({
   ]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /**
-   * 用户**手动指定**的快递商。空串 = 跟着识别结果走。
-   *
-   * 只存"手动指定"的那一半：自动识别是每次算的，把猜测结果存进库里，
-   * 以后规则修好了老数据也还是错的。
-   */
-  const [courierCode, setCourierCode] = useState("");
-
-  const isSpecial = kind === "special";
-
-  /** 当前单号认出来是谁家的（不落库，只用来显示与兜底） */
-  const guess = useMemo(
-    () => (isSpecial ? detectCourier(no) : null),
-    [isSpecial, no],
-  );
-
   const flowStages = useMemo(
     () =>
       stages
@@ -141,51 +89,21 @@ export default function OrderCreateDialog({
       .map(([label]) => label);
   }, [allWoFields]);
 
-  /**
-   * 同一个快递单号是不是已经登记过。
-   *
-   * 只**提醒**不拦：同一张单隔两周又出问题、需要再记一张是完全正常的，
-   * 硬拦下来反而逼着人去改单号。但"我到底登记过没有"是翻记录时最常问的一句，
-   * 顺手答掉能省一次搜索。
-   */
-  const duplicate = useMemo(() => {
-    const n = no.trim().toLowerCase();
-    if (!isSpecial || !n) return null;
-    return (
-      orders.find((o) => o.kind === "special" && o.no.trim().toLowerCase() === n) ?? null
-    );
-  }, [no, isSpecial, orders]);
 
   // 流程是异步加载的，第一次渲染时可能还没有。等它到了再定默认，
   // 而不是在 useState 初始值里赌一把 —— 那样首次打开会停在空选项上。
   //
-  // 特殊单号优先选名字里带"特殊单号"的那套流程（首次运行会种一套，
-  // 它的过程态带着默认时效）；没有就退回默认流程，不硬造一套出来。
+  // 第一次渲染时流程可能还没加载完。等它到了再定默认，
+  // 而不是在 useState 初始值里赌一把 —— 那样首次打开会停在空选项上。
   useEffect(() => {
     if (flowId || !flows.length) return;
-    const preferred = isSpecial ? flows.find((f) => f.name.includes("特殊单号")) : undefined;
-    setFlowId((preferred ?? flows.find((f) => f.isDefault) ?? flows[0]).id);
-  }, [flows, flowId, isSpecial]);
+    setFlowId((flows.find((f) => f.isDefault) ?? flows[0]).id);
+  }, [flows, flowId]);
 
   // 换流程后原来选的过程态多半不存在了。这里不写 effect 去重置，
   // 而是每次渲染算一个"有效值"——少了来回 setState，也不会闪一下错值。
   const effectiveStageId =
     stageId && flowStages.some((s) => s.id === stageId) ? stageId : (flowStages[0]?.id ?? "");
-
-  const effectiveStage = flowStages.find((s) => s.id === effectiveStageId);
-
-  /**
-   * 把这一步的默认时效带进输入框。
-   *
-   * 只在用户**没手动碰过**时效时覆盖：他要是先把手填的 10 分钟填好了，
-   * 再回头换个过程态就把输入冲掉，那是很讨厌的行为。
-   */
-  useEffect(() => {
-    if (!isSpecial || dueTouched) return;
-    const min = effectiveStage?.defaultMinutes ?? 0;
-    setStageDueAt(min > 0 ? new Date(Date.now() + min * 60_000).toISOString() : "");
-    // effectiveStage 每次渲染都是新算出来的对象，依赖它的两个字段就够了
-  }, [isSpecial, dueTouched, effectiveStage?.id, effectiveStage?.defaultMinutes]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -202,23 +120,8 @@ export default function OrderCreateDialog({
 
   const submit = async () => {
     const t = title.trim();
-    const orderNo = no.trim();
 
-    if (isSpecial) {
-      // 起点是快递单号，没有它就无从对账 —— 这里不要自动生成一个 WO- 号顶上，
-      // 那只会让人以为"随便填也行"
-      if (!orderNo) {
-        setError("特殊单号以快递单号为起点，这一项必填");
-        return;
-      }
-      // 时效是这类单子的意义所在：没有时效，"等不起"就无从谈起，
-      // 它也就退化成了一张普通流程任务。宁可拦在这里，也不要悄悄建一张没时效的
-      // ——那种单子不会提醒、排序也排在最后，等于白建。
-      if (!stageDueAt) {
-        setError("特殊单号必须填处理时效（到下一步之前还剩多久）");
-        return;
-      }
-    } else if (!t) {
+    if (!t) {
       setError("流程任务标题不能为空");
       return;
     }
@@ -231,24 +134,16 @@ export default function OrderCreateDialog({
     setError(null);
     try {
       await createOrder({
-        // 特殊单号允许留空标题，退化成快递单号 —— 这类单子本来就是靠号认的
-        title: t || (isSpecial ? orderNo : ""),
-        // 描述只属于普通流程任务：特殊单号那边已经有快递单号与时效，
-        // 再挂一句描述不会有人填，只会让弹窗更长
-        description: isSpecial ? "" : description.trim(),
-        // 单号只给特殊单号。普通流程任务连输入框都没有了，
-        // 这里再传就等于开后门造一张"界面上看不见它的号"的单
-        no: isSpecial ? orderNo : undefined,
-        kind,
+        title: t,
+        description: description.trim(),
+        kind: "normal",
         flowId,
         stageId: effectiveStageId,
         startDate,
         dueDate,
-        stageDueAt: isSpecial ? stageDueAt : null,
+        stageDueAt: null,
         important,
         note: note.trim(),
-        // 只存用户手动指定的那次；留空表示"以后按单号自动识别"
-        courier: courierCode || undefined,
         // 建单时就一起绑上。分两步（先建单、再回详情里一条条加）
         // 在连着登记好几张单的时候格外烦。
         // 两种流程任务都支持 —— 字段名由用户定，宿主不预设一套。
@@ -277,14 +172,8 @@ export default function OrderCreateDialog({
       >
         {/* 标题栏 */}
         <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-4">
-          {isSpecial ? (
-            <Timer size={15} className="text-special" />
-          ) : (
-            <ClipboardList size={15} className="text-primary" />
-          )}
-          <span className="text-[14px] font-medium">
-            {isSpecial ? "登记特殊单号" : "新建流程任务"}
-          </span>
+          <ClipboardList size={15} className="text-primary" />
+          <span className="text-[14px] font-medium">新建流程任务</span>
           <div className="flex-1" />
           <button
             type="button"
@@ -315,141 +204,34 @@ export default function OrderCreateDialog({
         )}
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          {/* 类型：普通流程任务 / 特殊单号。跟着进入时的视图预选，
-              但仍然留在这里可切 —— 建错类型不用关掉重开一遍。
-
-              模块关掉时整条切换栏收掉：只剩一项可选时，一个点了也不会有
-              别的结果的 tab，比没有它更让人困惑。 */}
-          {specialOn && (
-            <div className="mb-3 flex items-center rounded-lg bg-chip p-0.5">
-              <KindTab
-                active={!isSpecial}
-                onClick={() => setKind("normal")}
-                icon={<ClipboardList size={12} />}
-                label="普通流程任务"
-                kind="normal"
-                accent="var(--color-primary)"
-              />
-              <KindTab
-                active={isSpecial}
-                onClick={() => setKind("special")}
-                icon={<Timer size={12} />}
-                label="特殊单号"
-                kind="special"
-                accent="var(--color-special)"
-              />
-            </div>
-          )}
-
-          {/* 特殊单号的起点：快递单号。它就是这张单的单号，所以排在最前面 */}
-          {isSpecial && (
-            <Field label="快递单号（起点）" required>
-              <input
-                autoFocus
-                value={no}
-                onChange={(e) => setNo(e.target.value)}
-                data-oc-no=""
-                placeholder="粘贴快递单号"
-                className="w-full rounded-lg border border-line bg-card px-2.5 py-2 font-mono text-[13.5px] text-fg outline-none placeholder:font-sans placeholder:text-fg-dim focus:border-special"
-              />
-            </Field>
-          )}
-
-          {/* 快递商：自动识别 + 认错了能改一次。
-              识别结果**不落库**（只在库里记"手动指定过谁"），
-              所以规则以后修好了，这批老数据也会跟着变对 */}
-          {isSpecial && (
-            <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1">
-              <span
-                data-oc-courier-guess={guess?.code ?? ""}
-                className="shrink-0 text-[11.5px] text-fg-dim"
-              >
-                {!no.trim()
-                  ? "粘贴单号后自动识别快递商"
-                  : guess
-                    ? `${guess.certain ? "识别为" : "可能是"} ${courierName(guess.code)}${
-                        !guess.certain && guess.candidates.length > 1
-                          ? `（也可能是 ${guess.candidates
-                              .slice(1, 3)
-                              .map((c) => courierName(c))
-                              .join(" / ")}）`
-                          : ""
-                      }`
-                    : "没认出是哪家，可手动指定"}
-              </span>
-              <select
-                value={courierCode}
-                onChange={(e) => setCourierCode(e.target.value)}
-                data-oc-courier=""
-                title="认错了就在这里改一次，改完按你说的算"
-                className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-0.5 text-[11.5px] text-fg-2 outline-none"
-              >
-                <option value="">
-                  {guess ? `跟随识别（${courierName(guess.code)}）` : "跟随识别"}
-                </option>
-                {COURIERS.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* 重复登记提醒：不拦，但给一条直接去那张单的路 */}
-          {isSpecial && duplicate && (
-            <div
-              data-oc-dup=""
-              className="mt-1 flex items-center gap-1.5 rounded-md bg-tip-bg px-2 py-1 text-[11.5px] text-tip-text"
-            >
-              <AlertTriangle size={12} className="shrink-0" />
-              <span className="min-w-0 flex-1 truncate">
-                这个单号已经登记过（
-                {stages.find((s) => s.id === duplicate.stageId)?.name ?? "未知步骤"}
-                {duplicate.closed ? " · 已完结" : ""}）
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  openOrder(duplicate.id);
-                }}
-                data-oc-dup-open=""
-                className="shrink-0 rounded px-1.5 py-0.5 hover:bg-tip-line"
-              >
-                打开那条
-              </button>
-            </div>
-          )}
-
+          {/* 「特殊单号」的类型切换、快递单号输入框、快递商识别、重复登记提醒
+              这四块随该功能一起删除（2026-10-10）。删掉后这个弹窗
+              只剩「普通流程任务」一种形态，不再有第二种种类的入口。 */}
           {/* 标题 */}
-          <Field label="标题" required={!isSpecial}>
+          <Field label="标题" required>
             <input
-              autoFocus={!isSpecial}
+              autoFocus
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               data-oc-title=""
-              placeholder={isSpecial ? "留空就用快递单号当标题" : "这张单要解决什么"}
+              placeholder="这张单要解决什么"
               className="w-full rounded-lg border border-line bg-card px-2.5 py-2 text-[13.5px] text-fg outline-none placeholder:text-fg-dim focus:border-primary"
             />
           </Field>
 
           {/* 描述。
               标题只有一行 —— 那是用来扫列表的，写长了会被截断；
-              真正要交代清楚的（"空调不制冷，去年换过一次压缩机"）写在这里。
-              特殊单号不要这一项：它的语义全在快递单号与处理时效上。 */}
-          {!isSpecial && (
-            <Field label="描述">
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                data-oc-desc=""
-                rows={2}
-                placeholder="这件事要办什么（可选；标题写不下的放这里）"
-                className="mt-1.5 w-full resize-none rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim focus:border-primary"
-              />
-            </Field>
-          )}
+              真正要交代清楚的（"空调不制冷，去年换过一次压缩机"）写在这里。 */}
+          <Field label="描述">
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              data-oc-desc=""
+              rows={2}
+              placeholder="这件事要办什么（可选；标题写不下的放这里）"
+              className="mt-1.5 w-full resize-none rounded-lg border border-line bg-card px-2.5 py-2 text-[13px] leading-relaxed text-fg-2 outline-none placeholder:text-fg-dim focus:border-primary"
+            />
+          </Field>
 
           {/* 流程 + 起始过程态。两个联动，放同一行省一次纵向滚动 */}
           <div className="mt-3 flex gap-2">
@@ -499,67 +281,9 @@ export default function OrderCreateDialog({
             </div>
           )}
 
-          {/* 处理时效 —— 特殊单号的核心参数，所以紧跟在流程后面，
-              不和日期挤在一起（它俩是两件事：日期是"什么时候交"，
-              时效是"这一步到下一步之前还剩多久"） */}
-          {isSpecial && (
-            <Field label="处理时效（到下一步之前）" required>
-              <div className="mt-1 flex flex-wrap items-center gap-1.5" data-oc-due-presets="">
-                {DUE_PRESETS.map((p) => (
-                  <button
-                    key={p.label}
-                    type="button"
-                    data-oc-due-preset={p.label}
-                    onClick={() => {
-                      setDueTouched(true);
-                      setStageDueAt(p.at(Date.now()));
-                    }}
-                    className="rounded-md border border-line bg-card px-2 py-1 text-[12px] text-fg-3 hover:bg-hover"
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-              <div className="mt-1.5 flex items-center gap-2">
-                <div className="min-w-0 flex-1">
-                  <DateTimePicker
-                    mode="datetime"
-                    value={stageDueAt || null}
-                    onChange={(v) => {
-                      setDueTouched(true);
-                      setStageDueAt(v ?? "");
-                    }}
-                    align="right"
-                    inputAttrs={{ "data-oc-due-input": "" }}
-                    inputClassName="min-w-0 flex-1 rounded-lg border border-line bg-card px-2 py-1.5 text-[12.5px] text-fg-2 outline-none hover:bg-hover focus:bg-hover"
-                  />
-                </div>
-                {stageDueAt && (
-                  <button
-                    type="button"
-                    data-oc-due-clear=""
-                    onClick={() => {
-                      setDueTouched(true);
-                      setStageDueAt("");
-                    }}
-                    title="清空时效"
-                    className="grid size-7 shrink-0 place-items-center rounded text-fg-dim hover:bg-danger-soft hover:text-danger"
-                  >
-                    <X size={13} />
-                  </button>
-                )}
-              </div>
-              <div className="mt-1 px-0.5 text-[11.5px] text-fg-dim">
-                {stageDueAt
-                  ? `时效至 ${dueAtText(stageDueAt)}`
-                  : "还没设时效 —— 没有时效的特殊单号不会提醒，排序也排在最后"}
-                {effectiveStage && effectiveStage.defaultMinutes > 0 && !dueTouched
-                  ? ` · 沿用「${effectiveStage.name}」的默认时效 ${effectiveStage.defaultMinutes} 分钟`
-                  : ""}
-              </div>
-            </Field>
-          )}
-
+          {/* 处理时效（到下一步之前）的输入框原来是特殊单号的核心参数，
+              随该功能一起删除。普通流程任务不设时效，
+              所以流程任务详情里那块「时效」也只在老数据上才看得到。 */}
           {/* 相关信息：字段名由用户定，所以这里只是几行"名字 + 值"。
               两种流程任务都开放 —— 它本来就是同一张表里的同一批单，
               给普通单单独砍掉这个能力，只会逼着人把键值对写进描述里去。 */}
@@ -681,11 +405,7 @@ export default function OrderCreateDialog({
         {/* 底部按钮 */}
         <div className="flex shrink-0 items-center gap-2 border-t border-line px-4 py-3">
           <span className="min-w-0 flex-1 truncate text-[11.5px] text-fg-dim">
-            {flows.length === 0
-              ? "还没有任何流程，先去「编辑流程」建一套"
-              : isSpecial
-                ? "回车即可登记"
-                : "回车即可创建"}
+            {flows.length === 0 ? "还没有任何流程，先去「编辑流程」建一套" : "回车即可创建"}
           </span>
           <button
             type="button"
@@ -698,56 +418,13 @@ export default function OrderCreateDialog({
             type="submit"
             disabled={busy}
             data-oc-submit=""
-            className={`rounded-lg px-3.5 py-1.5 text-[13px] font-medium text-white disabled:opacity-50 ${
-              isSpecial ? "bg-special" : "bg-primary"
-            }`}
+            className="rounded-lg bg-primary px-3.5 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
           >
-            {busy ? "创建中…" : isSpecial ? "登记单号" : "创建流程任务"}
+            {busy ? "创建中…" : "创建流程任务"}
           </button>
         </div>
       </form>
     </div>
-  );
-}
-
-/**
- * 类型切换钮。跟列表顶部那排 segmented 控件同源：选中态用浅色底 + 主色字，
- * 不整块反白 —— 反白在两个选项并排时会显得很重。
- */
-function KindTab({
-  active,
-  onClick,
-  icon,
-  label,
-  kind,
-  accent,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-  /**
-   * 自动化验证用的稳定标识。
-   *
-   * 不拿 label 顶，理由同 TaskList 的 ComposeTab：界面文案是会变的
-   * （「工单」刚改成了「流程任务」），拿文案当选择器，等于每改一个字就弄红一批用例。
-   */
-  kind: WorkOrderKind;
-  accent: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      data-oc-kind={kind}
-      className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] transition-colors ${
-        active ? "bg-panel font-medium shadow-[0_1px_2px_rgba(0,0,0,0.06)]" : "text-fg-3 hover:text-fg-2"
-      }`}
-      style={active ? { color: accent } : undefined}
-    >
-      {icon}
-      {label}
-    </button>
   );
 }
 

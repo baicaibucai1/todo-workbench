@@ -96,37 +96,31 @@ const BUILTIN: ExtensionManifest[] = [
     ],
     capabilities: [],
   },
+  // 「特殊单号」（id: special）于 2026-10-10 删除，模块整段移除。
+  // 它原本是 core_work_orders.kind = 'special' 的一类流程任务，
+  // 数据由迁移 v22 清理；它独用的两个偏好（自定义列、行高密度）一并删掉，
+  // 而查件渠道与复制格式因为流程任务还在用，搬到了 SETTINGS.order*。
   {
-    // 选装（v17）：默认不带。它有完整的关闭语义 —— 入口、专属视图、
-    // 创建弹窗类型、我的一天那组、时效提醒与紧急区一起收起，
-    // 已经建好的单子仍留在「流程任务」里。
-    id: "special",
-    name: "特殊单号",
-    description: "以快递单号起算、每步带处理时效的流程任务；临期与逾期各提醒一次",
-    version: "1.0.0",
-    enabledByDefault: false,
-    injects: [
-      { kind: "nav", id: "special", group: "tasks", icon: "timer" },
-      { kind: "view", id: "special" },
-    ],
-    capabilities: [],
-  },
-  {
-    // 选装（v18）：图库是所有工具产物的**共同落点**（在以前它是写进 App.tsx
+    // 选装（v18）：图床是所有工具产物的**共同落点**（在以前它是写进 App.tsx
     // 的一个分支）。它同时提供 `gallery` 能力 —— 工具在 manifest 里申请，
     // 宿主按这个模块有没有启用决定放不放行。
     //
     // 注意 group：它不属于"看哪些任务"，属于"这个程序里还有什么地方可去"，
     // 所以和「设置」挨在一起（2026-09-22 的取舍）。
-    id: "gallery",
-    name: "图库",
+    id: "imagebed",
+    name: "图床",
     description: "所有图片 / 视频的共同落点：工具的产物存进来，工具要用的素材从这里取",
     version: "1.0.0",
-    enabledByDefault: false,
+    // 默认开：便签、AI 生成、图片裁剪都以它为落点，缺了它附图上不来
+    // （工具侧会显示「图床模块未开启」）。用户仍可在设置里关掉。
+    enabledByDefault: true,
     injects: [
-      { kind: "nav", id: "gallery", group: "places", icon: "images" },
-      { kind: "view", id: "gallery" },
+      { kind: "nav", id: "imagebed", group: "places", icon: "images" },
+      { kind: "view", id: "imagebed" },
     ],
+    // ⚠️ 能力名仍是 `gallery`：它是对**工具**的契约（manifest 里申请的那一项），
+    // 改名会让已装工具（含内置的图片裁剪 / AI 生成 / 便签）拿不到通道。
+    // 模块自己叫 imagebed，提供的服务仍叫 gallery —— 桥接那边同理。
     capabilities: ["gallery"],
   },
   {
@@ -386,13 +380,13 @@ export function isViewAvailable(settings: Record<string, string>, view: string):
 /**
  * 视图不可用时该落到哪儿。
  *
- * 特殊单号 → 流程任务而不是「我的一天」：它是流程任务的**真子集**，
- * 那批单子本来就同时躺在「流程任务」里，落那儿用户一眼能接着看，
- * 落到「我的一天」则是去了另一个地方。
- * 其余回到内核的「我的一天」—— 那是默认视图，也是最能让人知道自己在哪的一屏。
+ * 一律回到内核的「我的一天」—— 那是默认视图，也是最能让人知道自己在哪的一屏。
+ *
+ * 原先这里对「特殊单号」有个例外（落「流程任务」，因为那批单子本来也在那儿），
+ * 功能删掉后（2026-10-10）没有需要特殊对待的视图了。
  */
-export function fallbackView(view: string): string {
-  return view === "special" ? "orders" : "myday";
+export function fallbackView(_view: string): string {
+  return "myday";
 }
 
 /* ------------------------------------------------------------------ */
@@ -406,7 +400,9 @@ export function fallbackView(view: string): string {
  * 自己的私有表和 KV），不需要某个模块启用才存在。
  */
 const CAPABILITY_OWNER: Partial<Record<Capability, string>> = {
-  gallery: "gallery",
+  // 键 = 能力名（对工具的契约，仍是 gallery）；
+  // 值 = 提供它的扩展 id（模块自己叫 imagebed）。
+  gallery: "imagebed",
   attachments: CORE_EXTENSION_ID,
   // task 由内核提供（读的是待办，而待办永远是内核的地盘）。
   // 它额外还有一道"必须挂在某条待办上"的门，那道门在桥接里 ——
@@ -439,7 +435,7 @@ export function capabilityState(
  * 回绝时说给扩展听的话。
  *
  * 刻意**不抛异常**：调用方拿不到堆栈，界面上就只剩一句"出错了"，而它真正
- * 需要知道的是"图库没开，你自己想办法"。降级由调用方决定 ——
+ * 需要知道的是"图床没开，你自己想办法"。降级由调用方决定 ——
  * 宿主不替它做决定，这是整套能力的第三条边界。
  */
 export function capabilityError(state: CapabilityState, cap: Capability): string | null {

@@ -99,17 +99,17 @@ const readVal = (frame, id) =>
   }, id);
 
 /* ================================================================== */
-console.log("\n0. 先启用图库（它是选装模块，工具存图要靠它）");
+console.log("\n0. 先启用图床（它是选装模块，工具存图要靠它）");
 
-// 这个套件验的正是"工具的产物能不能落进图库"，而图库 v18 起默认不带 ——
-// 不开它，第 1 节的「从图库打开」入口就会整个消失，后面的断言全红在
+// 这个套件验的正是"工具的产物能不能落进图床"，而图床 v18 起默认不带 ——
+// 不开它，第 1 节的「从图床打开」入口就会整个消失，后面的断言全红在
 // "入口不见了"上，看上去像工具坏了。
 await page.goto(BASE, { waitUntil: "load" });
 await page.waitForSelector("aside", { timeout: 20000 });
 await page.waitForTimeout(800);
-await enableModule(page, "gallery");
+await enableModule(page, "imagebed");
 
-console.log("\n1. 图片裁剪工具：Image Studio 已置入工具槽，并可连通图库");
+console.log("\n1. 图片裁剪工具：Image Studio 已置入工具槽，并可连通图床");
 
 const fc = await openTool("image-crop");
 check("iframe 指向 image-crop 入口", !!fc, fc ? fc.url() : "未找到 iframe");
@@ -128,33 +128,33 @@ if (fc) {
     batch: document.getElementById("btnBatch2").disabled,
     preview: document.getElementById("btnPreview").disabled,
     outW: document.getElementById("outW").textContent.trim(),
-    saveGallery: document.getElementById("btnSaveToGallery").disabled,
-    // 图库入口的显隐 = 宿主有没有推来 gallery 标记。这是「工具与宿主分开升级」
+    saveImagebed: document.getElementById("btnSaveToImagebed").disabled,
+    // 图床入口的显隐 = 宿主有没有推来 gallery 标记。这是「工具与宿主分开升级」
     // 那条设计的可观测面：本机宿主支持，所以这里应该出现
-    openGalleryHidden: document.getElementById("btnOpenFromGallery").hidden,
+    openImagebedHidden: document.getElementById("btnOpenFromImagebed").hidden,
     hostState: document.getElementById("hostState").textContent.trim(),
   }));
   info("载图前", before);
   check("未载图时导出/批量/预览都禁用", before.dl && before.batch && before.preview);
   check("未载图时缩略图为空", before.thumbs === 0, `thumbs=${before.thumbs}`);
   check("未载图时输出尺寸是占位符", before.outW === "—", before.outW);
-  check("未载图时「存进图库」禁用", before.saveGallery);
-  check("宿主支持图库 → 「从图库打开」入口可见", before.openGalleryHidden === false);
+  check("未载图时「存进图床」禁用", before.saveImagebed);
+  check("宿主支持图床 → 「从图床打开」入口可见", before.openImagebedHidden === false);
   check("状态条上显示已连工作台", before.hostState === "已连工作台", before.hostState);
 
-  // 图库选择器：能打开、能读到条目
-  await fc.evaluate(() => document.getElementById("btnOpenFromGallery").click());
+  // 图床选择器：能打开、能读到条目
+  await fc.evaluate(() => document.getElementById("btnOpenFromImagebed").click());
   await page.waitForTimeout(1200);
   const picker = await fc.evaluate(() => ({
-    on: document.getElementById("galleryMask").classList.contains("on"),
-    count: document.getElementById("galleryCount").textContent.trim(),
-    hint: document.getElementById("galleryHint").textContent.trim(),
+    on: document.getElementById("imagebedMask").classList.contains("on"),
+    count: document.getElementById("imagebedCount").textContent.trim(),
+    hint: document.getElementById("imagebedHint").textContent.trim(),
   }));
-  info("图库选择器", picker);
-  check("图库选择器能打开", picker.on);
+  info("图床选择器", picker);
+  check("图床选择器能打开", picker.on);
   check("选择器里读到了条目数", /项|读取失败/.test(picker.count), picker.count);
   check("未选中时「导入」是禁用的", picker.hint.includes("已选 0"), picker.hint);
-  await fc.evaluate(() => closeGalleryPicker());
+  await fc.evaluate(() => closeImagebedPicker());
 
   // 载两张：一张才能看出"框出来了"，两张才能验批量的启用条件
   await fc.locator("#fileInput").setInputFiles([
@@ -176,7 +176,7 @@ if (fc) {
     outH: document.getElementById("outH").textContent.trim(),
     outEst: document.getElementById("outEst").textContent.trim(),
     listHint: document.getElementById("listHint").textContent.trim(),
-    saveGallery: document.getElementById("btnSaveToGallery").disabled,
+    saveImagebed: document.getElementById("btnSaveToImagebed").disabled,
   }));
   info("载图后", after);
   check("载图后文件条不再是空态", !after.chip.includes("empty"), after.chip);
@@ -187,7 +187,7 @@ if (fc) {
   check("导出与预览已启用", !after.dl && !after.preview);
   check("两张时批量导出可用", !after.batch);
   check("列表提示跟上（2 张）", after.listHint.includes("2"), after.listHint);
-  check("载图后「存进图库」可用", !after.saveGallery);
+  check("载图后「存进图床」可用", !after.saveImagebed);
 
   const canvasOk = await fc.evaluate(() => {
     const c = document.getElementById("stageCanvas");
@@ -402,7 +402,7 @@ await page.waitForTimeout(400);
 check("参考图可以移除", (await f.evaluate(() => document.body.dataset.refCount)) === "0");
 
 /* ================================================================== */
-console.log("\n4b. 阿里云百炼：异步提交 → 轮询 → 出图 → 存进图库");
+console.log("\n4b. 阿里云百炼：异步提交 → 轮询 → 出图 → 存进图床");
 
 const ali = { create: null, headers: null, old: null, polls: 0 };
 
@@ -461,7 +461,7 @@ const aliUi = await f.evaluate(() => ({
   sizes: [...document.querySelectorAll("#imgSize option")].map((o) => o.value),
   ratioHidden: document.getElementById("fieldImgRatio").hidden,
   videoDisabled: document.querySelector("#tabs .tab[data-tab='video']").disabled,
-  refBtnDisabled: document.getElementById("btnRefFromGallery").disabled,
+  refBtnDisabled: document.getElementById("btnRefFromImagebed").disabled,
 }));
 info("阿里云默认档", aliUi);
 check("切到阿里云后模型落在主力档 wan2.6-t2i（没有把 Agnes 的模型名带过来）",
@@ -478,7 +478,7 @@ check("万相没有画幅概念 → 画幅栏隐藏", aliUi.ratioHidden === true
 check("这次没接视频 → 生视频页签置灰", aliUi.videoDisabled === true, String(aliUi.videoDisabled));
 // 官方表里 wan2.6-t2i 的"编辑"是支持的，所以它能带参考图 ——
 // 不能再按"名字里有没有 image"来判断能不能带图（Z-Image 名字里也有 image 却一张不收）
-check("主力档支持参考图 → 「从图库选」可用", aliUi.refBtnDisabled === false, String(aliUi.refBtnDisabled));
+check("主力档支持参考图 → 「从图床选」可用", aliUi.refBtnDisabled === false, String(aliUi.refBtnDisabled));
 
 // 换档：价格必须跟着模型走，否则标了等于没标
 await f.locator("#imgModel").fill("wan2.0-t2i-turbo");
@@ -500,23 +500,23 @@ const cost3 = await f.evaluate(() => document.getElementById("imgCostHint").text
 info("3 张时的预估", cost3);
 check("预估按张数相乘（0.04 × 3 = 0.12）", /预估 0\.12 元/.test(cost3), cost3);
 
-// 带 image 的档才能从图库取参考图
+// 带 image 的档才能从图床取参考图
 await f.locator("#imgModel").fill("wan2.6-image");
 await f.locator("#imgModel").dispatchEvent("input");
 await page.waitForTimeout(500);
 const refOk = await f.evaluate(() => ({
-  disabled: document.getElementById("btnRefFromGallery").disabled,
-  max: Number(document.getElementById("btnRefFromGallery").dataset.max || -1),
+  disabled: document.getElementById("btnRefFromImagebed").disabled,
+  max: Number(document.getElementById("btnRefFromImagebed").dataset.max || -1),
 }));
 info("切到带参考图的档", refOk);
-check("带 image 的档放开「从图库选」", refOk.disabled === false, String(refOk.disabled));
+check("带 image 的档放开「从图床选」", refOk.disabled === false, String(refOk.disabled));
 check("参考图上限是 3", refOk.max === 3, String(refOk.max));
 
 /* ---- 从本机加参考图：这条**曾经断过**，而且是静默的 ----
    原来这个入口读的是 provider 级的 p.image.maxRef（阿里云恒为 0），
    而不是按模型算的 maxRefsFor(model)（这一档是 3）。于是阿里云下本地图
    会被静默丢弃：界面上写着「已加 0 / 3」，「＋」也在，塞图进去却什么都没发生，
-   零报错。旁边的「从图库选」走的是正确路径 —— 表现成「图库能加、本机加不了」。
+   零报错。旁边的「从图床选」走的是正确路径 —— 表现成「图床能加、本机加不了」。
    全套 172 项当时没抓住它，因为「从本机加」只在 Agnes 下测过（那边 maxRef=4，
    两条路径答案恰好相同）。所以这里必须在**另一家服务商**下再验一遍。 */
 await f.locator("#filePick").setInputFiles({ name: "ali-1.png", mimeType: "image/png", buffer: PNG_ALI });
@@ -556,8 +556,8 @@ await f.locator("#imgPrompt").fill("白色背景下的蓝色马克杯，柔和�
 await page.waitForTimeout(400);
 // 出图前的基线：自动留档是"出完图自己多一条"，没有基线就证不出"多"
 const galBeforeGen = await page.evaluate(async () => {
-  const g = await import("/src/lib/gallery.ts");
-  return (await g.fetchGallery()).length;
+  const g = await import("/src/lib/imagebed.ts");
+  return (await g.fetchImagebed()).length;
 });
 await f.locator("#btnGenImg").click();
 await page.waitForTimeout(7000);
@@ -582,28 +582,28 @@ const aliOut = await f.evaluate(() => ({
   taskId: document.body.dataset.taskId,
   cards: document.querySelectorAll("#imgResults .shot").length,
   imgs: document.querySelectorAll("#imgResults .shot img").length,
-  galleryBtns: document.querySelectorAll("#imgResults [data-act='togallery']").length,
+  imagebedBtns: document.querySelectorAll("#imgResults [data-act='togallery']").length,
 }));
 info("阿里云出图结果", aliOut);
 check("task_id 写到 DOM 上（用户能拿去控制台查）", aliOut.taskId === "task_ali_mock", String(aliOut.taskId));
 check("出图后渲染出结果卡", aliOut.cards === 1, String(aliOut.cards));
 check("结果图真的解码了", aliOut.imgs === 1, `imgs=${aliOut.imgs}`);
-check("每张结果都带「存进图库」", aliOut.galleryBtns === 1, String(aliOut.galleryBtns));
+check("每张结果都带「存进图床」", aliOut.imagebedBtns === 1, String(aliOut.imagebedBtns));
 await shot("19-ai-aliyun");
 
-/* ---- 自动留档：出图后**不点任何按钮**，图库也该多一份 ----
+/* ---- 自动留档：出图后**不点任何按钮**，图床也该多一份 ----
    这是"工具的产出默认留一份"在 AI 生成里的落点：万相给的是 24 小时就失效的
    OSS 链接，不存就真的没了。 */
 const autoGal = await page.evaluate(async () => {
-  const g = await import("/src/lib/gallery.ts");
-  const all = await g.fetchGallery();
+  const g = await import("/src/lib/imagebed.ts");
+  const all = await g.fetchImagebed();
   const last = all[0];
   return { n: all.length, origin: last && last.origin, prompt: last && last.prompt, hasRel: !!(last && last.relPath) };
 });
 info("出图后（未点任何按钮）", { before: galBeforeGen, after: autoGal });
-check("出图后自动留了一份进图库", autoGal.n === galBeforeGen + 1, `${galBeforeGen} → ${autoGal.n}`);
+check("出图后自动留了一份进图床", autoGal.n === galBeforeGen + 1, `${galBeforeGen} → ${autoGal.n}`);
 check("来源被宿主盖成 ai-gen（工具说了不算）", autoGal.origin === "ai-gen", String(autoGal.origin));
-check("提示词一起存进去了（图库里能按提示词搜）", String(autoGal.prompt).includes("马克杯"), String(autoGal.prompt));
+check("提示词一起存进去了（图床里能按提示词搜）", String(autoGal.prompt).includes("马克杯"), String(autoGal.prompt));
 check("文件真的落进仓库", autoGal.hasRel, String(autoGal.hasRel));
 const autoBtn = await f.evaluate(() => {
   const b = document.querySelector("#imgResults [data-act='togallery']");
@@ -611,28 +611,28 @@ const autoBtn = await f.evaluate(() => {
     saved: b && b.classList.contains("saved"), title: b && b.title };
 });
 info("自动留档后的按钮", autoBtn);
-// v0.4.0 起按钮是图标态：已存 = 勾图标（saved class）+ title「已存图库」+ 禁用
+// v0.4.0 起按钮是图标态：已存 = 勾图标（saved class）+ title「已存图床」+ 禁用
 check("已自动存过 → 按钮变已存态并禁用（防重复存）",
-  autoBtn.saved === true && autoBtn.disabled === true && autoBtn.title === "已存图库",
+  autoBtn.saved === true && autoBtn.disabled === true && autoBtn.title === "已存图床",
   JSON.stringify(autoBtn));
 
-/* ---- 关掉开关：手动「存进图库」回到原来那条路 ---- */
+/* ---- 关掉开关：手动「存进图床」回到原来那条路 ---- */
 await f.locator("#btnCfg").click();
 await page.waitForTimeout(400);
 check("配置里有「自动留档」开关且默认开",
-  (await f.locator("#cfgAutoGallery").isChecked()) === true);
-await f.locator("#cfgAutoGallery").uncheck();
+  (await f.locator("#cfgAutoImagebed").isChecked()) === true);
+await f.locator("#cfgAutoImagebed").uncheck();
 await f.locator("#btnCfgClose").click();
 await page.waitForTimeout(400);
 const galBeforeManual = await page.evaluate(async () => {
-  const g = await import("/src/lib/gallery.ts");
-  return (await g.fetchGallery()).length;
+  const g = await import("/src/lib/imagebed.ts");
+  return (await g.fetchImagebed()).length;
 });
 await f.locator("#btnGenImg").click();
 await page.waitForTimeout(7000);
 const galAfterOff = await page.evaluate(async () => {
-  const g = await import("/src/lib/gallery.ts");
-  return (await g.fetchGallery()).length;
+  const g = await import("/src/lib/imagebed.ts");
+  return (await g.fetchImagebed()).length;
 });
 check("关掉开关后出图不再自动存", galAfterOff === galBeforeManual,
   `${galBeforeManual} → ${galAfterOff}`);
@@ -641,19 +641,19 @@ const manualBtn = await f.evaluate(() => {
   return { found: !!b, text: b && b.textContent.trim(), disabled: b && b.disabled };
 });
 info("关掉自动留档后出图", manualBtn);
-check("这回「存进图库」按钮是可用的", manualBtn.found && manualBtn.disabled === false, JSON.stringify(manualBtn));
+check("这回「存进图床」按钮是可用的", manualBtn.found && manualBtn.disabled === false, JSON.stringify(manualBtn));
 await f.locator("#imgResults [data-act='togallery']").first().click();
 await page.waitForTimeout(2500);
 const afterManual = await page.evaluate(async () => {
-  const g = await import("/src/lib/gallery.ts");
-  return (await g.fetchGallery()).length;
+  const g = await import("/src/lib/imagebed.ts");
+  return (await g.fetchImagebed()).length;
 });
-check("手动点「存进图库」照样多一条", afterManual === galBeforeManual + 1,
+check("手动点「存进图床」照样多一条", afterManual === galBeforeManual + 1,
   `${galBeforeManual} → ${afterManual}`);
 // 复原：这个开关是持久化的，留在"关"上会污染后面的轮次
 await f.locator("#btnCfg").click();
 await page.waitForTimeout(300);
-await f.locator("#cfgAutoGallery").check();
+await f.locator("#cfgAutoImagebed").check();
 await f.locator("#btnCfgClose").click();
 await page.waitForTimeout(300);
 

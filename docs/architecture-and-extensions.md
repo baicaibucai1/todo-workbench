@@ -30,8 +30,12 @@
 | 模块 | id | 默认 | 说明 |
 |---|---|---|---|
 | 流程任务 | `orders` | 开 | 与待办分表、只在展示层混排 |
-| 特殊单号 | `special` | **关（选装）** | 带处理时效的流程任务真子集 |
-| 图库 | `gallery` | **关（选装）** | 所有工具产物的共同落点，同时提供 `gallery` 能力 |
+
+> 「特殊单号」（`special`）曾是其中一个选装模块（带处理时效的流程任务真子集），
+> 已于 2026-10-10 整个删除：模块登记移除、数据由迁移 v22 清理。
+> 它独用的两个偏好（自定义列、行高密度）一并删掉，而查件渠道与复制格式
+> 因为流程任务还在用，搬到了 `SETTINGS.order*`。
+| 图床 | `imagebed` | **开（选装）** | 所有工具产物的共同落点（提供的能力名仍是 `gallery`） |
 | AI 助手 | `agent` | 开（看有没有配 Key） | 入口只有悬浮球，刻意不占侧栏 |
 | 工具 | 工具 id | 装上就开 | 用户自己装，见第 5 节 |
 
@@ -53,7 +57,7 @@ capabilityState(settings, ext, c)  // 这个扩展能用这项能力吗
 加一个模块要同时动五六处，而且**漏掉任何一处都不报错**，只是界面有一半不对：
 
 - 侧栏 `SMART_ITEMS` 数组里加一行，再跟一句 `specialOn &&`
-- `App.tsx` 里往 `view === "gallery" ? <GalleryView/> : <TaskList/>` 上再套一层
+- `App.tsx` 里往 `view === "gallery" ? <ImagebedView/> : <TaskList/>` 上再套一层
 - `store.setView` 里拦一道（否则提醒卡片的「查看」会落到空列表上）
 - 提醒循环里提前 `return`
 - 紧急区过滤一次
@@ -137,9 +141,9 @@ INSERT INTO core_settings (key, value)
     AND EXISTS (SELECT 1 FROM core_work_orders WHERE kind = 'special' AND deleted = 0);
 
 INSERT INTO core_settings (key, value)
-  SELECT 'ext.gallery.enabled', '1'
-  WHERE NOT EXISTS (SELECT 1 FROM core_settings WHERE key = 'ext.gallery.enabled')
-    AND EXISTS (SELECT 1 FROM core_gallery_items);
+  SELECT 'ext.imagebed.enabled', '1'
+  WHERE NOT EXISTS (SELECT 1 FROM core_settings WHERE key = 'ext.imagebed.enabled')
+    AND EXISTS (SELECT 1 FROM core_imagebed_items);
 ```
 
 两个 `WHERE` 缺一不可：
@@ -218,7 +222,7 @@ INSERT INTO core_settings (key, value)
 
 iframe 的 `sandbox` 属性 = `allow-scripts allow-downloads allow-forms allow-modals`，**故意不给 `allow-same-origin`**：里面的代码碰不到宿主的 DOM、storage、cookie。
 
-- **影子桥**：`row.*` / `kv.*` / `gallery.*` / `task.get` 全在内存里应答，记一笔"调过什么"，不落库、不真写图库。能力门与生产是**同一份判断**——图库关着时沙箱里照样回绝，免得出现"沙箱能过、装上去就废"。
+- **影子桥**：`row.*` / `kv.*` / `gallery.*` / `task.get` 全在内存里应答，记一笔"调过什么"，不落库、不真写图床。能力门与生产是**同一份判断**——图床关着时沙箱里照样回绝，免得出现"沙箱能过、装上去就废"。
 - **探针**：注入一段脚本收集 `error` / `unhandledrejection` / `console.error` / `console.warn`，300 ms 后回报渲染节点数与文本长度，2 s 兜底收工。
 - **报告**：跑了没有、有没有可见内容、报错清单、调过哪些桥操作、被回绝过哪些。
 
@@ -262,9 +266,9 @@ iframe 的 `sandbox` 属性 = `allow-scripts allow-downloads allow-forms allow-m
 
 ### 能力：跨扩展共享的东西要申请
 
-判断标准：**这个东西是不是多个扩展都要用、又不属于任何一个扩展自己的**。图库符合（三个工具的产物都往里落、谁都能取），所以它是能力；便签本自己的表不符合，那是私有数据，走 `row`。
+判断标准：**这个东西是不是多个扩展都要用、又不属于任何一个扩展自己的**。图床符合（三个工具的产物都往里落、谁都能取），所以它是能力；便签本自己的表不符合，那是私有数据，走 `row`。
 
-目前两项：`gallery`（图库模块提供）与 `task`（内核提供，只读当前任务，且只在注入上下文里给）。`CAPABILITY_OWNER` 记着谁提供它——能力的作用域来自**提供方**，不是申请方。
+目前两项：`gallery`（图床模块提供）与 `task`（内核提供，只读当前任务，且只在注入上下文里给）。`CAPABILITY_OWNER` 记着谁提供它——能力的作用域来自**提供方**，不是申请方。
 
 ```
 工具 manifest: capabilities: ["gallery"]
@@ -278,7 +282,13 @@ iframe 的 `sandbox` 属性 = `allow-scripts allow-downloads allow-forms allow-m
 
 回绝是**结构化的返回，不是抛异常**——调用方要能据此降级，而不是弹一个"失败"了事。
 
-图库关掉时，工具不要指望宿主替它想办法：拿不到 `gallery` 就把产物改成下载到本地，并在界面上说一句。**宿主不替扩展做决定**，这是整套能力的第三条边界。
+图床关掉时，工具不要指望宿主替它想办法：**降级由工具自己决定**——拿不到 `gallery`
+就换个落点（便签是直接把图内联进自己的表，别的工具可以改成下载到本地），
+并在界面上说清现在是哪种。**宿主不替扩展做决定**，这是整套能力的第三条边界。
+
+> 反过来说，宿主也不该让"某个选装模块没开"变成工具的半残状态：
+> 2026-10-04 便签报过「图库模块未开启，暂时不能附图」——那是工具把
+> 可选依赖当成了硬依赖。现在它有内联直存这条退路，开不开图床都能附图。
 
 ---
 
@@ -288,14 +298,16 @@ iframe 的 `sandbox` 属性 = `allow-scripts allow-downloads allow-forms allow-m
 2. 需要整页视图 → `views.ts` 的 `VIEW_COMPONENTS` 里加一行（键必须与 `injects` 里的 view id 一致，否则拿不到合法性判断）。
 3. 默认关（选装）→ 同版加迁移回填（第 4 节），并跑 python 验证各路径。
 4. 侧栏、设置页的选装列表、视图拦截**都不用改**——它们读注册表。
-5. 测试：`special-orders.mjs` 第 0 节（先启用再验）是这类模块的模板；依赖它的套件用 `tests/_enable-module.mjs`。
+5. 测试：先启用再验——`tests/imagebed.mjs` 开头调 `enableModule(page, "imagebed")` 那段
+   是这类模块的模板（特殊单号模块已随 `special-orders.mjs` 一起删掉，别再照它写）；
+   依赖它的套件统一走 `tests/_enable-module.mjs`。
 
 ## 9. 取舍记录
 
 | 决定 | 为什么 |
 |---|---|
 | 不让扩展碰 `core_*`，不给 SQL 通道 | 边界写进物理实现，而不是靠约定；开一次口子就再也说不清它碰过什么 |
-| 图库是能力而不是某个模块的私产 | 三个工具都要读写它，做成私有的话双向联动无从谈起 |
+| 图床是能力而不是某个模块的私产 | 三个工具都要读写它，做成私有的话双向联动无从谈起 |
 | 卸载工具默认保留数据 | 卸载是"我不用了"，装回来还要能接着看 |
 | 注册表不 import 组件 | 避免 `store → registry → 组件 → store` 的环 |
 | 迁移回填按"有没有用过" | 默认值管新库、迁移管老库、缺键按开兜底，三层合起来才不会让人丢东西 |
@@ -325,6 +337,8 @@ iframe 的 `sandbox` 属性 = `allow-scripts allow-downloads allow-forms allow-m
 
 三条硬要求：
 
-- **"默认没有入口"本身要有断言**（`gallery.mjs` 第 0 节、`placeholder-tools.mjs` 里特殊单号那条）。只验"开了之后对不对"，等于把选装这件事在测试里关掉了。
+- **"默认没有入口"本身要有断言**（`imagebed.mjs` 第 0 节、`placeholder-tools.mjs` 里特殊单号那条）。只验"开了之后对不对"，等于把选装这件事在测试里关掉了。
+  ⚠️ 图床是**例外**：它默认开（工具的共同落点），所以那条断言验的是"新库默认就有入口"，
+  而"关掉之后不会被默认值翻回来"由 `imagebed.mjs` 末节（老库升级）盯着。
 - **门禁要有"没有票就是不行"的断言**，而且断言的是**被拒的原因里点名了 `sandbox_run`**——只验"提交成功"的话，哪天把验票那行删了测试照样全绿。
 - ⚠️ 沙箱里 `spawnSync` 会报 `EBUSY`，`_run-all-e2e.mjs` 会给出一批 `exit=null / 0.0s` 的**假红**（PITFALLS 七十五）。出现就改前台逐个跑套件，别去查套件代码。

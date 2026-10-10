@@ -1,9 +1,11 @@
+![待办工作台](docs/screenshots/logo.png)
+
 # 待办工作台
 
 ![版本](https://img.shields.io/badge/版本-v0.2.7-blue) ![许可](https://img.shields.io/badge/license-MIT-green) ![平台](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
 
 以 Microsoft To Do 为原型的 Windows 桌面应用，但定位不止于待办——
-它是一个**可扩展的工作台**：待办是核心，流程任务、特殊单号、图库、工具等作为模块插进来，
+它是一个**可扩展的工作台**：待办是核心，流程任务、图床、工具等作为模块插进来，
 全部共用同一个本地数据库。
 
 > 想往里加东西？先读这两份：
@@ -58,9 +60,9 @@
 | --- | --- |
 | ![流程任务](docs/screenshots/orders.png) | ![流程任务详情](docs/screenshots/order-detail.png) |
 
-| 特殊单号 · 时效倒计时（选装） | 图库（选装） |
+| 图床（选装） | |
 | --- | --- |
-| ![特殊单号](docs/screenshots/special-orders.png) | ![图库](docs/screenshots/gallery.png) |
+| ![图床](docs/screenshots/imagebed.png) | |
 
 | 侧边栏紧急区（剩余时间不足自动聚合） | 左右面板宽度可拖拽 |
 | --- | --- |
@@ -81,9 +83,13 @@
 | --- | --- |
 | ![图片裁剪](docs/screenshots/tool-image-crop.png) | ![尺码表](docs/screenshots/tool-size-chart.png) |
 
-| 随手记 | AI 生成（多厂商可切） |
+| 便签（卡片式，图存图床） | 模板（写工具时照抄的样板，**默认停用**） |
 | --- | --- |
-| ![随手记](docs/screenshots/tool-scratchpad.png) | ![AI 生成](docs/screenshots/tool-ai-gen.png) |
+| ![便签](docs/screenshots/tool-notes.png) | ![模板](docs/screenshots/tool-scratchpad.png) |
+
+| AI 生成（多厂商可切） | |
+| --- | --- |
+| ![AI 生成](docs/screenshots/tool-ai-gen.png) | |
 
 ---
 
@@ -100,7 +106,7 @@
 - **附件**：图片 / 文件拖进来即存，支持粘贴与灯箱预览
 - **选中行整行浮起**（圆角 + 投影），不是左侧一条色带
 
-### 流程任务与特殊单号
+### 流程任务
 
 - 流程任务与待办**分表存储，只在展示层混排**——不会因为看到一条流程任务而把待办的数据模型污染
 - 流程任务有**可定制流程**：过程态编辑走 `moveOrderToStage`，每次流转留痕
@@ -110,11 +116,9 @@
   ⚠️ 老库里的 `WO-` 号**数据仍在**（没有做删除迁移），只是界面不再显示
 - 两种流程任务都能绑**自定义键值**的「相关信息」（字段名由用户定，可一键复制单个值或全部）。
   搜索会跨标题、单号、描述与相关信息字段值
-- **特殊单号**（**选装模块**：设置 → 行为 → 模块里打开，默认不带）以快递单号起算，
-  时效 =「距下一步骤的剩余时间」，流程可定制。打开后专属视图、创建时的类型选择、
-  「我的一天」里那一组、时效提醒与紧急区一起出现；关掉只是收起入口与提醒，
-  已经建好的单子仍留在「流程任务」里
-- 逾期与临期各提醒一次，临近过期红色高亮
+- 流程任务也能带**处理时效**（距下一步骤的剩余时间）：流程的那一步配了默认时长就会自动带上，
+  逾期与临期各提醒一次，临近过期红色高亮。
+  （时效原是「特殊单号」模块的核心参数，那个功能已于 2026-10-10 删除，数据由迁移 v22 清理）
 - ⚠️ **流程任务永不进「我的一天」**——那是待办的地盘
 
 ### 紧急区
@@ -151,7 +155,7 @@
 | 必应每日壁纸 | `public/wallpapers/`（随包静态资源） | 离线优先，不联网取图；换一批跑一次 `scripts/fetch-wallpapers.mjs` |
 | **自己上传的图** | 附件仓库（桌面 AppData / 浏览器 IndexedDB） | 单张 ≤ 12 MB、只收图片；设置里只存仓库相对路径 |
 
-自己传的图走 `attachmentStore`，跟图库、附件同一套仓库 —— 同样的「我传进来的文件」
+自己传的图走 `attachmentStore`，跟图床、附件同一套仓库 —— 同样的「我传进来的文件」
 应该在同一处，清理和查占用都复用现成的入口，而不是让用户在两个地方找。
 
 **从壁纸取色**是手动的：铺着图时点「取这张图的主色」，把图缩到 96px 分桶取样，
@@ -348,7 +352,7 @@ markdown，旁边有「在资源管理器中打开」。
 | 3. 拿票 | — | 通过了才发一张 `ticket`；没通过就把每一条问题（含怎么改）列出来 |
 | 4. 提交 | `install_tool` | 带上票才准装。**没票、票过期、源码改过后票对不上，一律直接拒绝** |
 
-试跑**不落库**（`row.*` / `kv.*` 只记账，图库不真存），但能力门与正式运行完全一致：
+试跑**不落库**（`row.*` / `kv.*` 只记账，图床不真存），但能力门与正式运行完全一致：
 没申请 `gallery` 却调 `gallery.put`，在沙箱里一样被拒 —— 于是这类问题在装之前就暴露了。
 通行证绑的是 (id, 源码, schema, 能力, 注入位置) 的指纹，**源码改一个字节票就作废**，
 所以它不可能"验一份、装另一份"。指纹里 schema 的**键顺序不影响结果**（模型在 install
@@ -450,7 +454,7 @@ markdown，旁边有「在资源管理器中打开」。
 |---|---|
 | 待办 | 列表、待办、子任务，以及待办之间的关联 |
 | 流程任务 | 流程模板、流程任务、自定义字段、流转记录 |
-| 图库 | 图库**记录**（图库本身是选装模块，没开就不会有东西可同步） |
+| 图床 | 图床**记录**（图床本身是选装模块，没开就不会有东西可同步） |
 | 附件 | 流程任务附件的**记录** |
 
 三条刻意定下的规则，写在设置页上也写在代码里：
@@ -542,7 +546,7 @@ Electron 换来的是 Node 原生模块能力，而本项目的工具全部是�
 | 6 | `add_work_orders` | 流程任务 |
 | 7 | `add_wo_attachments` | 流程任务附件 |
 | 8 | `add_special_orders_as_work_orders` | 特殊单号升格为流程任务的一类 |
-| 9 | `add_gallery` | 图库 |
+| 9 | `add_gallery` | 图床 |
 | 10 | `add_tool_schema_ledger` | 工具 schema 台账 |
 | 11 | `add_wo_courier` | 流程任务的快递字段 |
 | 12 | `add_step_due_at` | 子任务的到期时刻 |
@@ -550,16 +554,24 @@ Electron 换来的是 Node 原生模块能力，而本项目的工具全部是�
 | 14 | `add_sync_timestamps` | 同步用的时间戳 |
 | 15 | `add_agent_messages` | AI 助手消息 |
 | 16 | `add_agent_chats` | 助手多会话（消息挂 `chat_id`，老会话回填到 `chat-legacy`） |
-| 17 | `modules_opt_in` | 特殊单号与图库改为选装（开关统一到 `ext.<id>.enabled`）：用过哪个就给哪个把开关打开 |
+| 17 | `modules_opt_in` | 特殊单号与图床改为选装（开关统一到 `ext.<id>.enabled`）：用过哪个就给哪个把开关打开 |
 | 18 | `agent_skills` | 助手自己写的技能落库（`core_agent_skills`）：内置是代码，它自己总结的规矩要能留下来 |
+| 19 | `agent_message_images` | 助手消息带图（`images` + `image_count`），历史列表不用再为"有几张图"去解析大字段 |
+| 20 | `sample_data_opt_in` | 示例数据改成选装（`behavior.seedSampleData`，默认关）；按"库里有没有清单"回填老库 |
+| 21 | `gallery_renamed_to_imagebed` | 图库改名图床：表 `core_gallery_items` → `core_imagebed_items`，开关键与启动视图的旧 id 一并搬走（**图一条不丢**） |
 
-四条铁律：
+五条铁律：
 
 1. 只追加，已发布的迁移脚本**永不修改**——用户库里可能已经跑过它
 2. 每个迁移是一个原子事务，失败整批回滚，绝不留半截 schema
 3. 核心表用 `core_` 前缀，工具表用 `tool_<id>_` 前缀，两套迁移互不干扰
 4. SQLite 的 `ALTER TABLE` 能力有限，涉及重建表时用
    "建新表 → 拷数据 → 删旧表 → 改名"四步法
+5. **迁移里的 SQL 要两个驱动都能跑**（真 SQLite 与浏览器演示用的 `MemoryDb`）。
+   `MemoryDb` 只认 `=` / `LIKE` / `IS NULL` / `IS NOT NULL` 这类简单条件，
+   遇到 `NOT EXISTS (SELECT ...)` 或 `IN (...)` 会**按"不匹配"处理** ——
+   语句看着成功了，实际一行没动。需要"先查一下再决定怎么写"的迁移，
+   把那半段写进 `Migration.run`（JS，两个驱动同一条路），别硬塞进 SQL
 
 ### 工具装载子系统
 
@@ -620,14 +632,15 @@ iframe 的文档一直活着，里面的变量、DOM、滚动位置都还在。�
 **单文件导入**：设置 → 工具 → 选择 HTML 文件 → 确认名称与 id 即可。
 CSS/JS 必须内联，相对引用不会跟着进来（原因见 `ToolHost` 里那段 asset 协议说明）。
 
-**内置工具一览**（表里的四个都不在安装包里，从 Release 上的工具包取得）：
+**内置工具一览**（表里的五个都不在安装包里，从 Release 上的工具包取得）：
 
 | 工具 | 版本 | 做什么 |
 |---|---|---|
-| 图片裁剪 | 2.0.0 | 裁剪 / 尺寸与比例 / 镜像 / 选区填充 / 批量导出；可存进工作台图库、可从图库自取；本地 AI 补全（**模型在工具包的 `ai/` 目录里**，没带它时自动退回纯 JS 算法 —— 差一档质量，不是坏了） |
-| 尺码表生成器 | 1.1.0 | 粘贴 Excel 尺码数据生成尺码表；导出的图能存进工作台图库 |
-| 随手记 | 1.0.0 | 跑在工具表数据库上的便签本，也是"工具怎么用自己的数据表"的样例 |
-| AI 生成 | 0.5.0 | 文生图 / 图生图 / 生视频与对话；已接入阿里云百炼（万相、千问图像、Z-Image 共 21 档，按族走不同接口）与 Agnes；出图可自动存图库 |
+| 图片裁剪 | 2.0.0 | 裁剪 / 尺寸与比例 / 镜像 / 选区填充 / 批量导出；可存进工作台图床、可从图床自取；本地 AI 补全（**模型在工具包的 `ai/` 目录里**，没带它时自动退回纯 JS 算法 —— 差一档质量，不是坏了） |
+| 尺码表生成器 | 1.1.0 | 粘贴 Excel 尺码数据生成尺码表；导出的图能存进工作台图床 |
+| 便签 | 1.0.0 | 卡片式便签：随手记一条、贴几张图，按颜色与标签分类。图存在工作台图床里，别的地方也能取用 |
+| 模板 | 1.0.0 | 写工具时照着抄的样板：演示工具怎么建自己的表、读写它、把内容交给别的工具。**默认停用**（到 设置 → 工具 里打开），它不是日常用的便签本 |
+| AI 生成 | 0.5.0 | 文生图 / 图生图 / 生视频与对话；已接入阿里云百炼（万相、千问图像、Z-Image 共 21 档，按族走不同接口）与 Agnes；出图可自动存图床 |
 
 > 加一家服务商 = 往 `PROVIDERS` 里加一个对象，UI 不用改。描述符里的可选键就是扩展点：
 > 生图用 `async`，生视频用 `headers` + `pollPathFor`
@@ -643,7 +656,7 @@ CSS/JS 必须内联，相对引用不会跟着进来（原因见 `ToolHost` 里�
 卸载或回滚某个工具，不影响待办数据。
 
 同步也按同样的边界切：**一个分片只碰它自己那几张表**。只勾「待办」时，
-流程任务、图库、附件在本机一行都不会被动到；反过来，只勾「流程任务」时
+流程任务、图床、附件在本机一行都不会被动到；反过来，只勾「流程任务」时
 附件记录也不会被连带清掉（`core_wo_attachments` 挂在流程任务下且是级联删除，
 所以写回一律走 upsert 而不是"清空重插"）。
 
@@ -677,7 +690,7 @@ main/
   src/
     lib/
       db.ts            数据库抽象层（双驱动）+ 迁移执行
-      migrations.ts    版本化迁移定义（当前 v16）
+      migrations.ts    版本化迁移定义（当前 v22；数字在文件末尾的 CURRENT_SCHEMA_VERSION）
       repo.ts          业务数据仓库
       rows.ts          列表分组与排序（"默认展开第一条"同源）
       urgent.ts        紧急区取数（待办 / 流程任务 / 子任务三类来源）
@@ -689,8 +702,8 @@ main/
       rowStyle.ts      列表行表面样式（选中浮起等共用规则）
       datetime.ts      时间转换与格式化
       couriers.ts      快递公司表
-      special.ts       特殊单号业务规则
-      gallery.ts       图库
+      special.ts       相关信息的复制格式
+      imagebed.ts      图床
       attachments.ts   附件
       notify.ts        系统通知
       wallpapers.ts    壁纸（内置清单 + 背景设置的解析；纯函数，可在 Node 里直接 import）
@@ -721,8 +734,7 @@ main/
       OrderRow.tsx     单条流程任务
       TaskDetail.tsx   右侧常驻详情面板
       OrderDetail.tsx  流程任务详情
-      SpecialOrdersView.tsx  特殊单号专用视图
-      GalleryView.tsx  图库
+      ImagebedView.tsx  图床
       AgentBall.tsx    悬浮球（唯一入口：可拖动、松手贴边、落点记住、忙碌时转圈）
       AgentWindow.tsx  助手窗口（可拖动、位置记住）+ 右侧历史对话栏
       AgentView.tsx    AI 助手对话主体（消息流 / 动作卡 / 技能抽屉）
@@ -1004,9 +1016,8 @@ image-crop-ai  图片工具与本地 AI
 placeholder-tools  占位工具
 ai-gen         AI 生成（多厂商切换 / 异步轮询 / 真实连通性）
 cross-origin-bridge  跨源工具桥（只在装出来的应用里能复现的那类断链）
-gallery / wallpapers / attachments  图库 / 壁纸 / 附件
+gallery / wallpapers / attachments  图床 / 壁纸 / 附件
 orders-view    流程任务视图
-special-orders 特殊单号
 urgent         紧急区三类来源
 panel-resize   面板拖拽
 agent          AI 助手（整条工具循环 / 权限拒绝 / 坏参数不回灌）
@@ -1031,16 +1042,27 @@ node tests/gen-about-shot.mjs     # 单拍「设置 → 关于」
 
 ### 图标
 
-应用图标由 `npm run icons` 生成，**不依赖任何第三方库**——
+![应用图标](docs/screenshots/logo.png)
+
+它是**橙黄底 + 一张白任务卡**：卡里两行勾选任务，底下压一条分隔线。
+取这张脸而不是"单独一个更大的勾"，是因为这个应用的核心动作是勾掉一件事，
+而一个孤立的勾只画了动作、画不出"一叠待办"——卡片一上来，清单这层意思就有了。
+
+它由 `npm run icons` 生成，**不依赖任何第三方库**——
 PNG 与 ICO 的编码是 `scripts/gen-icons.mjs` 里用内置 `zlib` 手写的。
 
 ```bash
-npm run icons        # 重新生成 src-tauri/icons/ 下全部 14 个文件
-npm run icons:check  # 校验生成的 PNG 结构、ICO 各帧、以及配置引用是否齐全
+npm run icons        # 重新生成 src-tauri/icons/ 下全部 14 个文件，
+                     # 另存一份 128x128 到 docs/screenshots/logo.png（本页抬头那张）
+npm run icons:check  # 校验 PNG 结构、ICO 各帧、配置引用，以及 logo 与图标是否同源
 ```
 
-想换设计：改 `gen-icons.mjs` 里的 `renderIcon()`（大尺寸）与 `renderSmallIcon()`
-（小尺寸，勾线更粗、不加装饰细节）两个函数即可。
+想换设计：改 `gen-icons.mjs` 里的 `renderIcon()` 与 `renderSmallIcon()`。
+两者以 **64px** 为界（`main()` 里的 `renderAt`）：≥ 64 走"白卡 + 两行勾选 + 分隔线"，
+小于它只留"白卡 + 一个粗勾" —— 两行任务在 48px 下每行不到 5px 高，会糊成一道脏线。
+
+网页标签上的小图标是 `index.html` 里内联的一段 SVG，配色与比例照着
+`renderSmallIcon()` 等比换算过来的，**那边改了这边要跟着动**。
 
 ---
 
@@ -1048,6 +1070,7 @@ npm run icons:check  # 校验生成的 PNG 结构、ICO 各帧、以及配置引
 
 - [x] 生成 updater 签名密钥并填入 `tauri.conf.json` 的 `pubkey`
 - [x] 补齐应用图标（14 个文件，含多尺寸 ICO）
+- [x] 图标改橙黄配色 · 白任务卡造型（≥64px 两行勾选，更小尺寸退到单勾）
 - [x] 环境自检脚本 `npm run env:check`
 - [x] GNU 工具链配置脚本 `npm run setup:gnu`
 - [x] **跑通首次桌面打包**（无提权）
@@ -1057,8 +1080,8 @@ npm run icons:check  # 校验生成的 PNG 结构、ICO 各帧、以及配置引
 - [x] **实机安装并跑通**：应用正常启动 + 工具目录同步 + SQLite 落盘
 - [x] 任务详情面板（子任务、备注、截止日期与提醒）
 - [x] 系统通知提醒（`notify.ts`；拿不到权限时用应用内提醒卡片兜底）
-- [x] 流程任务与特殊单号（可定制流程、过程态留痕、时效倒计时）
-- [x] 图库与附件
+- [x] 流程任务（可定制流程、过程态留痕、处理时效与提醒）
+- [x] 图床与附件
 - [x] 工具的数据表、互相调用、设置里的数据库浏览
 - [x] 侧边栏紧急区（三类来源统一聚合）
 - [x] **坚果云同步**（WebDAV 双向合并，默认只同步待办；只同步记录不传文件，设置不进同步）

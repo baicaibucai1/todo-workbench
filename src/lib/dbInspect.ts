@@ -43,7 +43,7 @@ export const CORE_TABLE_LABELS: Record<string, string> = {
   core_wo_logs: "流转记录",
   core_wo_attachments: "流程任务附件",
   core_plan_items: "今日计划",
-  core_gallery_items: "图库",
+  core_imagebed_items: "图床",
   core_tool_kv: "工具配置",
   core_tool_schema: "工具表版本台账",
   core_agent_messages: "AI 助手对话",

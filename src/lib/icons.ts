@@ -24,6 +24,7 @@ import {
   Video,
   Hash,
   NotebookPen,
+  StickyNote,
   Bot,
   type LucideIcon,
 } from "lucide-react";
@@ -47,8 +48,11 @@ export const ICONS: Record<string, LucideIcon> = {
   sparkles: Sparkles,
   video: Video,
   hash: Hash,
-  // 记笔记类工具（随包自带的「随手记」用）
+  // 记笔记类工具（随包自带的样板工具「模板」用）
   "notebook-pen": NotebookPen,
+  // 卡片式便签（「便签」工具用）—— 与 notebook-pen 区分开：
+  // 那个是"本子"的形状，这个是单张便签纸的形状
+  "sticky-note": StickyNote,
   // 助手类工具（AI 写的工具常想用机器人图标；三处技能提示词都列了 bot，
   // 这里必须真的有映射，否则会静默退回默认包裹图标）
   bot: Bot,

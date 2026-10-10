@@ -6,7 +6,7 @@
  * 宿主在 `http://tauri.localhost` —— 不同源。而 postMessage 的 targetOrigin
  * 一旦不匹配，浏览器把消息**静默丢弃**：不抛错、不告警。曾经两边都填
  * `window.location.origin`（各自的），于是桌面端整条桥双向断开：
- * 工具 KV 写不进、图库存不进、开关读不到，而 dev 下 15 个套件全绿。
+ * 工具 KV 写不进、图床存不进、开关读不到，而 dev 下 15 个套件全绿。
  *
  * 这里用「localhost:1420 的宿主 + 127.0.0.1:1421 的工具」造出真实的跨源，
  * 两种造法各测一遍，因为它们坏在不同的地方：
@@ -182,10 +182,10 @@ await page.goto(HOST, { waitUntil: "load" });
 await page.waitForSelector("aside", { timeout: 20000 });
 check("postMessage 探针能记录到消息（否则后面的断言全是假绿）", await probeWorks());
 
-// 第 2 节要把产出存进图库，而图库是**选装模块**（v18 起默认不带）——
+// 第 2 节要把产出存进图床，而图床是**选装模块**（v18 起默认不带）——
 // 不开它，gallery.put 会被能力门回绝，那条断言会红在"存不进去"上，
 // 而真凶其实只是模块没开。
-await enableModule(page, "gallery");
+await enableModule(page, "imagebed");
 
 /* ================================================================== */
 console.log("\n1. 跨源：src 写着同源、实际加载在别的 host（302）");
@@ -200,7 +200,7 @@ if (fa) {
 await page.unrouteAll();
 
 /* ================================================================== */
-console.log("\n2. 跨源下把产出存进图库（AI 生成默认留档走的就是这条）");
+console.log("\n2. 跨源下把产出存进图床（AI 生成默认留档走的就是这条）");
 
 await viaRedirect("ai-gen");
 const fg = frameOf("ai-gen");
@@ -208,33 +208,33 @@ check("ai-gen 加载在跨源地址上", !!fg && /127\.0\.0\.1:1421/.test(fg.url
 
 if (fg) {
   const before = await page.evaluate(async () => {
-    const g = await import("/src/lib/gallery.ts");
-    return (await g.fetchGallery()).length;
+    const g = await import("/src/lib/imagebed.ts");
+    return (await g.fetchImagebed()).length;
   });
 
   const put = await fg.evaluate(async (url) => {
     try {
-      if (typeof saveResultToGallery !== "function") return { err: "工具里没有 saveResultToGallery" };
-      const item = await saveResultToGallery({ url, prompt: "跨源桥探针" }, 0, false);
+      if (typeof saveResultToImagebed !== "function") return { err: "工具里没有 saveResultToImagebed" };
+      const item = await saveResultToImagebed({ url, prompt: "跨源桥探针" }, 0, false);
       return { ok: true, id: item && item.id, title: item && item.title };
     } catch (e) {
       return { err: String((e && e.message) || e) };
     }
   }, `${ALT}/probe.png`);
   info("gallery.put", put);
-  check("跨源下工具能把产出存进图库", !!put.ok, put.err || "");
+  check("跨源下工具能把产出存进图床", !!put.ok, put.err || "");
 
   await page.waitForTimeout(1500);
   const after = await page.evaluate(async () => {
-    const g = await import("/src/lib/gallery.ts");
-    const all = await g.fetchGallery();
+    const g = await import("/src/lib/imagebed.ts");
+    const all = await g.fetchImagebed();
     return {
       n: all.length,
       last: all[0] ? { origin: all[0].origin, title: all[0].title, rel: all[0].relPath } : null,
     };
   });
-  info("图库", { before, after });
-  check("图库真的多了一条", after.n === before + 1, `${before} → ${after.n}`);
+  info("图床", { before, after });
+  check("图床真的多了一条", after.n === before + 1, `${before} → ${after.n}`);
   check("来源被宿主盖成 ai-gen", after.last && after.last.origin === "ai-gen", String(after.last && after.last.origin));
   check("图真的落盘了（有 relPath）", !!(after.last && after.last.rel), JSON.stringify(after.last));
 }

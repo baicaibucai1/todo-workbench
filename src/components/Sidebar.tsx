@@ -91,12 +91,10 @@ export default function Sidebar() {
     all: number;
     /** 未完结流程任务数，给「流程任务」入口当角标 */
     orders: number;
-    /** 未完结的特殊单号数，给「特殊单号」入口当角标 */
-    special: number;
-    /** 图库条目总数（不是"未完结"，图库没有完成态） */
-    gallery: number;
+    /** 图床条目总数（不是"未完结"，图床没有完成态） */
+    imagebed: number;
     byList: Record<string, number>;
-  }>({ myday: 0, all: 0, orders: 0, special: 0, gallery: 0, byList: {} });
+  }>({ myday: 0, all: 0, orders: 0, imagebed: 0, byList: {} });
 
   const [addingList, setAddingList] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -127,10 +125,9 @@ export default function Sidebar() {
     if (key === "myday") return counts.myday;
     if (key === "all") return counts.all;
     if (key === "orders") return counts.orders;
-    if (key === "special") return counts.special;
-    // 图库是个例外：它没有"未完结"的概念，标的是总数 ——
+    // 图床是个例外：它没有"未完结"的概念，标的是总数 ——
     // 用户想知道的是"里面有多少素材"，而不是"还剩几件没处理"
-    if (key === "gallery") return counts.gallery;
+    if (key === "imagebed") return counts.imagebed;
     return undefined;
   };
 
@@ -380,7 +377,7 @@ export default function Sidebar() {
       <UrgentPanel />
 
       {/*
-        底部：图库这一类"可以去的地方"。
+        底部：图床这一类"可以去的地方"。
         它和上面的视图组不是一回事 —— 上半栏回答"看哪些任务"，
         这里回答"这个程序里还有什么地方可去"。
 

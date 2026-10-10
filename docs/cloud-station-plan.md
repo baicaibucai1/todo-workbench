@@ -19,7 +19,7 @@
 | 域 | 上云? | 理由 |
 |---|---|---|
 | 工单（work_orders / wo_fields / wo_logs / wo_attachments） | ✅ | 分发的载体，多端协作的主战场 |
-| 图库（gallery_items） | ✅（P3） | 内容寻址，hash 天然是同步键，同步成本最低 |
+| 图床（gallery_items） | ✅（P3） | 内容寻址，hash 天然是同步键，同步成本最低 |
 | 待办（tasks / lists / steps / links） | ❌ 暂不 | 纯私人、量最大、`sort_order` 冲突最集中，收益最低 |
 | 配置（core_settings） | ❌ | 混了面板宽度这类设备级偏好，要先做归属分类 |
 
@@ -39,7 +39,7 @@
 |---|---|---|---|---|
 | `core_steps` | ❌ | ✅ | `updateStep`（改 done/title） | 改了无痕；`deleteStep` 是**硬删除**（`DELETE FROM`），连墓碑都没有 |
 | `core_wo_attachments` | ❌ | ✅ | `updateAttachment`（改标题/尺寸/探测值） | 改了无痕 |
-| `core_gallery_items` | ❌ | ✅ | `updateGalleryItem`（改标题/备注/尺寸）；`deleteGalleryItem` 只做 `SET deleted = 1`，**连时间戳都不动** | 改与删都完全无痕 |
+| `core_imagebed_items` | ❌ | ✅ | `updateImagebedItem`（改标题/备注/尺寸）；`deleteImagebedItem` 只做 `SET deleted = 1`，**连时间戳都不动** | 改与删都完全无痕 |
 | `core_wo_logs` | ❌ | 只追加 | — | 用已有的 `at` 列当游标即可，**不是问题** |
 
 所以 v10 必须补的是这三张表的 `updated_at`，并且**在写路径里真的写上它**。
@@ -49,7 +49,7 @@
 
 - **`reqwest` 已经在依赖里**（Cargo.toml:31，`attachments.rs` 正在用它下载附件）→ 传输层不用装插件、不用改 CSP。
 - **ID 全客户端生成**（`crypto.randomUUID()` / gallery 的时间有序 ID）→ 跨端合并不会撞主键，**这个设计天然适合同步，别动它**。
-- **附件与图库共用同一个内容寻址仓库**，`hash` 是内容指纹 → 二进制同步直接拿 hash 当键，同内容自动跳过。
+- **附件与图床共用同一个内容寻址仓库**，`hash` 是内容指纹 → 二进制同步直接拿 hash 当键，同内容自动跳过。
 
 ---
 
@@ -63,7 +63,7 @@
 -- 1) 三张「改了不留痕」的表补上 updated_at
 ALTER TABLE core_steps          ADD COLUMN updated_at TEXT;
 ALTER TABLE core_wo_attachments ADD COLUMN updated_at TEXT;
-ALTER TABLE core_gallery_items  ADD COLUMN updated_at TEXT;
+ALTER TABLE core_imagebed_items  ADD COLUMN updated_at TEXT;
 
 -- 2) 工单的责任人（分发的载体）
 ALTER TABLE core_work_orders    ADD COLUMN owner_id    TEXT;
@@ -99,7 +99,7 @@ Cargo.toml:25-35 有注释说明：reqwest / rustls / ring 的 feature 是**刻�
 
 **备注（可选加固）**：`deleted_at` 仍建议加，但它解决的是另一个问题 ——
 「删除必须顺手 bump `updated_at`」这条约定现在成立，却没有任何东西保证它一直成立
-（今天图库的 `deleteGalleryItem` 就已经坏了这条约定）。加了它，"删除"就是一件独立可查的事实。
+（今天图床的 `deleteImagebedItem` 就已经坏了这条约定）。加了它，"删除"就是一件独立可查的事实。
 建议放在 P3 顺手加，不单独占一个版本。
 
 ---
@@ -115,7 +115,7 @@ Cargo.toml:25-35 有注释说明：reqwest / rustls / ring 的 feature 是**刻�
 | `src/lib/sync.ts` | 同步引擎：摘要交换、冲突规则、水位 | **冲突规则与摘要构造做成纯函数**，不碰 IO，这样能进 smoke 单测（见 §7） |
 | `src/components/CloudSection.tsx` | 设置页「账号与同步」分区 | 复用 `Settings.tsx` 里现成的 `SectionTitle` / `Card` / `FieldRow` / `Switch` / `ActionButton`（都在文件尾部 945-1060 行） |
 | `tests/cloud.mjs` | 浏览器 e2e | 只能测 UI 层（分区渲染、未登录态、demo 下禁用提示）。**真正的同步跑不进浏览器 e2e**，见 §7 |
-| `scripts/check-sync-timestamps.mjs` | 门禁脚本 | 扫 `repo.ts` / `gallery.ts`，凡是 `UPDATE core_steps / core_wo_attachments / core_gallery_items ... SET` 里不含 `updated_at` 的语句直接报错。这才能防住"以后新写的更新路径又忘了留痕" |
+| `scripts/check-sync-timestamps.mjs` | 门禁脚本 | 扫 `repo.ts` / `imagebed.ts`，凡是 `UPDATE core_steps / core_wo_attachments / core_imagebed_items ... SET` 里不含 `updated_at` 的语句直接报错。这才能防住"以后新写的更新路径又忘了留痕" |
 | `server/` | 服务端（独立项目，不在 main 里） | 见 §5 |
 
 ### 3.2 修改文件
@@ -123,10 +123,10 @@ Cargo.toml:25-35 有注释说明：reqwest / rustls / ring 的 feature 是**刻�
 | 文件 | 改什么 | 具体位置与写法 |
 |---|---|---|
 | `src/lib/migrations.ts` | 追加 v10 | `migrations` 数组末尾，`version: 10, name: "add_sync_foundation"` |
-| `src/lib/repo.ts` | ① 三处补留痕 | `updateStep`(551)、`updateAttachment`(1896)、`updateGalleryItem` 各自在 `sets` 里 push `updated_at = ?` 并补参数 |
-| `src/lib/gallery.ts` | ② 删除补留痕 | `deleteGalleryItem`(397) 的 `UPDATE ... SET deleted = 1` 改成 `SET deleted = 1, updated_at = ?`。**这是当前唯一一处"删了连时间戳都不动"的地方** |
+| `src/lib/repo.ts` | ① 三处补留痕 | `updateStep`(551)、`updateAttachment`(1896)、`updateImagebedItem` 各自在 `sets` 里 push `updated_at = ?` 并补参数 |
+| `src/lib/imagebed.ts` | ② 删除补留痕 | `deleteImagebedItem`(397) 的 `UPDATE ... SET deleted = 1` 改成 `SET deleted = 1, updated_at = ?`。**这是当前唯一一处"删了连时间戳都不动"的地方** |
 | `src/lib/repo.ts` | ③ 读新列兜底 | `toWorkOrder` 加 `ownerId: r.owner_id ?? null`、`assigneeId: r.assignee_id ?? null`（照 repo.ts:85 的 `?? `先例，防 MemoryDb 下 ALTER 失效） |
-| `src/lib/gallery.ts` | ④ 同上 | `RawGallery` 加 `updated_at?: string`，`toGalleryItem` 用 `?? null` 兜底 |
+| `src/lib/imagebed.ts` | ④ 同上 | `RawImagebed` 加 `updated_at?: string`，`toImagebedItem` 用 `?? null` 兜底 |
 | `src/types.ts` | 类型 | `WorkOrder` 加 `ownerId?: string \| null`、`assigneeId?: string \| null`；新增 `CloudAccount`、`SyncScope`、`SyncDigest` 类型 |
 | `src/lib/settings.ts` | 配置键 | `SETTINGS` 加 `cloudEnabled: "cloud.enabled"`、`cloudBaseUrl: "cloud.baseUrl"`、`cloudUser: "cloud.user"`。**注意**：这些 key 会被 `exportBackup` 带走，可接受（不是凭据）；`cloud.user` 只存显示名 |
 | `src/store.ts` | 状态与方法 | 新增 `cloud: CloudState`（`available / signedIn / user / syncing / lastError / lastSyncAt`）+ `syncNow()` + `cloudSignIn()` / `cloudSignOut()`。`init()`(335) 末尾 fire-and-forget 拉一次状态；`refresh()`(375) **不动** |
@@ -289,8 +289,8 @@ GET  /v1/blobs/:hash                                    -> 二进制
 |---|---|---|
 | **P0 传输与身份** | 新增 `cloud.rs` / `cloud.ts`；改 `lib.rs`、`Settings.tsx`(NAV)、新增 `CloudSection.tsx`、`settings.ts`、`store.ts` | 桌面版能登录、`/v1/me` 返回用户、token 落 `$APPDATA/cloud.json`、**导出备份里搜不到 token**、demo 下分区提示"桌面版可用" |
 | **P1 分发工单** | `migrations.ts`(v10 只加 owner/assignee 两列)、`repo.ts`(读+兜底)、`types.ts`、`rows.ts`、`OrderDetail.tsx`、`OrderCreateDialog.tsx` | 能派单、目标端 pull 后出现在「派给我的」、**不改 `stage_id` 的现有路径**、特殊单号的时效仍由 `moveOrderToStage` 重算 |
-| **P2 工单域同步** | `migrations.ts`(补 updated_at + sync_state)、`repo.ts`+`gallery.ts`(补留痕)、`sync.ts`、门禁脚本 | 两端工单/字段/日志一致；A 删 B 也能删；断网可用、联网追平 |
-| **P3 图库与附件** | blob 通道、按 hash 同步 | 图在另一台机器能打开；同内容不重复上传 |
+| **P2 工单域同步** | `migrations.ts`(补 updated_at + sync_state)、`repo.ts`+`imagebed.ts`(补留痕)、`sync.ts`、门禁脚本 | 两端工单/字段/日志一致；A 删 B 也能删；断网可用、联网追平 |
+| **P3 图床与附件** | blob 通道、按 hash 同步 | 图在另一台机器能打开；同内容不重复上传 |
 | **P4 待办（另议）** | 需要给 `core_steps` 加 `deleted` 列（现在是硬删除） | 排序冲突方案先定 |
 
 **P0 与 P1 完全不碰同步**，可以独立交付、独立回滚。建议先做这两步。
@@ -299,11 +299,11 @@ GET  /v1/blobs/:hash                                    -> 二进制
 
 ## 9. 请你拍板的 6 件事
 
-1. **同步域**：接受"只同步工单 + 图库，待办不上云"吗？（§1.1）
+1. **同步域**：接受"只同步工单 + 图床，待办不上云"吗？（§1.1）
 2. **服务端栈**：PostgreSQL（推荐，多端并发写）还是先 SQLite 单进程起步？
 3. **登录方式**：邮箱+密码起步（推荐，桌面端做 OAuth 很别扭），还是直接上设备码？
 4. **冲突规则**：接受 LWW（时间戳大者胜）吗？工单有没有"绝不能被覆盖"的字段？（§6.2）
-5. **文件上云**：图库与附件的图片/视频要不要真的传到服务器？（带宽与存储成本，也是合规敏感项）
+5. **文件上云**：图床与附件的图片/视频要不要真的传到服务器？（带宽与存储成本，也是合规敏感项）
 6. **隐私**：原设计是「数据仅本机」。确认改成**默认关闭、用户主动开启**吗？
 
 ---

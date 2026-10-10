@@ -83,8 +83,6 @@ export default function OrderRow({
   const dueLabel = order.dueDate ? shortDate(order.dueDate) : null;
   const overdue = !!order.dueDate && order.dueDate < today() && !order.closed;
 
-  /** 特殊单号：带处理时效的那类。它和普通流程任务的区别全在下面那个时效胶囊上 */
-  const isSpecial = order.kind === "special";
   const dueSt = dueState(order);
   // ⚠️ 临期（soon）也是红的，不只是逾期 —— 用户对"红"的预期就是
   // "这一单开始要命了"，还剩 20 分钟和已经超了 10 分钟在动作上没有区别：
@@ -143,9 +141,9 @@ export default function OrderRow({
       <div className="min-w-0 flex-1 pt-[1px]">
         <div className="flex min-w-0 items-center gap-1.5">
           {/* 单号用等宽字体，和标题拉开层次；它是"对账用的标识"不是内容。
-              只有特殊单号有它 —— 那里放的是快递单号。普通流程任务从 v13 起
-              不再编号，它要写的是下面那行描述 */}
-          {isSpecial && order.no && (
+              它原本是特殊单号专属（那里放的是快递单号），功能删掉后
+              只有老数据上还挂着号时才显示。 */}
+          {order.no && (
             <span
               data-order-no={order.no}
               className="shrink-0 rounded bg-chip px-1.5 py-px font-mono text-[10.5px] text-fg-3"
@@ -200,7 +198,7 @@ export default function OrderRow({
               普通流程任务也显示，只要它真的挂着时效：生效的是**流程那一步的默认时长**，
               不是单据类型。既然它会计时、会提醒，列表上就必须看得见 ——
               否则会出现"提醒弹出来，可列表里找不到它凭什么提醒"。 */}
-          {(isSpecial || !!order.stageDueAt) && (
+          {!!order.stageDueAt && (
             <span
               data-order-due={dueSt}
               data-order-due-at={order.stageDueAt ?? ""}

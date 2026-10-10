@@ -1,0 +1,29 @@
+{
+  "id": "notes",
+  "name": "便签",
+  "version": "1.0.0",
+  "description": "卡片式便签：随手记一条、贴几张图，按颜色与标签分类。图存在工作台图床里，别的地方也能取用",
+  "icon": "sticky-note",
+  "entry": "index.html",
+  "dbVersion": 1,
+  "author": "内置工具",
+  "capabilities": ["gallery"],
+  "schema": {
+    "tables": [
+      {
+        "name": "notes",
+        "columns": [
+          { "name": "id", "type": "text", "pk": true },
+          { "name": "title", "type": "text" },
+          { "name": "body", "type": "text" },
+          { "name": "tag", "type": "text" },
+          { "name": "color", "type": "text" },
+          { "name": "images", "type": "text" },
+          { "name": "created_at", "type": "text" },
+          { "name": "updated_at", "type": "text" }
+        ],
+        "indexes": [{ "columns": ["created_at"] }]
+      }
+    ]
+  }
+}

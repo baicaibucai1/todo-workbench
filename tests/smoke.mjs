@@ -295,7 +295,7 @@ check("AI 生成工具在列", tools.some((t) => t.id === "ai-gen"));
 // 它现在改成了原生专属视图：时效要跟流转记录、计划表绑在一起，
 // 而工具在物理上碰不到 core_* 表（见第 8/9 节的隔离），塞不进去。
 check(
-  "占位工具 special-orders 已下线（改走原生视图）",
+  "占位工具 special-orders 已下线（那个功能已整个删除）",
   !tools.some((t) => t.id === "special-orders"),
   tools.map((t) => t.id).join(","),
 );
@@ -746,10 +746,9 @@ const futureOrder = await repo.createWorkOrder({
 check("新建流程任务的 myDay 恒为 false", todayOrder.myDay === false);
 
 const myday = await repo.fetchWorkOrders({ view: "myday", includeDone: true });
-// 现在的边界是：**普通**流程任务不进「我的一天」，特殊单号进（它们是"今天在跟的、
-// 等不起的单"，必须出现在默认视图里）。本节此刻还没建特殊单号，所以是 0；
-// special 的放行在 23 节系统覆盖。
-check("普通流程任务一条都不进「我的一天」", myday.length === 0, `实际 ${myday.length} 条`);
+// 现在的边界是：流程任务一条都不进「我的一天」——
+// 「特殊单号」删掉后（2026-10-10）连那个唯一的例外也没了。
+check("流程任务一条都不进「我的一天」", myday.length === 0, `实际 ${myday.length} 条`);
 
 // 今日计划候选池用的是 today：今天开始/今天要交的
 const todayPool = await repo.fetchWorkOrders({ view: "today", includeDone: true });
@@ -1010,27 +1009,21 @@ section("19. 列表排版与「默认展开第一条」同源");
   );
   check("只剩已完成条目时没有候选（列表默认收起已完成区）", allDone === null);
 
-  // 「我的一天」：特殊单号单独成组、按时效排、放在最上面（它们是提醒的前线）；
-  // 今日组按日期排，且只排非每日任务；普通流程任务被挡在外面（rows 层第二道闸）
+  // 「我的一天」：今日组按日期排，且只排非每日任务；
+  // 流程任务一条都不进这个视图（「特殊单号」删掉后它唯一的入口也没了）
   const mdTasks = [task("T-每日", D(0), { repeat: "daily" }), task("T-今日", D(0))];
-  const mdOrders = [
-    order("O-特", D(-2), {
-      kind: "special",
-      stageDueAt: new Date(Date.now() + 60 * 60_000).toISOString(),
-    }),
-    order("O-普", D(-2)),
-  ];
+  const mdOrders = [order("O-普", D(-2))];
   const myday = firstVisibleRow(mdTasks, mdOrders, "myday");
-  check("「我的一天」里特殊单号排在待办前面（提醒优先）",
-    myday?.kind === "order" && myday.order.id === "O-特",
+  check("「我的一天」里流程任务不参与（第一条仍是今日待办）",
+    myday?.kind === "task" && myday.task.id === "T-今日",
     `${myday?.kind}:${myday?.kind === "order" ? myday.order.id : myday?.task?.id}`);
 
   const mdGroups = groupRows(mdTasks, mdOrders, "myday");
-  check("「我的一天」第一组就是特殊单号", mdGroups.sections[0]?.key === "special");
-  check("普通流程任务被挡在「我的一天」外（rows 层第二道闸）",
+  check("「我的一天」第一组是今日任务", mdGroups.sections[0]?.key === "today");
+  check("流程任务被挡在「我的一天」外（rows 层第二道闸）",
     mdGroups.sections
       .flatMap((s) => s.items)
-      .every((r) => !(r.kind === "order" && r.order.kind !== "special")),
+      .every((r) => r.kind !== "order"),
     mdGroups.sections.map((s) => s.key).join(","));
 
   const onlyDaily = firstVisibleRow([task("T-每日", null, { repeat: "daily" })], [], "myday");
@@ -1423,7 +1416,6 @@ section("23. 特殊单号：时效、相关信息与专属视图");
   // 建单时只给流程、不给时效 → 套该步的默认时效（30 分）
   const autoOrder0 = await repo.createWorkOrder({
     title: "只给流程，时效走默认",
-    kind: "special",
     flowId: spFlow.id,
     stageId: spTodo.id,
     startDate: repo.today(),
@@ -1439,7 +1431,6 @@ section("23. 特殊单号：时效、相关信息与专属视图");
     await repo.createWorkOrder({
       title: "",
       no: "SF7712345678901",
-      kind: "special",
       flowId: spFlow.id,
       stageId: spTodo.id,
       startDate: repo.today(),
@@ -1452,8 +1443,8 @@ section("23. 特殊单号：时效、相关信息与专属视图");
     })
   ).id;
   const spOrder = (await repo.fetchWorkOrders({ view: "all" })).find((o) => o.id === spId);
-  check("特殊单号的类型标记落库", spOrder.kind === "special", `实际 ${spOrder.kind}`);
-  check("单号就是那个快递单号", spOrder.no === "SF7712345678901", spOrder.no);
+  check("流程任务的种类恒为 normal", spOrder.kind === "normal", `实际 ${spOrder.kind}`);
+  check("单号原样落库", spOrder.no === "SF7712345678901", spOrder.no);
   check("显式时效不被默认值覆盖", spOrder.stageDueAt === explicitAt);
 
   const spFields = await repo.fetchWoFields(spId);
@@ -1471,27 +1462,18 @@ section("23. 特殊单号：时效、相关信息与专属视图");
   const byField = await repo.fetchWorkOrders({ view: "all", search: "YT0000000001" });
   check("按相关信息的值能搜到这张单", byField.some((o) => o.id === spId), `命中 ${byField.length} 张`);
   const byNo = await repo.fetchWorkOrders({ view: "all", search: "SF7712345678901" });
-  check("按快递单号也能搜到", byNo.some((o) => o.id === spId));
+  check("按单号也能搜到", byNo.some((o) => o.id === spId));
 
-  // 视图：special 只给特殊单号，别的视图不受影响
-  const specials = await repo.fetchWorkOrders({ view: "special", includeDone: true });
-  check("special 视图里全是特殊单号", specials.length > 0 && specials.every((o) => o.kind === "special"), `实际 ${specials.length} 张`);
-  // 「流程任务」视图不过滤 kind：特殊单号也是流程任务，用户进「流程任务」就是想看全部单子
+  // 「流程任务」视图给全部流程任务，不按种类再筛（现在也只有一种）
   const orderView = await repo.fetchWorkOrders({ view: "orders", includeDone: true });
-  check("「流程任务」视图里普通流程任务和特殊单号都在",
-    orderView.some((o) => o.kind === "normal") && orderView.some((o) => o.kind === "special"));
-  // 这是最容易漏的一处：fetchTasks 落到 switch 的 default 就等于"不加条件"，
-  // 会把整个待办表倒进特殊单号视图
-  check("special 视图取不到任何待办",
-    (await repo.fetchTasks({ view: "special", includeDone: true })).length === 0);
-  check("「全部」里普通流程任务与特殊单号都在",
-    (await repo.fetchWorkOrders({ view: "all", includeDone: true })).filter((o) => o.kind === "special").length >= 1);
+  check("「流程任务」视图里流程任务都在", orderView.length > 0 && orderView.every((o) => o.kind === "normal"));
+  check("「全部」里这张单也在",
+    (await repo.fetchWorkOrders({ view: "all", includeDone: true })).some((o) => o.id === spId));
 
-  // 角标：未完结的特殊单号数
+  // 角标：未完结的流程任务数
   const cnt = await repo.fetchCounts();
-  const openSpecial = (await repo.fetchWorkOrders({ view: "special" })).length;
-  check("侧边栏角标 = 未完结的特殊单号数", cnt.special === openSpecial, `${cnt.special} vs ${openSpecial}`);
-  check("special 角标不混进普通流程任务", cnt.special < cnt.orders);
+  const openOrders = (await repo.fetchWorkOrders({ view: "orders" })).length;
+  check("侧边栏角标 = 未完结的流程任务数", cnt.orders === openOrders, `${cnt.orders} vs ${openOrders}`);
 
   // 时效档位：同一条代码路径给列表、详情、提醒三个地方用
   check("没设时效时是 none", dueMod.dueState({ ...spOrder, stageDueAt: null }) === "none");
@@ -1556,11 +1538,14 @@ section("23. 特殊单号：时效、相关信息与专属视图");
   check("走到终态后时效清空", closedSp.closed === true && closedSp.stageDueAt === null);
   check("已完结的单不再进提醒队列", !(await repo.fetchOrdersForDueReminder()).some((o) => o.id === spId));
 
-  // 分组：进行中按时效先后排（逾期在最前），已完结单拎出来
+  // 分组：流程任务视图分成「进行中 / 已完成」两组，已完结单拎出来。
+  //
+  // 原来这里还钉着"进行中按时效先后排、逾期在最前"——那是「特殊单号」视图
+  // 独有的排序（byDue）。功能删掉后（2026-10-10）那个排序连同它的调用点
+  // 一起没了，「流程任务」视图一直都是按日期排。
   const spOpen = (
     await repo.createWorkOrder({
       title: "晚一点到期",
-      kind: "special",
       flowId: spFlow.id,
       stageId: spTodo.id,
       startDate: repo.today(),
@@ -1570,45 +1555,40 @@ section("23. 特殊单号：时效、相关信息与专属视图");
   const spUrgent = (
     await repo.createWorkOrder({
       title: "已经超时了",
-      kind: "special",
       flowId: spFlow.id,
       stageId: spTodo.id,
       startDate: repo.today(),
       stageDueAt: new Date(Date.now() - 60 * 60_000).toISOString(),
     })
   ).id;
-  const spRows = await repo.fetchWorkOrders({ view: "special", includeDone: true });
-  const grouped = groupRows([], spRows, "special");
-  check("特殊单号也分成「进行中 / 已完成」两组", grouped.sections.length === 2,
+  const spRows = await repo.fetchWorkOrders({ view: "orders", includeDone: true });
+  const grouped = groupRows([], spRows, "orders");
+  check("流程任务分成「进行中 / 已完成」两组", grouped.sections.length === 2,
     grouped.sections.map((s) => s.key).join(","));
   check("done 折叠区为空（避免与「已完成」组重复）", grouped.done.length === 0);
-  const openItems = grouped.sections[0].items.map((r) => r.order.id);
-  check("越急的排越前（逾期在最上）", openItems[0] === spUrgent, openItems.slice(0, 2).join(","));
-  check("按到期时间升序", openItems.indexOf(spUrgent) < openItems.indexOf(spOpen));
-  check("分组里全是特殊单号", grouped.sections.flatMap((s) => s.items).every((r) => r.order.kind === "special"));
+  check("两张单都在分组里",
+    grouped.sections.flatMap((s) => s.items).some((r) => r.order.id === spUrgent) &&
+      grouped.sections.flatMap((s) => s.items).some((r) => r.order.id === spOpen));
 
   // 默认展开的第一条 = 肉眼看到的第一行（列表排版与详情选中同源）
-  const spFirst = firstVisibleRow([], spRows, "special");
-  check("默认展开最急的那张特殊单号", spFirst?.kind === "order" && spFirst.order.id === spUrgent,
+  const spFirst = firstVisibleRow([], spRows, "orders");
+  check("默认展开的是一张流程任务", spFirst?.kind === "order",
     spFirst ? String(spFirst.order.id) : "null");
 
-  /* --- 我的一天：特殊单号是唯一放行进来的流程任务 --- */
+  /* --- 我的一天：流程任务一条都不进来 --- */
   const mydayOrders = await repo.fetchWorkOrders({ view: "myday" });
-  check("特殊单号出现在「我的一天」（数据层放行）",
-    mydayOrders.some((o) => o.id === spUrgent) && mydayOrders.some((o) => o.id === spOpen));
-  check("普通流程任务仍然不进「我的一天」",
+  check("流程任务不进「我的一天」（数据层不放行）",
+    !mydayOrders.some((o) => o.id === spUrgent) && !mydayOrders.some((o) => o.id === spOpen),
+    `实际 ${mydayOrders.length} 张`);
+  check("普通流程任务同样不进「我的一天」",
     !mydayOrders.some((o) => o.id === plainId) && !mydayOrders.some((o) => o.id === crossId));
-  check("已完结的特殊单号不进「我的一天」的进行组",
-    !mydayOrders.some((o) => o.id === spId), `实际 ${mydayOrders.length} 张里含 spId？`);
 
   const mdGroups = groupRows([], spRows, "myday");
-  check("「我的一天」里特殊单号单独成组",
-    mdGroups.sections[0]?.key === "special", mdGroups.sections.map((s) => s.key).join(","));
-  check("组内越急的排越前（逾期在最上）",
-    mdGroups.sections[0]?.items[0]?.order.id === spUrgent);
+  check("「我的一天」里没有流程任务组",
+    mdGroups.sections.every((s) => s.items.every((r) => r.kind !== "order")),
+    mdGroups.sections.map((s) => s.key).join(","));
   const mdFirst = firstVisibleRow([], spRows, "myday");
-  check("「我的一天」默认展开最急的那张", mdFirst?.kind === "order" && mdFirst.order.id === spUrgent,
-    mdFirst ? String(mdFirst.order.id) : "null");
+  check("「我的一天」里没有流程任务可展开", mdFirst === null, String(mdFirst?.kind ?? "null"));
 
   // 角标：我的一天 = 待办数 + 未完结特殊单号数 —— 点进去必须对得上，
   // 角标比列表多是最让人怀疑"数据丢了"的表现
@@ -1633,20 +1613,19 @@ section("23. 特殊单号：时效、相关信息与专属视图");
     await repo.createWorkOrder({
       title: "",
       no: "123456789012", // 纯数字，形状上撞车，正需要人指定一次
-      kind: "special",
       flowId: spFlow.id,
       stageId: spTodo.id,
       startDate: repo.today(),
       courier: "zt",
     })
   ).id;
-  const spCourier = (await repo.fetchWorkOrders({ view: "special", includeDone: true })).find(
+  const spCourier = (await repo.fetchWorkOrders({ view: "orders", includeDone: true })).find(
     (o) => o.id === spCourierId,
   );
   check("登记时手动指定的快递商落库", spCourier?.courier === "zt", `实际 ${String(spCourier?.courier)}`);
   await repo.updateWorkOrder(spCourierId, { courier: "yt" });
   check("认错了能改一次（改完按指定的算）",
-    (await repo.fetchWorkOrders({ view: "special", includeDone: true }))
+    (await repo.fetchWorkOrders({ view: "orders", includeDone: true }))
       .find((o) => o.id === spCourierId)?.courier === "yt");
   check("没指定的单子存空串（以后按单号识别，不把当时的猜测冻进库）",
     spOrder.courier === "", `实际 ${String(spOrder.courier)}`);
@@ -1654,19 +1633,19 @@ section("23. 特殊单号：时效、相关信息与专属视图");
   // 备份要带上相关信息与时效，否则换台机器就丢了绑定的号码
   const backup = await repo.exportBackup();
   check("备份含相关信息", Array.isArray(backup.woFields) && backup.woFields.some((f) => f.woId === spId));
-  check("备份含特殊单号的时效",
-    backup.workOrders.some((o) => o.id === spUrgent && o.stageDueAt && o.kind === "special"));
+  check("备份含流程任务的时效",
+    backup.workOrders.some((o) => o.id === spUrgent && o.stageDueAt && o.kind === "normal"));
   check("备份含过程态的默认时效", backup.stages.some((s) => s.id === spDoing.id && s.defaultMinutes === 240));
   check("备份含手动指定的快递商",
     backup.workOrders.some((o) => o.id === spCourierId && o.courier === "yt"));
 }
 
-/* ---------- 24. 图库（数据层 + 跨表引用计数） ---------- */
+/* ---------- 24. 图床（数据层 + 跨表引用计数） ---------- */
 
-section("24. 图库");
+section("24. 图床");
 
 {
-  const g = await import("../src/lib/gallery.ts");
+  const g = await import("../src/lib/imagebed.ts");
   const att = await import("../src/lib/attachments.ts");
 
   /* --- 展示辅助（纯函数） --- */
@@ -1692,7 +1671,7 @@ section("24. 图库");
     return (h >>> 0).toString(16).padStart(8, "0");
   };
   // 真实仓库按**内容**判类型（magic bytes），替身只能按后缀装一下。
-  // 这一步不能省：图库的 kind 是拿落盘后的 mime **再判一次**的，
+  // 这一步不能省：图床的 kind 是拿落盘后的 mime **再判一次**的，
   // 替身永远报 image/png 的话，视频类目就永远测不到。
   const mimeFor = (name = "") =>
     /\.mp4$/i.test(name) ? "video/mp4" : (/\.webm$/i.test(name) ? "video/webm" : "image/png");
@@ -1732,13 +1711,13 @@ section("24. 图库");
   att.__setAttachmentStore(fakeStore);
 
   /* --- 写入：先落文件、再写元数据 --- */
-  const inGallery = await repo.fetchTasks({ view: "gallery" });
-  check("图库视图不会把待办捞进来（switch 的默认分支会返回全部）",
-    Array.isArray(inGallery) && inGallery.length === 0, String(inGallery.length));
+  const inImagebed = await repo.fetchTasks({ view: "imagebed" });
+  check("图床视图不会把待办捞进来（switch 的默认分支会返回全部）",
+    Array.isArray(inImagebed) && inImagebed.length === 0, String(inImagebed.length));
 
-  const galleryCount = async () => (await repo.fetchCounts()).gallery;
-  const beforeWrite = await galleryCount();
-  const gImg = await g.addToGallery({
+  const imagebedCount = async () => (await repo.fetchCounts()).imagebed;
+  const beforeWrite = await imagebedCount();
+  const gImg = await g.addToImagebed({
     dataUrl: "data:image/png;base64,AAAA",
     title: "产品主图.png",
     origin: "image-crop",
@@ -1750,112 +1729,112 @@ section("24. 图库");
   check("条目拿到了仓库相对路径", String(gImg.relPath).startsWith("2026-09/"), gImg.relPath);
   check("体积/指纹来自仓库而不是调用方", gImg.size > 0 && !!gImg.hash, `${gImg.size} / ${gImg.hash}`);
   check("空标题时用文件名兜底", gImg.title === "产品主图.png", gImg.title);
-  check("图库计数加一", (await galleryCount()) === beforeWrite + 1);
+  check("图床计数加一", (await imagebedCount()) === beforeWrite + 1);
 
-  const gVid = await g.addToGallery({
+  const gVid = await g.addToImagebed({
     url: "https://a.com/clip.mp4", title: "商品视频", origin: "manual", prompt: "秋冬外套",
   });
-  const gAi = await g.addToGallery({
+  const gAi = await g.addToImagebed({
     dataUrl: "data:image/png;base64,BBBB", title: "AI 出图 1", origin: "ai-gen", prompt: "白色背景 商品",
   });
-  const gChart = await g.addToGallery({
+  const gChart = await g.addToImagebed({
     dataUrl: "data:image/png;base64,CCCC", title: "尺码表-淘宝-1080", origin: "size-chart",
   });
 
   /* --- 读取与筛选 --- */
-  const all = await g.fetchGallery();
+  const all = await g.fetchImagebed();
   check("默认按最新在前", all[0].id === gChart.id, all.map((x) => x.title).join(","));
   check("全部默认不含已删除", all.every((x) => x.id !== "nope"));
 
   check("按类型筛：只要图片",
-    (await g.fetchGallery({ kind: "image" })).every((x) => x.kind === "image"));
+    (await g.fetchImagebed({ kind: "image" })).every((x) => x.kind === "image"));
   check("按类型筛：只要视频",
-    (await g.fetchGallery({ kind: "video" })).map((x) => x.id).join(",") === gVid.id);
+    (await g.fetchImagebed({ kind: "video" })).map((x) => x.id).join(",") === gVid.id);
   check("按来源筛",
-    (await g.fetchGallery({ origin: "ai-gen" })).map((x) => x.id).join(",") === gAi.id);
+    (await g.fetchImagebed({ origin: "ai-gen" })).map((x) => x.id).join(",") === gAi.id);
 
   // 搜索走 JS 过滤（MemoryDb 不支持 LIKE 之外的写法），
   // 且**有搜索词时不能加 LIMIT** —— 否则变成"只在最近 N 条里搜"
-  check("搜标题命中", (await g.fetchGallery({ search: "尺码表" })).map((x) => x.id).join(",") === gChart.id);
-  check("搜提示词命中", (await g.fetchGallery({ search: "白色背景" })).map((x) => x.id).join(",") === gAi.id);
-  check("搜备注命中", (await g.fetchGallery({ search: "800×600" })).map((x) => x.id).join(",") === gImg.id);
-  check("搜索大小写不敏感", (await g.fetchGallery({ search: "ai 出图" })).length === 1);
-  check("搜不到就是空", (await g.fetchGallery({ search: "没有这个词" })).length === 0);
+  check("搜标题命中", (await g.fetchImagebed({ search: "尺码表" })).map((x) => x.id).join(",") === gChart.id);
+  check("搜提示词命中", (await g.fetchImagebed({ search: "白色背景" })).map((x) => x.id).join(",") === gAi.id);
+  check("搜备注命中", (await g.fetchImagebed({ search: "800×600" })).map((x) => x.id).join(",") === gImg.id);
+  check("搜索大小写不敏感", (await g.fetchImagebed({ search: "ai 出图" })).length === 1);
+  check("搜不到就是空", (await g.fetchImagebed({ search: "没有这个词" })).length === 0);
   // 这条钉的是「搜索 + limit」：4 条都在库里，limit=1 也必须在**全库**里搜
   check("带搜索词时 limit 只截结果、不截搜索范围",
-    (await g.fetchGallery({ search: "AI 出图", limit: 1 })).length === 1);
-  check("limit 生效", (await g.fetchGallery({ limit: 2 })).length === 2);
+    (await g.fetchImagebed({ search: "AI 出图", limit: 1 })).length === 1);
+  check("limit 生效", (await g.fetchImagebed({ limit: 2 })).length === 2);
 
-  check("单条能取回", (await g.getGalleryItem(gAi.id))?.title === "AI 出图 1");
-  check("取不存在的返回 null", (await g.getGalleryItem("nope")) === null);
+  check("单条能取回", (await g.getImagebedItem(gAi.id))?.title === "AI 出图 1");
+  check("取不存在的返回 null", (await g.getImagebedItem("nope")) === null);
 
-  const byOrigin = await g.galleryCountsByOrigin();
+  const byOrigin = await g.imagebedCountsByOrigin();
   check("按来源统计正确", byOrigin["ai-gen"] === 1 && byOrigin["size-chart"] === 1, JSON.stringify(byOrigin));
 
   /* --- 改：只允许改展示字段 --- */
-  await g.updateGalleryItem(gAi.id, { title: "AI 出图 1（改过）", note: "1024×1024" });
-  const edited = await g.getGalleryItem(gAi.id);
+  await g.updateImagebedItem(gAi.id, { title: "AI 出图 1（改过）", note: "1024×1024" });
+  const edited = await g.getImagebedItem(gAi.id);
   check("标题改得动", edited?.title === "AI 出图 1（改过）", edited?.title);
   check("备注改得动", edited?.note === "1024×1024", edited?.note);
   check("文件和来源不可改", edited?.relPath === gAi.relPath && edited?.origin === "ai-gen");
-  await g.updateGalleryItem(gAi.id, {});   // 空 patch 是空操作，不该抛
-  check("空 patch 不炸", (await g.getGalleryItem(gAi.id))?.title === "AI 出图 1（改过）");
+  await g.updateImagebedItem(gAi.id, {});   // 空 patch 是空操作，不该抛
+  check("空 patch 不炸", (await g.getImagebedItem(gAi.id))?.title === "AI 出图 1（改过）");
 
   /* --- 删：跨表引用计数 --- */
-  const loneRel = (await g.deleteGalleryItem(gChart.id));
+  const loneRel = (await g.deleteImagebedItem(gChart.id));
   check("没人引用时返回可回收的仓库文件", loneRel === gChart.relPath, String(loneRel));
   check("已删除的不再出现在列表里",
-    (await g.fetchGallery()).every((x) => x.id !== gChart.id));
+    (await g.fetchImagebed()).every((x) => x.id !== gChart.id));
   check("删除后计数减一",
-    (await galleryCount()) === beforeWrite + 3, String(await galleryCount()));
-  check("重复删除返回 null（记录已不在了）", (await g.deleteGalleryItem(gChart.id)) === null);
+    (await imagebedCount()) === beforeWrite + 3, String(await imagebedCount()));
+  check("重复删除返回 null（记录已不在了）", (await g.deleteImagebedItem(gChart.id)) === null);
 
-  // 最关键的一条：同一份字节同时被流程任务附件和图库引用时，删图库**不能删文件**
+  // 最关键的一条：同一份字节同时被流程任务附件和图床引用时，删图床**不能删文件**
   //
   // 注意路径的构成是 `<hash 前 8 位>-<名字>`，所以"同名 + 同内容"才指向同一个
   // 文件（这正是「同一张图被加进两张流程任务，磁盘上只有一份」成立的条件）。
   // 而**引用计数是按 hash 算的、且跨两张表** —— 下面刻意用相同的名字，
   // 好让路径也真的相同，把"按路径删就会误删"这条风险摆到台面上。
   const dupStore = await att.attachmentStore().putDataUrl("data:image/png;base64,SHARED", { name: "shared.png", maxBytes: 1e7 });
-  const dupFlow = await repo.createFlow("图库引用计数测试流程");
-  const dupOrder = await repo.createWorkOrder({ title: "和图库共用同一份文件", flowId: dupFlow.id });
+  const dupFlow = await repo.createFlow("图床引用计数测试流程");
+  const dupOrder = await repo.createWorkOrder({ title: "和图床共用同一份文件", flowId: dupFlow.id });
   await repo.createAttachment({
     woId: dupOrder.id, kind: "image", title: "共用图",
     relPath: dupStore.relPath, mime: dupStore.mime, size: dupStore.size, hash: dupStore.hash,
   });
-  const dupItem = await g.addToGallery({
+  const dupItem = await g.addToImagebed({
     dataUrl: "data:image/png;base64,SHARED", title: "shared.png", origin: "manual",
   });
   check("同名同内容 → 仓库里是同一个文件（内容寻址）",
     dupItem.relPath === dupStore.relPath, `${dupItem.relPath} vs ${dupStore.relPath}`);
   check("同名同内容 → 指纹一致", dupItem.hash === dupStore.hash);
-  const dupRel = await g.deleteGalleryItem(dupItem.id);
+  const dupRel = await g.deleteImagebedItem(dupItem.id);
   check("还有别的引用时不返回待删文件（不能把流程任务的图删掉）", dupRel === null, String(dupRel));
   check("仓库文件确实还在", await att.attachmentStore().exists(dupStore.relPath));
 
   /* --- 备份 --- */
   const gBackup = await repo.exportBackup();
-  check("备份带上图库条目", Array.isArray(gBackup.gallery) && gBackup.gallery.length >= 3,
-    String(gBackup.gallery?.length));
+  check("备份带上图床条目", Array.isArray(gBackup.imagebed) && gBackup.imagebed.length >= 3,
+    String(gBackup.imagebed?.length));
 
-  /* --- 备份往返：图库不能"看起来备了、其实没备" ---
+  /* --- 备份往返：图床不能"看起来备了、其实没备" ---
      这是最后一段，所以可以放心清库重来（上面的断言都不再依赖旧数据）。 */
-  const liveBefore = await galleryCount();
+  const liveBefore = await imagebedCount();
   await repo.clearAllData();
-  check("清空后图库为空", (await galleryCount()) === 0, String(await galleryCount()));
+  check("清空后图床为空", (await imagebedCount()) === 0, String(await imagebedCount()));
   const restored = await repo.importBackup(gBackup);
-  check("导入返回条数（不含图库，保持既有契约）", typeof restored.lists === "number");
-  check("导入后图库条目数还原", (await galleryCount()) === liveBefore,
-    `${await galleryCount()} vs ${liveBefore}`);
-  const restoredAi = (await g.fetchGallery({ origin: "ai-gen" }))[0];
+  check("导入返回条数（不含图床，保持既有契约）", typeof restored.lists === "number");
+  check("导入后图床条目数还原", (await imagebedCount()) === liveBefore,
+    `${await imagebedCount()} vs ${liveBefore}`);
+  const restoredAi = (await g.fetchImagebed({ origin: "ai-gen" }))[0];
   check("导入后关键字段没丢（来源 / 标题 / 仓库路径）",
     restoredAi?.origin === "ai-gen" && !!restoredAi?.relPath && !!restoredAi?.title,
     JSON.stringify(restoredAi && { o: restoredAi.origin, t: restoredAi.title, p: restoredAi.relPath }));
   check("导入后提示词也带回来了", restoredAi?.prompt === "白色背景 商品", restoredAi?.prompt);
   // 软删除状态也要带回来，否则"删过的图"会在新机器上复活
   check("导入后软删除状态保留",
-    (await g.fetchGallery()).every((x) => x.origin !== "size-chart"),
-    (await g.fetchGallery()).map((x) => x.origin).join(","));
+    (await g.fetchImagebed()).every((x) => x.origin !== "size-chart"),
+    (await g.fetchImagebed()).map((x) => x.origin).join(","));
 
   att.__setAttachmentStore(null);
 }
@@ -1871,7 +1850,13 @@ section("25. 工具的启用、状态保持与单文件导入");
   /* --- 停用清单是一条字符串，必须挡得住脏输入 ---
      它躺在 core_settings 里，用户能手改；而 id 会参与表名拼接，
      所以非法值要在入口处丢掉，而不是带着往下走。 */
-  check("默认不停用任何工具", st.DEFAULT_SETTINGS[st.SETTINGS.toolsDisabled] === "");
+  // 「模板」（scratchpad）是给写工具的人照抄的样板，默认就该是关的 ——
+  // 新装用户的工具区里不该出现一个和「便签」撞脸的东西。
+  // （只管新库：withDefaults 是 {...DEFAULT, ...raw}，老库沿用自己那个值。）
+  check(
+    "默认只停用样板工具「模板」",
+    st.DEFAULT_SETTINGS[st.SETTINGS.toolsDisabled] === "scratchpad",
+  );
   check(
     "解析逗号分隔的停用清单",
     [...st.parseDisabledTools("size-chart,ai-gen")].join(",") === "size-chart,ai-gen",
@@ -2198,7 +2183,6 @@ section("26. 快递单号的快递商识别与查询路径");
 
 {
   const c = await import("../src/lib/couriers.ts");
-  const spMod = await import("../src/lib/special.ts");
 
   /* --- 识别 --- */
   const sf = c.detectCourier("SF7712345678901");
@@ -2242,29 +2226,8 @@ section("26. 快递单号的快递商识别与查询路径");
   check("没指定又认不出就是空（界面显示\"查询\"而不是瞎猜一家）", c.courierCodeOf("hello", "") === "");
   check("渠道脏值退回快递100", c.parseTrackChannel("???") === "kuaidi100" && c.parseTrackChannel(undefined) === "kuaidi100");
 
-  /* --- 导出要带上快递商与链接 --- */
-  const csv = spMod.buildSpecialCsv(
-    [
-      {
-        no: "SF7712345678901",
-        courier: "顺丰速运",
-        trackUrl: "https://example.com/track",
-        title: "",
-        flowName: "",
-        stageName: "",
-        status: "处理中",
-        important: false,
-        createdAt: "",
-        dueAt: null,
-        dueState: "ok",
-        note: "",
-        fields: [],
-      },
-    ],
-    [],
-  );
-  check("导出的表里有快递商这一列", csv.includes("快递商") && csv.includes("顺丰速运"));
-  check("导出的表里有查询链接这一列", csv.includes("查询链接") && csv.includes("https://example.com/track"));
+  // CSV 导出（buildSpecialCsv）随「特殊单号」一起删除 ——
+  // 它是那个记录视图的专属导出，删掉后没有别的调用点。
 }
 
 /* ---------- 27. 详情面板的分区顺序 ---------- */

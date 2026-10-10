@@ -1,9 +1,10 @@
 {
   "id": "scratchpad",
-  "name": "随手记",
+  "name": "模板",
   "version": "1.0.0",
-  "description": "跑在工作台数据库里的便签本：增删改查自己的一张表，并能把内容交给别的工具。它也是「工具怎么用自己的数据表」的样板",
+  "description": "写工具时照着抄的样板：演示一个工具怎么在工作台里建自己的表、用结构化 CRUD 读写它，以及把一条内容交给别的工具。默认停用，不是日常用的便签本",
   "icon": "notebook-pen",
+  "tags": ["template"],
   "entry": "index.html",
   "dbVersion": 1,
   "author": "内置工具",

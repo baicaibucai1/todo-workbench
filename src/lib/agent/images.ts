@@ -89,7 +89,7 @@ const uid = (): string =>
  *
  * 用 `decode()` 而不是等 `onload`：后者在部分实现里会早于解码完成触发，
  * 那时画到 canvas 上得到的是一张**空白图** —— 症状是"模型说图里什么都没有"，
- * 很难往加载时机上想。图库里的 makeThumb 用的也是这个写法。
+ * 很难往加载时机上想。图床里的 makeThumb 用的也是这个写法。
  */
 async function decodeImage(url: string): Promise<HTMLImageElement> {
   const img = new Image();

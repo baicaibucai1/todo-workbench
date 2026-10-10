@@ -34,11 +34,16 @@ const SUITES = [
   // 跨源工具桥：dev 下工具与宿主同源，只有这一个套件能挡住 targetOrigin 那类
   // "只在装出来的应用里复现"的断链（详见套件头注释）
   ["cross-origin-bridge.mjs", []],
-  ["gallery.mjs", ["--fresh"]],
+  // 便签：卡片式工具的首个样本 —— 注册 → iframe 真加载 → 私有表建出来 →
+  // 新建/改字自动落库（刷新后还在）→ 走 gallery.put 附图。
+  // 它会打开图床模块并往库里留数据，所以排在 imagebed(--fresh) 之前，让它自己清掉。
+  // ⚠️ 套件文件名是 imagebed.mjs，但**能力名仍叫 gallery**（对外契约不改），
+  // 所以上面那句 gallery.put 是对的、不必跟着改名。
+  ["notes-tool.mjs", []],
+  ["imagebed.mjs", ["--fresh"]],
   ["wallpapers.mjs", []],
   ["attachments.mjs", ["--fresh"]],
   ["orders-view.mjs", ["--fresh"]],
-  ["special-orders.mjs", ["--fresh"]],
   ["urgent.mjs", ["--fresh"]],
   ["panel-resize.mjs", ["--fresh"]],
   // AI 助手：用 page.route 拦掉对话端点、喂自己拼的 SSE 分片，所以不连任何模型。

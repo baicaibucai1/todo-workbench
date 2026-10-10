@@ -3,6 +3,9 @@ import type { Flash } from "./parts";
 import { useState } from "react";
 import { isTauri } from "../../lib/db";
 import tauriConf from "../../../src-tauri/tauri.conf.json";
+// 直接引用图标源文件，不复制一份到 public/：复制品迟早跟 src-tauri/icons 走散，
+// 而改图标的人只会去 `npm run icons` 那边。vite 会把它当静态资源一并打进包。
+import appIcon from "../../../src-tauri/icons/128x128@2x.png";
 
 /* ------------------------------ 分区：关于与更新 ------------------------------ */
 
@@ -31,11 +34,19 @@ export function AboutSection({ say }: { say: (text: string, tone?: Flash["tone"]
       <SectionTitle title="关于" desc={tauriConf.productName} />
 
       <Card>
-        <div className="grid grid-cols-2 gap-y-2.5 text-[13px]">
-          <InfoCell label="版本" value={`v${tauriConf.version}`} />
-          <InfoCell label="运行环境" value={isTauri() ? "桌面应用" : "浏览器演示"} />
-          <InfoCell label="作者" value="Sogapopo" />
-          <InfoCell label="标识符" value={tauriConf.identifier} />
+        <div className="flex items-start gap-4">
+          <img
+            src={appIcon}
+            alt="应用图标"
+            data-about-icon=""
+            className="h-[68px] w-[68px] shrink-0 rounded-2xl"
+          />
+          <div className="grid flex-1 grid-cols-2 gap-y-2.5 text-[13px]">
+            <InfoCell label="版本" value={`v${tauriConf.version}`} />
+            <InfoCell label="运行环境" value={isTauri() ? "桌面应用" : "浏览器演示"} />
+            <InfoCell label="作者" value="Sogapopo" />
+            <InfoCell label="标识符" value={tauriConf.identifier} />
+          </div>
         </div>
 
         <p

@@ -21,8 +21,8 @@ import type { ToolInjectSpec } from "./lib/extensions/types";
  * 它是流程任务的真子集，不是另一种东西 —— 所以它同时照旧出现在「流程任务」视图里；
  * 这个入口只是把"有时效、等不起"的那些单独摆出来，让人先处理快超时的。
  *
- * `gallery` 与前面几个**不同类**：它不是"待办的某种筛选"，而是一个独立的
- * 素材库（见 types.ts 的 GalleryItem）。放进这个枚举是因为侧边栏入口、
+ * `imagebed` 与前面几个**不同类**：它不是"待办的某种筛选"，而是一个独立的
+ * 素材库（见 types.ts 的 ImagebedItem）。放进这个枚举是因为侧边栏入口、
  * 启动视图、以及"当前该渲染哪个主区组件"都归它管，代价是取数层必须
  * **显式把它挡掉**（repo.fetchTasks / fetchWorkOrders 都有专门的 case），
  * 否则未知视图会落空条件、把全部待办捞回来。
@@ -31,7 +31,7 @@ import type { ToolInjectSpec } from "./lib/extensions/types";
  * 要求整个删掉了 —— 入口、取数分支、按日期分桶的分组逻辑一起清。
  * 别只删侧边栏入口留个看不见的视图：那样既没有入口，又让一堆代码永远到不了。
  *
- * `agent` 是**内置 AI 助手**（2026-09-23 加）。它和 `gallery` 一样不是"待办的筛选"，
+ * `agent` 是**内置 AI 助手**（2026-09-23 加）。它和 `imagebed` 一样不是"待办的筛选"，
  * 区别在于它是唯一一个**会反过来改数据**的视图：它能建日程（写 core_tasks）、
  * 能往工具目录写一个新的单 HTML 工具、能给工具绑定数据表。
  * 正因为要碰 core_* 与文件系统，它**不能**做成 tools/ 下的 iframe 工具
@@ -42,8 +42,7 @@ export type SmartView =
   | "important"
   | "all"
   | "orders"
-  | "special"
-  | "gallery"
+  | "imagebed"
   | "agent";
 
 /**
@@ -174,21 +173,21 @@ export interface WorkStage {
 /**
  * 流程任务种类。
  *
- * - normal  普通流程任务：只有流转，没有时效
- * - special 特殊单号：以快递单号为起点，每一步带「到下一步之前还剩多久」
+ * 现在只有 `normal` 一种。曾经还有 `special`（特殊单号：以快递单号为起点、
+ * 每步带处理时效），2026-10-10 整个功能删掉了 —— 数据由迁移 v22 清理，
+ * 类型在这里收窄，好让编译器把漏网的引用一次全指出来。
  *
- * 做成**类型标记而不是独立表**：两者共用过程态、流转记录、计划表、附件，
- * 唯一多出来的只是时效与若干自定义字段。另起一张表就意味着整套流程任务子系统
- * 要来第二遍。
+ * 数据库里 `core_work_orders.kind` 这一列**保留未删**：SQLite 的 DROP COLUMN
+ * 要 3.35+ 且同步协议里还带着这个字段，为了删一个已经没有第二种值的标记
+ * 去动表结构不划算。它现在恒为 'normal'。
  */
-export type WorkOrderKind = "normal" | "special";
+export type WorkOrderKind = "normal";
 
 /** 流程任务 */
 export interface WorkOrder {
   id: string;
   /**
-   * 流程任务种类。special 是「特殊单号」——以快递单号为起点、每一步带处理时效的那类。
-   * 它只是流程任务的一个子集，视图与流转逻辑完全共用。
+   * 流程任务种类。恒为 'normal' —— 见 WorkOrderKind 上那段说明。
    */
   kind: WorkOrderKind;
   /**
@@ -374,17 +373,17 @@ export interface WoAttachment {
 }
 
 /* ------------------------------------------------------------------ */
-/* 图库                                                                */
+/* 图床                                                                */
 /* ------------------------------------------------------------------ */
 
 /**
- * 图库条目类型。
+ * 图床条目类型。
  *
  * 只收图片和视频 —— 与附件的三分法不同（那里还有 link）。
- * 原因是图库的界面就是一片缩略图，一条"没有缩略图可画"的链接
+ * 原因是图床的界面就是一片缩略图，一条"没有缩略图可画"的链接
  * 在里面没有位置；链接该留在流程任务附件的语境里。
  */
-export type GalleryKind = "image" | "video";
+export type ImagebedKind = "image" | "video";
 
 /**
  * 条目是谁放进来的。
@@ -394,20 +393,20 @@ export type GalleryKind = "image" | "video";
  *   2. 工具写入的内容出问题时，能一眼看出是从哪条路径进来的。
  * 所以它必须落在数据里，而不是只在界面上推导。
  */
-export type GalleryOrigin = "manual" | "ai-gen" | "image-crop" | "size-chart";
+export type ImagebedOrigin = "manual" | "ai-gen" | "image-crop" | "size-chart";
 
 /**
- * 图库条目。
+ * 图床条目。
  *
  * 与流程任务附件（WoAttachment）是**两张表、同一个文件仓库**：
  * rel_path / hash 都指向同一个内容寻址池，所以同一份字节
- * "既在流程任务里又在图库里"时磁盘上只有一份。
+ * "既在流程任务里又在图床里"时磁盘上只有一份。
  * 代价是删除前必须跨两张表数引用（见 repo.refCountByHash）。
  */
-export interface GalleryItem {
+export interface ImagebedItem {
   id: string;
   title: string;
-  kind: GalleryKind;
+  kind: ImagebedKind;
   /** 仓库内相对路径，形如 `2026-09/a1b2c3d4-产品图.png` */
   relPath: string | null;
   /** 原始来源：AI 生成时是接口给的临时 URL，导入时是原地址，手工新建时为 null */
@@ -419,7 +418,7 @@ export interface GalleryItem {
   width: number | null;
   height: number | null;
   durationMs: number | null;
-  origin: GalleryOrigin;
+  origin: ImagebedOrigin;
   /**
    * AI 生成时的提示词。
    * 单独一列而不是塞进 note：它是**可复用的输入**（换个模型再来一次），
@@ -435,10 +434,10 @@ export interface GalleryItem {
    */
   updatedAt: string;
   /**
-   * 非持久字段：只在 `addToGallery(…, { dedupe: true })` 命中已有内容时回填，
-   * **不写进数据库**。true 表示"这一份图库里本来就有，没有新建记录"。
+   * 非持久字段：只在 `addToImagebed(…, { dedupe: true })` 命中已有内容时回填，
+   * **不写进数据库**。true 表示"这一份图床里本来就有，没有新建记录"。
    *
-   * 为什么不给它单独一个返回值：`addToGallery` 的调用方（图库视图、
+   * 为什么不给它单独一个返回值：`addToImagebed` 的调用方（图床视图、
    * 工具通道）要的都是"这条记录"，多返回一个布尔会让每处都得解构。
    * 挂在返回值上，现有调用点一行都不用改。
    */
@@ -571,6 +570,18 @@ export interface ToolManifest {
   dbVersion: number;
   author?: string;
   /**
+   * 展示用的**标签**（目前只有 `template`）。
+   *
+   * 它只影响界面上多挂一枚徽章，**不参与任何行为判断** ——
+   * 想让一个工具默认不出现，改的是设置里的停用清单（SETTINGS.toolsDisabled），
+   * 不是这里。把两者分开，是为了"它是什么"和"它开不开"能各自独立变化：
+   * 一个样板工具可以被打开来对照，一个普通工具也可以被停用。
+   *
+   * **外部输入**：只认 tools.ts 的 TOOL_TAG_NAMES 白名单，认不出来的丢掉，
+   * 工具不能自己给自己贴一个没听说过的标签。
+   */
+  tags?: string[];
+  /**
    * 私有数据表声明。**外部输入，一律按不可信数据处理**：
    * 名字、类型、默认值都要过 toolSchema.ts 的白名单才能进 SQL。
    * 没写就是"这个工具不需要自己的表"，宿主不会为它建任何东西。
@@ -580,9 +591,12 @@ export interface ToolManifest {
    * 要向宿主申请的**共享能力**（目前只有 "gallery"）。
    *
    * 为什么单独声明而不是"装了就能用"：能力碰的是**不属于这个工具的数据**
-   * （图库是全局素材库），应当像权限一样显式写在门口 —— 设置页要能列出
-   * "这个工具会碰图库"，宿主也能据此拒绝没声明过的调用。
+   * （图床是全局素材库），应当像权限一样显式写在门口 —— 设置页要能列出
+   * "这个工具会碰图床"，宿主也能据此拒绝没声明过的调用。
    * 私有表不需要声明在这里（那是 `schema`，工具自己的东西）。
+   *
+   * ⚠️ 这里写的是**能力名**（`gallery`），不是提供它的模块名（`imagebed`）。
+   * 两者故意不同名：模块可以改名，工具手里的契约不能随便动。
    */
   capabilities?: string[];
   /**
@@ -641,7 +655,7 @@ export interface ToolManifest {
   skill?: ToolSkillSpec;
   /**
    * 来源。**不是 manifest 里的字段**，由扫描器按"它是不是安装包里的"盖戳 ——
-   * 和 gallery 的 origin 一样，来源必须由宿主判定，工具自报不算：
+   * 和 imagebed 的 origin 一样，来源必须由宿主判定，工具自报不算：
    * 一个工具若能把 source 写成 "bundled"，卸载按钮就会消失。
    */
   source?: ToolSource;

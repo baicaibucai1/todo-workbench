@@ -67,12 +67,12 @@ check("标题正确", (await page.title()) === "待办工作台", await page.tit
 check("侧边栏已挂载", (await page.locator("aside").count()) > 0);
 check("初始无控制台错误", errors.length === 0, errors.slice(0, 3).join(" | "));
 
-// 第 5b 节验的是"工具导出的图默认留一份在图库"，而图库 v18 起是选装模块、
-// 默认不带 —— 不在这里先打开，那一节会红在"图库里一条都没多"上。
-await enableModule(page, "gallery");
+// 第 5b 节验的是"工具导出的图默认留一份在图床"，而图床 v18 起是选装模块、
+// 默认不带 —— 不在这里先打开，那一节会红在"图床里一条都没多"上。
+await enableModule(page, "imagebed");
 check(
-  "启用后侧边栏出现「图库」入口",
-  (await page.locator('aside [data-nav="gallery"]').count()) === 1,
+  "启用后侧边栏出现「图床」入口",
+  (await page.locator('aside [data-nav="imagebed"]').count()) === 1,
 );
 
 console.log("\n2. 工具已注册到侧边栏");
@@ -184,13 +184,13 @@ await page.waitForTimeout(500);
 const afterRedo = (await frameState()).rows;
 check("iframe 内重做生效", afterRedo === before + 1, `${afterUndo} → ${afterRedo}`);
 
-console.log("\n5b. 图库：导出的图默认留一份");
+console.log("\n5b. 图床：导出的图默认留一份");
 
-/** 直接读宿主数据层，比在图库视图里数卡片稳（不依赖当前视图） */
-const galleryRows = () =>
+/** 直接读宿主数据层，比在图床视图里数卡片稳（不依赖当前视图） */
+const imagebedRows = () =>
   page.evaluate(async () => {
-    const g = await import("/src/lib/gallery.ts");
-    const all = await g.fetchGallery();
+    const g = await import("/src/lib/imagebed.ts");
+    const all = await g.fetchImagebed();
     return all.map((i) => ({ id: i.id, title: i.title, origin: i.origin, hash: i.hash }));
   });
 
@@ -200,10 +200,10 @@ const frameFlags = () =>
     if (!d) return null;
     const q = (s) => d.getElementById(s);
     return {
-      galleryBtn: !q("btnChartToGallery").hidden,
-      autoLine: !q("chkAutoGalleryLine").hidden,
-      autoChecked: !!q("chkAutoGallery").checked,
-      autoGallery: d.body.dataset.autoGallery ?? "",
+      imagebedBtn: !q("btnChartToImagebed").hidden,
+      autoLine: !q("chkAutoImagebedLine").hidden,
+      autoChecked: !!q("chkAutoImagebed").checked,
+      autoImagebed: d.body.dataset.autoImagebed ?? "",
       autoArchived: d.body.dataset.autoArchived ?? "",
     };
   });
@@ -222,18 +222,18 @@ const waitArchived = () =>
     .catch(() => {});
 
 let fl = await frameFlags();
-info("工具内图库入口", fl);
-check("宿主点亮了「存进图库」", !!fl && fl.galleryBtn);
-check("「导出自动存图库」出现且默认开",
-  !!fl && fl.autoLine && fl.autoChecked && fl.autoGallery === "true", JSON.stringify(fl));
+info("工具内图床入口", fl);
+check("宿主点亮了「存进图床」", !!fl && fl.imagebedBtn);
+check("「导出自动存图床」出现且默认开",
+  !!fl && fl.autoLine && fl.autoChecked && fl.autoImagebed === "true", JSON.stringify(fl));
 
-const g0 = await galleryRows();
+const g0 = await imagebedRows();
 await frame.locator('button[title^="下载 PNG"]').click();
 await waitArchived();
-const g1 = await galleryRows();
+const g1 = await imagebedRows();
 const added = g1.filter((i) => !g0.some((b) => b.id === i.id));
-info("导出后图库", { before: g0.length, after: g1.length });
-check("只点了下载，图库就多了一条", added.length === 1, `${g0.length} → ${g1.length}`);
+info("导出后图床", { before: g0.length, after: g1.length });
+check("只点了下载，图床就多了一条", added.length === 1, `${g0.length} → ${g1.length}`);
 check("来源是宿主盖的 size-chart（工具自报不算）",
   added.length === 1 && added[0].origin === "size-chart", JSON.stringify(added));
 check("标题用的是尺码表文件名",
@@ -246,24 +246,24 @@ await page.evaluate(() => {
 });
 await frame.locator('button[title^="下载 PNG"]').click();
 await waitArchived();
-const g2 = await galleryRows();
+const g2 = await imagebedRows();
 check("同样的图再导一次，不重复占条目", g2.length === g1.length, `${g1.length} → ${g2.length}`);
 
 // 关掉开关 → 导出仍要成功，只是不再留档
-await frame.locator("#chkAutoGallery").uncheck();
+await frame.locator("#chkAutoImagebed").uncheck();
 await page.waitForTimeout(700);
 check("关掉后工具侧认为不该自动存档",
   (await page.evaluate(
-    () => document.querySelector("iframe").contentDocument.defaultView.autoGalleryOn(),
+    () => document.querySelector("iframe").contentDocument.defaultView.autoImagebedOn(),
   )) === false);
-const g3 = await galleryRows();
+const g3 = await imagebedRows();
 await frame.locator('button[title^="下载 PNG"]').click();
 await page.waitForTimeout(3500);
-const g4 = await galleryRows();
+const g4 = await imagebedRows();
 check("关掉开关后不再自动留档", g4.length === g3.length, `${g3.length} → ${g4.length}`);
 
 // 复原：这个偏好是写进库的，留在"关"上会让下一轮跑到这里时默认态变成关
-await frame.locator("#chkAutoGallery").check();
+await frame.locator("#chkAutoImagebed").check();
 await page.waitForTimeout(700);
 
 console.log("\n6. 返回待办：只是隐藏，不卸载");
@@ -422,11 +422,12 @@ await page.waitForTimeout(600);
 await page.locator('button[data-section="tools"]').click();
 await page.waitForTimeout(500);
 
-// 4 = image-crop / size-chart / ai-gen / scratchpad。
+// 5 = image-crop / size-chart / ai-gen / scratchpad / notes。
 // 五子棋不算：它是 tests/fixtures/gomoku/ 下的编写标准样本，不是产品里的工具。
 // 再加内置工具时这里要跟着改 —— 写死数字是为了让"多出一个陌生工具"能被立刻发现，
 // 而不是悄无声息地出现在用户的侧边栏里。
-check("设置里列出了全部工具", (await page.locator("[data-tool-row]").count()) === 4, String(await page.locator("[data-tool-row]").count()));
+const toolRows = await page.locator("[data-tool-row]").count();
+check("设置里列出了全部工具", toolRows === 5, String(toolRows));
 check("每个工具一行（图片裁剪）", (await page.locator("[data-tool-row='image-crop']").count()) === 1);
 check(
   "标了来源：内置",

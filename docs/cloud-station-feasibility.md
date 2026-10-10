@@ -42,7 +42,7 @@
 | `core_wo_logs` | 流转留痕 | ❌ **无** | ❌（只追加） | 中（只追加，可用 created_at 当游标） |
 | `core_wo_fields` | 工单自定义字段 | ✅ | ✅ | 好 |
 | `core_wo_attachments` | 工单附件 | ❌ **无** | ✅ | **差** |
-| `core_gallery_items` | 图库 | ❌ **无** | ✅ | **差** |
+| `core_imagebed_items` | 图床 | ❌ **无** | ✅ | **差** |
 
 （`core_plan_items` 已下线，表保留；`tool_special_orders_records` 已在 v8 删除。）
 
@@ -50,7 +50,7 @@
 
 **① 全库没有身份维度。**
 对 `repo.ts`（2522 行，全部写路径）grep `user|owner|assignee|member|userId|deviceId` → **零命中**。
-`types.ts` 里 `Task` / `WorkOrder` / `GalleryItem` 也没有任何一个归属字段。
+`types.ts` 里 `Task` / `WorkOrder` / `ImagebedItem` 也没有任何一个归属字段。
 这不是"少个字段"，是**整个数据模型没有"这份数据是谁的"这个概念**。多用户/多端是**新增维度**，不是补丁。
 
 **② `deleted` 是没有时间戳的裸标志（最硬的一条）。**
@@ -62,12 +62,12 @@
 必须补 `deleted_at`（墓碑时间戳），这是同步的地基。
 
 **③ 4 张表压根没有 `updated_at`。**
-`core_steps` / `core_wo_attachments` / `core_gallery_items` 三张表的写入模式是「只追加 + 改 deleted」，
+`core_steps` / `core_wo_attachments` / `core_imagebed_items` 三张表的写入模式是「只追加 + 改 deleted」，
 改了什么都不留痕；`core_wo_logs` 只追加（可以用 `created_at` 当游标，勉强可用）。
 没有 `updated_at` 就没有增量游标 → 这几张表只能全量比对，数据一大就废。
 
 **④ 所有 ID 由客户端生成。**
-`repo.ts` 用 `crypto.randomUUID()`，`gallery.ts` 用**时间有序 ID**（同毫秒靠 `id DESC` 定序）。
+`repo.ts` 用 `crypto.randomUUID()`，`imagebed.ts` 用**时间有序 ID**（同毫秒靠 `id DESC` 定序）。
 - 好处：离线可写、UUID 天然全局唯一，跨端合并不会撞主键 → **这个设计其实很适合同步，别改**。
 - 坏处：`sort_order` 是**纯本地语义**。两端同时拖排序，合并后顺序必然互相踩。
   排序冲突只能靠「整组重排 + 服务端定序」解决，或者接受 last-write-wins。
@@ -80,11 +80,11 @@
 整表同步会把一台机器的面板宽度推到所有机器上。同步前**必须先给 key 做一次归属分类**。
 它也没有时间戳，同样要补。
 
-**⑥ 附件与图库的文件在 SQLite 之外。**
-`$APPDATA/attachments/<月>/<hash8>-<标题>.ext`，内容寻址，图库与工单附件**共用同一个池**，
+**⑥ 附件与图床的文件在 SQLite 之外。**
+`$APPDATA/attachments/<月>/<hash8>-<标题>.ext`，内容寻址，图床与工单附件**共用同一个池**，
 `refCountByHash` 跨两张表数引用。
 只同步元数据不同步文件 = 客户端拿到一堆打不开的坏引用。文件必须走**独立的二进制通道**。
-好消息：`hash` 天然就是同步键（同内容跳过，与图库 dedupe 同一套思路）。
+好消息：`hash` 天然就是同步键（同内容跳过，与图床 dedupe 同一套思路）。
 ⚠️ 别拿 `rel_path` 当同步键 —— 它带标题，同内容不同标题本来就是两个路径。
 
 **⑦ 现有 `importBackup` 是"覆盖"不是"合并"。**
@@ -167,12 +167,12 @@ ALTER TABLE core_lists            ADD COLUMN deleted_at TEXT;
 ALTER TABLE core_work_orders      ADD COLUMN deleted_at TEXT;
 ALTER TABLE core_wo_fields        ADD COLUMN deleted_at TEXT;
 ALTER TABLE core_wo_attachments   ADD COLUMN deleted_at TEXT;
-ALTER TABLE core_gallery_items    ADD COLUMN deleted_at TEXT;
+ALTER TABLE core_imagebed_items    ADD COLUMN deleted_at TEXT;
 
 -- 2. 给"改了不留痕"的四张表补 updated_at
 ALTER TABLE core_steps            ADD COLUMN updated_at TEXT;
 ALTER TABLE core_wo_attachments   ADD COLUMN updated_at TEXT;
-ALTER TABLE core_gallery_items    ADD COLUMN updated_at TEXT;
+ALTER TABLE core_imagebed_items    ADD COLUMN updated_at TEXT;
 -- core_wo_logs 只追加，用 at / created_at 当游标即可，可不补
 
 -- 3. 同步水位
@@ -189,7 +189,7 @@ CREATE TABLE IF NOT EXISTS core_sync_state (
 **另外三件必须一起做：**
 
 1. **`core_settings` 先做归属分类**（账号级 / 设备级），再决定哪些 key 参与同步。
-2. **附件与图库走独立二进制通道**：按 `hash` 上传/下载，服务端存对象存储，同 hash 直接跳过。
+2. **附件与图床走独立二进制通道**：按 `hash` 上传/下载，服务端存对象存储，同 hash 直接跳过。
    引用计数是**跨表**算的，同步时别只看单张表就判定"没人引用可以删文件"。
 3. **首次接入要给明确选择**：现在库里已有本地数据，登录时必须让用户选
    **「以本地为准推上去 / 以云端为准拉下来 / 合并」**，不能自动合并。
@@ -216,8 +216,8 @@ CREATE TABLE IF NOT EXISTS core_sync_state (
 | **P0** | 身份：Rust 加 login/whoami 命令；设置页「账号」区；token 不入备份 | 无 | 低 |
 | **P1** | 工单派发：v10 加 `owner_id`/`assignee_id`；服务端派单；客户端「派给我的」视图 | P0 | 低（**先只读，不碰同步**） |
 | **P2** | 单向同步（仅工单域）：工单 + 日志 + 自定义字段，附件暂不同步 | P1 | 中 |
-| **P3** | 补 `updated_at`/`deleted_at` + 全量同步 + 附件/图库文件通道 | P2 | 中高（要回填历史数据） |
-| **P4** | 待办与图库同步（排序冲突最集中，放最后） | P3 | 高 |
+| **P3** | 补 `updated_at`/`deleted_at` + 全量同步 + 附件/图床文件通道 | P2 | 中高（要回填历史数据） |
+| **P4** | 待办与图床同步（排序冲突最集中，放最后） | P3 | 高 |
 
 **推荐从 P0 + P1 起步**：这两步就能拿到"服务器判断用户 + 分发工单"的完整价值，
 却完全不用动同步这块硬骨头。等真的跑起来、确认派单流程顺手了，再决定要不要投入 P2~P4。

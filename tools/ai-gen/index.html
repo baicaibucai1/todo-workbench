@@ -37,9 +37,9 @@
      来源是各家官方计费文档 —— **改价时要一起改这里**，
      界面上也标注了价格随官方调整而变、以控制台账单为准。
 
-  7) **和图库是双向联动的**（宿主侧见 src/lib/toolBridge.ts 的 gallery.*）：
-       · 参考图可以直接从图库挑（不用先下载到本机再上传）
-       · 生成结果一键存进图库（从此不再是一次性的、关掉就找不回来）
+  7) **和图床是双向联动的**（宿主侧见 src/lib/toolBridge.ts 的 gallery.*）：
+       · 参考图可以直接从图床挑（不用先下载到本机再上传）
+       · 生成结果一键存进图床（从此不再是一次性的、关掉就找不回来）
      存图走宿主：生图接口回报的往往是不给 CORS 头的临时链接，
      在 iframe 里 fetch 会被浏览器拦掉，交给宿主下载才稳。
 -->
@@ -731,7 +731,7 @@
     .shot:hover { transform: none; }
   }
 
-  /* ---------- 图库选择器 ---------- */
+  /* ---------- 图床选择器 ---------- */
   .gmask { position: fixed; inset: 0; z-index: 60; background: var(--scrim);
     display: flex; align-items: center; justify-content: center; padding: 24px; }
   /* ⚠️ 这条不能省：.gmask 自己写了 display:flex，作者样式会盖掉浏览器默认的
@@ -846,9 +846,9 @@
         <div class="field">
           <div class="refs" id="refList"></div>
           <p class="hint" id="refHint">加图后即变为图生图：在描述里写「保留什么 / 改什么」。</p>
-          <button class="btn sm" id="btnRefFromGallery" style="margin-top:6px">
+          <button class="btn sm" id="btnRefFromImagebed" style="margin-top:6px">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
-            从图库选
+            从图床选
           </button>
         </div>
 
@@ -1042,10 +1042,10 @@
       <div class="sep"></div>
       <p class="sect-title">产出去向</p>
       <div class="inline">
-        <input type="checkbox" id="cfgAutoGallery" checked>
-        <label for="cfgAutoGallery" class="swatch-label">出图 / 出视频后自动在图库留一份</label>
+        <input type="checkbox" id="cfgAutoImagebed" checked>
+        <label for="cfgAutoImagebed" class="swatch-label">出图 / 出视频后自动在图床留一份</label>
       </div>
-      <p class="hint" id="autoGalleryHint" style="margin:6px 0 0"></p>
+      <p class="hint" id="autoImagebedHint" style="margin:6px 0 0"></p>
 
       <div class="sep"></div>
       <div class="warnbox">
@@ -1103,7 +1103,7 @@
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
       继续编辑
     </button>
-    <button class="ibtn" data-lb="togallery" title="存进图库">
+    <button class="ibtn" data-lb="togallery" title="存进图床">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
     </button>
     <button class="ibtn" data-lb="dl" title="下载">
@@ -1118,29 +1118,29 @@
   </div>
 </div>
 
-<!-- 图库选择器：给「参考图」用的来源。
+<!-- 图床选择器：给「参考图」用的来源。
      它存在的意义是省掉"先下载到本机、再上传"这一圈 ——
-     而那一圈正是用户在图库功能之前每天在做的事。 -->
-<div class="gmask" id="galleryMask" hidden>
+     而那一圈正是用户在图床功能之前每天在做的事。 -->
+<div class="gmask" id="imagebedMask" hidden>
   <div class="gpanel">
     <header>
-      <b style="font-size:13px">从图库选参考图</b>
-      <span class="tag" id="galleryCount">—</span>
+      <b style="font-size:13px">从图床选参考图</b>
+      <span class="tag" id="imagebedCount">—</span>
       <span class="spacer" style="flex:1"></span>
-      <button class="btn sm ghost" id="btnGalleryClose">关闭</button>
+      <button class="btn sm ghost" id="btnImagebedClose">关闭</button>
     </header>
     <div class="gbar">
       <button class="chip" data-gkind="image" aria-selected="true">图片</button>
       <button class="chip" data-gkind="video" aria-selected="false">视频</button>
       <span class="spacer" style="flex:1"></span>
-      <input id="gallerySearch" placeholder="搜标题 / 提示词" style="width:190px">
-      <button class="btn sm" id="btnGalleryReload">刷新</button>
+      <input id="imagebedSearch" placeholder="搜标题 / 提示词" style="width:190px">
+      <button class="btn sm" id="btnImagebedReload">刷新</button>
     </div>
-    <div class="gbody" id="galleryBody"></div>
+    <div class="gbody" id="imagebedBody"></div>
     <footer>
-      <span class="hint" id="galleryHint" style="margin:0"></span>
+      <span class="hint" id="imagebedHint" style="margin:0"></span>
       <span class="spacer" style="flex:1"></span>
-      <button class="btn primary sm" id="btnGalleryUse">加入参考图</button>
+      <button class="btn primary sm" id="btnImagebedUse">加入参考图</button>
     </footer>
   </div>
 </div>
@@ -1155,7 +1155,7 @@
  *     所以工具在物理上读写不到别的工具的数据
  *   · 只认白名单操作（info / count / kv.* / gallery.*）
  *
- * gallery.* 是宿主那边**有意放宽**的一条：图库是全局资源，
+ * gallery.* 是宿主那边**有意放宽**的一条：图床是全局资源，
  * 任何工具都能列、能读、能往里写（理由写在 toolBridge.ts 的文件头）。
  * 三条约束仍然在：工具只能传 id 与内容（传不了路径）、
  * 写入的来源标记由宿主按 tool_id 盖章（工具无法伪装出处）、
@@ -1233,12 +1233,12 @@ var Host = (function () {
     kvAll: function () { return ask("kv.all").then(function (r) { return r.entries || {}; }); },
     kvDel: function (k) { return ask("kv.del", { key: k }); },
 
-    /* ---- 图库 ----
-     * 宿主是否支持图库，看 context 里有没有 gallery 这个标记 ——
+    /* ---- 图床 ----
+     * 宿主是否支持图床，看 context 里有没有 gallery 这个标记 ——
      * 工具和宿主是分开升级的，在旧宿主上装新工具时这个标记不存在，
      * 这时要把入口禁用并说明原因，而不是让用户对着一个
      * "不支持的操作" 猜是自己装错了还是软件坏了。 */
-    supportsGallery: function () { return !!(ctx && ctx.gallery); },
+    supportsImagebed: function () { return !!(ctx && ctx.gallery); },
     galleryList: function (opts) {
       return ask("gallery.list", opts || {}, 20000).then(function (r) { return r.items || []; });
     },
@@ -2208,16 +2208,16 @@ var S = {
   videoCancel: null,
   chatCancel: null,
   /**
-   * 产出是否自动在图库留一份。默认开 —— 这是"关掉就找不回来"的反面：
+   * 产出是否自动在图床留一份。默认开 —— 这是"关掉就找不回来"的反面：
    * 生成结果本来只活在一次会话里（万相的地址 24 小时失效），
    * 让用户记得每次去点保存，等于没保存。
    */
-  autoGallery: true,
+  autoImagebed: true,
 };
 
 var KV_CONFIG = "config";
 var KV_HISTORY = "history";
-var KV_AUTO_GALLERY = "autoGallery";
+var KV_AUTO_GALLERY = "autoImagebed";
 var HISTORY_MAX = 60;
 
 /**
@@ -2790,15 +2790,15 @@ function renderRefs() {
   // 参考图数量给 e2e 用
   document.body.dataset.refCount = String(S.refs.length);
 
-  // 「从图库选」在旧宿主上要禁用并说明，而不是点了没反应
-  var gb = el("btnRefFromGallery");
+  // 「从图床选」在旧宿主上要禁用并说明，而不是点了没反应
+  var gb = el("btnRefFromImagebed");
   if (gb) {
-    var ok = Host.supportsGallery() && max > 0;
+    var ok = Host.supportsImagebed() && max > 0;
     gb.disabled = !ok;
     gb.dataset.max = String(max);   // 上限写进 DOM，e2e 不用猜"这个档能带几张"
-    gb.title = !Host.supportsGallery()
-      ? "当前宿主不支持图库（先升级工作台）"
-      : (max === 0 ? "当前模型不支持参考图" : "从图库挑一张当参考图");
+    gb.title = !Host.supportsImagebed()
+      ? "当前宿主不支持图床（先升级工作台）"
+      : (max === 0 ? "当前模型不支持参考图" : "从图床挑一张当参考图");
     gb.style.opacity = ok ? "1" : ".5";
   }
 }
@@ -2895,7 +2895,7 @@ function renderImageResults() {
     el("imgOutLabel").textContent = "尚未生成";
     return;
   }
-  var canGallery = Host.supportsGallery();
+  var canImagebed = Host.supportsImagebed();
   el("imgOutLabel").textContent = "本次 " + S.results.length + " 张";
   host.innerHTML = '<div class="grid-img">' + S.results.map(function (r, i) {
     var src = r.url || ("data:image/png;base64," + r.b64);
@@ -2915,12 +2915,12 @@ function renderImageResults() {
           '<button class="ibtn" data-act="open" data-i="' + i + '" title="大图预览">' + ICONS.zoom + "</button>" +
           '<button class="ibtn" data-act="dl" data-i="' + i + '" title="下载">' + ICONS.dl + "</button>" +
           '<button class="ibtn" data-act="copy" data-i="' + i + '" title="复制图片地址">' + ICONS.copy + "</button>" +
-          // 存图库：把"一次性的出图"变成"素材"。
+          // 存图床：把"一次性的出图"变成"素材"。
           // 保存后按钮变已存态，避免用户重复点（重复存会占两条记录）
-          (canGallery
-            ? '<button class="ibtn' + (r.savedInGallery ? " saved" : "") + '" data-act="togallery" data-i="' + i + '"' +
-              (r.savedInGallery ? " disabled" : "") + ' title="' + (r.savedInGallery ? "已存图库" : "存进图库") + '">' +
-              (r.savedInGallery ? ICONS.check : ICONS.gallery) + "</button>"
+          (canImagebed
+            ? '<button class="ibtn' + (r.savedInImagebed ? " saved" : "") + '" data-act="togallery" data-i="' + i + '"' +
+              (r.savedInImagebed ? " disabled" : "") + ' title="' + (r.savedInImagebed ? "已存图床" : "存进图床") + '">' +
+              (r.savedInImagebed ? ICONS.check : ICONS.gallery) + "</button>"
             : "") +
           (provider(S.providerId).video ? '<button class="ibtn" data-act="tofirst" data-i="' + i + '" title="用作视频首帧">' + ICONS.first + "</button>" : "")) +
       "</div></div>";
@@ -2982,11 +2982,11 @@ async function resultAction(act, i, btn) {
   if (act === "togallery") {
     if (btn) btn.disabled = true;
     try {
-      await saveResultToGallery(r, i);
-      r.savedInGallery = true;
-      toast("已存进图库", "ok");
+      await saveResultToImagebed(r, i);
+      r.savedInImagebed = true;
+      toast("已存进图床", "ok");
     } catch (err) {
-      toast("存图库失败：" + String(err && err.message || err), "err");
+      toast("存图床失败：" + String(err && err.message || err), "err");
     }
     renderImageResults();
     if (LB.open) renderLightbox();
@@ -3043,10 +3043,10 @@ function renderLightbox() {
   el("lbNext").hidden = pos < 0 || pos >= done.length - 1;
   var saved = el("lightbox").querySelector('[data-lb="togallery"]');
   if (saved) {
-    saved.disabled = !!r.savedInGallery || !Host.supportsGallery();
-    saved.classList.toggle("saved", !!r.savedInGallery);
-    saved.title = r.savedInGallery ? "已存图库"
-      : Host.supportsGallery() ? "存进图库" : "当前宿主不支持图库";
+    saved.disabled = !!r.savedInImagebed || !Host.supportsImagebed();
+    saved.classList.toggle("saved", !!r.savedInImagebed);
+    saved.title = r.savedInImagebed ? "已存图床"
+      : Host.supportsImagebed() ? "存进图床" : "当前宿主不支持图床";
   }
 }
 
@@ -3365,11 +3365,11 @@ async function runImageAsync(p, opts) {
 }
 
 /* ==================================================================
- * 5b. 图库联动
+ * 5b. 图床联动
  *
  * 两个方向，都走宿主的 gallery.* 通道（协议见宿主 src/lib/toolBridge.ts）：
- *   图库 → 这里：参考图不必先下载到本机再上传，直接从图库里挑
- *   这里 → 图库：出图结果一键存成素材，不再"关掉页面就找不回来"
+ *   图床 → 这里：参考图不必先下载到本机再上传，直接从图床里挑
+ *   这里 → 图床：出图结果一键存成素材，不再"关掉页面就找不回来"
  *
  * ⚠️ 存图**交给宿主下载**，不是这里 fetch：
  * 生图接口回报的常常是不给 CORS 头的临时对象存储链接
@@ -3379,18 +3379,18 @@ async function runImageAsync(p, opts) {
  * ================================================================== */
 
 /**
- * 把一张生成结果存进图库。有 url 就交给宿主下，只有 b64 就直接给内容。
+ * 把一张生成结果存进图床。有 url 就交给宿主下，只有 b64 就直接给内容。
  *
  * dedupe 只由**自动存档**传 true：那一次保存不是用户点的，同样的内容
- * 再存一条只会让图库里排满一模一样的卡片。用户亲手点「存进图库」时
+ * 再存一条只会让图床里排满一模一样的卡片。用户亲手点「存进图床」时
  * 不去重 —— 他要的就是"再留一份"（同一个提示词重新生成也该是两条）。
  */
-async function saveResultToGallery(r, index, dedupe) {
-  if (!Host.supportsGallery()) throw new Error("当前宿主不支持图库");
+async function saveResultToImagebed(r, index, dedupe) {
+  if (!Host.supportsImagebed()) throw new Error("当前宿主不支持图床");
 
   var opts = {
     title: "AI 生成 " + fmtTime(nowIso()) + (S.results.length > 1 ? " #" + (index + 1) : ""),
-    // 提示词一起存：图库里能按提示词搜，还能"换个模型再来一次"。
+    // 提示词一起存：图床里能按提示词搜，还能"换个模型再来一次"。
     // 优先取结果上记的（「继续编辑」后输入框可能已经换成了下一轮的描述）
     prompt: (r.prompt || el("imgPrompt").value || "").trim(),
     note: el("imgModel").value.trim(),
@@ -3404,30 +3404,30 @@ async function saveResultToGallery(r, index, dedupe) {
 }
 
 /* ------------------------------------------------------------------
- * 5c. 产出自动进图库
+ * 5c. 产出自动进图床
  *
  * 生成结果原本只活在这一次会话里：万相回报的是 OSS 临时地址，24 小时就失效，
- * 关掉工具再打开只剩一条历史记录。所以产出**默认**在图库留一份 ——
- * 用户不必记得去点「存进图库」，那条按钮留着给"我就想再存一次"。
+ * 关掉工具再打开只剩一条历史记录。所以产出**默认**在图床留一份 ——
+ * 用户不必记得去点「存进图床」，那条按钮留着给"我就想再存一次"。
  *
  * 三条纪律：
  *   1. **存档失败绝不能把"生成成功"变成"生成失败"**：出图已经成功了，
  *      图没存进去只是可惜，不是错误。所以这里 try/catch 兜住，最多报一句。
- *   2. **自动存档走 dedupe**，手动存档不走（理由见 saveResultToGallery）。
- *   3. 开关默认开，但**关得掉** —— 有人只想试个提示词，不想弄脏图库。
+ *   2. **自动存档走 dedupe**，手动存档不走（理由见 saveResultToImagebed）。
+ *   3. 开关默认开，但**关得掉** —— 有人只想试个提示词，不想弄脏图床。
  * ------------------------------------------------------------------ */
 
-/** 开关开着 + 宿主确实有图库，才自动存 */
-function autoGalleryOn() {
-  return S.autoGallery !== false && Host.supportsGallery();
+/** 开关开着 + 宿主确实有图床，才自动存 */
+function autoImagebedOn() {
+  return S.autoImagebed !== false && Host.supportsImagebed();
 }
 
-/** 把本次还没存过的图依次存进图库。串行：一次并发十几张会把两边内存压满。 */
+/** 把本次还没存过的图依次存进图床。串行：一次并发十几张会把两边内存压满。 */
 async function archiveResults() {
-  if (!autoGalleryOn()) return;
+  if (!autoImagebedOn()) return;
   var list = [];
   S.results.forEach(function (r, i) {
-    if (r.status === "waiting" || r.savedInGallery) return;
+    if (r.status === "waiting" || r.savedInImagebed) return;
     list.push({ r: r, i: i });
   });
   if (!list.length) return;
@@ -3435,8 +3435,8 @@ async function archiveResults() {
   var ok = 0, dup = 0, firstErr = "";
   for (var k = 0; k < list.length; k++) {
     try {
-      var item = await saveResultToGallery(list[k].r, list[k].i, true);
-      list[k].r.savedInGallery = true;
+      var item = await saveResultToImagebed(list[k].r, list[k].i, true);
+      list[k].r.savedInImagebed = true;
       if (item && item.dup) dup++; else ok++;
     } catch (err) {
       // 单张失败不中断其余：能存几张是几张
@@ -3446,16 +3446,16 @@ async function archiveResults() {
   renderImageResults();
   document.body.dataset.autoArchived = String(ok + dup);
   if (ok || dup) {
-    toast("已自动存入图库：" + ok + " 张" +
-      (dup ? "（" + dup + " 张图库里本来就有）" : ""), "ok");
+    toast("已自动存入图床：" + ok + " 张" +
+      (dup ? "（" + dup + " 张图床里本来就有）" : ""), "ok");
   } else if (firstErr) {
-    toast("自动存入图库失败：" + firstErr, "err");
+    toast("自动存入图床失败：" + firstErr, "err");
   }
 }
 
 /** 视频同理：临时地址更短命，更要留一份 */
 async function archiveVideoJob(job) {
-  if (!autoGalleryOn() || !job || !job.url || job.savedInGallery) return;
+  if (!autoImagebedOn() || !job || !job.url || job.savedInImagebed) return;
   try {
     var item = await Host.galleryPut({
       url: job.url,
@@ -3464,21 +3464,21 @@ async function archiveVideoJob(job) {
       note: (job.model || "") + (job.seconds ? " · " + job.seconds + "s" : ""),
       dedupe: true,
     });
-    job.savedInGallery = true;
+    job.savedInImagebed = true;
     renderVideoJobs();
-    toast(item && item.dup ? "图库里已有这一份视频" : "已自动存入图库", "ok");
+    toast(item && item.dup ? "图床里已有这一份视频" : "已自动存入图床", "ok");
   } catch (err) {
     // 同图片：存档失败不影响"视频已经生成好了"这个事实
-    toast("自动存入图库失败：" + String(err && err.message || err), "err");
+    toast("自动存入图床失败：" + String(err && err.message || err), "err");
   }
 }
 
-/** 图库选择器的状态 */
+/** 图床选择器的状态 */
 var G = { kind: "image", items: [], picked: [] };
 
-function openGalleryPicker() {
-  if (!Host.supportsGallery()) {
-    toast("当前宿主不支持图库，先升级工作台", "err");
+function openImagebedPicker() {
+  if (!Host.supportsImagebed()) {
+    toast("当前宿主不支持图床，先升级工作台", "err");
     return;
   }
   if (maxRefsFor(el("imgModel").value.trim()) === 0) {
@@ -3486,44 +3486,44 @@ function openGalleryPicker() {
     return;
   }
   G.picked = [];
-  el("galleryMask").hidden = false;
-  document.body.dataset.galleryOpen = "1";
-  void loadGalleryPicker();
+  el("imagebedMask").hidden = false;
+  document.body.dataset.imagebedOpen = "1";
+  void loadImagebedPicker();
 }
 
-function closeGalleryPicker() {
-  el("galleryMask").hidden = true;
-  document.body.dataset.galleryOpen = "0";
+function closeImagebedPicker() {
+  el("imagebedMask").hidden = true;
+  document.body.dataset.imagebedOpen = "0";
 }
 
-async function loadGalleryPicker() {
-  var body = el("galleryBody");
-  body.innerHTML = '<p class="hint" style="grid-column:1/-1">正在读取图库…</p>';
-  el("galleryCount").textContent = "…";
+async function loadImagebedPicker() {
+  var body = el("imagebedBody");
+  body.innerHTML = '<p class="hint" style="grid-column:1/-1">正在读取图床…</p>';
+  el("imagebedCount").textContent = "…";
   try {
     G.items = await Host.galleryList({
       kind: G.kind,
-      search: el("gallerySearch").value.trim(),
+      search: el("imagebedSearch").value.trim(),
       limit: 120,
     });
   } catch (err) {
     body.innerHTML = '<p class="hint" style="grid-column:1/-1;color:var(--danger)">' +
       esc(String(err && err.message || err)) + "</p>";
-    el("galleryCount").textContent = "读取失败";
-    document.body.dataset.galleryCount = "0";
+    el("imagebedCount").textContent = "读取失败";
+    document.body.dataset.imagebedCount = "0";
     return;
   }
-  el("galleryCount").textContent = G.items.length + " 项";
-  document.body.dataset.galleryCount = String(G.items.length);
-  renderGalleryPicker();
+  el("imagebedCount").textContent = G.items.length + " 项";
+  document.body.dataset.imagebedCount = String(G.items.length);
+  renderImagebedPicker();
 }
 
-function renderGalleryPicker() {
-  var body = el("galleryBody");
+function renderImagebedPicker() {
+  var body = el("imagebedBody");
   if (!G.items.length) {
-    body.innerHTML = '<p class="hint" style="grid-column:1/-1">图库里还没有内容。' +
-      "先去侧边栏「图库」导入图片，或者直接生成几张再存进去。</p>";
-    updateGalleryHint();
+    body.innerHTML = '<p class="hint" style="grid-column:1/-1">图床里还没有内容。' +
+      "先去侧边栏「图床」导入图片，或者直接生成几张再存进去。</p>";
+    updateImagebedHint();
     return;
   }
   body.innerHTML = G.items.map(function (it) {
@@ -3536,33 +3536,33 @@ function renderGalleryPicker() {
       ' title="' + esc(it.title) + '">' + inner +
       '<span class="nm">' + esc(it.title) + "</span></button>";
   }).join("");
-  updateGalleryHint();
+  updateImagebedHint();
 }
 
-function updateGalleryHint() {
+function updateImagebedHint() {
   var max = maxRefsFor(el("imgModel").value.trim());
   var room = Math.max(0, max - S.refs.length);
-  el("galleryHint").textContent =
+  el("imagebedHint").textContent =
     "已选 " + G.picked.length + " 项 · 这个模型还能加 " + room + " 张";
-  el("btnGalleryUse").disabled = G.picked.length === 0 || room === 0;
+  el("btnImagebedUse").disabled = G.picked.length === 0 || room === 0;
 }
 
 /**
- * 把选中的图库项加进参考图。
+ * 把选中的图床项加进参考图。
  *
  * 必须走 gallery.get 把图读成 data URI，而不是直接用某个本地路径：
  * 参考图最终要交给**生图接口**，而接口只认公开 URL 或 data URI，
  * 仓库里的本地文件两者都不是。转换这一步只能由宿主做
  * （它才拿得到文件内容）。
  */
-async function useGalleryPicked() {
+async function useImagebedPicked() {
   var max = maxRefsFor(el("imgModel").value.trim());
   var room = Math.max(0, max - S.refs.length);
   if (!G.picked.length) return;
   if (room === 0) { toast("参考图已达上限（" + max + " 张）", "err"); return; }
 
   var ids = G.picked.slice(0, room);
-  var btn = el("btnGalleryUse");
+  var btn = el("btnImagebedUse");
   btn.disabled = true;
   btn.textContent = "读取中…";
 
@@ -3578,7 +3578,7 @@ async function useGalleryPicked() {
 
   btn.textContent = "加入参考图";
   renderRefs();
-  closeGalleryPicker();
+  closeImagebedPicker();
   if (failed.length) toast("有 " + failed.length + " 张读不动：" + failed[0], "err");
   else toast("已加入 " + (ids.length - failed.length) + " 张参考图", "ok");
 }
@@ -3637,7 +3637,7 @@ function renderVideoJobs() {
         (j.status === "completed" ? "ok" : j.status === "failed" ? "err" : "warn") + '">' + esc(statusText) + "</span>" +
         (j.seconds ? '<span class="tag">' + esc(j.seconds) + "s</span>" : "") +
         (j.size ? '<span class="tag">' + esc(j.size) + "</span>" : "") +
-        (j.savedInGallery ? '<span class="tag ok">已存图库</span>' : "") +
+        (j.savedInImagebed ? '<span class="tag ok">已存图床</span>' : "") +
       "</h4>" +
       // 任务句柄叫什么取决于服务商：Agnes 给 video_id，任务式接口只给 task_id。
       // 写死 video_id 的话后一种卡上会一直是「—」，用户没法拿它去控制台查。
@@ -3973,7 +3973,7 @@ function openCfg() {
   el("cfgModelImage").value = S.models.image;
   el("cfgModelVideo").value = S.models.video;
   el("cfgModelChat").value = S.models.chat;
-  syncAutoGalleryUI();
+  syncAutoImagebedUI();
   renderProviderCards();
   renderBasePresets();
   el("testOut").textContent = "";
@@ -4037,7 +4037,7 @@ async function loadConfig() {
     // 默认开：只有用户明确关过（存 "0"）才是关。读不到就按开算 ——
     // 这个开关的方向是"宁可多存一张，也别丢一张"。
     var a = await Host.kvGet(KV_AUTO_GALLERY);
-    S.autoGallery = a !== "0";
+    S.autoImagebed = a !== "0";
   } catch (err) {
     toast("读取配置失败：" + (err && err.message || err), "err");
   }
@@ -4047,30 +4047,30 @@ async function loadConfig() {
   el("cfgModelImage").value = S.models.image;
   el("cfgModelVideo").value = S.models.video;
   el("cfgModelChat").value = S.models.chat;
-  syncAutoGalleryUI();
+  syncAutoImagebedUI();
   renderHistory();
 }
 
 /**
- * 「产出自动进图库」开关的 UI 与说明。
+ * 「产出自动进图床」开关的 UI 与说明。
  *
- * 宿主没有图库时把框禁用并写清原因 —— 一个点了没反应、也不说为什么的
+ * 宿主没有图床时把框禁用并写清原因 —— 一个点了没反应、也不说为什么的
  * 复选框比没有这个开关更让人困惑。
  */
-function syncAutoGalleryUI() {
-  var box = el("cfgAutoGallery");
+function syncAutoImagebedUI() {
+  var box = el("cfgAutoImagebed");
   if (!box) return;
-  var on = S.autoGallery !== false;
-  var ok = Host.supportsGallery();
+  var on = S.autoImagebed !== false;
+  var ok = Host.supportsImagebed();
   box.checked = on;
   box.disabled = !ok;
-  var hint = el("autoGalleryHint");
+  var hint = el("autoImagebedHint");
   if (hint) {
     hint.textContent = ok
-      ? "开着的出图 / 出视频结果会自动进图库，不必再点「存进图库」。图库里已有的同一份不会重复占一条。"
-      : "当前宿主不支持图库（先把工作台升到带图库的版本），产出只能手动下载。";
+      ? "开着的出图 / 出视频结果会自动进图床，不必再点「存进图床」。图床里已有的同一份不会重复占一条。"
+      : "当前宿主不支持图床（先把工作台升到带图床的版本），产出只能手动下载。";
   }
-  document.body.dataset.autoGallery = String(on);
+  document.body.dataset.autoImagebed = String(on);
 }
 
 /* ==================================================================
@@ -4127,7 +4127,7 @@ el("provSel").addEventListener("change", function () {
 el("btnCfg").addEventListener("click", openCfg);
 el("btnCfgClose").addEventListener("click", closeCfg);
 el("cfgModal").addEventListener("click", function (e) { if (e.target === el("cfgModal")) closeCfg(); });
-// （Esc 的按键处理统一放在下面「图库选择器」那一段 —— 两个弹层都要吃 Esc，
+// （Esc 的按键处理统一放在下面「图床选择器」那一段 —— 两个弹层都要吃 Esc，
 //   分散成两个监听器会同时关闭两层）
 
 el("btnEye").addEventListener("click", function () {
@@ -4141,11 +4141,11 @@ el("btnSave").addEventListener("click", function () { void saveConfig(); });
 
 /* 自动存档开关：即时生效、即时落库，不等「保存到本机数据库」——
    它是界面偏好，不该被"忘了点保存"带着回到上一个状态。 */
-el("cfgAutoGallery").addEventListener("change", function () {
-  S.autoGallery = el("cfgAutoGallery").checked;
-  document.body.dataset.autoGallery = String(S.autoGallery);
+el("cfgAutoImagebed").addEventListener("change", function () {
+  S.autoImagebed = el("cfgAutoImagebed").checked;
+  document.body.dataset.autoImagebed = String(S.autoImagebed);
   if (!Host.isConnected()) return;
-  Host.kvSet(KV_AUTO_GALLERY, S.autoGallery ? "1" : "0").catch(function () {
+  Host.kvSet(KV_AUTO_GALLERY, S.autoImagebed ? "1" : "0").catch(function () {
     toast("开关没能写进本机数据库（刷新后会回到默认的开）", "err");
   });
 });
@@ -4237,7 +4237,7 @@ el("filePick").addEventListener("change", async function () {
      那几档收图，纯文生图档一张不收，而 provider 级的 maxRef 恒为 0。
      读后者的话阿里云下这个入口会**静默丢弃所有本地图** —— 界面上还写着
      「已加 0 / 3」（那行字走的是 maxRefsFor，所以它是对的），而旁边的
-     「从图库选」也走正确路径 → 表现成「从图库能加、从本机加不了」。
+     「从图床选」也走正确路径 → 表现成「从图床能加、从本机加不了」。
      实测复现过：塞图后 refCount 仍是 0，且零报错。 */
   var model = el("imgModel").value.trim();
   var max = maxRefsFor(model);
@@ -4266,17 +4266,17 @@ el("refList").addEventListener("click", function (e) {
   if (rm) { S.refs.splice(Number(rm.dataset.rm), 1); renderRefs(); }
 });
 
-// 图库选择器。选中的是"图库项 id"，点「加入参考图」才真正读文件 ——
+// 图床选择器。选中的是"图床项 id"，点「加入参考图」才真正读文件 ——
 // 读一次要过一次 IPC + base64，勾选时就预读会在选十张时卡住界面。
-el("btnRefFromGallery").addEventListener("click", openGalleryPicker);
-el("btnGalleryClose").addEventListener("click", closeGalleryPicker);
-el("galleryMask").addEventListener("click", function (e) {
-  if (e.target === el("galleryMask")) closeGalleryPicker();
+el("btnRefFromImagebed").addEventListener("click", openImagebedPicker);
+el("btnImagebedClose").addEventListener("click", closeImagebedPicker);
+el("imagebedMask").addEventListener("click", function (e) {
+  if (e.target === el("imagebedMask")) closeImagebedPicker();
 });
-el("btnGalleryReload").addEventListener("click", function () { void loadGalleryPicker(); });
-el("gallerySearch").addEventListener("input", function () {
-  // 不做防抖：图库列表最多 120 条，本地查询，输了就查最跟手
-  void loadGalleryPicker();
+el("btnImagebedReload").addEventListener("click", function () { void loadImagebedPicker(); });
+el("imagebedSearch").addEventListener("input", function () {
+  // 不做防抖：图床列表最多 120 条，本地查询，输了就查最跟手
+  void loadImagebedPicker();
 });
 $$("[data-gkind]").forEach(function (b) {
   b.addEventListener("click", function () {
@@ -4285,19 +4285,19 @@ $$("[data-gkind]").forEach(function (b) {
     $$("[data-gkind]").forEach(function (x) {
       x.setAttribute("aria-selected", x === b ? "true" : "false");
     });
-    void loadGalleryPicker();
+    void loadImagebedPicker();
   });
 });
-el("galleryBody").addEventListener("click", function (e) {
+el("imagebedBody").addEventListener("click", function (e) {
   var it = e.target.closest("[data-gid]");
   if (!it) return;
   var id = it.dataset.gid;
   var at = G.picked.indexOf(id);
   if (at >= 0) G.picked.splice(at, 1); else G.picked.push(id);
   it.setAttribute("aria-selected", at >= 0 ? "false" : "true");
-  updateGalleryHint();
+  updateImagebedHint();
 });
-el("btnGalleryUse").addEventListener("click", function () { void useGalleryPicked(); });
+el("btnImagebedUse").addEventListener("click", function () { void useImagebedPicked(); });
 
 // 大图预览：操作条复用 resultAction，卡片和预览的动作永远一致
 el("lightbox").addEventListener("click", function (e) {
@@ -4316,10 +4316,10 @@ document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") { closeLightbox(); e.preventDefault(); return; }
     if (e.key === "ArrowLeft") { lbStep(-1); e.preventDefault(); return; }
     if (e.key === "ArrowRight") { lbStep(1); e.preventDefault(); return; }
-    return; // 预览开着时别让 Esc 顺手把下面的图库选择器也关了
+    return; // 预览开着时别让 Esc 顺手把下面的图床选择器也关了
   }
   if (e.key !== "Escape") return;
-  if (!el("galleryMask").hidden) { closeGalleryPicker(); e.preventDefault(); return; }
+  if (!el("imagebedMask").hidden) { closeImagebedPicker(); e.preventDefault(); return; }
   if (!el("cfgModal").hidden) closeCfg();
 });
 el("imgResults").addEventListener("click", function (e) {

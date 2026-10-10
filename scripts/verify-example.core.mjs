@@ -153,16 +153,21 @@ say("【每个 op 真跑一遍】");
 
 const info = await ask("info", {});
 check("info", info.ok && info.data.tablePrefix === "tool_kitchen_sink_", JSON.stringify(info.data && info.data.tablePrefix));
-check("info 里 gallery=false（图库默认关）", info.data.gallery === false);
+// 图床**默认是开的**（它是便签 / AI 生成 / 图片裁剪的共同落点，关着这些工具的
+// 附图能力就废了）。所以默认这一态该是"能用"，而不是"被拒"。
+check("info 里 gallery=true（图床默认开）", info.data.gallery === true);
+const galleryDefault = await ask("gallery.list", { limit: 5 });
+check("默认就放行（没被拒）", galleryDefault.ok === true, String(galleryDefault.error));
 
-// 图库关着 → 应被拒，且原因是"没有申请/不可用"
+// 用户手动关掉 → 应被拒，且原因是"不可用"而不是"没申请"
+settingsObj = { "ext.imagebed.enabled": "0" };
 const galleryOff = await ask("gallery.list", { limit: 5 });
-check("图库没开 → 被拒且原因可读", galleryOff.ok === false, String(galleryOff.error));
+check("关掉图床 → 被拒且原因可读", galleryOff.ok === false, String(galleryOff.error));
 
-// 打开图库模块 + 能力已申请 → 放行
-settingsObj = { "ext.gallery.enabled": "1" };
+// 再打开 + 能力已申请 → 放行
+settingsObj = { "ext.imagebed.enabled": "1" };
 const galleryOn = await ask("gallery.list", { limit: 5 });
-check("打开图库模块后放行", galleryOn.ok === true, galleryOn.ok ? `items=${galleryOn.data.items.length}` : String(galleryOn.error));
+check("打开图床模块后放行", galleryOn.ok === true, galleryOn.ok ? `items=${galleryOn.data.items.length}` : String(galleryOn.error));
 
 // task.get：整页模式（无 inject）→ 应被拒
 const taskNoCtx = await ask("task.get", {});

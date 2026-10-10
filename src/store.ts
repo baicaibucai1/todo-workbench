@@ -129,7 +129,7 @@ export type LocalAttachResult = {
 export interface ToolIntent {
   /** 投递序号，纯用来做 React 的 key —— 队列出队不靠它 */
   seq: number;
-  /** 谁发起的；null 表示是宿主自己（比如图库里"用某工具打开"） */
+  /** 谁发起的；null 表示是宿主自己（比如图床里"用某工具打开"） */
   from: string | null;
   data: unknown;
 }
@@ -800,9 +800,6 @@ export const useStore = create<State>((set, get) => ({
       tasks,
       orders,
       view,
-      // 与 TaskList 传给 groupRows 的是同一个开关 —— 两边都问注册表，
-      // 否则会出现「列表里没有这一组、右侧却选中了组里第一条」的错位
-      isEnabled(get().settings, "special"),
     );
     if (!first) {
       set({ activeTaskId: null, activeOrderId: null });
@@ -1602,12 +1599,9 @@ export const useStore = create<State>((set, get) => ({
       repo.fetchTasks({ view: "all", includeDone: false }),
       repo.fetchWorkOrders({ view: "all", includeDone: false }),
     ]);
-    // 特殊单号关掉后，它的时效不该再往紧急区里冒 —— 这批单子之所以"紧急"，
-    // 来源就是处理时效，留着等于开关只关了一半。普通流程任务照旧参与。
-    const specialOn = isEnabled(get().settings, "special");
     set({
       urgentTasks: tasks,
-      urgentOrders: orders.filter((o) => !o.closed && (specialOn || o.kind !== "special")),
+      urgentOrders: orders.filter((o) => !o.closed),
     });
   },
 

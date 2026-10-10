@@ -43,13 +43,13 @@ import type {
   WorkStage,
 } from "../types";
 /**
- * 图库的**备份模型**（含 deleted / updatedAt）。
+ * 图床的**备份模型**（含 deleted / updatedAt）。
  *
- * 不用界面模型 GalleryItem：那个模型里根本没有 deleted / updatedAt ——
+ * 不用界面模型 ImagebedItem：那个模型里根本没有 deleted / updatedAt ——
  * 界面上永远只看得到活着的那批，而这两样恰好是合并必须的。
  * `import type` 只在编译期存在，不会让这一层产生对数据层的运行时依赖。
  */
-import type { GalleryBackupItem } from "./repo";
+import type { ImagebedBackupItem } from "./repo";
 
 /** 分片标识。一个分片 = 一类数据的**完整快照**（不是增量） */
 export type SyncShardId = "tasks" | "orders" | "gallery" | "attachments";
@@ -60,7 +60,7 @@ export const SHARD_FORMAT = 1;
 export const SHARD_LABELS: Record<SyncShardId, string> = {
   tasks: "待办",
   orders: "流程任务",
-  gallery: "图库",
+  gallery: "图床",
   attachments: "流程任务附件",
 };
 
@@ -120,9 +120,9 @@ export interface OrdersPayload {
   woLogs: WoLog[];
 }
 
-export interface GalleryPayload {
+export interface ImagebedPayload {
   /** 含已软删除的 —— 墓碑必须跟着走，否则"删除"这个动作同步不过去 */
-  items: GalleryBackupItem[];
+  items: ImagebedBackupItem[];
 }
 
 export interface AttachmentsPayload {
@@ -133,7 +133,7 @@ export interface AttachmentsPayload {
 export type ShardPayload =
   | TasksPayload
   | OrdersPayload
-  | GalleryPayload
+  | ImagebedPayload
   | AttachmentsPayload;
 
 /* ------------------------------------------------------------------ */
@@ -460,10 +460,10 @@ export function mergeOrdersPayload(
   };
 }
 
-export function mergeGalleryPayload(
-  local: GalleryPayload,
-  remote: GalleryPayload,
-): { payload: GalleryPayload; stats: SyncStats; conflicts: SyncConflict[] } {
+export function mergeImagebedPayload(
+  local: ImagebedPayload,
+  remote: ImagebedPayload,
+): { payload: ImagebedPayload; stats: SyncStats; conflicts: SyncConflict[] } {
   const items = mergeRecords(local.items ?? [], remote.items ?? [], "gallery", (g) =>
     g.title || g.id,
   );
@@ -492,7 +492,7 @@ export function mergeShard(
     case "orders":
       return mergeOrdersPayload(local as OrdersPayload, remote as OrdersPayload);
     case "gallery":
-      return mergeGalleryPayload(local as GalleryPayload, remote as GalleryPayload);
+      return mergeImagebedPayload(local as ImagebedPayload, remote as ImagebedPayload);
     case "attachments":
       return mergeAttachmentsPayload(
         local as AttachmentsPayload,

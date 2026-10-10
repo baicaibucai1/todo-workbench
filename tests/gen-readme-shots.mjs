@@ -88,9 +88,8 @@ const nav = async (key) => {
   await page.waitForTimeout(600);
 };
 
-/** 这两个模块默认关闭，而 README 里要截它们的界面，所以先按真实界面打开它们 */
-await enableModule(page, "special");
-await enableModule(page, "gallery");
+/** 图床默认关闭，而 README 里要截它的界面，所以先按真实界面打开它 */
+await enableModule(page, "imagebed");
 
 console.log("开始截图：");
 
@@ -123,19 +122,52 @@ await shot("orders");
    这里把详情面板滚到「流转记录」，既换了画面，也让"过程态流转留痕"真的入镜。
    刻意**不改数据**：不点阶段条（那会真的推进流程），只滚动。 */
 {
+  // 要滚的是详情面板里那层 overflow-y-auto（OrderDetail 里的），不是页面本身。
+  // 之前用 scrollIntoViewIfNeeded 是白做的：元素本来就在视口内，它判定"已可见"
+  // 于是一动不动，orders 与 order-detail 两张图字节完全相同 —— README 里却挂着
+  // 两个不同的标题。这里直接把滚动容器推到底，并当面确认真的滚出了距离。
   const trace = page.getByText("流转记录", { exact: true }).first();
   if ((await trace.count()) > 0) {
-    await trace.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(400);
+    const moved = await trace.evaluate((el) => {
+      let p = el.parentElement;
+      while (p && !["auto", "scroll"].includes(getComputedStyle(p).overflowY)) {
+        p = p.parentElement;
+      }
+      if (!p || p.scrollHeight <= p.clientHeight + 4) return 0;
+      p.scrollTop = p.scrollHeight;
+      return p.scrollHeight - p.clientHeight;
+    });
+    await page.waitForTimeout(500);
+    if (!moved) {
+      console.log("  ⚠️ 详情面板没有可滚的余量，order-detail 会跟 orders 撞成同一张图");
+    } else {
+      console.log(`  详情面板下滚 ${moved}px`);
+    }
   }
 }
 await shot("order-detail");
 
-await nav("special");
-await shot("special-orders");
+/** 启用一个**默认停用的工具**（设置 → 工具 → 开关）。
+ *  「模板」（tools/scratchpad）是样板工具，默认不出现在侧边栏，
+ *  但 README 里挂着它的界面，所以这里按真实界面把它打开再拍。
+ *  跟 _enable-module 一样走界面不抄近路 —— 顺带把"设置里找得到它"一起验了。 */
+const enableTool = async (id) => {
+  await page.locator('aside[data-sidebar-width] [data-nav="settings"]').first().click();
+  await page.waitForTimeout(600);
+  await page.locator('[data-section="tools"]').first().click();
+  await page.waitForTimeout(500);
+  const sw = page.locator(`[data-switch="tool-enable-${id}"]`);
+  if ((await sw.count()) === 0) {
+    throw new Error(`设置 → 工具 里没有「${id}」的开关（工具列表由 tools/ 下的 manifest 生成）`);
+  }
+  if ((await sw.getAttribute("aria-checked")) !== "true") {
+    await sw.click();
+    await page.waitForTimeout(700);
+  }
+};
 
-await nav("gallery");
-await shot("gallery");
+await nav("imagebed");
+await shot("imagebed");
 
 // 紧急区不是导航项 —— 它是侧边栏底部那个常驻面板，回「全部」让它露出来即可
 await nav("all");
@@ -150,7 +182,10 @@ await shot("settings-tools");
 await page.locator('[data-section="sync"]').click();
 await shot("settings-sync");
 
-// 工具：每个工具位都进去截一张，README 里按 <id> 引用
+// 工具：每个工具位都进去截一张，README 里按 <id> 引用。
+// 先打开「模板」—— 它是样板工具，默认停用，不开就拍不到，README 那格会一直挂着旧图。
+await enableTool("scratchpad");
+
 const toolNavs = page.locator('aside[data-sidebar-width] [data-nav^="tool:"]');
 const toolCount = await toolNavs.count();
 const wantTools = !ONLY || [...ONLY].some((x) => x.startsWith("tool-"));

@@ -50,7 +50,7 @@ import {
 const SHARD_HINTS: Record<SyncShardId, string> = {
   tasks: "列表、待办、子任务，以及待办之间的关联关系",
   orders: "流程模板、流程任务、自定义字段与操作记录",
-  gallery: "图库记录（不含图片、视频文件本体）",
+  gallery: "图床记录（不含图片、视频文件本体）",
   attachments: "流程任务附件的记录（不含文件本体）",
 };
 
@@ -338,7 +338,7 @@ export function SyncSection({
           })}
         </div>
         <p className="mt-2 text-[12px] leading-relaxed text-fg-dim">
-          默认只同步待办。图库和附件都只同步「记录」，图片、视频的原文件不会上传 ——
+          默认只同步待办。图床和附件都只同步「记录」，图片、视频的原文件不会上传 ——
           那些按目录各同步各的就行。设置项本身不参与同步。
         </p>
       </div>

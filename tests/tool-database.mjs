@@ -5,7 +5,7 @@
  * 工具**自己的数据**到底有没有真的落进数据库、有没有真的隔离、
  * 能不能互相拉起、用户能不能在某个地方看到并清掉它们。
  *
- * 载体是随包自带的「随手记」（tools/scratchpad）—— 它声明了一张表、
+ * 载体是随包自带的「模板」（tools/scratchpad）—— 它声明了一张表、
  * 用结构化 CRUD 读写它，并能把一条内容交给别的工具。用一个真工具跑，
  * 而不是在测试里造一个假的 iframe，是因为**桥要求消息来自宿主渲染的那个
  * iframe**，伪造的 frame 会被 `e.source !== frame.contentWindow` 直接丢掉。
@@ -26,7 +26,7 @@ const ui = argv.indexOf("--url");
 const BASE = ui !== -1 ? argv[ui + 1] : "http://localhost:1420/";
 
 const TOOL_ID = "scratchpad";
-const TOOL_NAME = "随手记";
+const TOOL_NAME = "模板";
 const TABLE = "tool_scratchpad_notes";
 
 let passed = 0;
@@ -131,10 +131,28 @@ const askInTool = async (op, payload, timeout = 8000) => {
   );
 };
 
-console.log("\n1. 打开「随手记」");
+console.log("\n1. 打开「模板」（它是样板工具，默认停用，先到设置里打开）");
 await page.goto(BASE, { waitUntil: "load" });
 await page.waitForSelector("aside", { timeout: 20000 });
 await page.waitForTimeout(900);
+
+// 这一套测的正是"工具怎么用宿主的表"，载体只能是它 ——
+// 而它是样板，默认不出现在侧边栏，所以先到 设置 → 工具 里把它打开。
+const enableSwitch = page.locator(`[data-switch="tool-enable-${TOOL_ID}"]`);
+await page.locator("aside [data-nav='settings']").click();
+await page.waitForTimeout(700);
+await page.locator('button[data-section="tools"]').click();
+await page.waitForTimeout(600);
+if ((await enableSwitch.getAttribute("aria-checked")) !== "true") {
+  await enableSwitch.click();
+  await page.waitForTimeout(600);
+}
+check(
+  `已在设置里启用「${TOOL_NAME}」`,
+  (await enableSwitch.getAttribute("aria-checked")) === "true",
+);
+await page.locator('button[data-act="close-settings"]').click();
+await page.waitForTimeout(700);
 
 const nav = page.locator(`aside [data-nav='tool:${TOOL_ID}']`);
 let navCount = await nav.count();
@@ -171,7 +189,7 @@ const readFrame = () =>
   }, TOOL_ID);
 
 let fr = await readFrame();
-check("iframe 里是随手记自己", !!fr && fr.title.includes(TOOL_NAME), fr && fr.title);
+check("iframe 里是模板自己", !!fr && fr.title.includes(TOOL_NAME), fr && fr.title);
 check("工具拿到了宿主的运行上下文", !!fr && fr.meta.includes("tool_scratchpad_notes"), fr && fr.meta);
 info("工具显示的上下文", fr && fr.meta);
 
@@ -307,7 +325,7 @@ await page.waitForTimeout(1200);
 
 check("数据库分区打开了", (await page.locator("[data-db-section]").count()) === 1);
 check("宿主命名空间在", (await page.locator("[data-ns='core']").count()) === 1);
-check("随手记的命名空间在", (await page.locator(`[data-ns='${TOOL_ID}']`).count()) === 1);
+check("模板的命名空间在", (await page.locator(`[data-ns='${TOOL_ID}']`).count()) === 1);
 check(
   "它的行数是对的",
   (await page.locator(`[data-ns='${TOOL_ID}']`).getAttribute("data-ns-rows")) === "2",

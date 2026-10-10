@@ -1,15 +1,15 @@
 /**
- * 图库 —— 工作台里所有图片/视频的共同落点。
+ * 图床 —— 工作台里所有图片/视频的共同落点。
  *
  * 设计取向（与工作台其余部分一致）：
- * - 取数只走 lib/gallery.ts，组件不直接碰 db
+ * - 取数只走 lib/imagebed.ts，组件不直接碰 db
  * - 不写假按钮：没有文件、删除失败这类情况都给出真实状态
  * - 关键状态写 `data-*`，e2e 靠它断言，不靠中文文案
  *
  * 与 AI 生成工具的联动是双向的，两边都落在这里：
- *   工具 → 图库：AI 出图后一键「存进图库」，产物落在本视图里
- *   图库 → 工具：AI 的参考图可直接从图库挑
- * 后者不需要本组件参与（工具在自己的界面里列图库），
+ *   工具 → 图床：AI 出图后一键「存进图床」，产物落在本视图里
+ *   图床 → 工具：AI 的参考图可直接从图床挑
+ * 后者不需要本组件参与（工具在自己的界面里列图床），
  * 但**前者需要一个刷新信号** —— 工具是 iframe，写库发生在宿主进程里，
  * 本组件不知道。所以宿主写入后广播 `workbench:gallery-changed`，这里监听它。
  */
@@ -34,33 +34,33 @@ import {
 } from "lucide-react";
 import { useStore } from "../store";
 import {
-  addToGallery,
-  deleteGalleryItem,
-  fetchGallery,
-  GALLERY_CHANGED,
+  addToImagebed,
+  deleteImagebedItem,
+  fetchImagebed,
+  IMAGEBED_CHANGED,
   originLabel,
   ORIGIN_COLOR,
   summarize,
-  updateGalleryItem,
-  type GalleryQuery,
-} from "../lib/gallery";
+  updateImagebedItem,
+  type ImagebedQuery,
+} from "../lib/imagebed";
 import { attachmentStore, errorText, pickLocalMedia } from "../lib/attachments";
-import type { GalleryItem, GalleryKind, GalleryOrigin } from "../types";
+import type { ImagebedItem, ImagebedKind, ImagebedOrigin } from "../types";
 
-const ORIGIN_ICON: Record<GalleryOrigin, typeof Images> = {
+const ORIGIN_ICON: Record<ImagebedOrigin, typeof Images> = {
   manual: Upload,
   "ai-gen": Sparkles,
   "image-crop": Crop,
   "size-chart": Ruler,
 };
 
-type KindFilter = GalleryKind | "all";
-type OriginFilter = GalleryOrigin | "all";
+type KindFilter = ImagebedKind | "all";
+type OriginFilter = ImagebedOrigin | "all";
 
-export default function GalleryView() {
+export default function ImagebedView() {
   const { search: globalSearch } = useStore();
 
-  const [items, setItems] = useState<GalleryItem[]>([]);
+  const [items, setItems] = useState<ImagebedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [kind, setKind] = useState<KindFilter>("all");
@@ -73,14 +73,14 @@ export default function GalleryView() {
   /** 预览中的条目 id，null 表示没开大图 */
   const [previewId, setPreviewId] = useState<string | null>(null);
 
-  // 侧边栏那个搜索框对图库同样管用 —— 用户在"全部"里搜东西，
-  // 切到图库却发现搜索词被无视，会以为搜索坏了
+  // 侧边栏那个搜索框对图床同样管用 —— 用户在"全部"里搜东西，
+  // 切到图床却发现搜索词被无视，会以为搜索坏了
   const keyword = (localSearch || globalSearch).trim();
 
   const load = useCallback(async () => {
     try {
-      const query: GalleryQuery = { kind, origin, search: keyword };
-      const rows = await fetchGallery(query);
+      const query: ImagebedQuery = { kind, origin, search: keyword };
+      const rows = await fetchImagebed(query);
       setItems(rows);
       setLoadError(null);
     } catch (e) {
@@ -94,11 +94,11 @@ export default function GalleryView() {
     void load();
   }, [load]);
 
-  // 工具（iframe）往图库里写东西时刷新本视图，见文件头
+  // 工具（iframe）往图床里写东西时刷新本视图，见文件头
   useEffect(() => {
     const onChange = () => void load();
-    window.addEventListener(GALLERY_CHANGED, onChange);
-    return () => window.removeEventListener(GALLERY_CHANGED, onChange);
+    window.addEventListener(IMAGEBED_CHANGED, onChange);
+    return () => window.removeEventListener(IMAGEBED_CHANGED, onChange);
   }, [load]);
 
   useEffect(() => {
@@ -124,7 +124,7 @@ export default function GalleryView() {
       const failed: string[] = [];
       for (const src of picked) {
         try {
-          await addToGallery({ local: src, origin: "manual" });
+          await addToImagebed({ local: src, origin: "manual" });
           ok++;
         } catch (e) {
           failed.push(errorText(e));
@@ -143,17 +143,17 @@ export default function GalleryView() {
     }
   };
 
-  const remove = async (item: GalleryItem) => {
+  const remove = async (item: ImagebedItem) => {
     setBusy(true);
     try {
-      const rel = await deleteGalleryItem(item.id);
+      const rel = await deleteImagebedItem(item.id);
       // rel 非空表示"没有别人再引用这个内容了"，物理文件可以回收。
-      // 为 null 是正常情况（同一份字节被流程任务附件或另一条图库记录用着），
+      // 为 null 是正常情况（同一份字节被流程任务附件或另一条图床记录用着），
       // 这时只删记录、留文件 —— 绝不能想当然地把文件删掉。
       if (rel) await attachmentStore().remove(rel);
       if (previewId === item.id) setPreviewId(null);
       await load();
-      setNotice({ kind: "ok", text: rel ? "已从图库移除" : "已从图库移除（文件仍被其它记录引用，保留）" });
+      setNotice({ kind: "ok", text: rel ? "已从图床移除" : "已从图床移除（文件仍被其它记录引用，保留）" });
     } catch (e) {
       setNotice({ kind: "err", text: errorText(e) });
     } finally {
@@ -161,11 +161,11 @@ export default function GalleryView() {
     }
   };
 
-  const rename = async (item: GalleryItem, title: string) => {
+  const rename = async (item: ImagebedItem, title: string) => {
     const next = title.trim();
     if (!next || next === item.title) return;
     try {
-      await updateGalleryItem(item.id, { title: next });
+      await updateImagebedItem(item.id, { title: next });
       await load();
     } catch (e) {
       setNotice({ kind: "err", text: errorText(e) });
@@ -216,7 +216,7 @@ export default function GalleryView() {
       <div className="shrink-0 border-b border-line px-5 pt-3 pb-2.5">
         <div className="flex items-center gap-2">
           <Images size={16} className="text-fg-dim" />
-          <span className="text-[15px] font-semibold text-fg">图库</span>
+          <span className="text-[15px] font-semibold text-fg">图床</span>
           <span
             className="rounded-full bg-chip px-1.5 py-px text-[11px] text-fg-3"
             data-gallery-count={items.length}
@@ -251,7 +251,7 @@ export default function GalleryView() {
           <Chip active={origin === "all"} onClick={() => setOrigin("all")} navKey="origin-all">
             所有来源
           </Chip>
-          {(["ai-gen", "image-crop", "size-chart", "manual"] as GalleryOrigin[]).map((o) => (
+          {(["ai-gen", "image-crop", "size-chart", "manual"] as ImagebedOrigin[]).map((o) => (
             <Chip key={o} active={origin === o} onClick={() => setOrigin(o)} navKey={`origin-${o}`}>
               <span
                 className="mr-1 inline-block size-1.5 rounded-full align-middle"
@@ -295,10 +295,10 @@ export default function GalleryView() {
       {/* 主体 */}
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {loading ? (
-          <p className="text-[13px] text-fg-dim">正在读取图库…</p>
+          <p className="text-[13px] text-fg-dim">正在读取图床…</p>
         ) : loadError ? (
           <div className="rounded-lg border border-line bg-card p-4 text-[13px] text-danger">
-            读图库失败：{loadError}
+            读图床失败：{loadError}
           </div>
         ) : items.length === 0 ? (
           <EmptyState
@@ -391,7 +391,7 @@ function EmptyState({
       <div className="max-w-[380px]">
         <Images size={28} className="mx-auto mb-3 text-fg-dim" />
         <p className="text-[13px] text-fg-2">
-          {filtered ? "没有符合条件的图片" : "图库还是空的"}
+          {filtered ? "没有符合条件的图片" : "图床还是空的"}
         </p>
         <p className="mt-1.5 text-[12px] leading-relaxed text-fg-dim">
           {filtered
@@ -449,7 +449,7 @@ function Card({
   onRemove,
   onRename,
 }: {
-  item: GalleryItem;
+  item: ImagebedItem;
   onOpen: () => void;
   onRemove: () => void;
   onRename: (title: string) => void;
@@ -504,7 +504,7 @@ function Card({
           <Pencil size={11} />
         </button>
         <button
-          title="从图库移除"
+          title="从图床移除"
           onClick={onRemove}
           data-gallery-remove={item.id}
           className="grid size-6 place-items-center rounded bg-black/55 text-white hover:bg-danger"
@@ -550,7 +550,7 @@ function Lightbox({
   onRemove,
   onRename,
 }: {
-  item: GalleryItem;
+  item: ImagebedItem;
   index: number;
   total: number;
   onClose: () => void;
@@ -760,7 +760,7 @@ function Lightbox({
               className="flex w-full items-center justify-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-[12px] text-fg-2 hover:bg-danger-soft hover:text-danger"
             >
               <Trash2 size={12} />
-              从图库移除
+              从图床移除
             </button>
           </div>
         </div>

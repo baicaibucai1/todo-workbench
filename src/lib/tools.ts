@@ -45,6 +45,15 @@ import type {
   ToolSkillSpec,
 } from "../types";
 
+/**
+ * 工具标签白名单。**外部输入，认不出来的一律丢掉** ——
+ * 和 capabilities 一个道理：标签会出现在设置页的徽章上，
+ * 不能让一个工具自己往那块地方贴任何它想写的字。
+ *
+ * `template` = 它是给写工具的人照着抄的样板，不是给用户日常用的功能。
+ */
+export const TOOL_TAG_NAMES = ["template"] as const;
+
 /* ------------------------------------------------------------------ */
 /* 内置工具清单（浏览器 demo 用；打包时由构建脚本生成真实的 tools/ 目录）  */
 /* ------------------------------------------------------------------ */
@@ -70,12 +79,12 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     name: "图片裁剪",
     version: "2.0.0",
     description:
-      "图片编辑器 Image Studio：裁剪 / 尺寸与比例 / 镜像 / 选区填充 / 批量导出；可从工作台图库直接取图，导出的图默认自动存回图库（开关可关）",
+      "图片编辑器 Image Studio：裁剪 / 尺寸与比例 / 镜像 / 选区填充 / 批量导出；可从工作台图床直接取图，导出的图默认自动存回图床（开关可关）",
     icon: "crop",
     entry: "index.html",
     dbVersion: 1,
     author: "内置",
-    // 它要把裁好的图存进图库 —— 那是**不属于自己**的共享资源，
+    // 它要把裁好的图存进图床 —— 那是**不属于自己**的共享资源，
     // 所以必须申请；宿主据此决定放不放行（见 extensions/registry 的能力门）
     capabilities: ["gallery"],
   },
@@ -83,7 +92,7 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     id: "size-chart",
     name: "尺码表生成器",
     version: "1.1.0",
-    description: "粘贴 Excel 尺码数据，套用主题生成可直接发布的尺码表图片；导出的图默认在工作台图库留一份（开关可关），同一份内容不重复占条目",
+    description: "粘贴 Excel 尺码数据，套用主题生成可直接发布的尺码表图片；导出的图默认在工作台图床留一份（开关可关），同一份内容不重复占条目",
     icon: "list",
     entry: "index.html",
     dbVersion: 1,
@@ -95,11 +104,18 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     // 用结构化 CRUD 读写自己的 tool_scratchpad_notes，并能把一条内容交给别的工具。
     // 存在它，是为了让这套机制**有一个端到端跑起来的实例** —— 否则它只是文档。
     id: "scratchpad",
-    name: "随手记",
+    // 名字就叫「模板」，不叫「随手记」也不叫「便签本」：
+    // 它的用途是给人照着抄，不是给人日常记东西 —— 叫成便签本只会和旁边的
+    // 「便签」打架，让人以为是两个重复的东西。id 仍是 scratchpad（改名会换
+    // 表名，已经落在用户库里的 tool_scratchpad_notes 就找不着了）。
+    name: "模板",
     version: "1.0.0",
     description:
-      "跑在工作台数据库里的便签本：增删改查自己的一张表，还能把内容交给别的工具。这也是「工具怎么用自己的数据表」的样板",
+      "写工具时照着抄的样板：演示一个工具怎么在工作台里建自己的表、用结构化 CRUD 读写它，以及把一条内容交给别的工具。默认停用，不是日常用的便签本",
     icon: "notebook-pen",
+    // 打上样板标签，设置页会挂一枚「参考模板」徽章。
+    // 注意它**只管显示**：让这个工具默认不出现的是 settings 里的停用清单。
+    tags: ["template"],
     entry: "index.html",
     dbVersion: 1,
     author: "内置",
@@ -120,6 +136,51 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     },
   },
   {
+    // 卡片式便签。与上面「模板」的区别要说清楚，否则会被当成重复造轮子：
+    //
+    //   · 模板是**列表**，且它的定位是"工具怎么用自己的数据表"的教学样板
+    //     （manifest 里明写了），不该为了好看往里塞 UI；
+    //   · 便签是**给用户用的**：卡片网格、六色、附图、输入即存。
+    //
+    // 两者共用同一套能力（私有表 + 图床），互不干扰 —— 表名按 id 隔离成
+    // tool_notes_notes / tool_scratchpad_notes。
+    //
+    // 附图走图床（gallery.put 拿 id 存进 images 列），不自己存文件：
+    // 图床已经是工作台里图的唯一落点，有缩略图、有界面、别处也能取用；
+    // 便签只记 id，删便签也不会顺手删掉用户的图。
+    id: "notes",
+    name: "便签",
+    version: "1.0.0",
+    description:
+      "卡片式便签：随手记一条、贴几张图，按颜色与标签分类。图床开着时图进图床（别处也能取用），没开就直接随签保存",
+    icon: "sticky-note",
+    entry: "index.html",
+    dbVersion: 1,
+    author: "内置",
+    capabilities: ["gallery"],
+    schema: {
+      tables: [
+        {
+          name: "notes",
+          columns: [
+            { name: "id", type: "text", pk: true },
+            { name: "title", type: "text" },
+            { name: "body", type: "text" },
+            { name: "tag", type: "text" },
+            { name: "color", type: "text" },
+            // 图条目的 JSON 数组。列类型只有 text/integer/real，多条图只能序列化成一列。
+            // 条目两种形态混存：图床开着时是图床 id（宿主盖 origin 章），
+            // 没开时是内联 dataURL（工具自己降级直存，不让选装模块挡住附图）。
+            { name: "images", type: "text" },
+            { name: "created_at", type: "text" },
+            { name: "updated_at", type: "text" },
+          ],
+          indexes: [{ columns: ["created_at"] }],
+        },
+      ],
+    },
+  },
+  {
     // 已接入 Agnes AI（生图 / 生视频 / 对话，OpenAI 风格接口）。
     // 服务商与能力都以「描述符」形式写在工具内部的 PROVIDERS 里，
     // 加一家新 API 只动工具，不用动宿主。
@@ -127,7 +188,7 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     name: "AI 生成",
     version: "0.5.0",
     description:
-      "文生图 / 图生图、文生视频与对话。已接入阿里云百炼（万相、千问图像、Z-Image 共 21 档，按族走各自接口）与 Agnes AI，出图默认自动存进图库（开关可关）、参考图可从图库挑，生成结果可一键放回参考图继续编辑",
+      "文生图 / 图生图、文生视频与对话。已接入阿里云百炼（万相、千问图像、Z-Image 共 21 档，按族走各自接口）与 Agnes AI，出图默认自动存进图床（开关可关）、参考图可从图床挑，生成结果可一键放回参考图继续编辑",
     icon: "sparkles",
     entry: "index.html",
     dbVersion: 1,
@@ -181,6 +242,14 @@ export function validateManifest(raw: unknown): ToolManifest | null {
     entry,
     dbVersion: Number.isInteger(m.dbVersion) ? (m.dbVersion as number) : 1,
     author: typeof m.author === "string" ? m.author : undefined,
+    // 展示用标签。外部输入，按白名单过滤；一个都不认识就当没写。
+    // 它只影响界面徽章，不参与行为判断（见 types.ts 的 tags）。
+    ...(() => {
+      const tags = (Array.isArray(m.tags) ? m.tags : []).filter((t): t is string =>
+        typeof t === "string" && (TOOL_TAG_NAMES as readonly string[]).includes(t),
+      );
+      return tags.length ? { tags: [...new Set(tags)] } : {};
+    })(),
     // schema 单独走一套校验（见 toolSchema.validateToolSchema）：它会被拼进 DDL，
     // 要求比普通字段严得多。**校验不通过就整个丢掉**，而不是留一半 ——
     // 工具因此只是"没有私有表"，row.* 会明确报出来，不会变成半残的可写状态。
@@ -188,7 +257,7 @@ export function validateManifest(raw: unknown): ToolManifest | null {
       const schema = validateToolSchema(id, m.schema);
       return schema ? { schema } : {};
     })(),
-    // 能力申请：要碰**不属于自己**的共享资源（目前只有图库）就得在这里写明。
+    // 能力申请：要碰**不属于自己**的共享资源（目前只有图床）就得在这里写明。
     // 按白名单过滤，写什么奇奇怪怪的名字都会被丢掉；没写就是没有。
     ...(() => {
       const caps = (Array.isArray(m.capabilities) ? m.capabilities : []).filter((c): c is string =>

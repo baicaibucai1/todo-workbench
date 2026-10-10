@@ -217,7 +217,7 @@ parent.postMessage(
   schemaVersion: 18,
   theme: "light",                // 或 "dark"
   runtime: "desktop",            // 或 "browser"
-  gallery: true,                 // 宿主此刻是否为**这个工具**开放图库
+  gallery: true,                 // 宿主此刻是否为**这个工具**开放图床
   data: true,                    // 是否有 row.* 通道
   link: true,                    // 是否有 tools.* 通道
   inject: { kind: "detailSection", taskId: "t-abc" }   // 整页工具没有这个字段
@@ -369,7 +369,7 @@ await call("row.delete", { table: "notes", id: "n-abc" });
 3. **多出来的列会被拒绝**（不是忽略）：`表「notes」里没有「xxx」这一列`。
    单列值 ≤ 512 KB。
 
-### 图库（`gallery.*`）
+### 图床（`gallery.*`）
 
 | op | 参数 | 返回 |
 | --- | --- | --- |
@@ -412,14 +412,14 @@ await call("row.delete", { table: "notes", id: "n-abc" });
 | `not-granted` | manifest 里没写这个能力 | `这个扩展没有申请 gallery 能力` |
 | `unavailable` | 写了，但提供它的模块没启用 | `gallery 能力当前不可用（提供它的模块没有启用）` |
 
-**图库是选装模块，默认是关的** —— 所以 `ctx.gallery` 现在是会变的（以前恒为 true）。
+**图床是选装模块，默认是关的** —— 所以 `ctx.gallery` 现在是会变的（以前恒为 true）。
 
 正确的写法是**据此降级**，而不是弹一个"失败"了事：
 
 ```js
 var info = await call("info", {});
 if (!info.gallery) {
-  // 把"存进图库"按钮换成"下载到本地"，并在界面上说明原因
+  // 把"存进图床"按钮换成"下载到本地"，并在界面上说明原因
 }
 ```
 
@@ -764,7 +764,7 @@ install_tool（先验票，无票直接回绝）
 | 宿主的原话 | 真正的原因 | 怎么改 |
 | --- | --- | --- |
 | `这个扩展没有申请 gallery 能力` | manifest 的 `capabilities` 里没写 | 加上 `gallery`，重装 |
-| `gallery 能力当前不可用（提供它的模块没有启用）` | 图库是选装模块，没开 | 设置 → 行为 → 选装模块 → 开图库；或让工具降级 |
+| `gallery 能力当前不可用（提供它的模块没有启用）` | 图床是选装模块，没开 | 设置 → 行为 → 选装模块 → 开图床；或让工具降级 |
 | `这个组件没有挂在任何一条待办上…` | 整页工具调了 `task.get` | 注入组件才能用；整页模式下这是预期行为 |
 | `它挂着的那条待办已经不存在了` | 那条刚被删了 | 界面上显示出来，不要静默 |
 | `没有声明过「xxx」这张表。可用的是：…` | `schema.tables` 里没有这个裸表名 | 补声明，或改掉调用里的表名 |

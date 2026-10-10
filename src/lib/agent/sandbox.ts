@@ -13,7 +13,7 @@
  *
  *   · row.*    记账，返回空结果 / 合成主键（不会在试跑时弄脏真数据）
  *   · kv.*     只写内存 Map
- *   · gallery.* 记账，返回合成的一条（不真往图库塞东西）
+ *   · gallery.* 记账，返回合成的一条（不真往图床塞东西）
  *   · 能力门与生产**完全一致**：没申请 gallery 却调 gallery.put，
  *     在沙箱里一样被拒 —— 这样助手当场就能看见，而不是等用户打开才发现。
  *
@@ -200,7 +200,7 @@ export async function runSandbox(input: SandboxInput): Promise<SandboxReport> {
     if (op === "info") {
       const ctx = buildContext(safeId, settings);
       // 声明优先：沙箱里的工具还没进注册表，能力门只能按这份声明算
-      ctx.gallery = caps.has("gallery") && isEnabled(settings, "gallery");
+      ctx.gallery = caps.has("gallery") && isEnabled(settings, "imagebed");
       if (input.injects?.length) {
         ctx.inject = { kind: input.injects[0].kind, taskId: "__sandbox__" };
       }
@@ -263,7 +263,7 @@ export async function runSandbox(input: SandboxInput): Promise<SandboxReport> {
 
     /* ---- gallery：与生产同一道门，通过则给合成结果 ---- */
     if (op.startsWith("gallery.")) {
-      const state = !caps.has("gallery") ? "not-granted" : isEnabled(settings, "gallery") ? "on" : "unavailable";
+      const state = !caps.has("gallery") ? "not-granted" : isEnabled(settings, "imagebed") ? "on" : "unavailable";
       if (state !== "on") {
         const msg =
           state === "not-granted"
@@ -373,7 +373,7 @@ export async function runSandbox(input: SandboxInput): Promise<SandboxReport> {
 
   function pushContext() {
     const ctx = buildContext(safeId, settings);
-    ctx.gallery = caps.has("gallery") && isEnabled(settings, "gallery");
+    ctx.gallery = caps.has("gallery") && isEnabled(settings, "imagebed");
     if (input.injects?.length) {
       ctx.inject = { kind: input.injects[0].kind, taskId: "__sandbox__" };
     }

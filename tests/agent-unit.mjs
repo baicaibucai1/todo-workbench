@@ -1638,9 +1638,9 @@ section("10. 沙箱与验证器：静态体检 / 报告判定 / 通行证");
     const withSchema = { tables: [{ name: "recs", columns: [{ name: "id", type: "text", pk: true }] }] };
     check("同时给了 schema 就放行", !codes(V.staticProblems({ id: "a-b", html: usesRow, schema: withSchema })).includes("ROW_WITHOUT_SCHEMA"));
 
-    const usesGallery = '<html><body><script>call("gallery.put",{dataUrl:"data:,"})</script></body></html>';
-    check("用了 gallery.* 却没申请能力 → 拦下", codes(V.staticProblems({ id: "a-b", html: usesGallery })).includes("GALLERY_NOT_DECLARED"));
-    check("申请了 gallery 就放行", !codes(V.staticProblems({ id: "a-b", html: usesGallery, capabilities: ["gallery"] })).includes("GALLERY_NOT_DECLARED"));
+    const usesImagebed = '<html><body><script>call("gallery.put",{dataUrl:"data:,"})</script></body></html>';
+    check("用了 gallery.* 却没申请能力 → 拦下", codes(V.staticProblems({ id: "a-b", html: usesImagebed })).includes("GALLERY_NOT_DECLARED"));
+    check("申请了 gallery 就放行", !codes(V.staticProblems({ id: "a-b", html: usesImagebed, capabilities: ["gallery"] })).includes("GALLERY_NOT_DECLARED"));
 
     const usesTask = '<html><body><script>call("task.get",{})</script></body></html>';
     check("用了 task.get 却没申请 task → 拦下", codes(V.staticProblems({ id: "a-b", html: usesTask })).includes("TASK_NOT_DECLARED"));
@@ -2334,14 +2334,18 @@ section("15. 上传图片：谁能看图、图怎么进请求、以及看不了�
 
   /* -- 2. 名单本身要经得起检查 -- */
   {
-    // v19 是助手图片上传那一版；v20 是示例数据改成选装 —— 那一条与助手无关，
-    // 但它同样是"当前最新版本"，所以这里的判据跟着推进。
+    // v19 是助手图片上传那一版；v20 是示例数据改成选装、v21 是图库改名图床、
+    // v22 是删掉特殊单号 —— 后面几条与助手无关，但它们同样是"当前最新版本"，
+    // 所以这里的判据跟着推进。（v21/v22 都属"被删/被改名"那一类，具体断言
+    // 分别在 imagebed.mjs 与 smoke.mjs 里。）
     // ⚠️ 这里钉的是**具体数字**而不是"等于最新"，是为了让每次加迁移都必须
     // 显式回来改一行 —— 顺带逼人检查新迁移有没有被别的断言覆盖到。
     // 具体断言留给各自的测试：v19 在下面，v20 在 smoke.mjs 里。
-    check("schema 已推进到 v20（示例数据改成选装）", CURRENT_SCHEMA_VERSION === 20, String(CURRENT_SCHEMA_VERSION));
+    check("schema 已推进到 v22（删除特殊单号）", CURRENT_SCHEMA_VERSION === 22, String(CURRENT_SCHEMA_VERSION));
     check("v19 这条迁移存在且叫得出名字", migrations.some((m) => m.version === 19 && m.name === "agent_message_images"));
     check("v20 这条迁移存在且叫得出名字", migrations.some((m) => m.version === 20 && m.name === "sample_data_opt_in"));
+    check("v21 这条迁移存在且叫得出名字", migrations.some((m) => m.version === 21 && m.name === "gallery_renamed_to_imagebed"));
+    check("v22 这条迁移存在且叫得出名字", migrations.some((m) => m.version === 22 && m.name === "drop_special_orders"));
 
     for (const prv of P.AGENT_PROVIDERS) {
       if (!prv.vision) continue;

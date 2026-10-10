@@ -153,33 +153,33 @@ check(
   (await page.locator("body").innerText()).includes("1027 改码发货"),
 );
 
-console.log("\n8. 底部区块：图库在设置正上方");
+console.log("\n8. 底部区块：图床在设置正上方");
 // 「计划内」整个视图已删（侧边栏入口也一起没了），这里顺手守住"它不会再回来"
 check("侧边栏不再有计划内", !sidebarText.includes("计划内"));
 
 /*
- * ⚠️ 图库是**选装模块**（v18 起，默认关），侧边栏里默认没有它。
+ * ⚠️ 图床是**选装模块**（v18 起，默认关），侧边栏里默认没有它。
  *
- * 这里原先直接断言"图库与设置都在侧边栏底部"，在选装改版之后就一直是红的
+ * 这里原先直接断言"图床与设置都在侧边栏底部"，在选装改版之后就一直是红的
  * —— 而这条红是"没人去按那个开关"，不是功能坏了。修它的正确做法是
  * **先按开关**，而不是把断言删掉或改成"允许没有"：
- * 后两者都会让"图库紧挨设置上面"这个真的会被改坏的顺序约束失去守卫。
+ * 后两者都会让"图床紧挨设置上面"这个真的会被改坏的顺序约束失去守卫。
  *
  * 用 _enable-module.mjs 走真实界面（它顺带验了"设置页里找得到这个开关"），
  * 然后回到待办视图 —— 启用完人会站在设置页上。
  */
-await enableModule(page, "gallery");
+await enableModule(page, "imagebed");
 await page.locator('aside [data-nav="myday"]').first().click();
 await page.waitForTimeout(600);
 
 const bottomNav = await page
   .locator("aside[data-sidebar-width] [data-nav]")
   .evaluateAll((els) => els.map((e) => e.getAttribute("data-nav")));
-const gi = bottomNav.indexOf("gallery");
+const gi = bottomNav.indexOf("imagebed");
 const si = bottomNav.indexOf("settings");
-console.log(`    · 底部顺序: 图库@${gi} 设置@${si}`);
-check("图库与设置都在侧边栏底部", gi !== -1 && si !== -1, bottomNav.join(","));
-check("图库紧挨在设置上面", gi !== -1 && si === gi + 1, `${gi} vs ${si}`);
+console.log(`    · 底部顺序: 图床@${gi} 设置@${si}`);
+check("图床与设置都在侧边栏底部", gi !== -1 && si !== -1, bottomNav.join(","));
+check("图床紧挨在设置上面", gi !== -1 && si === gi + 1, `${gi} vs ${si}`);
 
 console.log("\n9. 切换到全部视图与列表视图");
 await navItem("全部").click();

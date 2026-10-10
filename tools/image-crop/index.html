@@ -576,7 +576,7 @@
     .filmstrip{height:104px;}
   }
 
-  /* ===================== 图库（工作台宿主联动） =====================
+  /* ===================== 图床（工作台宿主联动） =====================
      只在被工作台当工具嵌进 iframe 时才会出现，双击打开本文件时
      这两个入口是 hidden 的 —— 见脚本 H 节的说明。 */
   .gmask{position:fixed;inset:0;z-index:120;display:none;align-items:center;justify-content:center;
@@ -622,7 +622,7 @@
     </div>
   </div>
   <div class="file-chip empty" id="fileChip"></div>
-  <!-- 「打开图片 / 从图库打开」不在这里 —— 它们管的是往【图片列表】里加图，
+  <!-- 「打开图片 / 从图床打开」不在这里 —— 它们管的是往【图片列表】里加图，
        所以跟着列表走，放在底部胶片条的头部。顶部只留跟当前这张有关的动作。 -->
 
   <div class="spacer"></div>
@@ -648,18 +648,18 @@
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
     导出当前
   </button>
-  <!-- 「导出到本机」的兄弟动作：不落盘，直接进图库当素材 -->
-  <button class="btn" id="btnSaveToGallery" disabled onclick="saveToGallery()" hidden
-          title="把当前结果存进工作台图库（不再落一份到下载目录）">
+  <!-- 「导出到本机」的兄弟动作：不落盘，直接进图床当素材 -->
+  <button class="btn" id="btnSaveToImagebed" disabled onclick="saveToImagebed()" hidden
+          title="把当前结果存进工作台图床（不再落一份到下载目录）">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-    存进图库
+    存进图床
   </button>
-  <!-- 自动存档：与图库入口同命运，只有连上工作台才出现。
-       默认开 —— 导出一次就在图库留一份，用户不必记得去点「存进图库」。 -->
-  <label class="check" id="chkAutoGalleryLine" hidden
-         title="导出的图默认在工作台图库留一份；同一份内容不会重复占一条">
-    <input type="checkbox" id="chkAutoGallery" checked>
-    <span>导出自动存图库</span>
+  <!-- 自动存档：与图床入口同命运，只有连上工作台才出现。
+       默认开 —— 导出一次就在图床留一份，用户不必记得去点「存进图床」。 -->
+  <label class="check" id="chkAutoImagebedLine" hidden
+         title="导出的图默认在工作台图床留一份；同一份内容不会重复占一条">
+    <input type="checkbox" id="chkAutoImagebed" checked>
+    <span>导出自动存图床</span>
   </label>
   <span class="batch-tip hidden" id="batchTip"></span>
 </header>
@@ -682,9 +682,9 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
           <div class="t1">点击选择图片，或直接拖进来</div>
           <div class="t2">支持 JPG / PNG / WebP · 多选进入批量 · <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴</div>
-          <!-- 图库入口的第二处：空态是最需要它的时刻（手上还没有图） -->
-          <button class="btn sm" id="btnEmptyFromGallery" onclick="openGalleryPicker()" hidden
-                  style="margin-top:12px;">从工作台图库打开</button>
+          <!-- 图床入口的第二处：空态是最需要它的时刻（手上还没有图） -->
+          <button class="btn sm" id="btnEmptyFromImagebed" onclick="openImagebedPicker()" hidden
+                  style="margin-top:12px;">从工作台图床打开</button>
         </div>
       </div>
 
@@ -1194,11 +1194,11 @@
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="M12 4v12"/><polyline points="7 9 12 4 17 9"/></svg>
         <span class="lbl-wide">加入图片</span><span class="lbl-narrow">加入</span>
       </button>
-      <!-- 图库入口：默认隐藏，只有工作台宿主说「我支持图库」才出现（见 H 节） -->
-      <button class="btn sm" id="btnOpenFromGallery" onclick="openGalleryPicker()" hidden
-              title="直接从工作台图库取图加进列表，不必先下载到本机再上传">
+      <!-- 图床入口：默认隐藏，只有工作台宿主说「我支持图床」才出现（见 H 节） -->
+      <button class="btn sm" id="btnOpenFromImagebed" onclick="openImagebedPicker()" hidden
+              title="直接从工作台图床取图加进列表，不必先下载到本机再上传">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
-        <span class="lbl-wide">从图库加入</span><span class="lbl-narrow">图库</span>
+        <span class="lbl-wide">从图床加入</span><span class="lbl-narrow">图床</span>
       </button>
       <span style="width:1px;height:18px;background:var(--line);flex-shrink:0;"></span>
 
@@ -1229,7 +1229,7 @@
 <div class="statusbar">
   <span class="st" id="statusMsg">就绪</span>
   <!-- 这个工具两种活法：双击单开 / 被工作台嵌进来。指示灯把当前是哪种说清楚，
-       否则用户会疑惑「图库按钮为什么时有时无」 -->
+       否则用户会疑惑「图床按钮为什么时有时无」 -->
   <span class="host-dot" id="hostState" title="这个工具可以单独双击打开，也可以在工作台里打开">独立运行</span>
   <div class="spacer"></div>
   <span><kbd>Ctrl</kbd><kbd>V</kbd> 粘贴</span>
@@ -1255,35 +1255,35 @@
     <div class="modal-bd"><img id="modalImg" alt="预览"></div>
     <div class="modal-ft">
       <div class="info" id="modalInfo"></div>
-      <button class="btn" id="btnModalToGallery" onclick="saveToGallery('last')" hidden>存入图库</button>
+      <button class="btn" id="btnModalToImagebed" onclick="saveToImagebed('last')" hidden>存入图床</button>
       <button class="btn" onclick="closeModal()">关闭</button>
       <button class="btn primary" onclick="downloadLast()">下载这张</button>
     </div>
   </div>
 </div>
 
-<!-- ===================== 图库选择器 =====================
-     存在的意义：省掉「先导出到本机、再从图库导入」这一圈。
+<!-- ===================== 图床选择器 =====================
+     存在的意义：省掉「先导出到本机、再从图床导入」这一圈。
      多选：选中的会整批进图片列表（第一张成为当前编辑的那张）。 -->
-<div class="gmask" id="galleryMask">
+<div class="gmask" id="imagebedMask">
   <div class="gpanel">
     <header>
-      <b>从工作台图库打开</b>
-      <span id="galleryCount" style="font-size:11px;color:var(--txt3)">—</span>
+      <b>从工作台图床打开</b>
+      <span id="imagebedCount" style="font-size:11px;color:var(--txt3)">—</span>
       <div class="spacer" style="flex:1"></div>
-      <button class="btn sm ghost" onclick="closeGalleryPicker()">关闭</button>
+      <button class="btn sm ghost" onclick="closeImagebedPicker()">关闭</button>
     </header>
     <div class="gbar">
       <span class="hint" style="margin:0">只列出图片；选多张会一起进图片列表</span>
       <div class="spacer" style="flex:1"></div>
-      <input class="inp" id="gallerySearch" placeholder="搜标题 / 提示词" style="width:190px">
-      <button class="btn sm" onclick="loadGalleryPicker()">刷新</button>
+      <input class="inp" id="imagebedSearch" placeholder="搜标题 / 提示词" style="width:190px">
+      <button class="btn sm" onclick="loadImagebedPicker()">刷新</button>
     </div>
-    <div class="gbody" id="galleryBody"></div>
+    <div class="gbody" id="imagebedBody"></div>
     <footer>
-      <span class="hint" id="galleryHint" style="margin:0"></span>
+      <span class="hint" id="imagebedHint" style="margin:0"></span>
       <div class="spacer" style="flex:1"></div>
-      <button class="btn primary sm" id="btnGalleryUse" disabled onclick="useGalleryPicked()">导入</button>
+      <button class="btn primary sm" id="btnImagebedUse" disabled onclick="useImagebedPicked()">导入</button>
     </footer>
   </div>
 </div>
@@ -2462,7 +2462,7 @@ async function exportCurrent() {
   toast('已导出 ' + res.canvas.width + '×' + res.canvas.height + ' · ' + fmtSize(res.blob.size));
   setStatus(sv.picked ? ('已保存 ' + sv.name) : ('已下载 ' + sv.name + '（当前环境不开放位置选择，存入默认下载目录）'));
   // 不 await：文件已经落在本机了，存档在后台跑完再提示一句
-  void archiveToGallery(res.blob, name, res.canvas.width, res.canvas.height, res.ext);
+  void archiveToImagebed(res.blob, name, res.canvas.width, res.canvas.height, res.ext);
 }
 
 /* ============================================================
@@ -2489,13 +2489,13 @@ async function exportBatch() {
       setStatus('正在处理第 ' + (i + 1) + '/' + list.length + ' 张…');
       const c = await renderResult(it.img, it.w, it.h, o, ov);
       const res = await encodeWithin(c, maxBytes);
-      // ext 一起带出去：自动存档要给图库写「尺寸 · 格式」的备注
+      // ext 一起带出去：自动存档要给图床写「尺寸 · 格式」的备注
       if (res && res.blob) items.push({ name:baseName(it.name) + '_crop.' + res.ext, blob:res.blob, ext:res.ext });
     } catch (e) { /* 跳过失败项 */ }
   }
   if (!items.length) { toast('没有可用的结果'); return; }
   // 打包/写盘之前就起头：存档是后台的事，不该让用户多等一轮
-  void archiveManyToGallery(items);
+  void archiveManyToImagebed(items);
 
   if (S.batchMode === 'zip') {
     const zipBlob = await buildZip(items);
@@ -2642,8 +2642,8 @@ async function openPreview() {
   $('#modalSub').textContent = S.name;
   $('#modalInfo').textContent = c.width + ' × ' + c.height + ' px · ' + res.ext.toUpperCase() + ' · ' + fmtSize(res.blob.size);
   $('#modal').classList.add('on');
-  // 刚算出结果，弹窗里那个「存入图库」才有东西可存
-  syncGalleryUI();
+  // 刚算出结果，弹窗里那个「存入图床」才有东西可存
+  syncImagebedUI();
 }
 function closeModal() { $('#modal').classList.remove('on'); }
 async function downloadLast() {
@@ -2653,7 +2653,7 @@ async function downloadLast() {
   if (sv.aborted) return;
   setStatus(sv.picked ? ('已保存 ' + sv.name) : ('已下载 ' + sv.name));
   toast('已导出');
-  void archiveToGallery(S.lastBlob, name, S.lastCanvas ? S.lastCanvas.width : 0,
+  void archiveToImagebed(S.lastBlob, name, S.lastCanvas ? S.lastCanvas.width : 0,
     S.lastCanvas ? S.lastCanvas.height : 0, S.lastExt);
 }
 $('#modal').addEventListener('click', e => { if (e.target === $('#modal')) closeModal(); });
@@ -2686,12 +2686,12 @@ function syncBatchUI() {
     ? ('导出当前这一张；列表里另有 ' + others + ' 张，批量导出在底部胶片条（Ctrl+E）')
     : '导出当前编辑的这一张（Ctrl+E）';
 
-  // 「存进图库」跟着「有没有当前图」走。挂在这里而不是各调用点，
+  // 「存进图床」跟着「有没有当前图」走。挂在这里而不是各调用点，
   // 是因为载图、清空列表、切图最后都会走到 renderThumbs ——
   // 挂调用点必然漏掉某一处（清空列表后按钮还亮着）。
   // 换图 / 清空列表后，「加入贴纸」的可用状态和列表得跟着收干净
   if (typeof syncStickerUI === 'function') syncStickerUI();
-  if (typeof syncGalleryUI === 'function') syncGalleryUI();
+  if (typeof syncImagebedUI === 'function') syncImagebedUI();
 }
 
 function renderThumbs() {
@@ -6053,8 +6053,8 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'Escape') {
-    // 图库选择器盖在预览弹窗之上，所以 Esc 先关最上层那个
-    if ($('#galleryMask').classList.contains('on')) { closeGalleryPicker(); return; }
+    // 图床选择器盖在预览弹窗之上，所以 Esc 先关最上层那个
+    if ($('#imagebedMask').classList.contains('on')) { closeImagebedPicker(); return; }
     closeModal(); return;
   }
   const mod = e.ctrlKey || e.metaKey;
@@ -6146,28 +6146,28 @@ window.fillApply=fillApply; window.fillDiscard=fillDiscard; window.runFillRun=ru
 window.fillEnsureApplied=fillEnsureApplied; window.fillUsable=fillUsable; window.fillFresh=fillFresh;
 window.curStrokes=curStrokes;
 window.drawFillOverlay=drawFillOverlay; window.strokesArea=strokesArea;
-window.openGalleryPicker=openGalleryPicker; window.closeGalleryPicker=closeGalleryPicker;
-window.loadGalleryPicker=loadGalleryPicker; window.useGalleryPicked=useGalleryPicked;
-window.saveToGallery=saveToGallery;
+window.openImagebedPicker=openImagebedPicker; window.closeImagebedPicker=closeImagebedPicker;
+window.loadImagebedPicker=loadImagebedPicker; window.useImagebedPicked=useImagebedPicked;
+window.saveToImagebed=saveToImagebed;
 
 /* ============================================================
-   H. 图库联动（工作台宿主）
+   H. 图床联动（工作台宿主）
    ------------------------------------------------------------
    这个 HTML 有两副面孔：
      · 双击直接打开 —— 一个自足的单文件工具，下面这些入口**全部不出现**
      · 被工作台当工具嵌进 iframe —— 通过 postMessage 跟宿主说话，
-       多出「从图库打开」「存进图库」两处
+       多出「从图床打开」「存进图床」两处
    判定靠宿主主动推来的 tool:context（见宿主 src/lib/toolBridge.ts），
    而不是 UA 或 query 参数。原因是工具和宿主**分开升级**：新工具装在
    旧宿主上时，ctx 里没有 gallery 标记，这时要把入口藏起来，
    而不是让用户对着一个点了报「不支持的操作」的按钮发懵。
 
    ⚠️ 边界：工具拿不到宿主的文件系统。能做的只有
-   「列图库 → 按 id 换回图片内容」和「把内容交出去存」。路径永远不出宿主。
-   往图库写时，来源标记由宿主按 tool_id 盖（这里是 image-crop），
-   工具说了不算 —— 这样图库里的「出处」才可信。
+   「列图床 → 按 id 换回图片内容」和「把内容交出去存」。路径永远不出宿主。
+   往图床写时，来源标记由宿主按 tool_id 盖（这里是 image-crop），
+   工具说了不算 —— 这样图床里的「出处」才可信。
    ============================================================ */
-var Gallery = (function () {
+var Imagebed = (function () {
   var HOST_SOURCE = 'workbench-host', TOOL_SOURCE = 'workbench-tool';
   var seq = 0, pending = Object.create(null), ctx = null, connected = false;
 
@@ -6220,85 +6220,85 @@ var Gallery = (function () {
 
   return {
     connected: function () { return connected; },
-    /** 宿主是否提供图库通道；旧宿主上为 false */
+    /** 宿主是否提供图床通道；旧宿主上为 false */
     supports: function () { return !!(ctx && ctx.gallery); },
     list: function (o) { return ask('gallery.list', o || {}, 20000).then(function (r) { return r.items || []; }); },
     get: function (id) { return ask('gallery.get', { id: id }, 30000); },
     put: function (o) { return ask('gallery.put', o, 120000); },
-    /* 工具私有 KV：存「导出是否自动存图库」这类偏好。
+    /* 工具私有 KV：存「导出是否自动存图床」这类偏好。
        只在本工具命名空间下读写（宿主按 tool_id 隔离），碰不到別的工具的键。 */
     kvGet: function (k) { return ask('kv.get', { key: k }).then(function (r) { return r.value; }); },
     kvSet: function (k, v) { return ask('kv.set', { key: k, value: v }); }
   };
 })();
 
-/** 宿主连上（或没连上）后，决定图库入口的可见性 */
-function syncGalleryUI() {
-  var ok = Gallery.supports();
-  $('#btnOpenFromGallery').hidden = !ok;
-  $('#btnEmptyFromGallery').hidden = !ok;
-  $('#btnSaveToGallery').hidden = !ok;
-  $('#btnModalToGallery').hidden = !ok;
+/** 宿主连上（或没连上）后，决定图床入口的可见性 */
+function syncImagebedUI() {
+  var ok = Imagebed.supports();
+  $('#btnOpenFromImagebed').hidden = !ok;
+  $('#btnEmptyFromImagebed').hidden = !ok;
+  $('#btnSaveToImagebed').hidden = !ok;
+  $('#btnModalToImagebed').hidden = !ok;
   if (ok) {
     $('#hostState').textContent = '已连工作台';
     $('#hostState').classList.add('ok');
   }
   // 有图才能存。「有没有图」这件事 renderThumbs 每次都会重算，
   // 所以这里跟着它走，不另设状态
-  $('#btnSaveToGallery').disabled = !ok || !S.img;
-  $('#btnModalToGallery').disabled = !ok || !S.lastBlob;
-  // 自动存档开关与图库入口同命运：没有图库的地方谈"存一份"没有意义
-  syncAutoGalleryUI();
+  $('#btnSaveToImagebed').disabled = !ok || !S.img;
+  $('#btnModalToImagebed').disabled = !ok || !S.lastBlob;
+  // 自动存档开关与图床入口同命运：没有图床的地方谈"存一份"没有意义
+  syncAutoImagebedUI();
 }
 document.addEventListener('host-ready', function () {
-  syncGalleryUI();
-  loadAutoGalleryPref();      // 偏好存在宿主 KV 里，读到之后再刷一次开关
+  syncImagebedUI();
+  loadAutoImagebedPref();      // 偏好存在宿主 KV 里，读到之后再刷一次开关
 });
 
 /* 开关改动即时落库 —— 它是界面偏好，不该被"忘了点某个保存按钮"带着回到旧状态 */
-$('#chkAutoGallery').addEventListener('change', function () {
-  autoGallery = $('#chkAutoGallery').checked;
-  document.body.dataset.autoGallery = String(autoGallery);
-  if (!Gallery.connected()) return;
-  Gallery.kvSet(KV_AUTO_GALLERY, autoGallery ? '1' : '0').catch(function () {
+$('#chkAutoImagebed').addEventListener('change', function () {
+  autoImagebed = $('#chkAutoImagebed').checked;
+  document.body.dataset.autoImagebed = String(autoImagebed);
+  if (!Imagebed.connected()) return;
+  Imagebed.kvSet(KV_AUTO_GALLERY, autoImagebed ? '1' : '0').catch(function () {
     toast('开关没能写进工作台（下次打开会回到默认的开）');
   });
 });
 
-/* ---- 从图库打开 ---- */
+/* ---- 从图床打开 ---- */
 var GP = { items: [], picked: [] };
 
-function openGalleryPicker() {
-  if (!Gallery.supports()) { toast('没连上工作台，图库用不了'); return; }
+function openImagebedPicker() {
+  if (!Imagebed.supports()) { toast('没连上工作台，图床用不了'); return; }
   GP.picked = [];
-  $('#galleryMask').classList.add('on');
-  loadGalleryPicker();
+  $('#imagebedMask').classList.add('on');
+  loadImagebedPicker();
 }
-function closeGalleryPicker() { $('#galleryMask').classList.remove('on'); }
+function closeImagebedPicker() { $('#imagebedMask').classList.remove('on'); }
 
-async function loadGalleryPicker() {
-  var body = $('#galleryBody');
-  body.innerHTML = '<p class="hint" style="grid-column:1/-1">正在读取图库…</p>';
-  $('#galleryCount').textContent = '…';
+async function loadImagebedPicker() {
+  var body = $('#imagebedBody');
+  body.innerHTML = '<p class="hint" style="grid-column:1/-1">正在读取图床…</p>';
+  $('#imagebedCount').textContent = '…';
   try {
     // 只要图片：这个工具处理不了视频，列出来只会让用户白点一次
-    GP.items = await Gallery.list({ kind: 'image', search: $('#gallerySearch').value.trim(), limit: 120 });
+    GP.items = await Imagebed.list({ kind: 'image', search: $('#imagebedSearch').value.trim(), limit: 120 });
   } catch (err) {
     body.innerHTML = '<p class="hint" style="grid-column:1/-1;color:var(--danger)">' +
       escHtml(String(err && err.message || err)) + '</p>';
-    $('#galleryCount').textContent = '读取失败';
+    $('#imagebedCount').textContent = '读取失败';
     return;
   }
-  $('#galleryCount').textContent = GP.items.length + ' 项';
-  renderGalleryPicker();
+  $('#imagebedCount').textContent = GP.items.length + ' 项';
+  renderImagebedPicker();
 }
 
-function renderGalleryPicker() {
-  var body = $('#galleryBody');
+function renderImagebedPicker() {
+  var body = $('#imagebedBody');
   if (!GP.items.length) {
-    body.innerHTML = '<p class="hint" style="grid-column:1/-1">图库里还没有图片。' +
-      '先去侧边栏「图库」导入，或用 AI 生成几张存进去。</p>';
-    updateGalleryHint();
+    body.innerHTML = '<p class="hint" style="grid-column:1/-1">图床里还没有图片。' +
+      '先去侧边栏「图床」导入，或用 AI 生成几张存进去。</p>';
+    updateImagebedHint();
     return;
   }
   body.innerHTML = GP.items.map(function (it) {
@@ -6311,21 +6311,21 @@ function renderGalleryPicker() {
       ' title="' + escHtml(it.title) + '">' + inner +
       '<span class="nm">' + escHtml(it.title) + '</span></button>';
   }).join('');
-  updateGalleryHint();
+  updateImagebedHint();
 }
 
-function updateGalleryHint() {
-  $('#galleryHint').textContent = '已选 ' + GP.picked.length + ' 张，导入后进图片列表';
-  $('#btnGalleryUse').disabled = GP.picked.length === 0;
-  $('#btnGalleryUse').textContent = GP.picked.length > 1 ? ('导入 ' + GP.picked.length + ' 张') : '导入';
+function updateImagebedHint() {
+  $('#imagebedHint').textContent = '已选 ' + GP.picked.length + ' 张，导入后进图片列表';
+  $('#btnImagebedUse').disabled = GP.picked.length === 0;
+  $('#btnImagebedUse').textContent = GP.picked.length > 1 ? ('导入 ' + GP.picked.length + ' 张') : '导入';
 }
 
-/* 把选中的图库项读成文件，交给现成的 addFiles —— 不重写一套「装载图片」。
+/* 把选中的图床项读成文件，交给现成的 addFiles —— 不重写一套「装载图片」。
    addFiles 里已经处理了「第一张成为当前图、其余进队列」以及缩略图/按钮状态，
    绕开它只会多出一份会跟主流程漂移的重复逻辑。 */
-async function useGalleryPicked() {
+async function useImagebedPicked() {
   if (!GP.picked.length) return;
-  var btn = $('#btnGalleryUse');
+  var btn = $('#btnImagebedUse');
   var old = btn.textContent;
   btn.disabled = true; btn.textContent = '读取中…';
 
@@ -6334,7 +6334,7 @@ async function useGalleryPicked() {
     try {
       var id = GP.picked[i];
       var meta = GP.items.filter(function (x) { return x.id === id; })[0];
-      var got = await Gallery.get(id);
+      var got = await Imagebed.get(id);
       if (!got || !got.dataUrl) throw new Error('这个条目没有内容');
       // data: URL 在 iframe 里可以直接 fetch 成 Blob（同源，不受 CORS 限制），
       // 这样就不必再手写一遍 base64 解码
@@ -6347,19 +6347,19 @@ async function useGalleryPicked() {
   }
 
   btn.textContent = old;
-  closeGalleryPicker();
+  closeImagebedPicker();
   if (files.length) await addFiles(files);
   if (failed.length) toast('有 ' + failed.length + ' 张没能导入：' + failed[0]);
 }
 
-/* ---- 存进图库 ----
+/* ---- 存进图床 ----
    from === 'last' 时用预览已经算好的那张（用户在预览里看到什么就存什么），
    否则现算一遍当前编辑结果。 */
-async function saveToGallery(from) {
-  if (!Gallery.supports()) { toast('没连上工作台，图库用不了'); return; }
+async function saveToImagebed(from) {
+  if (!Imagebed.supports()) { toast('没连上工作台，图床用不了'); return; }
   if (!S.img) { toast('先载入一张图片'); return; }
 
-  var btn = from === 'last' ? $('#btnModalToGallery') : $('#btnSaveToGallery');
+  var btn = from === 'last' ? $('#btnModalToImagebed') : $('#btnSaveToImagebed');
   var old = btn.textContent;
   btn.disabled = true; btn.textContent = '保存中…';
   try {
@@ -6378,65 +6378,65 @@ async function saveToGallery(from) {
     }
 
     // 手动保存不去重：用户点了就是"再留一份"
-    var item = await putResultToGallery(blob, baseName(S.name) + '_crop.' + ext, w, h, ext, false);
-    toast('已存进图库' + (item && item.title ? '：' + item.title : ''));
-    setStatus('已存进图库');
+    var item = await putResultToImagebed(blob, baseName(S.name) + '_crop.' + ext, w, h, ext, false);
+    toast('已存进图床' + (item && item.title ? '：' + item.title : ''));
+    setStatus('已存进图床');
   } catch (err) {
-    toast('存图库失败：' + String(err && err.message || err));
+    toast('存图床失败：' + String(err && err.message || err));
   } finally {
     btn.textContent = old;
     btn.disabled = false;
-    syncGalleryUI();
+    syncImagebedUI();
   }
 }
 
-/* ---- 产出自动进图库 ----
-   工具的两副面孔决定了这个开关只在工作台里有意义：独立打开时没有图库，
-   开关跟着图库入口一起隐藏，所以状态直接存在宿主 KV 里，不做本地兜底。
+/* ---- 产出自动进图床 ----
+   工具的两副面孔决定了这个开关只在工作台里有意义：独立打开时没有图床，
+   开关跟着图床入口一起隐藏，所以状态直接存在宿主 KV 里，不做本地兜底。
 
    为什么默认开：导出的图原本只落在下载目录，隔天就淹没在一堆
-   xxx_crop.png 里，换个工具要用还得重新找。留一份进图库，
+   xxx_crop.png 里，换个工具要用还得重新找。留一份进图床，
    之后在任何一个工具里都能再取出来。 */
-var KV_AUTO_GALLERY = 'autoGallery';
-var autoGallery = true;
+var KV_AUTO_GALLERY = 'autoImagebed';
+var autoImagebed = true;
 
-function autoGalleryOn() { return autoGallery !== false && Gallery.supports(); }
+function autoImagebedOn() { return autoImagebed !== false && Imagebed.supports(); }
 
 /**
- * 单一出口：手动「存进图库」与自动存档走同一个函数，只有 dedupe 不同。
+ * 单一出口：手动「存进图床」与自动存档走同一个函数，只有 dedupe 不同。
  * 复制成两份迟早会漂移成"手动存的和自动存的不是同一张图"。
  */
-async function putResultToGallery(blob, title, w, h, ext, dedupe) {
+async function putResultToImagebed(blob, title, w, h, ext, dedupe) {
   var dataUrl = await blobToDataUrl(blob);
-  return Gallery.put({
+  return Imagebed.put({
     dataUrl: dataUrl,
     title: title,
-    // note 里放尺寸与格式，图库详情面板直接显示，省得再开一次图确认
+    // note 里放尺寸与格式，图床详情面板直接显示，省得再开一次图确认
     note: (w && h ? (w + '×' + h + ' · ') : '') + String(ext || '').toUpperCase(),
     dedupe: dedupe === true,
   });
 }
 
 /** 单张导出后补一句存档。失败只提示，不改写"导出已经成功"这个事实。 */
-async function archiveToGallery(blob, title, w, h, ext) {
-  if (!autoGalleryOn()) return;
+async function archiveToImagebed(blob, title, w, h, ext) {
+  if (!autoImagebedOn()) return;
   try {
-    var item = await putResultToGallery(blob, title, w, h, ext, true);
-    toast(item && item.dup ? '图库里已有这一份' : '已自动存入图库：' + (item && item.title || title));
+    var item = await putResultToImagebed(blob, title, w, h, ext, true);
+    toast(item && item.dup ? '图床里已有这一份' : '已自动存入图床：' + (item && item.title || title));
     document.body.dataset.autoArchived = '1';
   } catch (err) {
-    toast('自动存图库失败：' + String(err && err.message || err));
+    toast('自动存图床失败：' + String(err && err.message || err));
   }
 }
 
 /** 批量：串行存，最后汇总一句 —— 一次并发十几张会把两边内存压满。 */
-async function archiveManyToGallery(items) {
-  if (!autoGalleryOn() || !items.length) return;
+async function archiveManyToImagebed(items) {
+  if (!autoImagebedOn() || !items.length) return;
   var ok = 0, dup = 0, firstErr = '';
   for (var i = 0; i < items.length; i++) {
     var it = items[i];
     try {
-      var r = await putResultToGallery(it.blob, it.name, it.w || 0, it.h || 0, it.ext || '', true);
+      var r = await putResultToImagebed(it.blob, it.name, it.w || 0, it.h || 0, it.ext || '', true);
       if (r && r.dup) dup++; else ok++;
     } catch (err) {
       if (!firstErr) firstErr = String(err && err.message || err);
@@ -6444,27 +6444,27 @@ async function archiveManyToGallery(items) {
   }
   document.body.dataset.autoArchived = String(ok + dup);
   if (ok || dup) {
-    toast('已自动存入图库：' + ok + ' 张' + (dup ? '（' + dup + ' 张图库里已有）' : ''));
+    toast('已自动存入图床：' + ok + ' 张' + (dup ? '（' + dup + ' 张图床里已有）' : ''));
   } else if (firstErr) {
-    toast('自动存图库失败：' + firstErr);
+    toast('自动存图床失败：' + firstErr);
   }
 }
 
 /** 开关只在连上宿主时出现；改动立刻写库，不等别的保存动作 */
-function syncAutoGalleryUI() {
-  var line = $('#chkAutoGalleryLine');
+function syncAutoImagebedUI() {
+  var line = $('#chkAutoImagebedLine');
   if (!line) return;
-  line.hidden = !Gallery.supports();
-  $('#chkAutoGallery').checked = autoGallery !== false;
-  document.body.dataset.autoGallery = String(autoGallery !== false);
+  line.hidden = !Imagebed.supports();
+  $('#chkAutoImagebed').checked = autoImagebed !== false;
+  document.body.dataset.autoImagebed = String(autoImagebed !== false);
 }
 
-function loadAutoGalleryPref() {
-  if (!Gallery.connected()) return;
+function loadAutoImagebedPref() {
+  if (!Imagebed.connected()) return;
   // 只有用户明确关过（存 "0"）才是关；读不到一律按开 ——
   // 这个开关的方向是"宁可多存一张，也别丢一张"
-  Gallery.kvGet(KV_AUTO_GALLERY).then(function (v) {
-    if (v === '0' || v === '1') { autoGallery = v !== '0'; syncAutoGalleryUI(); }
+  Imagebed.kvGet(KV_AUTO_GALLERY).then(function (v) {
+    if (v === '0' || v === '1') { autoImagebed = v !== '0'; syncAutoImagebedUI(); }
   }).catch(function () { /* 读不到就用默认的开 */ });
 }
 
@@ -6477,23 +6477,23 @@ function blobToDataUrl(blob) {
   });
 }
 
-// 图库弹层的交互：点格子切换选中、Esc 关闭
-$('#galleryBody').addEventListener('click', function (e) {
+// 图床弹层的交互：点格子切换选中、Esc 关闭
+$('#imagebedBody').addEventListener('click', function (e) {
   var it = e.target.closest('[data-gid]');
   if (!it) return;
   var id = it.dataset.gid;
   var at = GP.picked.indexOf(id);
   if (at >= 0) GP.picked.splice(at, 1); else GP.picked.push(id);
   it.setAttribute('aria-selected', at >= 0 ? 'false' : 'true');
-  updateGalleryHint();
+  updateImagebedHint();
 });
-$('#gallerySearch').addEventListener('input', loadGalleryPicker);
-$('#galleryMask').addEventListener('click', function (e) {
-  if (e.target === $('#galleryMask')) closeGalleryPicker();
+$('#imagebedSearch').addEventListener('input', loadImagebedPicker);
+$('#imagebedMask').addEventListener('click', function (e) {
+  if (e.target === $('#imagebedMask')) closeImagebedPicker();
 });
 // 预览弹窗关掉之后，「上次结果」就没了 —— 顺手把弹窗里那个按钮也置灰
 var _closeModal = window.closeModal;
-window.closeModal = function () { _closeModal(); syncGalleryUI(); };
+window.closeModal = function () { _closeModal(); syncImagebedUI(); };
 
 /* 启动顺序：先按注册表建工具栏，再同步面板与叠加层。
    renderThumbs 也要跑一遍 —— 空态不是「什么都不画」，
@@ -6504,7 +6504,7 @@ syncOverlays();
 syncUI();
 syncFillUI();
 syncHistoryUI();
-syncGalleryUI();
+syncImagebedUI();
 renderThumbs();
 
 </script>

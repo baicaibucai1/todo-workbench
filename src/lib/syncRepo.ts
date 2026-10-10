@@ -30,10 +30,10 @@ import {
   fetchTasks,
   fetchWorkOrders,
 } from "./repo";
-import { fetchAllGallery } from "./repo";
+import { fetchAllImagebed } from "./repo";
 import type {
   AttachmentsPayload,
-  GalleryPayload,
+  ImagebedPayload,
   OrdersPayload,
   ShardPayload,
   SyncShardId,
@@ -138,9 +138,9 @@ async function exportOrdersPayload(): Promise<OrdersPayload> {
   return { flows, stages, workOrders, woFields, woLogs };
 }
 
-async function exportGalleryPayload(): Promise<GalleryPayload> {
-  // fetchAllGallery 已经含软删（备份也要墓碑），直接复用
-  return { items: await fetchAllGallery() };
+async function exportImagebedPayload(): Promise<ImagebedPayload> {
+  // fetchAllImagebed 已经含软删（备份也要墓碑），直接复用
+  return { items: await fetchAllImagebed() };
 }
 
 async function exportAttachmentsPayload(): Promise<AttachmentsPayload> {
@@ -155,7 +155,7 @@ export async function exportShardPayload(shard: SyncShardId): Promise<ShardPaylo
     case "orders":
       return exportOrdersPayload();
     case "gallery":
-      return exportGalleryPayload();
+      return exportImagebedPayload();
     case "attachments":
       return exportAttachmentsPayload();
   }
@@ -321,7 +321,8 @@ const W_ORDERS: TableWrite = {
       bit(x.important), bit(x.myDay), x.startDate ?? null, x.dueDate ?? null,
       x.completedAt ?? null, x.sortOrder ?? 0, bit(x.deleted), str(x.createdAt),
       str(x.updatedAt),
-      x.kind === "special" ? "special" : "normal",
+      // 「特殊单号」删掉后 kind 恒为 normal，远端带上 'special' 也按普通单写进去
+      "normal",
       x.stageDueAt ?? null, str(x.stageDueNotifiedAt),
       str(x.courier), str(x.description),
     ];
@@ -341,14 +342,14 @@ const W_FIELDS: TableWrite = {
 };
 
 const W_GALLERY: TableWrite = {
-  table: "core_gallery_items",
+  table: "core_imagebed_items",
   columns: [
     "id", "title", "kind", "rel_path", "source_url", "mime", "size_bytes", "hash",
     "width", "height", "duration_ms", "origin", "prompt", "note", "deleted",
     "created_at", "updated_at",
   ],
   paramsOf: (r: never) => {
-    const x = r as GalleryPayload["items"][number];
+    const x = r as ImagebedPayload["items"][number];
     return [
       x.id, str(x.title), x.kind === "video" ? "video" : "image", x.relPath,
       x.sourceUrl ?? null, str(x.mime), x.size ?? null, x.hash ?? null,
@@ -436,7 +437,7 @@ async function applyOrdersPayload(p: OrdersPayload): Promise<void> {
   if (statements.length) await db().transaction(statements);
 }
 
-async function applyGalleryPayload(p: GalleryPayload): Promise<void> {
+async function applyImagebedPayload(p: ImagebedPayload): Promise<void> {
   await upsertAll(W_GALLERY, p.items ?? []);
 }
 
@@ -445,7 +446,7 @@ async function applyAttachmentsPayload(p: AttachmentsPayload): Promise<void> {
 }
 
 /** 按分片写回。**只碰这个分片自己的表** —— 所以只勾「待办」时，
- *  流程任务、图库、附件在本地一行都不会被动到。 */
+ *  流程任务、图床、附件在本地一行都不会被动到。 */
 export async function applyShardPayload(
   shard: SyncShardId,
   payload: ShardPayload,
@@ -456,7 +457,7 @@ export async function applyShardPayload(
     case "orders":
       return applyOrdersPayload(payload as OrdersPayload);
     case "gallery":
-      return applyGalleryPayload(payload as GalleryPayload);
+      return applyImagebedPayload(payload as ImagebedPayload);
     case "attachments":
       return applyAttachmentsPayload(payload as AttachmentsPayload);
   }

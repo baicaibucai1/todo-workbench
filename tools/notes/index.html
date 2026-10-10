@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>便签</title>
+<style>
+  /* ------------------------------------------------------------------
+     颜色全部走 CSS 变量，明暗两套值由宿主的 ctx.theme 切换
+     （document.documentElement.dataset.theme）。
+     工具不该自己猜主题 —— 宿主会把它自己的配色体系推过来。
+  ------------------------------------------------------------------ */
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --fg: #1f2328;
+    --fg2: #57606a;
+    --dim: #8b949e;
+    --line: #e3e6ea;
+    --chip: #eef1f4;
+    --accent: #3b82f6;
+    --danger: #d64545;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .08);
+    /* 便签六色：底色 + 描边。默认（空）就用卡片底色 */
+    --ny: #fff8d6; --ny-b: #f0e08c;
+    --np: #ffe4ef; --np-b: #f6c8dc;
+    --nb: #dbeafe; --nb-b: #bfdbfe;
+    --ng: #d9f7e6; --ng-b: #b6ebcd;
+    --nv: #ede9fe; --nv-b: #ddd6fe;
+    --no: #ffe8d6; --no-b: #fed7aa;
+  }
+  [data-theme="dark"] {
+    --bg: #16181d;
+    --card: #1e2127;
+    --fg: #e6edf3;
+    --fg2: #adbac7;
+    --dim: #768390;
+    --line: #2d333b;
+    --chip: #262b33;
+    --accent: #58a6ff;
+    --danger: #f0705a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+    --ny: #4a3f14; --ny-b: #5c4f1a;
+    --np: #4a2436; --np-b: #5c2d43;
+    --nb: #1e3a5f; --nb-b: #244a78;
+    --ng: #1e4034; --ng-b: #245040;
+    --nv: #332b56; --nv-b: #3f3668;
+    --no: #4a3320; --no-b: #5c3f28;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 13.5px/1.55 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { padding: 14px 16px 26px; max-width: 1180px; margin: 0 auto; }
+
+  /* ---- 顶栏 ---- */
+  .top { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .top h1 { font-size: 16px; font-weight: 600; margin: 0; }
+  .top .sub { color: var(--dim); font-size: 12px; }
+  .top input {
+    flex: 1; max-width: 260px; padding: 6px 10px; font-size: 12.5px;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--fg);
+  }
+  .top input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    font: inherit; cursor: pointer; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); border-radius: 7px; padding: 6px 12px; font-size: 12.5px;
+  }
+  button:hover { background: var(--chip); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { filter: brightness(1.06); }
+  button.ghost { border-color: transparent; background: transparent; color: var(--dim); }
+  button.ghost:hover { background: var(--chip); color: var(--fg); }
+
+  /* ---- 卡片网格：auto-fill 让它自己决定几列，窄屏自然变一列 ---- */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(186px, 1fr)); gap: 10px; }
+  .card {
+    position: relative; padding: 11px 12px; border-radius: 10px;
+    background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow);
+    cursor: pointer; transition: transform .12s, box-shadow .12s;
+    display: flex; flex-direction: column; gap: 6px; min-height: 96px;
+  }
+  .card:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(16, 24, 40, .12); }
+  .card.c-yellow { background: var(--ny); border-color: var(--ny-b); }
+  .card.c-pink   { background: var(--np); border-color: var(--np-b); }
+  .card.c-blue   { background: var(--nb); border-color: var(--nb-b); }
+  .card.c-green  { background: var(--ng); border-color: var(--ng-b); }
+  .card.c-purple { background: var(--nv); border-color: var(--nv-b); }
+  .card.c-orange { background: var(--no); border-color: var(--no-b); }
+
+  .card .t { font-weight: 600; font-size: 13.5px; overflow-wrap: anywhere; }
+  .card .b {
+    font-size: 12.5px; color: var(--fg2); white-space: pre-wrap; overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .card .meta { display: flex; align-items: center; gap: 6px; margin-top: auto; }
+  .card .time { font-size: 11px; color: var(--dim); }
+  .tag {
+    font-size: 11px; color: var(--fg2); background: rgba(127, 127, 127, .14);
+    border-radius: 5px; padding: 1px 6px; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .card .del {
+    position: absolute; top: 6px; right: 6px; opacity: 0; transition: opacity .12s;
+    border: none; background: transparent; color: var(--dim); padding: 2px 5px; border-radius: 5px; font-size: 14px; line-height: 1;
+  }
+  .card:hover .del { opacity: 1; }
+  .card .del:hover { background: rgba(214, 69, 69, .12); color: var(--danger); }
+
+  /* ---- 卡片上的缩略图：2 列网格，最多露 4 张 ---- */
+  .thumbs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 3px; }
+  .thumbs img {
+    width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 5px;
+    background: var(--chip); display: block;
+  }
+  .thumbs .more {
+    display: grid; place-items: center; aspect-ratio: 1; border-radius: 5px;
+    background: rgba(127, 127, 127, .2); color: var(--fg2); font-size: 12px; font-weight: 600;
+  }
+  .thumbs.one { grid-template-columns: 1fr; }
+  .thumbs.one img { aspect-ratio: 16 / 10; }
+
+  .empty { color: var(--dim); text-align: center; padding: 46px 0; font-size: 13px; }
+
+  /* ---- 编辑面板：盖在界面上的一层，点空白处关 ---- */
+  .mask {
+    position: fixed; inset: 0; background: rgba(0, 0, 0, .34);
+    display: flex; align-items: center; justify-content: center; padding: 18px; z-index: 20;
+  }
+  .panel {
+    width: min(520px, 100%); max-height: 88vh; overflow: auto;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, .26); padding: 14px;
+  }
+  .panel h2 { font-size: 14px; margin: 0 0 10px; font-weight: 600; }
+  .field { margin-bottom: 9px; }
+  .field label { display: block; font-size: 11.5px; color: var(--dim); margin-bottom: 3px; }
+  .field input, .field textarea {
+    width: 100%; padding: 7px 9px; font: inherit; font-size: 13px;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--fg);
+  }
+  .field textarea { min-height: 108px; resize: vertical; }
+  .field input:focus, .field textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+  .swatches { display: flex; gap: 6px; }
+  .sw {
+    width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0;
+  }
+  .sw.on { border-color: var(--accent); }
+  .sw.s-      { background: var(--card);  border-color: var(--line); }
+  .sw.s-yellow{ background: var(--ny); }
+  .sw.s-pink  { background: var(--np); }
+  .sw.s-blue  { background: var(--nb); }
+  .sw.s-green { background: var(--ng); }
+  .sw.s-purple{ background: var(--nv); }
+  .sw.s-orange{ background: var(--no); }
+
+  .imgs { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .imgs .it { position: relative; }
+  .imgs img { width: 62px; height: 62px; object-fit: cover; border-radius: 6px; display: block; background: var(--chip); }
+  .imgs .x {
+    position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; border-radius: 50%;
+    border: 1px solid var(--line); background: var(--card); color: var(--fg);
+    font-size: 12px; line-height: 1; display: grid; place-items: center; padding: 0;
+  }
+  .imgs .x:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+
+  /* 从图床挑：一层小网格 */
+  .picker { max-height: 210px; overflow: auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 6px 0; }
+  .picker img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; cursor: pointer; border: 2px solid transparent; background: var(--chip); }
+  .picker img:hover { border-color: var(--accent); }
+
+  .panel .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; gap: 8px; }
+  .hint { color: var(--dim); font-size: 11.5px; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(8px);
+    background: var(--chip); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 14px; font-size: 12.5px; opacity: 0; transition: .18s; pointer-events: none; z-index: 40;
+  }
+  #toast.on { opacity: 1; transform: translateX(-50%); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>便签</h1>
+    <span class="sub" id="meta">连接中…</span>
+    <input id="search" placeholder="搜索标题 / 内容 / 标签" />
+    <button class="primary" id="new">+ 新建</button>
+  </div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" hidden>还没有便签 —— 点右上角「新建」记一条</div>
+</div>
+<div id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOOL_SOURCE = "workbench-tool";
+  var HOST_SOURCE = "workbench-host";
+  var COLORS = ["", "yellow", "pink", "blue", "green", "purple", "orange"];
+
+  var seq = 0;
+  var waiting = new Map();
+  var ctx = null;
+  var notes = [];        // 全部便签
+  var thumbs = {};       // galleryId -> 可显示的图源（缩略图优先）
+  var editing = null;    // 正在编辑的便签 id
+  var draft = null;      // 编辑器里的暂存对象
+  var saveTimer = null;
+  var toastTimer = null;
+
+  /* ================= 与宿主通信 ================= */
+
+  function call(op, payload) {
+    var id = "r" + ++seq;
+    return new Promise(function (resolve, reject) {
+      waiting.set(id, { resolve: resolve, reject: reject });
+      parent.postMessage({ source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} }, "*");
+      setTimeout(function () {
+        if (waiting.delete(id)) reject(new Error("宿主没有回应（" + op + "）"));
+      }, 20000);   // 存图要先落盘再入库，比普通查询慢，给宽一点
+    }).then(function (res) {
+      if (!res.ok) throw new Error(String(res.error || "宿主拒绝了这次请求"));
+      return res.data;
+    });
+  }
+
+  window.addEventListener("message", function (e) {
+    var m = e.data;
+    if (!m || m.source !== HOST_SOURCE) return;
+    if (m.type === "tool:response") {
+      var w = waiting.get(m.id);
+      if (w) { waiting.delete(m.id); w.resolve({ ok: m.ok, data: m.data, error: m.error }); }
+      return;
+    }
+    if (m.type === "tool:context") {
+      ctx = m.data;
+      if (ctx) document.documentElement.dataset.theme = ctx.theme || "light";
+      showMeta();
+      // 上下文里带了这张表的结构，顺手显示出来
+      return;
+    }
+  });
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function toast(msg) {
+    var el = document.getElementById("toast");
+    el.textContent = msg; el.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove("on"); }, 1900);
+  }
+  function showMeta() {
+    var el = document.getElementById("meta");
+    var can = ctx && ctx.gallery;
+    el.textContent = can ? "图存在工作台图床里" : "图床未开启，图片直接随签保存在本地";
+    // 给 e2e / 调试留一个窗口：宿主推的上下文里图床通道开没开
+    try { window.__ctxImagebed = !!can; } catch (e) { /* 沙箱里写不上就算了 */ }
+  }
+  /**
+   * images 列里的一个条目有两种形态：
+   *   · 图床开着时 —— gallery id（宿主盖了 origin 章，别处也能取用）；
+   *   · 图床没开时 —— 内联 dataURL，图本体就随签存在自己的私有表里。
+   * 判定只看开头是不是 "data:"，两种形态可以在同一张签里混着
+   * （先离线贴的图、后来开了图床再贴的 id）。
+   */
+  function isInlineImg(s) { return String(s).indexOf("data:") === 0; }
+  /** 内联图的字符上限：约 5MB 的二进制（base64 膨胀 4/3 后约 683 万字符 + 头） */
+  var INLINE_MAX_CHARS = 7000000;
+  function imagesOf(n) {
+    try { var a = JSON.parse(n.images || "[]"); return Array.isArray(a) ? a : []; }
+    catch (e) { return []; }
+  }
+  function fmtTime(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    var p = function (x) { return String(x).padStart(2, "0"); };
+    return p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  /* ================= 数据 ================= */
+
+  async function load() {
+    var r = await call("row.select", { table: "notes", orderBy: "updated_at", orderDir: "desc", limit: 200 });
+    notes = (r && r.rows) || [];
+    await loadThumbs();
+    render();
+  }
+
+  /**
+   * 把便签里引用的图换成能显示的图源（thumbs: 条目 -> src）。
+   * 内联 dataURL 自己就是图源，直接映射；图床 id 一次 list 拿全部缩略图
+   * （宿主侧有缓存，第二次几乎不花钱），漏掉的再逐条 get 补。
+   */
+  async function loadThumbs() {
+    thumbs = {};
+    notes.forEach(function (n) {
+      imagesOf(n).forEach(function (i) { if (isInlineImg(i)) thumbs[i] = i; });
+    });
+    var ids = [];
+    notes.forEach(function (n) {
+      imagesOf(n).forEach(function (i) {
+        if (!isInlineImg(i) && thumbs[i] === undefined && ids.indexOf(i) < 0) ids.push(i);
+      });
+    });
+    if (!ids.length) return;
+    try {
+      var r = await call("gallery.list", { limit: 200 });
+      ((r && r.items) || []).forEach(function (it) { if (it && it.id) thumbs[it.id] = it.thumb || ""; });
+    } catch (e) { /* 图床不可用时下面逐条补 */ }
+    for (var i = 0; i < ids.length; i++) {
+      if (thumbs[ids[i]]) continue;
+      try {
+        var g = await call("gallery.get", { id: ids[i] });
+        if (g && g.dataUrl) thumbs[ids[i]] = g.dataUrl;
+      } catch (e) { thumbs[ids[i]] = ""; }
+    }
+  }
+
+  async function save(patch, silent) {
+    // ⚠️ 进门先把 id 抓在手里：close() 会同步把 editing 置空，若回包到达时
+    // 再去读 editing，findIndex 落空走 unshift 兜底 —— 视图里凭空多出一张
+    // 一模一样的卡（2026-10-04「点开一次多一张」的根因）。
+    var targetId = editing;
+    if (!targetId) return;
+    try {
+      var r = await call("row.update", { table: "notes", id: targetId, patch: patch });
+      var row = r && r.row;
+      if (row) {
+        var i = notes.findIndex(function (n) { return n.id === targetId; });
+        if (i >= 0) notes[i] = row; else notes.unshift(row);
+      }
+      if (!silent) toast("已保存");
+    } catch (e) { toast("保存失败：" + e.message); }
+  }
+
+  /* 输入即存：停手 400ms 写一次，不让用户去想"要不要保存" */
+  function scheduleSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      if (!draft) return;
+      save({ title: draft.title, body: draft.body, tag: draft.tag, color: draft.color, updated_at: new Date().toISOString() }, true);
+    }, 400);
+  }
+
+  async function createNote() {
+    var now = new Date().toISOString();
+    var id = "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    try {
+      await call("row.insert", {
+        table: "notes",
+        row: { id: id, title: "", body: "", tag: "", color: "", images: "[]", created_at: now, updated_at: now },
+      });
+      await load();
+      open(id);
+    } catch (e) { toast("新建失败：" + e.message); }
+  }
+
+  async function removeNote(id) {
+    if (!window.confirm("删掉这条便签？随签保存的图会一起删掉；存在图床里的图不受影响。")) return;
+    try {
+      await call("row.delete", { table: "notes", id: id });
+      notes = notes.filter(function (n) { return n.id !== id; });
+      close();
+      render();
+      toast("已删除");
+    } catch (e) { toast("删除失败：" + e.message); }
+  }
+
+  /* ================= 渲染 ================= */
+
+  function render() {
+    var q = (document.getElementById("search").value || "").trim().toLowerCase();
+    var list = notes.filter(function (n) {
+      if (!q) return true;
+      return [n.title, n.body, n.tag].some(function (v) { return String(v || "").toLowerCase().indexOf(q) >= 0; });
+    });
+    var grid = document.getElementById("grid");
+    document.getElementById("empty").hidden = list.length > 0;
+    grid.innerHTML = list.map(cardHtml).join("");
+  }
+
+  function cardHtml(n) {
+    var imgs = imagesOf(n).filter(function (i) { return thumbs[i] !== undefined; });
+    var shown = imgs.slice(0, 4);
+    var rest = imgs.length - shown.length;
+    var th = "";
+    if (shown.length) {
+      th = '<div class="thumbs' + (shown.length === 1 ? " one" : "") + '">' +
+        shown.map(function (i) { return '<img src="' + esc(thumbs[i]) + '" alt="" />'; }).join("") +
+        (rest > 0 ? '<div class="more">+' + rest + "</div>" : "") +
+        "</div>";
+    }
+    return '<div class="card' + (n.color ? " c-" + esc(n.color) : "") + '" data-id="' + esc(n.id) + '">' +
+      '<button class="del" data-del="' + esc(n.id) + '" title="删除">×</button>' +
+      (n.title ? '<div class="t">' + esc(n.title) + "</div>" : "") +
+      (n.body ? '<div class="b">' + esc(n.body) + "</div>" : "") +
+      th +
+      '<div class="meta">' +
+        (n.tag ? '<span class="tag">' + esc(n.tag) + "</span>" : "") +
+        '<span class="time">' + esc(fmtTime(n.updated_at || n.created_at)) + "</span>" +
+      "</div></div>";
+  }
+
+  /* ================= 编辑器 ================= */
+
+  function open(id) {
+    editing = id;
+    var n = notes.find(function (x) { return x.id === id; });
+    if (!n) return;
+    draft = { title: n.title || "", body: n.body || "", tag: n.tag || "", color: n.color || "", images: imagesOf(n).slice() };
+    var mask = document.createElement("div");
+    mask.className = "mask";
+    mask.id = "mask";
+    mask.innerHTML =
+      '<div class="panel">' +
+        "<h2>编辑便签</h2>" +
+        '<div class="field"><label>标题</label><input id="e-title" value="' + esc(draft.title) + '" placeholder="（可留空）" /></div>' +
+        '<div class="field"><label>内容</label><textarea id="e-body" placeholder="想到什么写什么">' + esc(draft.body) + "</textarea></div>" +
+        '<div class="field"><label>标签</label><input id="e-tag" value="' + esc(draft.tag) + '" placeholder="例如：待办 / 灵感" /></div>' +
+        '<div class="field"><label>颜色</label><div class="swatches" id="e-colors">' +
+          COLORS.map(function (c) {
+            return '<button class="sw s-' + (c || "") + (c === draft.color ? " on" : "") + '" data-color="' + esc(c) + '" title="' + (c || "默认") + '"></button>';
+          }).join("") +
+        "</div></div>" +
+        '<div class="field"><label>附图（' + draft.images.length + '）</label>' +
+          '<div class="imgs" id="e-imgs"></div>' +
+          '<div class="row">' +
+            '<button id="e-pick">选图片</button>' +
+            (ctx && ctx.gallery ? '<button id="e-gallery">从图床挑</button>' : "") +
+            '<span class="hint">也可以直接 Ctrl+V 粘贴</span>' +
+            '<input type="file" id="e-file" accept="image/*" multiple hidden />' +
+          "</div>" +
+          '<div class="picker" id="e-picker" hidden></div>' +
+        "</div>" +
+        '<div class="foot">' +
+          '<button class="ghost" id="e-del">删除这条</button>' +
+          '<button class="primary" id="e-done">完成</button>' +
+        "</div>" +
+      "</div>";
+    document.body.appendChild(mask);
+    renderImgs();
+
+    var t = mask.querySelector("#e-title"), b = mask.querySelector("#e-body"), g = mask.querySelector("#e-tag");
+    t.addEventListener("input", function () { draft.title = t.value; scheduleSave(); });
+    b.addEventListener("input", function () { draft.body = b.value; scheduleSave(); });
+    g.addEventListener("input", function () { draft.tag = g.value; scheduleSave(); });
+
+    mask.querySelector("#e-colors").addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-color]");
+      if (!btn) return;
+      draft.color = btn.getAttribute("data-color");
+      Array.prototype.forEach.call(mask.querySelectorAll(".sw"), function (s) { s.classList.toggle("on", s === btn); });
+      scheduleSave();
+    });
+    mask.querySelector("#e-pick").addEventListener("click", function () { mask.querySelector("#e-file").click(); });
+    mask.querySelector("#e-file").addEventListener("change", function (e) { addFiles(e.target.files); e.target.value = ""; });
+    var imagebedBtn = mask.querySelector("#e-gallery");
+    if (imagebedBtn) imagebedBtn.addEventListener("click", togglePicker);
+    mask.querySelector("#e-done").addEventListener("click", close);
+    mask.querySelector("#e-del").addEventListener("click", function () { removeNote(id); });
+    mask.addEventListener("mousedown", function (e) { if (e.target === mask) close(); });
+    // 粘贴：在面板内任意位置都能接住剪贴板里的图
+    mask.addEventListener("paste", function (e) {
+      var items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      var files = [];
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].kind === "file" && String(items[i].type).indexOf("image/") === 0) {
+          var f = items[i].getAsFile();
+          if (f) files.push(f);
+        }
+      }
+      if (files.length) { e.preventDefault(); addFiles(files); }
+    });
+    t.focus();
+  }
+
+  function close() {
+    clearTimeout(saveTimer);
+    // 关之前把没落库的改动补写一次，避免"打了字直接点空白"丢内容
+    if (draft) {
+      save({ title: draft.title, body: draft.body, tag: draft.tag, color: draft.color, updated_at: new Date().toISOString() }, true);
+    }
+    var mask = document.getElementById("mask");
+    if (mask) mask.remove();
+    editing = null; draft = null;
+    render();
+  }
+
+  function renderImgs() {
+    var box = document.getElementById("e-imgs");
+    if (!box) return;
+    box.innerHTML = draft.images.map(function (id) {
+      return '<div class="it"><img src="' + esc(thumbs[id] || "") + '" alt="" />' +
+        '<button class="x" data-rm="' + esc(id) + '" title="移除">×</button></div>';
+    }).join("");
+    box.onclick = function (e) {
+      var btn = e.target.closest("[data-rm]");
+      if (!btn) return;
+      var id = btn.getAttribute("data-rm");
+      draft.images = draft.images.filter(function (x) { return x !== id; });
+      pushImages();
+      renderImgs();
+    };
+    var label = document.querySelector("#e-imgs").previousElementSibling;
+    if (label) label.textContent = "附图（" + draft.images.length + "）";
+  }
+
+  function pushImages() {
+    save({ images: JSON.stringify(draft.images), updated_at: new Date().toISOString() }, true);
+  }
+
+  async function addFiles(files) {
+    if (!files || !files.length) return;
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      try {
+        var dataUrl = await new Promise(function (res, rej) {
+          var fr = new FileReader();
+          fr.onload = function () { res(String(fr.result)); };
+          fr.onerror = function () { rej(new Error("读不出这个文件")); };
+          fr.readAsDataURL(f);
+        });
+        // 图床开着 → 走图床（有出处、有缩略图、别处也能取用）；
+        // 没开 → 图直接随签存进自己的私有表，不该让"选装模块没开"挡住附图。
+        if (ctx && ctx.gallery) {
+          var item = await call("gallery.put", { dataUrl: dataUrl, title: f.name || "便签附图" });
+          if (item && item.id) {
+            thumbs[item.id] = item.thumb || dataUrl;
+            draft.images.push(item.id);
+          }
+        } else {
+          if (dataUrl.length > INLINE_MAX_CHARS) {
+            toast("这张图超过 5MB，先压缩一下再贴");
+            continue;
+          }
+          thumbs[dataUrl] = dataUrl;
+          draft.images.push(dataUrl);
+        }
+      } catch (e) { toast("这张图没存上：" + e.message); }
+    }
+    pushImages();
+    renderImgs();
+  }
+
+  async function togglePicker() {
+    var box = document.getElementById("e-picker");
+    if (!box.hidden) { box.hidden = true; return; }
+    try {
+      var r = await call("gallery.list", { limit: 60 });
+      var items = (r && r.items) || [];
+      if (!items.length) { toast("图床还是空的"); return; }
+      box.innerHTML = items.map(function (it) {
+        return '<img src="' + esc(it.thumb || "") + '" data-gid="' + esc(it.id) + '" data-thumb="' + esc(it.thumb || "") + '" title="' + esc(it.title || "") + '" />';
+      }).join("");
+      box.onclick = function (e) {
+        var img = e.target.closest("[data-gid]");
+        if (!img) return;
+        var gid = img.getAttribute("data-gid");
+        if (draft.images.indexOf(gid) < 0) {
+          draft.images.push(gid);
+          thumbs[gid] = img.getAttribute("data-thumb") || "";
+          pushImages();
+          renderImgs();
+          toast("已附上");
+        } else { toast("这张已经在便签里了"); }
+      };
+      box.hidden = false;
+    } catch (e) { toast("打不开图床：" + e.message); }
+  }
+
+  /* ================= 事件 ================= */
+
+  document.getElementById("new").addEventListener("click", createNote);
+  document.getElementById("search").addEventListener("input", render);
+  document.getElementById("grid").addEventListener("click", function (e) {
+    var del = e.target.closest("[data-del]");
+    if (del) { e.stopPropagation(); removeNote(del.getAttribute("data-del")); return; }
+    var card = e.target.closest(".card");
+    if (card) open(card.getAttribute("data-id"));
+  });
+
+  // 启动：先要一次上下文（拿主题），再拉数据
+  parent.postMessage({ source: TOOL_SOURCE, type: "tool:hello" }, "*");
+  load().catch(function (e) {
+    document.getElementById("empty").hidden = false;
+    document.getElementById("empty").textContent = "读不到数据：" + e.message;
+  });
+})();
+</script>
+</body>
+</html>

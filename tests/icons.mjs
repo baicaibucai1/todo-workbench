@@ -164,6 +164,25 @@ for (const rel of conf.bundle.icon) {
 }
 
 console.log("");
+console.log("=== README logo 校验 ===");
+// README 抬头那张 logo 是 gen-icons.mjs 从 128x128.png 另存过去的。
+// 两处耦合（脚本写它、README 引它）就得在这儿钉住，否则哪天改了名字，
+// README 顶部会静默变成一张挂掉的图 —— 这种坏法没人会收到报错。
+const logoPath = path.resolve(__dirname, "..", "docs", "screenshots", "logo.png");
+const readme = fs.readFileSync(path.resolve(__dirname, "..", "README.md"), "utf8");
+ok(fs.existsSync(logoPath), "docs/screenshots/logo.png 存在");
+ok(readme.includes("docs/screenshots/logo.png"), "README 里确实引用了它");
+if (fs.existsSync(logoPath)) {
+  ok(
+    Buffer.compare(
+      fs.readFileSync(logoPath),
+      fs.readFileSync(path.join(ICON_DIR, "128x128.png")),
+    ) === 0,
+    "它与 128x128.png 字节一致（不会跟图标走散）",
+  );
+}
+
+console.log("");
 if (failures === 0) {
   console.log("全部通过");
 } else {

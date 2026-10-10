@@ -10,6 +10,14 @@
 //   128x128@2x.png  256x256，Windows 高分屏
 //   icon.ico        多尺寸 ICO，Tauri bundle 必需
 //   Square*.png     Windows Store 资源（备用，不参与当前 nsis 打包）
+// 另存一份 128x128 到 docs/screenshots/logo.png —— README 抬头引用的就是它
+// （为什么不直接引用 src-tauri/ 下那份：见 main() 里那段注释）。
+//
+// 设计：橙黄底 + 一张白任务卡，卡里两行勾选任务，底下压一条分隔线。
+//
+// renderIcon / renderSmallIcon / encodePng 是 export 的：外部脚本（比如把各尺寸
+// 拼成一张对照图自查）可以直接复用，不必再抄一遍编码器。
+// ⚠️ 但 import 本文件会顺带跑一次 main() —— 它会重新生成 src-tauri/icons/ 下的图。
 
 import fs from "node:fs";
 import path from "node:path";
@@ -44,7 +52,7 @@ function blendPixel(canvas, x, y, [r, g, b, a]) {
 }
 
 // 超采样抗锯齿：在每个像素内取 N×N 个子样本，交给 shape 判断是否在图形内。
-// 这样圆角、圆环、勾线的边缘都不会有锯齿，且不依赖任何绘图库。
+// 这样圆角、圆环、勾线的边缘都不会有锯齿，且不依赖任何绘图床。
 const SS = 4;
 
 function fillShape(canvas, bbox, color, insideTest) {
@@ -128,7 +136,7 @@ function chunk(type, data) {
   return Buffer.concat([len, typeBuf, data, crcBuf]);
 }
 
-function encodePng(canvas) {
+export function encodePng(canvas) {
   const { size, data } = canvas;
   const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -195,72 +203,90 @@ function encodeIco(pngBuffers) {
 // 图形设计
 // ---------------------------------------------------------------------------
 
-const TEAL_DARK = [11, 92, 72, 255]; // #0B5C48 渐变暗端
-const TEAL_LIGHT = [29, 158, 117, 255]; // #1D9E75 渐变亮端
+const ORANGE = [234, 88, 12, 255]; // #EA580C 渐变上端（橙）
+const YELLOW = [250, 204, 21, 255]; // #FACC15 渐变下端（黄）
 const WHITE = [255, 255, 255, 255];
+const CHECK = [217, 72, 15, 255]; // #D9480F 勾
+const BAR = [252, 211, 77, 255]; // #FCD34D 任务行条
+const RULE = [253, 230, 138, 255]; // #FDE68A 卡内分隔线
 
 // 圆角方块内的竖直渐变。图标语言里渐变很常见，这里手工做逐行插值。
-function gradientColorAt(t) {
-  const c = [0, 1, 2].map((i) =>
-    Math.round(TEAL_DARK[i] + (TEAL_LIGHT[i] - TEAL_DARK[i]) * t),
-  );
-  return [c[0], c[1], c[2], 255];
-}
-
-function renderIcon(size) {
-  const canvas = createCanvas(size);
-  const S = size / 1024; // 统一按 1024 设计稿缩放
-
-  // 1) 圆角方块底：留 4% 内边距，符合 Windows 图标安全区
-  const pad = 40 * S;
-  const radius = 224 * S;
-  const box = [pad, pad, size - pad, size - pad];
-  const boxTest = roundedRectTest(box[0], box[1], box[2], box[3], radius);
-
-  // 逐行填渐变：先算出每一行属于渐变哪个位置，再统一填充
+function fillVerticalGradient(canvas, box, radius, top, bottom) {
+  const test = roundedRectTest(box[0], box[1], box[2], box[3], radius);
   for (let y = Math.floor(box[1]); y < Math.ceil(box[3]); y++) {
     const t = (y - box[1]) / (box[3] - box[1]);
-    const color = gradientColorAt(t);
-    fillShape(canvas, [box[0], y, box[2], y + 1], color, boxTest);
+    const c = [0, 1, 2].map((i) => Math.round(top[i] + (bottom[i] - top[i]) * t));
+    fillShape(canvas, [box[0], y, box[2], y + 1], [c[0], c[1], c[2], 255], test);
+  }
+}
+
+function fillRoundedRect(canvas, x0, y0, x1, y1, radius, color) {
+  fillShape(canvas, [x0, y0, x1, y1], color, roundedRectTest(x0, y0, x1, y1, radius));
+}
+
+// 线段用"点到线段距离 + 圆头端点"表达。bbox 收紧到线段外扩一个笔宽 ——
+// 之前的写法是整张画布逐个像素判 insideTest，在 1024 尺寸上白扫一百万个点。
+function fillCapsule(canvas, ax, ay, bx, by, stroke, color) {
+  const r = stroke / 2;
+  fillShape(
+    canvas,
+    [Math.min(ax, bx) - r, Math.min(ay, by) - r, Math.max(ax, bx) + r, Math.max(ay, by) + r],
+    color,
+    capsuleTest(ax, ay, bx, by, r),
+  );
+}
+
+function fillCheck(canvas, p1, p2, p3, stroke, color) {
+  fillCapsule(canvas, p1[0], p1[1], p2[0], p2[1], stroke, color);
+  fillCapsule(canvas, p2[0], p2[1], p3[0], p3[1], stroke, color);
+}
+
+/**
+ * 大尺寸：橙黄底 + 一张白卡，卡里两行勾选任务，底下压一条分隔线。
+ *
+ * 为什么不是"一个更大的勾"：这个应用的核心动作是**勾掉一件事**，
+ * 而单独一个勾只画了动作，画不出"一叠待办"。卡片一上来，清单这层意思就有了。
+ */
+export function renderIcon(size) {
+  const canvas = createCanvas(size);
+  const S = size / 1024; // 统一按 1024 设计稿缩放
+  const u = (v) => v * S;
+
+  // 1) 圆角方块底：留 4% 内边距，符合 Windows 图标安全区
+  fillVerticalGradient(canvas, [u(40), u(40), u(984), u(984)], u(224), ORANGE, YELLOW);
+
+  // 2) 白卡
+  fillRoundedRect(canvas, u(168), u(190), u(856), u(834), u(104), WHITE);
+
+  // 3) 两行任务：左边一个勾，右边一条长条
+  const stroke = u(52);
+  const rows = [
+    { cy: 390, check: [[234, 388], [288, 442], [384, 334]] },
+    { cy: 630, check: [[234, 628], [288, 682], [384, 574]] },
+  ];
+  for (const { cy, check } of rows) {
+    fillRoundedRect(canvas, u(438), u(cy - 46), u(796), u(cy + 46), u(46), BAR);
+    fillCheck(canvas, ...check.map(([x, y]) => [u(x), u(y)]), stroke, CHECK);
   }
 
-  // 2) 对勾：两段胶囊，圆头端点。
-  //    不额外加任何装饰元素 —— 试过右上圆点和横线，都会跟勾抢视觉，
-  //    而且在小尺寸下退化成噪点。单一元素才经得起缩放。
-  const stroke = 82 * S;
-  const p1 = [322 * S, 536 * S];
-  const p2 = [452 * S, 660 * S];
-  const p3 = [700 * S, 386 * S];
-  fillShape(canvas, [0, 0, size, size], WHITE, capsuleTest(p1[0], p1[1], p2[0], p2[1], stroke / 2));
-  fillShape(canvas, [0, 0, size, size], WHITE, capsuleTest(p2[0], p2[1], p3[0], p3[1], stroke / 2));
+  // 4) 分隔线。卡底那段留白不是白留的 —— 它是"还能再写一条"的位置
+  fillCapsule(canvas, u(234), u(758), u(796), u(758), u(24), RULE);
 
   return canvas;
 }
 
-// 小尺寸下细节会糊，单独简化：
-//   - 沿用小半径比例，让 16px 也保持"圆角方块"而不是变成圆形
-//   - 只用对勾，不加横线，避免高频细节在小尺寸退化成脏点
-function renderSmallIcon(size) {
+// 小尺寸（< 64px，含 ICO 的 16/24/32/48 帧）单独简化：
+//   - 圆角方块沿用小半径比例，让 16px 也保持"圆角方块"而不是变成圆形
+//   - 两行任务在这个尺度上每行不到 5px 高，会糊成一道脏线，所以只留一个粗勾。
+//     卡片留着 —— 于是它跟大图标仍然是同一张脸，不是另一个图标。
+export function renderSmallIcon(size) {
   const canvas = createCanvas(size);
   const S = size / 1024;
+  const u = (v) => v * S;
 
-  const pad = 26 * S;
-  const radius = 190 * S;
-  const box = [pad, pad, size - pad, size - pad];
-  const boxTest = roundedRectTest(box[0], box[1], box[2], box[3], radius);
-
-  for (let y = Math.floor(box[1]); y < Math.ceil(box[3]); y++) {
-    const t = (y - box[1]) / (box[3] - box[1]);
-    fillShape(canvas, [box[0], y, box[2], y + 1], gradientColorAt(t), boxTest);
-  }
-
-  // 小尺寸勾线加粗、更居中，保证 16px 下依然清晰
-  const stroke = 116 * S;
-  const p1 = [296 * S, 526 * S];
-  const p2 = [434 * S, 660 * S];
-  const p3 = [724 * S, 358 * S];
-  fillShape(canvas, [0, 0, size, size], WHITE, capsuleTest(p1[0], p1[1], p2[0], p2[1], stroke / 2));
-  fillShape(canvas, [0, 0, size, size], WHITE, capsuleTest(p2[0], p2[1], p3[0], p3[1], stroke / 2));
+  fillVerticalGradient(canvas, [u(34), u(34), u(990), u(990)], u(210), ORANGE, YELLOW);
+  fillRoundedRect(canvas, u(128), u(150), u(896), u(874), u(140), WHITE);
+  fillCheck(canvas, [u(292), u(536)], [u(432), u(676)], [u(744), u(346)], u(132), CHECK);
 
   return canvas;
 }
@@ -279,35 +305,52 @@ function main() {
     written.push({ name, bytes: buf.length });
   };
 
+  // 渲染档位：≥ 64px 用细节版，更小的尺寸退到单勾版。
+  // 阈值压在 64 而不是 128 —— 128px 的白卡完全放得下两行任务，
+  // 没必要让它退回单勾，那样任务栏里 128 和 256 会是两张不同的图。
+  const renderAt = (size) => (size >= 64 ? renderIcon(size) : renderSmallIcon(size));
+
   // 母版与各尺寸 PNG
   const sizes = [
-    { name: "icon.png", size: 1024, small: false },
-    { name: "128x128@2x.png", size: 256, small: false },
-    { name: "128x128.png", size: 128, small: true },
-    { name: "32x32.png", size: 32, small: true },
+    { name: "icon.png", size: 1024 },
+    { name: "128x128@2x.png", size: 256 },
+    { name: "128x128.png", size: 128 },
+    { name: "32x32.png", size: 32 },
   ];
 
   const pngCache = new Map();
   for (const s of sizes) {
-    const canvas = s.small ? renderSmallIcon(s.size) : renderIcon(s.size);
-    const png = encodePng(canvas);
+    const png = encodePng(renderAt(s.size));
     pngCache.set(s.size, png);
     write(s.name, png);
   }
 
   // Windows Store 方形资源，尺寸必须是标准值
   for (const size of [30, 44, 71, 89, 107, 142, 150, 284, 310]) {
-    write(`Square${size}x${size}Logo.png`, encodePng(renderSmallIcon(size)));
+    write(`Square${size}x${size}Logo.png`, encodePng(renderAt(size)));
   }
 
   // ICO：嵌入 16/24/32/48/64/128/256，Windows 会按需挑选
   const icoSizes = [16, 24, 32, 48, 64, 128, 256];
   const frames = icoSizes.map((size) => {
-    let png = pngCache.get(size);
-    if (!png) png = encodePng(size >= 128 ? renderIcon(size) : renderSmallIcon(size));
+    const png = pngCache.get(size) ?? encodePng(renderAt(size));
     return { size, png };
   });
   write("icon.ico", encodeIco(frames));
+
+  // README 抬头那张 logo：跟 128x128.png **同一份字节**，另存到 docs/screenshots/。
+  //
+  // 为什么不在 README 里直接写 `src-tauri/icons/128x128.png`：
+  //   · README 里所有本地图都在 docs/screenshots/ 下，logo 不想当唯一的例外；
+  //   · 有些 markdown 预览器只认自己那套资源目录，跨到 src-tauri/ 就不出图 ——
+  //     "README 里看不到 logo"正是这么来的。
+  // 为什么由本脚本生成而不是手工放一份：手工那份迟早跟图标走散，
+  // 而改图标的人只会来跑 npm run icons。放这儿，两边永远同源。
+  const readmeLogoDir = path.resolve(OUT_DIR, "..", "..", "docs", "screenshots");
+  fs.mkdirSync(readmeLogoDir, { recursive: true });
+  const logoPng = pngCache.get(128);
+  fs.writeFileSync(path.join(readmeLogoDir, "logo.png"), logoPng);
+  written.push({ name: "docs/screenshots/logo.png", bytes: logoPng.length });
 
   console.log("图标已生成 ->", OUT_DIR);
   for (const w of written) {

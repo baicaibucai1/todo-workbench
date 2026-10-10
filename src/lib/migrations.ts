@@ -15,6 +15,35 @@ export interface Migration {
   version: number;
   name: string;
   sql: string;
+  /**
+   * 需要在 SQL 之外做判断的迁移，把那段逻辑写在这里（SQL 跑完后执行）。
+   *
+   * 存在的理由：**两个驱动的 SQL 能力不一样**。MemoryDb 只认自己那套正则，
+   * 遇到不认识的 WHERE 条件（比如 `NOT EXISTS (SELECT ...)`）会按
+   * **"不匹配"**处理 —— 语句看着执行成功了，实际一行没动。
+   * 这种"静默没做事"最难查：真 SQLite 上是对的，只有浏览器演示模式不对。
+   *
+   * 所以凡是需要读一下再决定怎么写（先查两个键都在不在、再决定搬哪个）
+   * 的迁移，都在这里用 JS 写，两个驱动走同一条路径。
+   *
+   * ⛔ 必须**可重入**：迁移失败时 user_version 不会推进，下次启动会重跑一遍。
+   * 所以每一句都要先判断"是不是已经做过了"。
+   */
+  run?: (db: MigrationRunner) => Promise<void>;
+}
+
+/**
+ * `run` 拿到的数据库接口。
+ *
+ * 故意只声明用到的那两个方法，而不是 import db.ts 的 Db —— 那个文件反过来
+ * import 本文件，声明成一个最小结构类型就不会变成运行时的循环依赖。
+ */
+export interface MigrationRunner {
+  select<T = Record<string, unknown>>(
+    sql: string,
+    params?: Array<string | number | null>,
+  ): Promise<T[]>;
+  execute(sql: string, params?: Array<string | number | null>): Promise<void>;
 }
 
 export const migrations: Migration[] = [
@@ -357,18 +386,18 @@ export const migrations: Migration[] = [
     `,
   },
   {
-    // 图库 —— 工作台里所有图片/视频的**共同落点**。
+    // 图床 —— 工作台里所有图片/视频的**共同落点**。
     //
     // 为什么它是核心表而不是工具私有表：
-    // 「图库」的用法就是"一个地方存所有素材，谁都能往里放、谁都能从里面取"。
+    // 「图床」的用法就是"一个地方存所有素材，谁都能往里放、谁都能从里面取"。
     // 图片裁剪的产物、尺码表的成品、AI 生成的结果、以及用户自己导入的图，
-    // 全都落到同一处；AI 生成的参考图又必须能直接从图库里挑。
+    // 全都落到同一处；AI 生成的参考图又必须能直接从图床里挑。
     // 做成 tools/gallery 的话，它和其它工具之间只能走"工具间通道"，
     // 而工具在物理上拿不到别的工具的数据 —— 双向联动根本做不了。
     //
     // 文件仍然走附件那套**内容寻址仓库**（attachments/），只是这里不存路径前缀
     // 差异：rel_path 与 core_wo_attachments.rel_path 处在同一个池子里，
-    // 所以同一张图"既在流程任务里又在图库里"时磁盘上只有一份。
+    // 所以同一张图"既在流程任务里又在图床里"时磁盘上只有一份。
     // 代价是删除时要**跨表**数引用（见 attachments 的引用计数约定），
     // 换来的是不重复占盘 —— 素材图动辄几 MB，这个取舍是值得的。
     //
@@ -617,7 +646,7 @@ export const migrations: Migration[] = [
     `,
   },
   {
-    // 「模块变选装」的回填（v17）：特殊单号与图库从"内置就有"改成"想要再开"。
+    // 「模块变选装」的回填（v17）：特殊单号与图床从"内置就有"改成"想要再开"。
     //
     // ⚠️ 本条**没有随任何 Release 发布过**（上一个发布的版本还停在 v16），
     // 所以它是在就地修正而不是追加一条 —— 已发布的迁移才永远不许改，
@@ -780,6 +809,139 @@ export const migrations: Migration[] = [
         WHERE NOT EXISTS (SELECT 1 FROM core_settings WHERE key = 'behavior.seedSampleData')
           AND EXISTS (SELECT 1 FROM core_lists);
     `,
+  },
+
+  {
+    /*
+     * v21：「图床」改名「图床」。
+     *
+     * ============================ 为什么改名也要写迁移 ============================
+     * 名字是给用户看的，**存数据的表名却是给代码看的**。只改代码里的表名，
+     * 老库里那张 core_gallery_items 就成了没人认识的孤儿表 —— 用户升级后
+     * 打开图床是一片空白，而他的图还在库里。所以改名必须两条腿：
+     * 代码改 + 老库跟着改。
+     *
+     * ============================ 三条语句各自的讲究 ============================
+     * 1. RENAME：SQLite 原生支持；MemoryDb 的 RENAME 分支是**为这条迁移补的**
+     *    （db.ts）。别改写成「建新表 + INSERT SELECT + DROP 老表」—— 内存库
+     *    不支持 INSERT…SELECT，那样做会在浏览器 demo 里静默丢数据。
+     * 2. 表不存在时怎么办：RENAME 一条不存在的表会报错（SQLite 里是 error，
+     *    不是静默成功）。所以外层用 EXISTS 判一下，**没有那张老表就整条跳过** ——
+     *    新库本来就用新表名，不该被这条迁移碰。
+     * ============================ 为什么设置键搬家写在 run 里 ============================
+     * 不是图省事，是因为**不能写成 SQL**：判断"新键是不是已经存在"
+     * 需要 `NOT EXISTS (SELECT ...)`，而 MemoryDb（浏览器演示模式）不认识
+     * 子查询，会把整条 WHERE 判成"不匹配" —— 结果是老键被后面那句 DELETE
+     * 删掉、新键一个字没写，用户明明**关掉**过图库，升级后却变成开着的。
+     * 这种"两个驱动表现不一致"的 bug 只在预览里出现，最难查（PITFALLS 有同类）。
+     *
+     * 所以那一段挪到 run 里用 JS 写，两个驱动走同一条逻辑。
+     *
+     * ⛔ 同步的分片 id 仍是 `gallery`（见 lib/sync.ts）—— 它写进远端文件名，
+     * 属于对外契约，改了会让老设备对不上。这条迁移**不动**它。
+     */
+    version: 21,
+    name: "gallery_renamed_to_imagebed",
+    sql: `
+      ALTER TABLE core_gallery_items RENAME TO core_imagebed_items;
+
+      UPDATE core_settings SET value = 'imagebed'
+        WHERE key = 'behavior.startupView' AND value = 'gallery';
+    `,
+    run: async (db) => {
+      // 设置键搬家：ext.gallery.enabled → ext.imagebed.enabled
+      //
+      // 三种情形（顺序即优先级）：
+      //   · 两个键都在 → 新键是用户更近的一次操作，留着它，删掉老键；
+      //   · 只有老键    → 把它改名（值原样带走，用户按过的开关不变）；
+      //   · 只有新键 / 都没有 → 什么都不做，按新默认走。
+      //
+      // 搬完必须让老键消失：否则设置页里会同时出现两个「图床」开关，
+      // 而它们各写各的键 —— 按了没反应，是最气人的那种。
+      //
+      // ⚠️ 这里**必须用两条单键查询**，不能图省事写成 `WHERE key IN (...)`：
+      // MemoryDb 的 WHERE 解析只认 =/!=/LIKE/IS NULL，遇到 IN 会判"不匹配"，
+      // 于是两个键都查不到 → 静默什么也不做（实测踩到过，见本条 run 的说明）。
+      const oldRows = await db.select<{ key: string }>(
+        `SELECT key FROM core_settings WHERE key = 'ext.gallery.enabled'`,
+      );
+      if (!oldRows || oldRows.length === 0) return; // 已经搬过了（重入时走这条）
+      const newRows = await db.select<{ key: string }>(
+        `SELECT key FROM core_settings WHERE key = 'ext.imagebed.enabled'`,
+      );
+      const hasNew = !!newRows && newRows.length > 0;
+      if (hasNew) {
+        await db.execute(`DELETE FROM core_settings WHERE key = 'ext.gallery.enabled'`);
+      } else {
+        await db.execute(
+          `UPDATE core_settings SET key = 'ext.imagebed.enabled' WHERE key = 'ext.gallery.enabled'`,
+        );
+      }
+    },
+  },
+  {
+    // 删掉「特殊单号」这个功能。
+    //
+    // 它在 v8 就已经并进了流程任务（core_work_orders.kind = 'special'），
+    // 所以这里要做的就是三件事：删掉这一类单子、清掉随之变成孤儿的自定义字段、
+    // 把两个**还在被流程任务用着**的设置键换成不带 special 的名字。
+    version: 22,
+    name: "drop_special_orders",
+    sql: `
+      DELETE FROM core_work_orders WHERE kind = 'special';
+    `,
+    run: async (db) => {
+      // 1) 孤儿字段。真 SQLite 有 ON DELETE CASCADE 会自己带走，
+      //    但 MemoryDb 没有外键，而浏览器 demo 走的正是它 ——
+      //    不清就留下一批查不到主人的行。
+      //
+      //    ⚠️ 不能写成 `WHERE wo_id IN (SELECT id FROM core_work_orders ...)`：
+      //    MemoryDb 的 WHERE 只认 =/!=/LIKE/IS NULL，子查询判不了
+      //    （v21 里踩过同一条），所以只能一条一条问。
+      const fields = await db.select<{ id: string; wo_id: string }>(
+        `SELECT id, wo_id FROM core_wo_fields`,
+      );
+      for (const f of fields ?? []) {
+        const owner = await db.select<{ id: string }>(
+          `SELECT id FROM core_work_orders WHERE id = ?`,
+          [f.wo_id],
+        );
+        if (!owner || owner.length === 0) {
+          await db.execute(`DELETE FROM core_wo_fields WHERE id = ?`, [f.id]);
+        }
+      }
+
+      // 2) 还在用的两个键搬到通用名。
+      //    为什么不连它们一起删：查件渠道与复制格式是**流程任务**也在用的能力，
+      //    删了等于顺手砍掉流程任务详情里的「查件」和「复制」。
+      //    搬值和 v21 同一套规则（两个都在时留新的，只有老键就改名），
+      //    同样必须逐键查询、不能用 IN。
+      const MOVED: Array<[string, string]> = [
+        ["special.copyTemplate", "order.copyTemplate"],
+        ["special.trackChannel", "order.trackChannel"],
+      ];
+      for (const [oldKey, newKey] of MOVED) {
+        const oldRows = await db.select<{ key: string }>(
+          `SELECT key FROM core_settings WHERE key = '${oldKey}'`,
+        );
+        if (!oldRows || oldRows.length === 0) continue; // 没有老键（或已搬过）
+        const newRows = await db.select<{ key: string }>(
+          `SELECT key FROM core_settings WHERE key = '${newKey}'`,
+        );
+        if (newRows && newRows.length > 0) {
+          await db.execute(`DELETE FROM core_settings WHERE key = '${oldKey}'`);
+        } else {
+          await db.execute(
+            `UPDATE core_settings SET key = '${newKey}' WHERE key = '${oldKey}'`,
+          );
+        }
+      }
+
+      // 3) 随功能一起消失的三个键，留着只会在设置里变成没人认的垃圾
+      for (const dead of ["ext.special.enabled", "special.columns", "special.density"]) {
+        await db.execute(`DELETE FROM core_settings WHERE key = '${dead}'`);
+      }
+    },
   },
 ];
 

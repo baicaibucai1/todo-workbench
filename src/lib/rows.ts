@@ -1,5 +1,4 @@
 import type { Task, WorkOrder } from "../types";
-import { dueState } from "./due";
 
 /**
  * 列表行的统一表示。
@@ -31,21 +30,8 @@ function byDate(rows: Row[]): Row[] {
   });
 }
 
-/**
- * 按时效排：越早到期越靠前。
- *
- * 逾期（时刻在过去）自然排在最前面，而且是**超得越久越靠前** ——
- * 这正是"先处理最等不起的"想要的效果。没设时效的排最后：
- * 它们不属于"等不起"那一类，塞在中间只会把真正紧急的挤下去。
- */
-function byDue(rows: Row[]): Row[] {
-  const key = (r: Row): number => {
-    if (r.kind !== "order" || !r.order.stageDueAt) return Number.MAX_SAFE_INTEGER;
-    const t = new Date(r.order.stageDueAt).getTime();
-    return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
-  };
-  return [...rows].sort((a, b) => key(a) - key(b));
-}
+// 原来这里还有一个 byDue（按处理时效排），它是「特殊单号」视图专用的
+// 排序方式 —— 那个视图删掉后（2026-10-10）没有别的调用点了，一并拿掉。
 
 /**
  * 把待办与流程任务分组、排序成界面要渲染的样子。
@@ -59,20 +45,6 @@ export function groupRows(
   tasks: Task[],
   orders: WorkOrder[],
   view: string,
-  /**
-   * 「特殊单号」模块是否启用。
-   *
-   * 关掉后「我的一天」里那一组直接不生成 —— 这是**第二道闸**：数据层
-   * （fetchWorkOrders 的 myday 分支）已经不返回这类单子，但 groupRows 的兜底
-   * 分支会把传进来的东西原样渲染出去，只要有一处调用漏了过滤
-   * （比如以后有人图省事直接传全量工单），关闭状态就当场破功。
-   *
-   * 参数默认 true **只是给纯函数场景兜底**（单测直接调它算分组，没有设置
-   * 可查）。⚠️ 界面上的调用方一律要显式传当前开关值（TaskList 传 specialOn、
-   * store.selectFirst 传同一个值）—— 它现在是选装模块、默认是关的，
-   * 靠这个默认值"顺便"生效，等于开关只关了一半。
-   */
-  specialEnabled = true,
 ): { sections: Section[]; done: Row[] } {
   const activeTasks = tasks.filter((t) => !t.done);
   const doneTasks = tasks.filter((t) => t.done);
@@ -85,30 +57,23 @@ export function groupRows(
   ];
 
   // 「我的一天」里分成几类而不是一锅：
-  //   特殊单号 —— 今天在跟的、等不起的。单独一组、按时效排（逾期最前），
-  //               放在最上面：这个视图是"提醒"的前线，越急越要先被看见
   //   今日任务 —— 手动加进来的、今天到期的
   //   每日任务 —— 每天都出现的习惯，今天勾掉明天自己回来
   // 混在一起时每日任务会天天赖在同一张列表里，很容易被误读成"昨天没做完"。
+  //
+  // 流程任务一条都不进这个视图。「特殊单号」在的时候，这里还会摆一组
+  // 带处理时效的单子；功能删掉后（2026-10-10）数据层的 myday 分支也不再
+  // 返回流程任务，这儿的 openOrders 理应是空的。
   if (view === "myday") {
-    const specials = specialEnabled
-      ? openOrders.filter((o) => o.kind === "special")
-      : [];
-    // 组头只在这一组里**真的有逾期单**时才红 —— 无条件标红会让
-    // "红"失去告警的意义，天天红等于没有红。
-    const specialOverdue = specials.some((o) => dueState(o) === "overdue");
     const daily = activeTasks.filter((t) => t.repeat === "daily");
-    // 普通流程任务在这里被**显式**挡掉，不进「今日任务」：数据层
-    // （fetchWorkOrders 的 myday 分支）只放行 kind='special'，这里是第二道闸 ——
-    // 和 orders/special 视图 "fetchTasks 返回空 + rows.done 置空" 两处不能漏一处
-    // 是同一条纪律。直接传进来的 orders 若混有普通流程任务（比如调用方没走数据层），
-    // 渲染出来就是"流程任务又混进我的一天了"的回归。
+    // 流程任务在这里被**显式**挡掉，不进「今日任务」：数据层已经不放行，
+    // 这里是第二道闸 —— 直接传进来的 orders 若混着流程任务（比如调用方
+    // 没走数据层），渲染出来就是"流程任务混进我的一天了"的回归。
     const once: Row[] = activeTasks
       .filter((t) => t.repeat !== "daily")
       .map((task) => ({ kind: "task" as const, task }));
     return {
       sections: [
-        { key: "special", label: "特殊单号", overdue: specialOverdue, items: byDue(specials.map((order) => ({ kind: "order" as const, order }))) },
         { key: "today", label: "今日任务", overdue: false, items: byDate(once) },
         {
           key: "daily",
@@ -138,49 +103,17 @@ export function groupRows(
     };
   }
 
-  // 「特殊单号」专属视图：只看带处理时效的那些流程任务（流程任务的真子集），
-  // 同样分「进行中 / 已完成」两组。
-  //
-  // 进行中那组**按时效排，不按日期排** —— 进这个视图的人问的是
-  // "哪一个先等不起"，而不是"哪个先开始的"。
-  // 已完结的那组回到按日期排：都办完了，时效已经没有意义了。
-  if (view === "special") {
-    // 模块关掉时这个视图不该有内容 —— 和 gallery 一样显式挡掉，
-    // 绝不能落进最下面的兜底分支（那会把**全部**流程任务渲染出来）
-    if (!specialEnabled) return { sections: [], done: [] };
-    const asRows = (os: WorkOrder[]): Row[] =>
-      os.map((order) => ({ kind: "order" as const, order }));
-    const specials = orders.filter((o) => o.kind === "special");
-    return {
-      sections: [
-        {
-          key: "open",
-          label: "进行中",
-          overdue: false,
-          items: byDue(asRows(specials.filter((o) => !o.closed))),
-        },
-        {
-          key: "closed",
-          label: "已完成",
-          overdue: false,
-          items: byDate(asRows(specials.filter((o) => o.closed))),
-        },
-      ].filter((s) => s.items.length > 0),
-      done: [],
-    };
-  }
-
-  // 图库：它不是"待办的某种筛选"，一条待办/流程任务都不该出现在这里。
+  // 图床：它不是"待办的某种筛选"，一条待办/流程任务都不该出现在这里。
   //
   // 显式写出来而不是靠"取数层已经返回空了"：groupRows 的兜底分支会把
   // 传进来的东西原样渲染出去，所以只要有一处忘了挡（比如以后有人给
-  // 图库视图加个"顺便显示相关流程任务"），待办就会立刻漏进来。
+  // 图床视图加个"顺便显示相关流程任务"），待办就会立刻漏进来。
   // done 同样必须是空数组 —— 默认那份 done 里混着已完成任务。
-  if (view === "gallery") {
+  if (view === "imagebed") {
     return { sections: [], done: [] };
   }
 
-  // AI 助手：同图库 —— 助手界面上一条待办都不该出现。
+  // AI 助手：同图床 —— 助手界面上一条待办都不该出现。
   // 少这一句不会报错，只会让助手视图旁边冒出一整屏任务，看着像串台了。
   if (view === "agent") {
     return { sections: [], done: [] };
@@ -213,10 +146,8 @@ export function firstVisibleRow(
   tasks: Task[],
   orders: WorkOrder[],
   view: string,
-  /** 同 groupRows：两边必须用同一个开关，否则"高亮的行"会和"详情里那条"错位 */
-  specialEnabled = true,
 ): Row | null {
-  const { sections } = groupRows(tasks, orders, view, specialEnabled);
+  const { sections } = groupRows(tasks, orders, view);
   for (const s of sections) {
     if (s.items.length) return s.items[0];
   }

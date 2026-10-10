@@ -115,10 +115,10 @@ check("提示了用的是应用密码而不是登录密码", syncText.includes("
 console.log("\n3. 同步内容：默认只勾待办");
 const st0 = await shardState();
 info("默认勾选", st0);
-check("四项都在（待办 / 流程任务 / 图库 / 附件）", Object.keys(st0).length === 4, Object.keys(st0).join(","));
+check("四项都在（待办 / 流程任务 / 图床 / 附件）", Object.keys(st0).length === 4, Object.keys(st0).join(","));
 check("待办默认勾上", st0.tasks === true);
 check("流程任务默认不勾", st0.orders === false);
-check("图库默认不勾", st0.gallery === false);
+check("图床默认不勾", st0.gallery === false);
 check("附件默认不勾", st0.attachments === false);
 check("说明了只同步记录、不传文件本体", syncText.includes("原文件不会上传"));
 
@@ -140,14 +140,14 @@ check("显示了「上次同步」且初始是「还没同步过」", syncText.i
 console.log("\n5. 勾选：能改、能落库、刷新后还在");
 await page.locator('[data-sync-shard="gallery"]').click();
 await page.waitForTimeout(300);
-check("点一下图库就勾上了", (await shardState()).gallery === true);
+check("点一下图床就勾上了", (await shardState()).gallery === true);
 
 await page.locator('[data-sync-shard="tasks"]').click();
 await page.waitForTimeout(300);
 let st1 = await shardState();
 info("勾选变化后", st1);
 check("取消待办生效", st1.tasks === false);
-check("图库仍然勾着", st1.gallery === true);
+check("图床仍然勾着", st1.gallery === true);
 
 // 一个都不勾是"点了同步却什么都不发生"，必须拦住
 await page.locator('[data-sync-shard="gallery"]').click();
@@ -167,7 +167,7 @@ await page.waitForTimeout(800);
 await openSync();
 const st3 = await shardState();
 info("刷新后", st3);
-check("刷新后仍然是「只勾图库」", st3.gallery === true && st3.tasks === false, JSON.stringify(st3));
+check("刷新后仍然是「只勾图床」", st3.gallery === true && st3.tasks === false, JSON.stringify(st3));
 
 console.log("\n6. 账号与目录能填能存");
 await page.locator('[data-field="sync-user"]').fill("someone@example.com");

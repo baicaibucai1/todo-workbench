@@ -35,8 +35,8 @@ export default function ReminderToast() {
   const now = Date.now();
 
   /** 从提醒卡跳到那张流程任务：先切到看得见它的视图，再选中它 */
-  const gotoOrder = async (orderId: string, kind: "normal" | "special") => {
-    await setView(kind === "special" ? "special" : "orders");
+  const gotoOrder = async (orderId: string) => {
+    await setView("orders");
     openOrder(orderId);
     void dismissOrderDue(orderId);
   };
@@ -102,7 +102,7 @@ export default function ReminderToast() {
 
             <div className="mt-2.5 flex gap-1.5">
               <button
-                onClick={() => void gotoOrder(a.orderId, a.kind)}
+                onClick={() => void gotoOrder(a.orderId)}
                 data-act="order-due-open"
                 className="flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[12.5px] text-white hover:opacity-90"
                 style={{ background: accent }}

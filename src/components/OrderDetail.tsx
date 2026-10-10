@@ -66,9 +66,8 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
     settings,
   } = useStore();
 
-  const isSpecial = order.kind === "special";
-  /** 查件走哪个渠道（全局偏好，见 SETTINGS.specialTrackChannel） */
-  const channel = parseTrackChannel(settings[SETTINGS.specialTrackChannel]);
+  /** 查件走哪个渠道（全局偏好，见 SETTINGS.orderTrackChannel） */
+  const channel = parseTrackChannel(settings[SETTINGS.orderTrackChannel]);
   /**
    * 这张单上生效的快递商：库里指定了就用指定的，否则按单号识别。
    * 走 courierCodeOf 而不是直接读 order.courier —— 大多数单是"没指定"的，
@@ -164,7 +163,7 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
 
   // 普通流程任务一般没有时效；但只要它挂着时效（比如所属流程的步骤配了默认时长），
   // 就得让它可见可改 —— 否则那段时间在详情里根本无从查看。
-  const showStageDue = order.kind === "special" || !!order.stageDueAt;
+  const showStageDue = !!order.stageDueAt;
   const ds = dueState(order);
   const dueHeadline = !order.stageDueAt
     ? "未设时效"
@@ -227,7 +226,7 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
   const copyAll = async () => {
     const text = formatFields(
       woFields,
-      parseCopyTemplate(settings[SETTINGS.specialCopyTemplate]),
+      parseCopyTemplate(settings[SETTINGS.orderCopyTemplate]),
     );
     if (!text) return;
     if (await copyText(text)) flashCopied("__all__");
@@ -262,18 +261,15 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-        {/* 特殊单号：单号（= 快递单号）+ 快递商 + 查件入口
-            普通流程任务：描述（它没有单号，也不查物流） */}
+        {/* 描述。单号（= 快递单号）的编辑框原来是「特殊单号」专属，
+            随功能一起删了；但**查件**那块留着 —— 它是流程任务也在用的能力，
+            所以老数据上还挂着单号时，下面那排仍然出现。 */}
         <div className="px-4">
-          {isSpecial ? (
-            <NoEditor value={order.no} onCommit={(v) => void patchOrder(order.id, { no: v })} />
-          ) : (
-            <DescEditor
-              value={order.description}
-              onCommit={(v) => void patchOrder(order.id, { description: v })}
-            />
-          )}
-          {isSpecial && order.no && (
+          <DescEditor
+            value={order.description}
+            onCommit={(v) => void patchOrder(order.id, { description: v })}
+          />
+          {order.no && (
             <div className="mt-1 flex items-center gap-1.5">
               <select
                 value={order.courier}
@@ -750,37 +746,8 @@ export default function OrderDetail({ order }: { order: WorkOrder }) {
 }
 
 /* -------------------------------- 零件 -------------------------------- */
-
-/** 单号编辑：等宽字体，空着显示「自动生成」提示 */
-function NoEditor({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
-  const [text, setText] = useState(value);
-  useEffect(() => setText(value), [value]);
-
-  return (
-    <div className="flex items-center gap-2 rounded-lg border border-line bg-card px-2.5 py-1.5">
-      <span className="shrink-0 text-[11.5px] text-fg-dim">单号</span>
-      <input
-        value={text}
-        data-order-no-input=""
-        onChange={(e) => setText(e.target.value)}
-        onBlur={() => {
-          const t = text.trim();
-          if (t !== value) onCommit(t);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") e.currentTarget.blur();
-          if (e.key === "Escape") {
-            setText(value);
-            e.currentTarget.blur();
-          }
-        }}
-        placeholder="未编号"
-        className="min-w-0 flex-1 border-0 bg-transparent font-mono text-[12.5px] text-fg-2 outline-none placeholder:text-fg-dim"
-      />
-    </div>
-  );
-}
-
+// 单号编辑框（NoEditor）随「特殊单号」一起删除：
+// 它编辑的是快递单号，而删除后已经没有能写入单号的入口。
 /**
  * 描述编辑：普通流程任务的主要文字信息。
  *

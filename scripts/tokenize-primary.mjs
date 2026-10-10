@@ -8,7 +8,7 @@
  *   - migrations.ts：列的 DEFAULT '#378add'（建表默认值，历史数据就是它）
  *   - repo.ts / syncRepo.ts：新建列表/阶段的默认色（写进数据库的字符串）
  *   - settings.ts：头像底色候选（写进 core_settings）
- *   - gallery.ts：origin 图例色
+ *   - imagebed.ts：origin 图例色
  *
  * 用法：
  *   node scripts/tokenize-primary.mjs --dry   # 先看要改什么
@@ -24,7 +24,7 @@ const SKIP = new Set([
   "src/lib/repo.ts",
   "src/lib/syncRepo.ts",
   "src/lib/settings.ts",
-  "src/lib/gallery.ts",
+  "src/lib/imagebed.ts",
 ]);
 
 const ROOT = "src";

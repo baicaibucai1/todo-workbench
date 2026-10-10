@@ -173,15 +173,15 @@ export async function deleteList(id: string): Promise<void> {
 
 export interface TaskQuery {
   /**
-   * myday / important / all / orders / special / list / gallery / agent
+   * myday / important / all / orders / special / list / imagebed / agent
    *
-   * 其中 `orders` / `special` / `gallery` / `agent` **都必然返回空数组** ——
-   * 它们不是"待办的某种筛选"（前两个是流程任务的视图，gallery 是独立模块，
+   * 其中 `orders` / `special` / `imagebed` / `agent` **都必然返回空数组** ——
+   * 它们不是"待办的某种筛选"（前两个是流程任务的视图，imagebed 是独立模块，
    * agent 是 AI 助手）。之所以还列在这里，是因为 store.refresh() 拿的是通用的
    * `SmartView | "list"`，它不分视图地调这个函数。类型上允许、运行时挡掉，
    * 比在每个调用点各判一次要可靠：**switch 落空 = 不加任何条件 = 把整库待办捞回来**。
    */
-  view: "myday" | "important" | "all" | "orders" | "special" | "list" | "gallery" | "agent";
+  view: "myday" | "important" | "all" | "orders" | "list" | "imagebed" | "agent";
   listId?: string;
   /** 是否包含已完成 */
   includeDone?: boolean;
@@ -208,19 +208,14 @@ export async function fetchTasks(q: TaskQuery): Promise<Task[]> {
       // 这里必须显式返回空：switch 没有 default，未知视图会落到"不加条件"，
       // 于是把全部待办捞回来 —— 表现就是「流程任务」页里混进一堆待办。
       return [];
-    case "special":
-      // 同上：「特殊单号」也是流程任务的视图，待办一张都不该有。
-      // 漏了这一句的后果不是"少了几条"，而是**整库的待办都会被捞进来** ——
-      // switch 落空 = 不加任何条件。
-      return [];
-    case "gallery":
-      // 图库是独立模块，取数走 lib/gallery.ts。
+    case "imagebed":
+      // 图床是独立模块，取数走 lib/imagebed.ts。
       // 它出现在这个函数的调用点上只有一个原因：store.refresh() 不分视图地
-      // 调了一次 fetchTasks。这里必须显式返回空，否则图库视图会打印出
+      // 调了一次 fetchTasks。这里必须显式返回空，否则图床视图会打印出
       // 一整屏待办（同样是"落空 = 不加条件"）。
       return [];
     case "agent":
-      // AI 助手视图：同图库 —— 助手界面上一条待办都不该出现。
+      // AI 助手视图：同图床 —— 助手界面上一条待办都不该出现。
       // 落空同样等于"不加条件"，会把整库待办捞到 store.tasks 里，
       // 于是助手旁边那条详情面板就有东西可选了（它已经被显式挡住，
       // 但取数这一层也不能漏：界面迟早会有别的地方读 tasks）。
@@ -418,12 +413,10 @@ export async function fetchCounts(): Promise<{
   byList: Record<string, number>;
   /** 未完结流程任务总数 */
   orders: number;
-  /** 未完结的特殊单号数（流程任务里带处理时效的那一类） */
-  special: number;
-  /** 图库条目总数 */
-  gallery: number;
+  /** 图床条目总数 */
+  imagebed: number;
 }> {
-  const [myday, all, byList, orderRows, stageRows, gallery] = await Promise.all([
+  const [myday, all, byList, orderRows, stageRows, imagebed] = await Promise.all([
     db().select<{ c: number }>(
       `SELECT COUNT(*) AS c FROM core_tasks
         WHERE deleted = 0 AND done = 0 AND (my_day = 1 OR due_date = ? OR repeat = 'daily')`,
@@ -444,10 +437,10 @@ export async function fetchCounts(): Promise<{
     db().select<{ id: string; is_terminal: number }>(
       `SELECT id, is_terminal FROM core_wo_stages`,
     ),
-    // 图库角标标的是**总数**（它没有完成态）。这里直接查而不调
-    // lib/gallery.ts 的 countGallery：那个文件依赖本文件的 refCountByHash，
+    // 图床角标标的是**总数**（它没有完成态）。这里直接查而不调
+    // lib/imagebed.ts 的 countImagebed：那个文件依赖本文件的 refCountByHash，
     // 反向再 import 回来会形成循环，虽然运行时没事，但依赖关系会变得难读。
-    db().select<{ c: number }>(`SELECT COUNT(*) AS c FROM core_gallery_items WHERE deleted = 0`),
+    db().select<{ c: number }>(`SELECT COUNT(*) AS c FROM core_imagebed_items WHERE deleted = 0`),
   ]);
 
   const map: Record<string, number> = {};
@@ -455,22 +448,15 @@ export async function fetchCounts(): Promise<{
 
   const terminal = new Set(stageRows.filter((s) => s.is_terminal).map((s) => s.id));
   const openOrders = orderRows.filter((o) => !terminal.has(o.stage_id));
-  const openSpecials = openOrders.filter((o) => o.kind === "special").length;
-
   return {
-    // 「我的一天」= 待办数 + 未完结特殊单号数。
-    // 特殊单号现在就显示在「我的一天」里（见 fetchWorkOrders 的 myday 分支），
-    // 角标必须把同一批单子算进去 —— 点进去对不上是最让人怀疑数据丢了的表现。
-    // 普通流程任务仍然不算：它们不在这个视图里。
-    myday: (myday[0]?.c ?? 0) + openSpecials,
+    // 「我的一天」只算待办。流程任务一条都不进这个视图
+    // （「特殊单号」删掉后，带时效的那批单子也不在了），
+    // 角标必须和点进去看到的东西一致 —— 对不上是最让人怀疑数据丢了的表现。
+    myday: myday[0]?.c ?? 0,
     all: (all[0]?.c ?? 0) + openOrders.length,
     byList: map,
     orders: openOrders.length,
-    // 未完结的特殊单号数。和「流程任务」角标同一把尺子（都是"未完结"），
-    // 不按"逾期/临期"再筛一道 —— 那会让角标数字在没有任何操作时自己跳，
-    // 用户不知道它为什么变。
-    special: openSpecials,
-    gallery: gallery[0]?.c ?? 0,
+    imagebed: imagebed[0]?.c ?? 0,
   };
 }
 
@@ -1078,9 +1064,10 @@ type RawOrder = {
 
 const toOrder = (r: RawOrder): WorkOrder => ({
   id: r.id,
-  // 老行没有 kind（内存库的旧快照 / v8 之前的数据），一律当普通流程任务，
-  // 而不是让它变成 undefined 一路漏到界面上
-  kind: r.kind === "special" ? "special" : "normal",
+  // kind 恒为 normal：「特殊单号」已删（迁移 v22 清掉了那批记录）。
+  // 老行可能还是 'special'（没跑迁移的库），一律按普通流程任务读出来，
+  // 而不是让它变成一个认不出来的值漏到界面上。
+  kind: "normal",
   no: r.no,
   courier: r.courier ?? "",
   title: r.title,
@@ -1113,7 +1100,7 @@ export interface OrderQuery {
    * 再让它按日期混进我的一天，等于绕开了这条规则（新建流程任务默认开始日期就是
    * 今天，那样每张新单都会自动出现在那儿）。
    */
-  view: "myday" | "today" | "important" | "all" | "orders" | "special" | "list" | "gallery" | "agent";
+  view: "myday" | "today" | "important" | "all" | "orders" | "special" | "list" | "imagebed" | "agent";
   /** 是否包含已完结的流程任务 */
   includeDone?: boolean;
   search?: string;
@@ -1146,14 +1133,14 @@ export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
 
   switch (q.view) {
     case "myday":
-      // 「我的一天」是待办的领地，**普通流程任务**不进（它们有自己的专属入口）。
-      // 唯一的例外是特殊单号：它就是"今天在跟的、等不起的单"，
-      // 用户打开应用的第一眼（默认视图）必须看得到它 ——
-      // 只靠右上角的提醒卡片，等于把最重要的信息藏在角落里。
-      // 必须显式写条件而不是删掉这个分支：switch 没有 default，
-      // 落空就等于"不加条件"，会把全部流程任务捞回来。
-      where.push("kind = 'special'");
-      break;
+      // 「我的一天」是待办的领地，流程任务一条都不进（它们有自己的专属入口）。
+      //
+      // 唯一的例外曾经是「特殊单号」——它就是"今天在跟的、等不起的单"，
+      // 要出现在打开应用的第一眼里。功能删掉后（2026-10-10）这里回归成空。
+      //
+      // 必须显式 return 而不是删掉这个分支：switch 没有 default，
+      // 落空就等于"不加条件"，会把**全部**流程任务捞回来。
+      return [];
     case "today":
       where.push("(start_date = ? OR due_date = ?)");
       params.push(t, t);
@@ -1165,19 +1152,14 @@ export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
       // 专属入口就看全部流程任务（进行中 / 已完结由 groupRows 再分两组）。
       // 写出来是为了别靠 switch 的"落空"凑巧生效 —— 那样以后加视图会顺手改坏这里。
       //
-      // 这里**不加 kind 条件**：特殊单号也是流程任务，用户进「流程任务」就是想看全部单子。
-      // 它另有专属入口，但那是个"只看等不起的那些"的过滤器，不是一道围墙。
+      // 现在只有一种流程任务，不需要再加条件。
       break;
-    case "special":
-      // 特殊单号：带处理时效的那一类（kind = 'special'）。
-      where.push("kind = 'special'");
-      break;
-    case "gallery":
-      // 图库与流程任务毫无关系，但 store.refresh() 会不分视图地调到这里。
+    case "imagebed":
+      // 图床与流程任务毫无关系，但 store.refresh() 会不分视图地调到这里。
       // 同 myday：必须显式挡掉，落空 = 不加条件 = 把全部流程任务捞回来。
       return [];
     case "agent":
-      // AI 助手视图：同 gallery，一条流程任务都不该出现。
+      // AI 助手视图：同 imagebed，一条流程任务都不该出现。
       return [];
     case "all":
       break;
@@ -1321,9 +1303,9 @@ export async function createWorkOrder(input: NewWorkOrderInput): Promise<WorkOrd
   );
 
   const createdAt = now();
-  const kind: WorkOrderKind = input.kind === "special" ? "special" : "normal";
+  const kind: WorkOrderKind = "normal";
   // 没显式给时效就退回这一步的默认时效 —— 界面上"忘了填"时至少还有流程兜着，
-  // 而不是悄悄落一张没有时效的特殊单（那样"等不起的单"就混进普通单里了）
+  // 而不是悄悄落一张没有时效的单子
   const stageDueAt =
     input.stageDueAt !== undefined
       ? input.stageDueAt
@@ -1332,10 +1314,10 @@ export async function createWorkOrder(input: NewWorkOrderInput): Promise<WorkOrd
   const order: WorkOrder = {
     id: uid(),
     kind,
-    // 单号只为特殊单号保留：那里它是**快递单号**，是这类单子的起点。
-    // 普通流程任务不再自动编号，传进来的号也丢掉 —— 界面已经没有这个入口了，
-    // 留着这条通路只会让"某张普通单上怎么会有单号"变成没法解释的事。
-    no: kind === "special" ? (input.no ?? "").trim() : "",
+    // 单号原来是特殊单号的专属（那里它是**快递单号**，是这类单子的起点）。
+    // 功能删掉后这一列保留下来做数据兼容（老库里还有值），但已经没有录入入口，
+    // 所以这里只做"传了就存、没传就是空"。
+    no: (input.no ?? "").trim(),
     // 登记时可以显式指定快递商（识别错了就改一次），不指定就留空 ——
     // 空串是"以后按单号自动识别"，不把当时的猜测结果冻进库里
     courier: (input.courier ?? "").trim(),
@@ -1884,31 +1866,9 @@ async function seedDemoOrdersInner(): Promise<void> {
   });
   if (stages[2]) await moveOrderToStage(b.id, stages[2].id, "已寄出替换件");
 
-  // 一张特殊单号：让「时效」第一次打开就有样子看 ——
-  // 它是特殊单号相对普通流程任务的核心差异（相关信息两者都有）。
-  // 时效给 90 分钟：看得出"还剩多久"，又不会一进应用就是逾期的样子。
-  const spFlow = (await fetchFlows()).find((f) => f.name === "特殊单号处理");
-  if (spFlow) {
-    const spStages = (await fetchStages())
-      .filter((s) => s.flowId === spFlow.id)
-      .sort((a, b) => a.sortOrder - b.sortOrder);
-    await createWorkOrder({
-      kind: "special",
-      title: "快递破损 · 待联系客户",
-      no: "SF7712345678901",
-      flowId: spFlow.id,
-      stageId: spStages[0]?.id,
-      note: "客户要求补发，已拍照留证",
-      stageDueAt: new Date(Date.now() + 90 * 60_000).toISOString(),
-      // 起点那个快递单号已经是流程任务的单号（no）了，这里绑的是**另外**的信息，
-      // 免得同一个号码在库里存两份、改一处另一处还是旧的
-      fields: [
-        { label: "补发单号", value: "SF7788001122334" },
-        { label: "客户", value: "王女士" },
-        { label: "手机尾号", value: "6621" },
-      ],
-    });
-  }
+  // 原来这里还会造一张「特殊单号」当样品（带时效与快递单号）。
+  // 功能删除后一起拿掉 —— 留着它等于让示例数据里出现一种界面上已经
+  // 无法新建、也无法查看的单子。
 }
 
 /* --------------------------- 备份与恢复 --------------------------- */
@@ -2086,9 +2046,9 @@ export async function updateAttachment(
  * 还有几张活着的记录引用这个内容。文件能不能删，看它。
  *
  * ⚠️ 必须**跨两张表**数，不能只看附件表。
- * 图库（v9）与流程任务附件共用同一个内容寻址仓库，同一份字节可以同时被
- * 「某张流程任务的附件」和「图库里的一张图」引用。只数附件表的话，
- * 删掉图库那条时会以为"没人用了"，把流程任务附件正指着的文件删掉 ——
+ * 图床（v9）与流程任务附件共用同一个内容寻址仓库，同一份字节可以同时被
+ * 「某张流程任务的附件」和「图床里的一张图」引用。只数附件表的话，
+ * 删掉图床那条时会以为"没人用了"，把流程任务附件正指着的文件删掉 ——
  * 表现是另一处突然变成"文件缺失"，而且找不到是谁干的。
  *
  * 两次独立单表查询再相加，不写 UNION/JOIN：内存库的 mini-SQL 不支持它们，
@@ -2100,7 +2060,7 @@ export async function refCountByHash(hash: string): Promise<number> {
     [hash],
   );
   const gal = await db().select<{ c: number }>(
-    `SELECT COUNT(*) AS c FROM core_gallery_items WHERE hash = ? AND deleted = 0`,
+    `SELECT COUNT(*) AS c FROM core_imagebed_items WHERE hash = ? AND deleted = 0`,
     [hash],
   );
   return (att[0]?.c ?? 0) + (gal[0]?.c ?? 0);
@@ -2176,14 +2136,14 @@ export async function fetchAllAttachments(): Promise<WoAttachment[]> {
 }
 
 /**
- * 图库条目的**备份形状**。
+ * 图床条目的**备份形状**。
  *
- * 为什么不直接复用 lib/gallery.ts 的 GalleryItem：那个文件要从本文件取
+ * 为什么不直接复用 lib/imagebed.ts 的 ImagebedItem：那个文件要从本文件取
  * refCountByHash（删文件前跨表数引用），反向再 import 回来就成环了 ——
  * 运行时不一定炸，但依赖关系会变得难以阅读（fetchCounts 那里已经
  * 为同一件事留下过注释）。所以这里用**原始的**行形状，映射也就几行。
  */
-export interface GalleryBackupItem {
+export interface ImagebedBackupItem {
   id: string;
   title: string;
   kind: string;
@@ -2204,8 +2164,8 @@ export interface GalleryBackupItem {
   updatedAt: string;
 }
 
-/** 全部图库条目（备份用）。和附件一样**含已软删除的**，把 deleted 一起带出去。 */
-export async function fetchAllGallery(): Promise<GalleryBackupItem[]> {
+/** 全部图床条目（备份用）。和附件一样**含已软删除的**，把 deleted 一起带出去。 */
+export async function fetchAllImagebed(): Promise<ImagebedBackupItem[]> {
   const rows = await db().select<{
     id: string;
     title: string;
@@ -2224,7 +2184,7 @@ export async function fetchAllGallery(): Promise<GalleryBackupItem[]> {
     deleted: number;
     created_at: string;
     updated_at: string | null;
-  }>(`SELECT * FROM core_gallery_items ORDER BY created_at ASC, id ASC`);
+  }>(`SELECT * FROM core_imagebed_items ORDER BY created_at ASC, id ASC`);
 
   return rows.map((r) => ({
     id: r.id,
@@ -2308,14 +2268,14 @@ export interface BackupPayload {
   /** v8 起新增：流程任务绑定的相关信息（特殊单号的另一个快递单号、用户名…） */
   woFields?: WoField[];
   /**
-   * v9 起新增：图库条目的**元数据**。
+   * v9 起新增：图床条目的**元数据**。
    *
    * 和附件同一条原则：不塞文件本体。仓库目录是
-   * %APPDATA%\待办工作台\attachments，图库和附件**共用同一个仓库**
+   * %APPDATA%\待办工作台\attachments，图床和附件**共用同一个仓库**
    * （内容寻址，同一份字节只存一份），所以想连文件一起搬，
    * 手动拷那一个目录就够了。
    */
-  gallery?: GalleryBackupItem[];
+  imagebed?: ImagebedBackupItem[];
 }
 
 /** 导出全部核心数据，用于备份或迁移到另一台机器 */
@@ -2377,7 +2337,7 @@ export async function exportBackup(): Promise<BackupPayload> {
     })),
     attachments: await fetchAllAttachments(),
     woFields: await fetchAllWoFields(),
-    gallery: await fetchAllGallery(),
+    imagebed: await fetchAllImagebed(),
   };
 }
 
@@ -2414,8 +2374,8 @@ export async function importBackup(payload: BackupPayload): Promise<{
     // 由调用方拿着 rel_path 去仓库删（见 clearAllData 的说明）。
     { sql: `DELETE FROM core_wo_attachments` },
     { sql: `DELETE FROM core_wo_fields` },
-    // v9 的图库。同样只删记录：文件本体由调用方按 rel_path 去仓库处理
-    { sql: `DELETE FROM core_gallery_items` },
+    // v9 的图床。同样只删记录：文件本体由调用方按 rel_path 去仓库处理
+    { sql: `DELETE FROM core_imagebed_items` },
   ];
 
   for (const l of payload.lists) {
@@ -2551,8 +2511,9 @@ export async function importBackup(payload: BackupPayload): Promise<{
       params: [
         w.id,
         // v8 之前的备份里没有 kind / 时效，缺失就是普通流程任务、没有时效。
-        // 当"特殊单"补出来是错的 —— 那会凭空给老单子加上处理时限。
-        w.kind === "special" ? "special" : "normal",
+        // 「特殊单号」删掉后这一列恒为 normal，即使备份里带着 'special'
+        // 也按普通流程任务写进去 —— 恢复出来的库不该有一个认不出的种类。
+        "normal",
         w.no ?? "",
         // v11 之前的备份没有快递商，缺失就是"没指定"（按单号自动识别）
         w.courier ?? "",
@@ -2651,13 +2612,13 @@ export async function importBackup(payload: BackupPayload): Promise<{
     });
   }
 
-  // v9 的图库条目。它不指向别的表，所以放最后插就行。
-  // created_at 原样带回来：图库没有 sort_order，排序完全靠它，
+  // v9 的图床条目。它不指向别的表，所以放最后插就行。
+  // created_at 原样带回来：图床没有 sort_order，排序完全靠它，
   // 重排（像附件那样按下标）反而会打乱用户看到的时间线。
-  for (const it of payload.gallery ?? []) {
+  for (const it of payload.imagebed ?? []) {
     if (!it?.id || !it.relPath) continue;
     statements.push({
-      sql: `INSERT INTO core_gallery_items
+      sql: `INSERT INTO core_imagebed_items
               (id, title, kind, rel_path, source_url, mime, size_bytes, hash,
                width, height, duration_ms, origin, prompt, note, deleted, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -2709,10 +2670,10 @@ export async function clearAllData(): Promise<void> {
     // 顺序不能反 —— 库先清掉就没地方查 rel_path 了，文件会永远留在磁盘上。
     { sql: `DELETE FROM core_wo_attachments` },
     { sql: `DELETE FROM core_wo_fields` },
-    // 图库同理：**只清记录，不删文件**。图库和附件共用同一个内容寻址仓库，
+    // 图床同理：**只清记录，不删文件**。图床和附件共用同一个内容寻址仓库，
     // 所以"哪些文件真的没人用了"只能在清库**之前**算出来，
     // 由 store.ts 的 clearAll 统一处理（它才拿得到文件仓库的句柄）。
-    { sql: `DELETE FROM core_gallery_items` },
+    { sql: `DELETE FROM core_imagebed_items` },
     // AI 助手的对话记录也算核心数据：它里面可能留着用户交代过的业务背景
     // （客户名、单号规则），"清空全部数据"若绕开它就等于没清干净。
     // 消息与会话两张表都要清 —— 只清消息会留下一堆空的历史条目。

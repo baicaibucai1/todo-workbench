@@ -134,7 +134,7 @@
         <span class="chip">驱动 <b id="f-driver">—</b></span>
         <span class="chip">运行时 <b id="f-runtime">—</b></span>
         <span class="chip">挂载 <b id="f-kind">—</b></span>
-        <span class="chip">图库 <b id="f-gallery">—</b></span>
+        <span class="chip">图床 <b id="f-gallery">—</b></span>
       </div>
 
       <!-- 1. 上下文 -->
@@ -198,7 +198,7 @@
 
       <!-- 4. gallery -->
       <details>
-        <summary>④ 图库 <span class="chip">gallery.*</span></summary>
+        <summary>④ 图床 <span class="chip">gallery.*</span></summary>
         <div class="body">
           <div class="row">
             <button class="ghost" data-act="gallery.list">刷新</button>
@@ -206,7 +206,7 @@
             <span class="v" id="g-count">—</span>
           </div>
           <div class="grid" id="g-grid"></div>
-          <div class="empty" id="g-empty" hidden>图库里还没有东西（或图库模块没开）。</div>
+          <div class="empty" id="g-empty" hidden>图床里还没有东西（或图床模块没开）。</div>
           <div class="msg" id="m-gallery" hidden></div>
         </div>
       </details>
@@ -424,9 +424,9 @@
         }
 
         /* ---------------------------------------------------------------- */
-        /* ④ 图库：跨工具共享的素材库                                         */
+        /* ④ 图床：跨工具共享的素材库                                         */
         /* ---------------------------------------------------------------- */
-        function loadGallery() {
+        function loadImagebed() {
           return call("gallery.list", { kind: "image", limit: 12 })
             .then(function (r) {
               var grid = $("#g-grid");
@@ -443,13 +443,13 @@
               $("#g-empty").hidden = r.items.length > 0;
             })
             .catch(function (e) {
-              /* 图库是选装模块：关着的时候这里会拿到一句有方向的拒绝，照原话显示 */
+              /* 图床是选装模块：关着的时候这里会拿到一句有方向的拒绝，照原话显示 */
               txt("#g-count", "不可用");
               msg("#m-gallery", String(e.message || e), "err");
             });
         }
 
-        /** 画一张简单的图，转成 dataURL 交给宿主存进图库 */
+        /** 画一张简单的图，转成 dataURL 交给宿主存进图床 */
         function makeImage() {
           var cv = document.createElement("canvas");
           cv.width = cv.height = 240;
@@ -596,7 +596,7 @@
           }
 
           if (act === "gallery.list") {
-            guard("#m-gallery", loadGallery)();
+            guard("#m-gallery", loadImagebed)();
             return;
           }
           if (act === "gallery.get") {
@@ -614,8 +614,8 @@
                 title: "能力演示生成 " + new Date().toLocaleTimeString("zh-CN"),
                 note: "由示例工具 kitchen-sink 写入",
               }).then(function () {
-                msg("#m-gallery", "已存进图库（来源由宿主盖章，工具自报不算）", "ok");
-                return loadGallery();
+                msg("#m-gallery", "已存进图床（来源由宿主盖章，工具自报不算）", "ok");
+                return loadImagebed();
               });
             })();
             return;
@@ -785,7 +785,7 @@
           call("info", {})
             .then(function (c) {
               applyContext(c);
-              return Promise.all([loadKv(), loadSchema().then(loadNotes), loadGallery(), loadTools()]);
+              return Promise.all([loadKv(), loadSchema().then(loadNotes), loadImagebed(), loadTools()]);
             })
             .catch(function (e) {
               document.body.dataset.bindState = "error";

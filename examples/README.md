@@ -21,7 +21,7 @@
 | ① 上下文与当前待办 | `info`、`task.get` | 主题 / 驱动 / 表前缀 / 挂载位置；读"我挂在它上面的那条待办" |
 | ② 键值配置 | `kv.get` `kv.set` `kv.all` `kv.del` | 工具自己的配置该存哪（不是表，是 kv） |
 | ③ 私有表 | `schema.info`、`row.count` `row.select` `row.insert` `row.update` `row.delete` | 声明式 schema + 结构化 CRUD，没有 SQL |
-| ④ 图库 | `gallery.list` `gallery.get` `gallery.put` | 跨工具共享素材库；图库关着时**降级显示宿主的原话** |
+| ④ 图床 | `gallery.list` `gallery.get` `gallery.put` | 跨工具共享素材库；图床关着时**降级显示宿主的原话** |
 | ⑤ 工具联动 | `tools.list` `tools.open` `tools.send` | 拉起别的工具并转交数据；只投运行中的工具 |
 | ⑥ 让助手驱动我 | `tool:command` | 注册三个动作给助手直接调用（含一个 destructive），并声明 headless |
 
@@ -52,7 +52,7 @@
 
 只导入 `index.html` 也能跑，但**导入界面只填 id / 名称 / 图标**，
 于是 `schema` / `capabilities` / `injects` 三样都不会写进 manifest ——
-表现出来是：私有表用不了、图库被拒、注入位置不出现。
+表现出来是：私有表用不了、图床被拒、注入位置不出现。
 这三样必须由 `manifest.json` 提供，所以想看完整效果请用方式 A。
 
 ### 怎么验（不用装进桌面版也能验）
@@ -64,7 +64,7 @@ node scripts/verify-example.mjs
 它把 `@tauri-apps/*` 别名成 Node 替身，于是**宿主的真代码**原样执行：
 `installFromHtml` 真的落盘、`ensureToolSchema` 真的建表、
 `createToolBridge` 真的应答 —— 然后把这个工具用到的每个 op 都调一遍
-（含"图库关着时被拒"、"缺主键被拒"、"integer 列传字符串被拒"这些反面用例）。
+（含"图床关着时被拒"、"缺主键被拒"、"integer 列传字符串被拒"这些反面用例）。
 全部通过会打印 `全部通过（22 次调用）`。
 
 改了样本或改了宿主契约之后跑一次，就知道"文档里写的"和"代码认的"还是不是一回事。

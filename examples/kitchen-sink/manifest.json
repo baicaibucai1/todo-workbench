@@ -2,7 +2,7 @@
   "id": "kitchen-sink",
   "name": "能力演示",
   "version": "1.0.0",
-  "description": "工具接入契约的全功能样本：主题、上下文、当前待办、键值配置、私有表、图库、工具联动、三个注入位置",
+  "description": "工具接入契约的全功能样本：主题、上下文、当前待办、键值配置、私有表、图床、工具联动、三个注入位置",
   "icon": "sparkles",
   "entry": "index.html",
   "dbVersion": 1,

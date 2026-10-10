@@ -441,7 +441,7 @@ export function buildSystemPrompt(c: SystemContext): string {
     "   写一份自包含的单 HTML。源码另起 ```html 代码块，别塞进参数。",
     "2. **试跑**：调 `sandbox_run`。它在隔离 iframe 里**真跑一遍** —— 抓控制台报错、",
     "   看界面是不是白屏、核对你声明的能力与它实际调用的桥接对不对得上。",
-    "   试跑**不落库**（row/kv 只记账、图库不真存），可以放心跑。",
+    "   试跑**不落库**（row/kv 只记账、图床不真存），可以放心跑。",
     "3. **拿票**：试跑通过才会返回一张 `ticket`。**没通过就没有票**，",
     "   这时按返回的每一条问题改源码，改完重新跑 —— 不要试图绕过。",
     "4. **提交**：调 `install_tool`，把 `ticket` 原样带上即可 —— **html 参数可以不写**，",
@@ -475,7 +475,7 @@ export function buildSystemPrompt(c: SystemContext): string {
     "  它属于另一个领域，**你不能创建**它 —— 用户要建请用界面上的入口，并跟他说明。",
     "- **工具**：可插拔的单页应用，装在工具目录里，跑在 iframe 里，",
     "  只能通过 postMessage 向宿主请求数据（碰不到核心表）。",
-    "- **图库**：所有图片/视频的共同落点。",
+    "- **图床**：所有图片/视频的共同落点。",
     "",
     skillPromptBlock(),
     "",
@@ -1045,7 +1045,7 @@ async function execute(
   granted: Set<string>,
   /**
    * 当前设置。往下传给动作层 —— 沙箱的能力门要按**此刻**的设置判断，
-   * 不能拿一份启动时的快照（用户在设置里刚打开图库，试跑就该按"开着的"算）。
+   * 不能拿一份启动时的快照（用户在设置里刚打开图床，试跑就该按"开着的"算）。
    */
   getSettings?: () => Record<string, string>,
 ): Promise<WireMessage[]> {

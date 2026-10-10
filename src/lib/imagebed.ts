@@ -1,12 +1,12 @@
 /**
- * 图库 —— 工作台里所有图片/视频的**共同落点**。
+ * 图床 —— 工作台里所有图片/视频的**共同落点**。
  *
  * ============================ 设计要点 ============================
  *
  * 1) 只有一张表，不是一个工具。
- *    「图库」的用法就是"一个地方存所有素材，谁都能往里放、谁都能从里面取"：
+ *    「图床」的用法就是"一个地方存所有素材，谁都能往里放、谁都能从里面取"：
  *    图片裁剪的产物、尺码表的成品、AI 生成的结果、用户自己导入的图，
- *    全都落到同一处；而 AI 生成的参考图必须能直接从图库里挑。
+ *    全都落到同一处；而 AI 生成的参考图必须能直接从图床里挑。
  *    做成 tools/gallery 就做不到 —— 工具在物理上拿不到别的工具的数据
  *    （见 toolBridge.ts 的安全边界），双向联动无从谈起。
  *
@@ -34,13 +34,13 @@ import {
   SIZE_LIMIT,
 } from "./attachments";
 import { refCountByHash } from "./repo";
-import type { GalleryItem, GalleryKind, GalleryOrigin } from "../types";
+import type { ImagebedItem, ImagebedKind, ImagebedOrigin } from "../types";
 
 /* ------------------------------------------------------------------ */
 /* 行 ↔ 模型                                                           */
 /* ------------------------------------------------------------------ */
 
-interface RawGallery {
+interface RawImagebed {
   id: string;
   title: string;
   kind: string;
@@ -61,12 +61,12 @@ interface RawGallery {
   updated_at: string | null;
 }
 
-function toItem(r: RawGallery): GalleryItem {
+function toItem(r: RawImagebed): ImagebedItem {
   return {
     id: r.id,
     title: r.title,
     // 数据库里是裸字符串（SQLite 没有枚举）。认不出的一律当图片：
-    // 图库的界面按类型分栏，落到"图片"是最不容易让人找不到东西的兜底。
+    // 图床的界面按类型分栏，落到"图片"是最不容易让人找不到东西的兜底。
     kind: r.kind === "video" ? "video" : "image",
     relPath: r.rel_path,
     sourceUrl: r.source_url,
@@ -76,7 +76,7 @@ function toItem(r: RawGallery): GalleryItem {
     width: r.width,
     height: r.height,
     durationMs: r.duration_ms,
-    origin: (r.origin || "manual") as GalleryOrigin,
+    origin: (r.origin || "manual") as ImagebedOrigin,
     prompt: r.prompt,
     note: r.note,
     createdAt: r.created_at,
@@ -90,10 +90,10 @@ function toItem(r: RawGallery): GalleryItem {
 /* 查询                                                                */
 /* ------------------------------------------------------------------ */
 
-export interface GalleryQuery {
+export interface ImagebedQuery {
   /** 不限时传 "all"（默认） */
-  kind?: GalleryKind | "all";
-  origin?: GalleryOrigin | "all";
+  kind?: ImagebedKind | "all";
+  origin?: ImagebedOrigin | "all";
   /** 关键词，匹配标题 / 提示词 / 备注。空串表示不过滤 */
   search?: string;
   /** 最多返回多少条。0 或不传表示不限 */
@@ -101,7 +101,7 @@ export interface GalleryQuery {
 }
 
 /** 关键词匹配。大小写不敏感 —— 与 SQLite 的 LIKE 默认行为保持一致。 */
-function matches(q: GalleryItem, needle: string): boolean {
+function matches(q: ImagebedItem, needle: string): boolean {
   if (!needle) return true;
   const n = needle.toLowerCase();
   return (
@@ -112,13 +112,13 @@ function matches(q: GalleryItem, needle: string): boolean {
 }
 
 /**
- * 列出图库条目，最新的在前。
+ * 列出图床条目，最新的在前。
  *
  * 搜索走 JS 过滤而不是 SQL LIKE，原因见文件头第 3 条。
  * 注意随之而来的一条约束：**有搜索词时不能在 SQL 里加 LIMIT** ——
- * 否则只是"在最近 N 条里搜"，用户会看到"明明在图库里却搜不到"。
+ * 否则只是"在最近 N 条里搜"，用户会看到"明明在图床里却搜不到"。
  */
-export async function fetchGallery(query: GalleryQuery = {}): Promise<GalleryItem[]> {
+export async function fetchImagebed(query: ImagebedQuery = {}): Promise<ImagebedItem[]> {
   const where: string[] = ["deleted = 0"];
   const params: (string | number)[] = [];
 
@@ -136,60 +136,60 @@ export async function fetchGallery(query: GalleryQuery = {}): Promise<GalleryIte
 
   // created_at 可能精确到毫秒都相同（工具批量写入时），补 id 保证顺序稳定，
   // 否则同一批图每次刷新顺序都可能变，看起来像"图自己会跑"
-  let sql = `SELECT * FROM core_gallery_items WHERE ${where.join(" AND ")}
+  let sql = `SELECT * FROM core_imagebed_items WHERE ${where.join(" AND ")}
              ORDER BY created_at DESC, id DESC`;
   if (limit > 0) sql += ` LIMIT ${Math.floor(limit)}`;
 
-  const rows = await db().select<RawGallery>(sql, params);
+  const rows = await db().select<RawImagebed>(sql, params);
   const items = rows.map(toItem);
   return search ? items.filter((i) => matches(i, search)).slice(0, query.limit || undefined) : items;
 }
 
 /**
- * 按内容指纹找一条还在图库里的记录。
+ * 按内容指纹找一条还在图床里的记录。
  *
- * 存在的理由只有一个：**工具的产出默认留一份进图库之后，重复是常态** ——
+ * 存在的理由只有一个：**工具的产出默认留一份进图床之后，重复是常态** ——
  * 同一张图反复导出、同一个提示词再生成一次、批量处理里同一份源图被处理两遍。
  * 内容寻址让这些重复在**仓库里只占一份字节**，但数据库里仍是 N 条记录，
- * 用户看到的就是"同一张图在图库里排了一整排"，而且越用越脏。
+ * 用户看到的就是"同一张图在图床里排了一整排"，而且越用越脏。
  *
  * 所以自动存档那条路要先问一句"这一份是不是已经有了"。
  *
- * 只按 hash 判，**不看 origin**：图库关心的是字节，不是谁放的。
- * 一张 AI 生成的图被裁剪工具原样导出一次，图库里已经有这份内容了，
+ * 只按 hash 判，**不看 origin**：图床关心的是字节，不是谁放的。
+ * 一张 AI 生成的图被裁剪工具原样导出一次，图床里已经有这份内容了，
  * 再记一条只是噪音。
  */
-export async function findGalleryByHash(hash: string | null): Promise<GalleryItem | null> {
+export async function findImagebedByHash(hash: string | null): Promise<ImagebedItem | null> {
   if (!hash) return null;
-  const rows = await db().select<RawGallery>(
-    `SELECT * FROM core_gallery_items WHERE hash = ? AND deleted = 0
+  const rows = await db().select<RawImagebed>(
+    `SELECT * FROM core_imagebed_items WHERE hash = ? AND deleted = 0
      ORDER BY created_at DESC, id DESC LIMIT 1`,
     [hash],
   );
   return rows.length ? toItem(rows[0]) : null;
 }
 
-/** 图库条目总数（未删除），给侧边栏角标用 */
-export async function countGallery(): Promise<number> {
+/** 图床条目总数（未删除），给侧边栏角标用 */
+export async function countImagebed(): Promise<number> {
   const rows = await db().select<{ c: number }>(
-    `SELECT COUNT(*) AS c FROM core_gallery_items WHERE deleted = 0`,
+    `SELECT COUNT(*) AS c FROM core_imagebed_items WHERE deleted = 0`,
   );
   return rows[0]?.c ?? 0;
 }
 
 /** 按来源统计，用于界面上的筛选计数 */
-export async function galleryCountsByOrigin(): Promise<Record<string, number>> {
+export async function imagebedCountsByOrigin(): Promise<Record<string, number>> {
   const rows = await db().select<{ origin: string; c: number }>(
-    `SELECT origin, COUNT(*) AS c FROM core_gallery_items WHERE deleted = 0 GROUP BY origin`,
+    `SELECT origin, COUNT(*) AS c FROM core_imagebed_items WHERE deleted = 0 GROUP BY origin`,
   );
   const out: Record<string, number> = {};
   for (const r of rows) out[r.origin || "manual"] = Number(r.c ?? 0);
   return out;
 }
 
-export async function getGalleryItem(id: string): Promise<GalleryItem | null> {
-  const rows = await db().select<RawGallery>(
-    `SELECT * FROM core_gallery_items WHERE id = ?`,
+export async function getImagebedItem(id: string): Promise<ImagebedItem | null> {
+  const rows = await db().select<RawImagebed>(
+    `SELECT * FROM core_imagebed_items WHERE id = ?`,
     [id],
   );
   return rows[0] ? toItem(rows[0]) : null;
@@ -202,7 +202,7 @@ export async function getGalleryItem(id: string): Promise<GalleryItem | null> {
 const nowIso = () => new Date().toISOString();
 
 /**
- * 图库条目的 id：**必须时间有序**，不能用纯随机。
+ * 图床条目的 id：**必须时间有序**，不能用纯随机。
  *
  * 原因是真实会发生的事：从裁剪工具一次导入两三张、或 AI 一次出四张，
  * 这些记录落在同一毫秒里，`created_at` 完全相同。此时 `ORDER BY created_at DESC`
@@ -230,13 +230,13 @@ const uid = (): string => {
   );
 };
 
-/** 按类型取大小上限。图库只收媒体，不会走到 link 那档。 */
-function limitFor(kind: GalleryKind): number {
+/** 按类型取大小上限。图床只收媒体，不会走到 link 那档。 */
+function limitFor(kind: ImagebedKind): number {
   return SIZE_LIMIT[kind === "video" ? "video" : "image"];
 }
 
 /**
- * 放进图库的三种输入，**三选一**。
+ * 放进图床的三种输入，**三选一**。
  *
  * 它们对应三条不同的落盘路径，不是"随便传哪个都行"：
  *   dataUrl → 内存里当场产生的内容（canvas 导出、AI 回报的 base64）
@@ -248,7 +248,7 @@ export interface AddMediaInput {
   url?: string;
   local?: string | File;
   title?: string;
-  origin: GalleryOrigin;
+  origin: ImagebedOrigin;
   prompt?: string;
   note?: string;
   /** 探测到的尺寸，调用方补；缺省就留空等事后回填 */
@@ -256,17 +256,17 @@ export interface AddMediaInput {
   height?: number | null;
   durationMs?: number | null;
   /**
-   * 内容已在图库里时，返回已有那条（标 `dup: true`）而不是再插一条。
+   * 内容已在图床里时，返回已有那条（标 `dup: true`）而不是再插一条。
    *
    * 只有**自动存档**这类"替用户保管"的场景该开：那一次保存不是用户主动点的，
-   * 重复了也无从解释。用户亲自点「存进图库」时不该开 —— 他明确要留一份，
+   * 重复了也无从解释。用户亲自点「存进图床」时不该开 —— 他明确要留一份，
    * 哪怕内容一样（比如同一个提示词重新生成了一次，本来就该是两条）。
    */
   dedupe?: boolean;
 }
 
 /**
- * 把一份媒体放进图库：**先落文件、再写元数据**。
+ * 把一份媒体放进图床：**先落文件、再写元数据**。
  *
  * 顺序不能反。反过来的话，文件写失败时库里会留下一条指向空气的记录，
  * 界面上表现为一张永远加载不出来的破图，而用户无法判断是网络问题
@@ -278,13 +278,13 @@ export interface AddMediaInput {
  * 不会留下垃圾，只是白算一次哈希。反过来想先查 hash 是做不到的 ——
  * 内容还没落盘，指纹无从谈起。
  */
-export async function addToGallery(input: AddMediaInput): Promise<GalleryItem> {
+export async function addToImagebed(input: AddMediaInput): Promise<ImagebedItem> {
   const store = attachmentStore();
 
   // 先用"名字 / 网址"猜类型，只为把大小上限和标题定下来；
   // 真正的类型以落盘后仓库回报的 mime 为准（桌面端会按 magic bytes 重判）。
   // 注意 kindFromMime / guessKindFromUrl 返回的是附件的三分法（含 "link"），
-  // 而图库只有 image / video 两档 —— 所以这里要收敛一次：
+  // 而图床只有 image / video 两档 —— 所以这里要收敛一次：
   // 认不出的一律按图片处理（用图片的上限，宁可错在更严的那一侧）。
   const guessName = input.url ? fileNameFromUrl(input.url) : (input.title || "image");
   const guessRaw =
@@ -293,7 +293,7 @@ export async function addToGallery(input: AddMediaInput): Promise<GalleryItem> {
       : input.url
         ? guessKindFromUrl(input.url)
         : "image";
-  const kind: GalleryKind = guessRaw === "video" ? "video" : "image";
+  const kind: ImagebedKind = guessRaw === "video" ? "video" : "image";
   const maxBytes = limitFor(kind);
 
   const stored = input.dataUrl
@@ -308,13 +308,13 @@ export async function addToGallery(input: AddMediaInput): Promise<GalleryItem> {
 
   // 落盘后的真实 mime 才作数：data URL 里谎报、网址后缀骗人都是常事，
   // 而桌面端的 store_bytes 已经用 magic bytes 判过一次了
-  const realKind: GalleryKind = kindFromMime(stored.mime) === "video" ? "video" : "image";
+  const realKind: ImagebedKind = kindFromMime(stored.mime) === "video" ? "video" : "image";
   const title = (input.title || "").trim() || stored.relPath.split("/").pop() || "未命名";
 
   // 同一个时刻写进 created_at 与 updated_at：新建不是"改过"，
   // 两次 nowIso() 会产生几毫秒的差，没有必要
   const at = nowIso();
-  const item: GalleryItem = {
+  const item: ImagebedItem = {
     id: uid(),
     title,
     kind: realKind,
@@ -333,14 +333,14 @@ export async function addToGallery(input: AddMediaInput): Promise<GalleryItem> {
     updatedAt: at,
   };
 
-  // 命中已有内容：把那一条交回去，不新增记录（理由见 findGalleryByHash 的注释）
+  // 命中已有内容：把那一条交回去，不新增记录（理由见 findImagebedByHash 的注释）
   if (input.dedupe && item.hash) {
-    const prev = await findGalleryByHash(item.hash);
+    const prev = await findImagebedByHash(item.hash);
     if (prev) return { ...prev, dup: true };
   }
 
   await db().execute(
-    `INSERT INTO core_gallery_items
+    `INSERT INTO core_imagebed_items
        (id, title, kind, rel_path, source_url, mime, size_bytes, hash,
         width, height, duration_ms, origin, prompt, note, deleted, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
@@ -368,9 +368,9 @@ export async function addToGallery(input: AddMediaInput): Promise<GalleryItem> {
 }
 
 /** 改标题/备注/探测到的尺寸。只允许改这几个字段，文件与来源不可变。 */
-export async function updateGalleryItem(
+export async function updateImagebedItem(
   id: string,
-  patch: Partial<Pick<GalleryItem, "title" | "note" | "width" | "height" | "durationMs">>,
+  patch: Partial<Pick<ImagebedItem, "title" | "note" | "width" | "height" | "durationMs">>,
 ): Promise<void> {
   const map: Record<string, string> = {
     title: "title",
@@ -389,18 +389,18 @@ export async function updateGalleryItem(
   }
   if (!sets.length) return;
   // 改标题 / 备注 / 尺寸都算"改过"。同步靠它判断两端谁更新 ——
-  // 不记的话，改标题在图库里完全看不见（v14 之前就是这个状态）。
+  // 不记的话，改标题在图床里完全看不见（v14 之前就是这个状态）。
   sets.push("updated_at = ?");
   params.push(nowIso());
   params.push(id);
-  await db().execute(`UPDATE core_gallery_items SET ${sets.join(", ")} WHERE id = ?`, params);
+  await db().execute(`UPDATE core_imagebed_items SET ${sets.join(", ")} WHERE id = ?`, params);
 }
 
 /**
- * 从图库删除一条，返回"可以顺手删掉的仓库文件"（没有则 null）。
+ * 从图床删除一条，返回"可以顺手删掉的仓库文件"（没有则 null）。
  *
  * **文件是内容寻址的，不能想删就删**：同一份字节可能同时被
- * 某张流程任务的附件和另一条图库记录引用。所以这里只做引用计数判断，
+ * 某张流程任务的附件和另一条图床记录引用。所以这里只做引用计数判断，
  * 真正的删除交给调用方（它才有文件仓库的句柄）。
  * 引用计数**跨两张表**，见 repo.refCountByHash 的注释。
  *
@@ -408,9 +408,9 @@ export async function updateGalleryItem(
  * "这个文件现在可以删了"，而删过一次之后再给同一个路径，调用方会去
  * 删一个已经不存在的文件 —— 无害，但会让"删了几个"的统计虚高。
  */
-export async function deleteGalleryItem(id: string): Promise<string | null> {
-  const rows = await db().select<RawGallery>(
-    `SELECT * FROM core_gallery_items WHERE id = ?`,
+export async function deleteImagebedItem(id: string): Promise<string | null> {
+  const rows = await db().select<RawImagebed>(
+    `SELECT * FROM core_imagebed_items WHERE id = ?`,
     [id],
   );
   const row = rows[0];
@@ -420,7 +420,7 @@ export async function deleteGalleryItem(id: string): Promise<string | null> {
   // 软删除：先把记录标记掉，再数引用 —— 顺序反了会把自己算进去，
   // 于是引用数永远 ≥ 1，文件永远删不掉
   await db().execute(
-    `UPDATE core_gallery_items SET deleted = 1, updated_at = ? WHERE id = ?`,
+    `UPDATE core_imagebed_items SET deleted = 1, updated_at = ? WHERE id = ?`,
     [nowIso(), id],
   );
 
@@ -433,19 +433,19 @@ export async function deleteGalleryItem(id: string): Promise<string | null> {
 /* 展示辅助                                                            */
 /* ------------------------------------------------------------------ */
 
-const ORIGIN_LABEL: Record<GalleryOrigin, string> = {
+const ORIGIN_LABEL: Record<ImagebedOrigin, string> = {
   manual: "手动导入",
   "ai-gen": "AI 生成",
   "image-crop": "图片裁剪",
   "size-chart": "尺码表",
 };
 
-export function originLabel(o: GalleryOrigin): string {
+export function originLabel(o: ImagebedOrigin): string {
   return ORIGIN_LABEL[o] ?? o;
 }
 
 /** 来源的语义色，与侧边栏/工具区既有的配色对应 */
-export const ORIGIN_COLOR: Record<GalleryOrigin, string> = {
+export const ORIGIN_COLOR: Record<ImagebedOrigin, string> = {
   manual: "#8a8985",
   "ai-gen": "#7c5cff",
   "image-crop": "#378add",
@@ -453,7 +453,7 @@ export const ORIGIN_COLOR: Record<GalleryOrigin, string> = {
 };
 
 /** 一键摘要，给卡片底部那行小字用 */
-export function summarize(item: GalleryItem): string {
+export function summarize(item: ImagebedItem): string {
   const bits: string[] = [];
   if (item.width && item.height) bits.push(`${item.width}×${item.height}`);
   if (item.size) bits.push(formatBytes(item.size));
@@ -466,23 +466,23 @@ export function summarize(item: GalleryItem): string {
 /* ------------------------------------------------------------------ */
 
 /**
- * "图库变了"的事件名。
+ * "图床变了"的事件名。
  *
- * 为什么需要它：往图库里写东西的有三个不同的地方 ——
- * 图库界面自己（导入/删除）、工具 iframe（经桥进来的 gallery.put）、
- * 以及将来可能的批量导入。而后两者发生的时候，**图库界面一无所知**：
+ * 为什么需要它：往图床里写东西的有三个不同的地方 ——
+ * 图床界面自己（导入/删除）、工具 iframe（经桥进来的 gallery.put）、
+ * 以及将来可能的批量导入。而后两者发生的时候，**图床界面一无所知**：
  * 工具是 iframe，写库是在宿主进程里做的；界面上又没有一个"刷新"按钮
  * 能覆盖这种情况。
  *
  * 定成全局事件而不是塞进 store：写库的地方（toolBridge）不该反过来
  * 依赖某个 React 组件的存在，监听方也可能不止一个。
  */
-export const GALLERY_CHANGED = "workbench:gallery-changed";
+export const IMAGEBED_CHANGED = "workbench:gallery-changed";
 
-/** 广播"图库变了"。写入方调它，界面自己监听 */
-export function notifyGalleryChanged(): void {
+/** 广播"图床变了"。写入方调它，界面自己监听 */
+export function notifyImagebedChanged(): void {
   // 非浏览器环境（单元测试里直接调数据层）没有 window，静默跳过
-  globalThis.dispatchEvent?.(new CustomEvent(GALLERY_CHANGED));
+  globalThis.dispatchEvent?.(new CustomEvent(IMAGEBED_CHANGED));
 }
 
 /* ------------------------------------------------------------------ */
@@ -503,7 +503,7 @@ export const THUMB_MAX = 320;
  * 所以这里**不赌链路**：缩略图以 data URL 的形式跟着消息走，
  * 消息能到，图就能显示，与源、协议、CSP 全都无关。
  *
- * 代价是多一次解码 + 重编码。但图库在工具里就是一片选择用的格子，
+ * 代价是多一次解码 + 重编码。但图床在工具里就是一片选择用的格子，
  * 320px 足够，一次也就几十毫秒。
  *
  * 视频返回空串 —— 抽首帧要在 <video> 上 seek，还得等时机，
@@ -530,13 +530,13 @@ export async function makeThumb(relPath: string, max: number = THUMB_MAX): Promi
 }
 
 /**
- * 读一条图库文件的**完整**内容，返回 data URL。
+ * 读一条图床文件的**完整**内容，返回 data URL。
  *
- * 这是给"把图库里的图喂给生成接口"用的：生图接口普遍接受公开 URL 或
+ * 这是给"把图床里的图喂给生成接口"用的：生图接口普遍接受公开 URL 或
  * data URI，而仓库里的文件是本地的，所以只能转成 data URI 送过去。
  */
-export async function readGalleryDataUrl(
-  item: GalleryItem,
+export async function readImagebedDataUrl(
+  item: ImagebedItem,
   maxBytes: number,
 ): Promise<{ dataUrl: string; mime: string }> {
   if (!item.relPath) throw new Error("这条记录没有本地文件");

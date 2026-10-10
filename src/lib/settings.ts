@@ -7,7 +7,7 @@
 
 import type { SmartView } from "../types";
 import { DEFAULT_DETAIL_SECTIONS } from "./detailSections";
-/* 键名与默认值在这里；「特殊单号」那几个偏好的**解析**放在 lib/special.ts，
+/* 键名与默认值在这里；流程任务相关的偏好（复制格式、查件渠道）的**解析**在 lib/special.ts，
    因为列的合法范围、复制模板的取值集合都是那个领域自己才知道的事。 */
 
 export type ThemeMode = "light" | "dark" | "system";
@@ -33,8 +33,14 @@ export const SETTINGS = {
   bgScrim: "appearance.bgScrim",
   /** 自定义壁纸的文件名清单（JSON 数组），用于在设置页里列出"我传过的图" */
   customWallpapers: "appearance.customWallpapers",
-  /** 是否启用「图库」模块（选装，默认关；老库由迁移 v17 回填） */
-  galleryEnabled: "ext.gallery.enabled",
+  /**
+   * 是否启用「图床」模块。
+   *
+   * 默认**开**：图床是便签 / AI 生成 / 图片裁剪的共同落点，关着的话这些工具
+   * 的附图能力直接不可用（工具侧会显示「图床模块未开启」）。用户仍可在
+   * 设置 → 选装模块里关掉；关过之后不会再被默认值翻回来。
+   */
+  imagebedEnabled: "ext.imagebed.enabled",
   startupView: "behavior.startupView",
   sidebarOpen: "behavior.sidebarOpen",
   /**
@@ -111,30 +117,22 @@ export const SETTINGS = {
    * 点开详情才能核对 —— 那这个记录表就白做了。
    */
   /**
-   * 是否启用「特殊单号」模块（选装）。
+   * 相关信息的复制格式（见 lib/special.ts 的 CopyTemplate）。
    *
-   * 关掉的是**入口与提醒**，不是数据：侧边栏入口、专属视图、创建弹窗里的类型切换、
-   * 「我的一天」里那一组、以及时效提醒与紧急区都会停；已经建好的单子仍留在
-   * 「流程任务」列表里，可以照常打开、推进、收尾，开关一打开就全回来。
-   *
-   * 默认**关闭**。默认值只管新建的库，老库由迁移 v17（modules_opt_in）按
-   * "这人有没有真建过特殊单号"回填 —— 见 lib/migrations.ts。
-   * 解析函数 parseSpecialEnabled 仍把「缺键」当开，那是最后一道兜底：
-   * 万一迁移没跑成，也不能让用过这个模块的人一升级就找不到入口。
+   * 原来是 `special.copyTemplate`（「特殊单号」模块的），功能删掉后它留了下来 ——
+   * 流程任务详情里的「复制相关信息」也走这一套。键名由迁移 v22 搬到这里。
    */
-  specialEnabled: "ext.special.enabled",
-  specialColumns: "special.columns",
-  /** 相关信息的复制格式（见 lib/special.ts 的 CopyTemplate） */
-  specialCopyTemplate: "special.copyTemplate",
-  /** 记录表的行高密度：comfortable | compact */
-  specialDensity: "special.density",
+  orderCopyTemplate: "order.copyTemplate",
   /**
    * 快递单号的查询渠道：快递100 / 菜鸟 / 快递商官网（见 lib/couriers.ts）。
    *
    * 它是**全局偏好**而不是每张单的属性：一个人手上跑的单子渠道是固定的
    * （做平台单就一直用菜鸟），每张单都选一次等于把习惯变成重复劳动。
+   *
+   * 同理，键名由迁移 v22 从 `special.trackChannel` 搬过来 —— 它服务的是
+   * 流程任务详情里的「查件」，不是那个已经删掉的模块。
    */
-  specialTrackChannel: "special.trackChannel",
+  orderTrackChannel: "order.trackChannel",
 
   /* ------------------------------ 同步 ------------------------------ */
 
@@ -172,7 +170,7 @@ export const SETTINGS = {
    * 要同步的分片，逗号分隔。
    *
    * 默认 **只有 tasks** —— 「默认只同步待办」是刻意的：待办是每天在用的核心，
-   * 流程任务/图库/附件的数据量与隐私权重都不一样，让用户自己决定要不要一起走。
+   * 流程任务/图床/附件的数据量与隐私权重都不一样，让用户自己决定要不要一起走。
    */
   syncShards: "sync.shards",
   /** 本机标识。首次使用时生成一个 uuid 并落库，此后不变 */
@@ -370,13 +368,17 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.toolKeepState]: "1",
   // 示例数据默认关：理由见 SETTINGS.seedSampleData 的注释
   [SETTINGS.seedSampleData]: "0",
-  [SETTINGS.toolsDisabled]: "",
-  [SETTINGS.specialEnabled]: "0",
-  [SETTINGS.galleryEnabled]: "0",
-  [SETTINGS.specialColumns]: "[]",
-  [SETTINGS.specialCopyTemplate]: "label-cn",
-  [SETTINGS.specialDensity]: "comfortable",
-  [SETTINGS.specialTrackChannel]: "kuaidi100",
+  // 「模板」（tools/scratchpad）默认停用：它是给写工具的人照着抄的样板，
+  // 不是给用户日常用的功能 —— 默认挂进侧边栏只会让工具区多一个名字相近的
+  // 便签本（旁边就是真正给用户用的「便签」），还容易被人当成重复造的轮子。
+  // 要看它的人到 设置 → 工具 里自己打开即可，文件一直都在。
+  //
+  // ⚠️ withDefaults 是 `{...DEFAULT_SETTINGS, ...raw}`：**只有库里没这个键时才填**。
+  // 所以这一行只管新库；已经跑过的库沿用它自己那个值（想批量改要走迁移）。
+  [SETTINGS.toolsDisabled]: "scratchpad",
+  [SETTINGS.imagebedEnabled]: "1",
+  [SETTINGS.orderCopyTemplate]: "label-cn",
+  [SETTINGS.orderTrackChannel]: "kuaidi100",
   [SETTINGS.syncBaseUrl]: "https://dav.jianguoyun.com/dav",
   [SETTINGS.syncUsername]: "",
   [SETTINGS.syncPassword]: "",
@@ -510,23 +512,6 @@ export function parseToolKeepState(raw: string | undefined): boolean {
   return raw !== "0";
 }
 
-/**
- * 「特殊单号」模块是否启用。
- *
- * ⚠️ 这里的方向与 DEFAULTS 相反，是**故意的**：DEFAULTS 管新建的库（默认关），
- * 而缺键意味着"迁移没跑过"——那是个用过这个模块的老库，此时按"开"处理，
- * 用户那批记录才不会在升级后凭空从界面上消失。
- *
- * 只有显式写了 "0" 才算关。方向不能反：反过来写的话，一次意外的脏值就会
- * 让用户找不到入口，而他还不知道发生了什么。
- *
- * 注：宿主现在统一走 lib/extensions/registry.ts 的 isEnabled()，这个函数只剩
- * 兜底与测试在用。
- */
-export function parseSpecialEnabled(raw: string | undefined): boolean {
-  return raw !== "0";
-}
-
 export function isThemeMode(v: string | undefined): v is ThemeMode {
   return v === "light" || v === "dark" || v === "system";
 }
@@ -566,7 +551,7 @@ export const STARTUP_VIEWS: Array<{ value: SmartView; label: string }> = [
   { value: "important", label: "重要" },
   { value: "all", label: "全部" },
   { value: "orders", label: "流程任务" },
-  { value: "gallery", label: "图库" },
+  { value: "imagebed", label: "图床" },
   // AI 助手也能作为启动视图：习惯一进来就让它排今天的人有这个需求，
   // 而且它和别的视图没有互斥关系（都能随时切走）
   { value: "agent", label: "AI 助手" },

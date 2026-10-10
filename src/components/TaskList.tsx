@@ -12,17 +12,13 @@ import {
   ChevronRight,
   Repeat,
   ClipboardList,
-  Timer,
 } from "lucide-react";
 import { useStore } from "../store";
 import TaskRow from "./TaskRow";
 import OrderRow from "./OrderRow";
 import OrderCreateDialog from "./OrderCreateDialog";
-import SpecialOrdersView from "./SpecialOrdersView";
 import { groupRows, type Row as RowsRow } from "../lib/rows";
-import type { WorkOrderKind } from "../types";
 import { SETTINGS } from "../lib/settings";
-import { isEnabled } from "../lib/extensions/registry";
 import {
   SCRIM,
   formatBackground,
@@ -59,13 +55,6 @@ const VIEW_META: Record<
     icon: ClipboardList,
     accent: "#378add",
     bg: "linear-gradient(135deg, #1f4e8c 0%, #378add 50%, #7fb3e3 100%)",
-  },
-  // 特殊单号：橙色。它是"等不起的单子"，在色板上要和流程任务的蓝、
-  // 重要的琥珀都拉开距离 —— 侧边栏里这几个入口是并排的，撞色就等于没颜色
-  special: {
-    icon: Timer,
-    accent: "var(--color-special)",
-    bg: "linear-gradient(135deg, #96361c 0%, #d85a30 50%, #eaa587 100%)",
   },
   list: {
     icon: Circle,
@@ -127,14 +116,6 @@ export default function TaskList() {
    * 回车只是把那句话带进表单，而不是丢掉重新填。
    */
   const [orderFormTitle, setOrderFormTitle] = useState<string | null>(null);
-  /**
-   * 弹窗按哪种单来开。
-   *
-   * 跟着**当前视图**走而不是让用户在弹窗里再选一次：在「特殊单号」里点创建，
-   * 想造的显然是特殊单号；让他在表单里再选一遍，就是在问一个他刚刚已经答过的问题。
-   * 弹窗里仍然保留切换（建错了不用关掉重来）。
-   */
-  const [orderFormKind, setOrderFormKind] = useState<WorkOrderKind>("normal");
   const [showDone, setShowDone] = useState(false);
   const [sortByDate, setSortByDate] = useState(false);
   /**
@@ -148,22 +129,12 @@ export default function TaskList() {
   /** 「流程任务」视图只装流程任务 */
   const ordersOnly = view === "orders";
   /**
-   * 「特殊单号」模块开关。
-   *
-   * specialOnly 把它一起算进去了：关掉后这个视图、这条创建路径、底部输入框
-   * 的"装快递单号"语义全都一起失效 —— 少算一处，就会出现"入口没了但视图还活着"
-   * 这种半关状态。记录本身仍在「流程任务」列表里（见 lib/settings.ts）。
-   */
-  const specialOn = isEnabled(settings, "special");
-  /** 「特殊单号」视图只装特殊单号（流程任务里带处理时效的那一类） */
-  const specialOnly = view === "special" && specialOn;
-  /**
-   * 这两个视图都是"只装流程任务"的，创建栏在这里只能造流程任务。
+   * 这个视图只装流程任务，创建栏在这里只能造流程任务。
    *
    * 在「流程任务」视图里造一条待办是不会出现在当前列表里的，那个
    * "输完回车却什么都没发生"的表现比不给入口糟糕得多（踩过一次）。
    */
-  const orderView = ordersOnly || specialOnly;
+  const orderView = ordersOnly;
   /**
    * 创建栏实际在造什么。流程任务视图下锁死成"造流程任务" ——
    * 在这里造一条待办是不会出现在当前列表里的（流程任务视图不取待办），
@@ -201,7 +172,6 @@ export default function TaskList() {
         important: "重要",
         all: "全部",
         orders: "流程任务",
-        special: "特殊单号",
       } as Record<string, string>
     )[view] ?? "任务";
   }, [view, activeListId, lists]);
@@ -215,10 +185,7 @@ export default function TaskList() {
 
   // 分组排序全部交给 lib/rows.ts —— store 选第一条时用的是同一份，
   // 保证「高亮的行」和「右侧展开的详情」永远指同一条记录
-  const grouped = useMemo(
-    () => groupRows(tasks, orders, view, specialOn),
-    [tasks, orders, view, specialOn],
-  );
+  const grouped = useMemo(() => groupRows(tasks, orders, view), [tasks, orders, view]);
 
   const submit = async () => {
     if (!draft.trim()) return;
@@ -230,23 +197,12 @@ export default function TaskList() {
     }
     // 流程任务不在这里直接建：只填标题的话，建出来的是一张只有标题的半成品，
     // 还得回详情补流程/日期/备注。改成把标题带进完整表单一次填完。
-    setOrderFormKind(specialOnly ? "special" : "normal");
     setOrderFormTitle(draft);
   };
 
   const isMyDay = view === "myday";
   const searching = search.trim().length > 0;
   const isEmpty = grouped.sections.every((s) => s.items.length === 0) && !grouped.done.length;
-
-  // 特殊单号：正规的记录管理界面（搜索/分类/表格），不套用待办的轻松样式。
-  // 它本质是"这批数据的管理台"，不是"今天做点什么"的清单 ——
-  // 数据层完全共用（kind='special' 的流程任务），只是呈现不同。
-  //
-  // 全局搜索时仍走下面的通用结果列表：搜索是跨视图的"找到它"，
-  // 记录视图自带的检索框才是"在这批单里翻账"，两回事。
-  if (specialOnly && !searching) {
-    return <SpecialOrdersView />;
-  }
 
   // 搜索是跨列表的，此时标题跟随结果而非当前视图，避免用户误解
   const headerTitle = searching ? `搜索：${search.trim()}` : title;
@@ -392,10 +348,7 @@ export default function TaskList() {
                     row,
                     i,
                     section.items,
-                    view === "all" ||
-                      view === "list" ||
-                      view === "orders" ||
-                      view === "special",
+                    view === "all" || view === "list" || view === "orders",
                   ),
                 )}
               </div>
@@ -409,22 +362,18 @@ export default function TaskList() {
               <meta.icon size={24} className="text-white/80" />
             </div>
             <p className="text-[14px] text-white/90">
-              {specialOnly
-                ? "还没有特殊单号"
-                : ordersOnly
-                  ? "还没有流程任务"
-                  : isMyDay
-                    ? "今天还没有安排"
-                    : "这个列表还没有任务"}
+              {ordersOnly
+                ? "还没有流程任务"
+                : isMyDay
+                  ? "今天还没有安排"
+                  : "这个列表还没有任务"}
             </p>
             <p className="max-w-[300px] text-[12px] leading-relaxed text-white/70">
-              {specialOnly
-                ? "在下方输入框建第一张：以快递单号为起点，每一步都带处理时效，超时会提醒"
-                : ordersOnly
-                  ? "在下方输入框建第一张流程任务；它会按所选流程一步步走，每走一步都留痕"
-                  : isMyDay
-                    ? "在下方输入框添加待办，或切到「流程任务」建一张要走流程的单子"
-                    : "在下方输入框添加第一条任务；其他列表里的任务不会显示在这里"}
+              {ordersOnly
+                ? "在下方输入框建第一张流程任务；它会按所选流程一步步走，每走一步都留痕"
+                : isMyDay
+                  ? "在下方输入框添加待办，或切到「流程任务」建一张要走流程的单子"
+                  : "在下方输入框添加第一条任务；其他列表里的任务不会显示在这里"}
             </p>
           </div>
         )}
@@ -460,10 +409,10 @@ export default function TaskList() {
             {orderView ? (
               <span
                 className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium text-white"
-                style={{ background: specialOnly ? "var(--color-special)" : "var(--color-primary)" }}
+                style={{ background: "var(--color-primary)" }}
               >
-                {specialOnly ? <Timer size={12} /> : <ClipboardList size={12} />}
-                {specialOnly ? "特殊单号" : "流程任务"}
+                <ClipboardList size={12} />
+                流程任务
               </span>
             ) : (
               <div className="flex shrink-0 items-center rounded-md bg-chip p-0.5">
@@ -497,9 +446,7 @@ export default function TaskList() {
               data-compose-input=""
               placeholder={
                 composeKind === "order"
-                  ? specialOnly
-                    ? "快递单号，回车填写时效与相关信息"
-                    : "流程任务标题，回车填写描述与相关信息"
+                  ? "流程任务标题，回车填写描述与相关信息"
                   : draftDaily
                     ? "添加每日任务"
                     : "添加任务"
@@ -529,10 +476,10 @@ export default function TaskList() {
                 data-compose-submit=""
                 className="shrink-0 rounded-md px-2.5 py-1 text-[12px] font-medium text-white"
                 style={{
-                  background: composeKind === "order" ? (specialOnly ? "var(--color-special)" : "var(--color-primary)") : accent,
+                  background: composeKind === "order" ? "var(--color-primary)" : accent,
                 }}
               >
-                {composeKind === "order" ? (specialOnly ? "登记单号" : "创建流程任务") : "添加"}
+                {composeKind === "order" ? "创建流程任务" : "添加"}
               </button>
             )}
           </div>
@@ -547,9 +494,7 @@ export default function TaskList() {
               <span data-compose-hint="" className="min-w-0 flex-1 text-[11.5px] text-fg-dim">
                 {isMyDay
                   ? "流程任务不进「我的一天」，建好后在侧边栏「流程任务」里看"
-                  : specialOnly
-                    ? "回车或点「登记单号」，弹窗里填时效与相关信息；时效是到下一步之前的时间"
-                    : "回车或点「创建流程任务」，弹窗里一次填完描述、流程、过程态与日期"}
+                  : "回车或点「创建流程任务」，弹窗里一次填完描述、流程、过程态与日期"}
               </span>
               <button
                 // 这里必须给一个**真实的 flowId**：openFlowEditor 的开关语义是
@@ -573,11 +518,7 @@ export default function TaskList() {
           塞进底部那一行的布局里会被父级的 overflow 裁掉 */}
       {orderFormTitle !== null && (
         <OrderCreateDialog
-          // 同一个底部输入框，在「特殊单号」视图里装的是快递单号（那是起点），
-          // 在别处装的是标题。灌错地方就等于让人白打一遍
-          initialTitle={orderFormKind === "special" ? "" : orderFormTitle}
-          initialNo={orderFormKind === "special" ? orderFormTitle : ""}
-          initialKind={orderFormKind}
+          initialTitle={orderFormTitle}
           onClose={() => setOrderFormTitle(null)}
           onCreated={() => {
             // 建成了才清掉输入框里那句话 —— 取消的话它还该留着，

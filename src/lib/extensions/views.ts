@@ -8,7 +8,7 @@
  *
  * 以前这里是 App.tsx 里的三元表达式：
  *
- *     view === "gallery" ? <GalleryView /> : <TaskList />
+ *     view === "imagebed" ? <ImagebedView /> : <TaskList />
  *
  * 每加一个整页视图就在那句上再套一层 —— 而且它**天然没有"这个视图现在
  * 还能不能用"的概念**：模块关掉之后界面会停在合法但空的一屏上。
@@ -21,7 +21,7 @@
 
 import type { ComponentType } from "react";
 import TaskList from "../../components/TaskList";
-import GalleryView from "../../components/GalleryView";
+import ImagebedView from "../../components/ImagebedView";
 import WorkspaceView from "../../components/WorkspaceView";
 
 /**
@@ -35,8 +35,7 @@ const VIEW_COMPONENTS: Record<string, ComponentType> = {
   all: TaskList,
   list: TaskList,
   orders: TaskList,
-  special: TaskList,
-  gallery: GalleryView,
+  imagebed: ImagebedView,
   workspace: WorkspaceView,
 };
 

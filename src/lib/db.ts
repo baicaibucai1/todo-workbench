@@ -123,9 +123,27 @@ class MemoryDb implements Db {
      * 用户看到的是"对话记录凭空消失"。而真 SQLite 那边是好的，
      * 于是同一个 bug 只在浏览器 demo 里出现 —— 最难查的那种。
      *
-     * 只实现 ADD COLUMN：RENAME / DROP COLUMN 目前没有迁移在用，
-     * 与其猜语义，不如让落到末尾时保持"静默成功"的现状（真要用了再补）。
+     * RENAME TO 也有实现了：v21 把图床那张表整体改名要用它。
+     * DROP COLUMN 仍没有 —— 没有迁移在用，等真要用时再补。
      */
+    // ALTER TABLE <old> RENAME TO <new> —— 连表名带数据一起搬。
+    //
+    // 必须真的改名：v21 迁移把 core_gallery_items 改成 core_imagebed_items，
+    // 若这里静默成功而实际没动，浏览器 demo 里老快照的图会"凭空消失"
+    // （新代码读新表名、数据还在旧表下）—— 和上面 ADD COLUMN 那次
+    // 「对话记录凭空消失」是同一类只在 demo 出现的 bug。
+    const rename = /^ALTER\s+TABLE\s+(\w+)\s+RENAME\s+TO\s+(\w+)$/i.exec(s);
+    if (rename) {
+      const [, oldName, newName] = rename;
+      const existing = this.tables.get(oldName);
+      if (existing) {
+        this.tables.delete(oldName);
+        this.tables.set(newName, { name: newName, rows: existing.rows });
+      }
+      this.persist();
+      return 0;
+    }
+
     const alter = /^ALTER\s+TABLE\s+(\w+)\s+ADD\s+(?:COLUMN\s+)?(\w+)\s+(.+)$/i.exec(s);
     if (alter) {
       const [, tableName, col, decl] = alter;
@@ -495,6 +513,10 @@ class MemoryDb implements Db {
     const pending = migrations.filter((m) => m.version > this.version);
     for (const m of pending) {
       await this.transaction([{ sql: m.sql }]);
+      // SQL 之后紧跟着跑需要判断的那段（见 Migration.run 的说明）。
+      // 放在设版本号之前：它失败了这一版就不算迁移完，下次启动会重来 ——
+      // 所以 run 里每句都必须能安全地跑第二遍。
+      if (m.run) await m.run(this);
       this.version = m.version;
       this.persist();
     }
@@ -752,6 +774,8 @@ class SqliteDb implements Db {
     const current = rows[0]?.user_version ?? 0;
     for (const m of migrations.filter((x) => x.version > current)) {
       await this.transaction([{ sql: m.sql }]);
+      // 与 MemoryDb 同一处约定：SQL 跑完接着跑 run，版本号最后才推进
+      if (m.run) await m.run(this);
       await this.execute(`PRAGMA user_version = ${m.version}`);
     }
   }

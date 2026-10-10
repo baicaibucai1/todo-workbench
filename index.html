@@ -3,9 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 网页标签上的小图标：与 src-tauri/icons 同一张脸（橙黄底 + 白任务卡 + 勾），
+         尺寸与配色照着 scripts/gen-icons.mjs 的 renderSmallIcon() 等比换算过来的，
+         改那边的时候这边要跟着动。 -->
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23d4537e'/%3E%3Cpath d='M9 16.5l4.5 4.5L23 12' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23EA580C'/%3E%3Cstop offset='1' stop-color='%23FACC15'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='1' y='1' width='30' height='30' rx='6.6' fill='url(%23g)'/%3E%3Crect x='4' y='4.7' width='24' height='22.6' rx='4.4' fill='white'/%3E%3Cpath d='M9.1 16.8L13.5 21.1L23.3 10.8' stroke='%23D9480F' stroke-width='4.1' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
     />
     <title>待办工作台</title>
   </head>

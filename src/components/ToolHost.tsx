@@ -154,7 +154,7 @@ export default function ToolFrame({ tool, active }: { tool: ToolManifest; active
         await useStore.getState().openToolWithIntent(id, data, tool.id);
       },
       peers: () => peersRef.current(),
-      // 能力门要现取设置：用户在设置里打开图库之后，已经挂着的工具
+      // 能力门要现取设置：用户在设置里打开图床之后，已经挂着的工具
       // 应当**立刻**能用上，而不是等重启
       getSettings: () => useStore.getState().settings,
     }),

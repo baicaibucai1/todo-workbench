@@ -110,7 +110,7 @@ check(
   diskTools.length === srcToolCount,
   `${diskTools.length} 个`,
 );
-// 「特殊单号记录」曾经是第 4 个工具，现在改成了原生视图（不再有工具目录）。
+// 「特殊单号记录」曾经是第 4 个工具；那个功能已于 2026-10-10 整个删除。
 // 这里顺手钉住"它没有再被塞回工具目录"，否则 check-installer 的门禁会跟着对不上
 check(
   "占位工具 special-orders 的目录已移除",

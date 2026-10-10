@@ -176,7 +176,7 @@
   }
   .stb-preset.on:hover { color: #fff; background: var(--accent); }
   .stb-input:disabled { opacity: 0.45; cursor: not-allowed; }
-  /* 工具栏上的小开关（「导出自动存图库」）。
+  /* 工具栏上的小开关（「导出自动存图床」）。
      ⚠️ 必须显式写 [hidden]：作者样式里的 display:flex 会盖掉浏览器默认的
      [hidden]{display:none}，不写的话这行在没连工作台时会露出来 */
   .stb-check {
@@ -1112,20 +1112,20 @@
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             下载图片
           </button>
-          <!-- 「下载图片」的兄弟动作：不落盘，直接进工作台图库当素材。
+          <!-- 「下载图片」的兄弟动作：不落盘，直接进工作台图床当素材。
                默认 hidden，只有被工作台嵌进去（宿主推来 gallery 标记）才出现 -->
-          <button class="stb-btn" id="btnChartToGallery" onclick="exportToGallery()" hidden
-                  title="直接存进工作台图库，不再落一份到下载目录">
+          <button class="stb-btn" id="btnChartToImagebed" onclick="exportToImagebed()" hidden
+                  title="直接存进工作台图床，不再落一份到下载目录">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-            存进图库
+            存进图床
           </button>
-          <!-- 「导出自动存图库」：默认开。下载与复制都算「产出」，都按同一条规则
-               在图库留一份；字节相同的内容不会重复占一条记录（宿主按 hash 去重）。
-               同样默认 hidden —— 单机打开时没有图库可言。 -->
-          <label class="stb-check" id="chkAutoGalleryLine" hidden
-                 title="导出/复制的图默认在工作台图库留一份；同一份内容不会重复占一条">
-            <input type="checkbox" id="chkAutoGallery" checked>
-            导出自动存图库
+          <!-- 「导出自动存图床」：默认开。下载与复制都算「产出」，都按同一条规则
+               在图床留一份；字节相同的内容不会重复占一条记录（宿主按 hash 去重）。
+               同样默认 hidden —— 单机打开时没有图床可言。 -->
+          <label class="stb-check" id="chkAutoImagebedLine" hidden
+                 title="导出/复制的图默认在工作台图床留一份；同一份内容不会重复占一条">
+            <input type="checkbox" id="chkAutoImagebed" checked>
+            导出自动存图床
           </label>
         </div>
       </div>
@@ -2410,10 +2410,10 @@ function toggleSquareExport() {
 // ============================================================
 // 导出图片
 // ============================================================
-/* 导出图去哪里。download = 下载到本机（默认）；gallery = 交给工作台图库。
+/* 导出图去哪里。download = 下载到本机（默认）；gallery = 交给工作台图床。
    做成一个变量而不是把 doExport 复制一份，是因为渲染那一段（量高度、
    方形补边、toBlob）一条都不能少 —— 复制出去的那份迟早会跟主流程漂移，
-   最后表现为「下载的图和存图库的图不一样」。 */
+   最后表现为「下载的图和存图床的图不一样」。 */
 let exportDest = 'download';
 
 function doExport(copyToClipboard = false) {
@@ -2459,19 +2459,19 @@ function doExport(copyToClipboard = false) {
   const finish = function (blob) {
     if (!blob) { showToast('导出失败，浏览器不支持此操作'); exportDest = 'download'; return; }
     // 立刻复位而不是等分支里再复位：任何分支提前 return 都不会把下一次导出
-    // 带成"存图库"（那种 bug 表现为"点了下载，图却进了图库、没落盘"）
+    // 带成"存图床"（那种 bug 表现为"点了下载，图却进了图床、没落盘"）
     const dest = exportDest;
     exportDest = 'download';
 
     if (copyToClipboard) {
       copyImageToClipboard(blob, { canvas: canvas });
       // 复制到剪贴板同样算产出 —— 那张图是要拿去用的，一样留一份
-      void archiveChartToGallery(blob, fname, finalW, finalH);
+      void archiveChartToImagebed(blob, fname, finalW, finalH);
     } else if (dest === 'gallery') {
-      // 同一个渲染管线，只换投递去处 —— 导出到图库和下载走的是**完全一样**
-      // 的那张图，不存在「图库版和下载版不一样」这种事。
+      // 同一个渲染管线，只换投递去处 —— 导出到图床和下载走的是**完全一样**
+      // 的那张图，不存在「图床版和下载版不一样」这种事。
       // 这里是用户明说要存，不再叠一次自动存档
-      saveChartToGallery(blob, fname, finalW, finalH);
+      saveChartToImagebed(blob, fname, finalW, finalH);
       return;
     } else {
       const link = document.createElement('a');
@@ -2482,7 +2482,7 @@ function doExport(copyToClipboard = false) {
       document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(link.href), 1000);
       showToast('图片已导出 (' + finalW + ' × ' + finalH + ')');
-      void archiveChartToGallery(blob, fname, finalW, finalH);
+      void archiveChartToImagebed(blob, fname, finalW, finalH);
     }
   };
 
@@ -3359,26 +3359,26 @@ document.addEventListener('keydown', function(e) {
 });
 
 // ============================================================
-// 图库联动（工作台宿主）
+// 图床联动（工作台宿主）
 // ------------------------------------------------------------
 // 这个 HTML 有两副面孔：
 //   · 双击直接打开 —— 一个自足的单文件生成器，下面这些东西**全部不出现**
 //   · 被工作台当工具嵌进 iframe —— 通过 postMessage 跟宿主说话，
-//     多出一个「存进图库」
+//     多出一个「存进图床」
 // 判定靠宿主主动推来的 tool:context（见宿主 src/lib/toolBridge.ts），
 // 不是 UA 或 query。因为工具和宿主是**分开升级**的：新工具装在旧宿主上时
 // ctx 里没有 gallery 标记，这时要把入口藏起来，而不是让用户点了报
 // 「不支持的操作」。
 //
 // 这个工具只出不进：它没有图片输入（表格来自手输或粘贴 Excel），
-// 所以只接「写进图库」这一个方向 —— 不像图片裁剪 / AI 生成那样还能从图库
+// 所以只接「写进图床」这一个方向 —— 不像图片裁剪 / AI 生成那样还能从图床
 // 挑一张回来当素材。这不是漏做，是它**没有可读图的场景**；哪天加了「商品图」
 // 之类的插图位，再顺着 list / get 补上就行（宿主那两个操作一直是开着的）。
 //
-// ⚠️ 往图库写时，来源标记由宿主按 tool_id 盖（这里是 size-chart），
-// 工具说了不算 —— 这样图库里的「出处」才可信。
+// ⚠️ 往图床写时，来源标记由宿主按 tool_id 盖（这里是 size-chart），
+// 工具说了不算 —— 这样图床里的「出处」才可信。
 // ============================================================
-var Gallery = (function () {
+var Imagebed = (function () {
   var HOST_SOURCE = 'workbench-host', TOOL_SOURCE = 'workbench-tool';
   var seq = 0, pending = Object.create(null), ctx = null;
 
@@ -3416,10 +3416,10 @@ var Gallery = (function () {
     if (e.source === parent && e.origin && e.origin !== 'null') hostOrigin = e.origin;
     if (d.type === 'tool:context') {
       ctx = d.data;
-      syncGalleryUI();
+      syncImagebedUI();
       // 偏好存在宿主（工具私有 KV）里，必须等连接确认后再读 ——
       // 双击打开时 kv 请求注定失败，提前发只会多一条无用报错
-      loadAutoGalleryPref();
+      loadAutoImagebedPref();
       return;
     }
     if (d.type === 'tool:response') {
@@ -3432,22 +3432,22 @@ var Gallery = (function () {
 
   return {
     supports: function () { return !!(ctx && ctx.gallery); },
-    /* 宿主**连上了**但不一定**支持图库**（旧宿主推来的 ctx 里没有 gallery 标记）。
+    /* 宿主**连上了**但不一定**支持图床**（旧宿主推来的 ctx 里没有 gallery 标记）。
        读偏好用 connected：连都没连上就别发请求。 */
     connected: function () { return !!ctx; },
     put: function (o) { return ask('gallery.put', o, 120000); },
-    /* 工具私有 KV：存「导出是否自动存图库」这类偏好。
+    /* 工具私有 KV：存「导出是否自动存图床」这类偏好。
        只在本工具命名空间下读写（宿主按 tool_id 隔离），碰不到别工具的键。 */
     kvGet: function (k) { return ask('kv.get', { key: k }).then(function (r) { return r.value; }); },
     kvSet: function (k, v) { return ask('kv.set', { key: k, value: v }); }
   };
 })();
 
-function syncGalleryUI() {
-  var ok = Gallery.supports();
-  var btn = document.getElementById('btnChartToGallery');
+function syncImagebedUI() {
+  var ok = Imagebed.supports();
+  var btn = document.getElementById('btnChartToImagebed');
   if (btn) btn.hidden = !ok;
-  syncAutoGalleryUI();
+  syncAutoImagebedUI();
 }
 
 // ============================================================
@@ -3455,15 +3455,15 @@ function syncGalleryUI() {
 // ------------------------------------------------------------
 // 三条纪律：
 //   1. **存档失败绝不能把「导出成功」翻成「导出失败」** —— 用户的动作是导出，
-//      图库只是顺手留底。所以是 void 火后不管 + 自己吞异常 + 只提示。
-//   2. 自动存档传 dedupe，手动「存进图库」不传 —— 自动是悄悄做的，不该
+//      图床只是顺手留底。所以是 void 火后不管 + 自己吞异常 + 只提示。
+//   2. 自动存档传 dedupe，手动「存进图床」不传 —— 自动是悄悄做的，不该
 //      每次导出都堆一张一模一样的卡；手动点那一按钮，他要的就是「再留一份」。
 //   3. 开关默认开、且可关：方向是「宁可多存一张，也别丢一张」。
 // ============================================================
-var KV_AUTO_GALLERY = 'autoGallery';
-var autoGallery = true;
+var KV_AUTO_GALLERY = 'autoImagebed';
+var autoImagebed = true;
 
-function autoGalleryOn() { return autoGallery !== false && Gallery.supports(); }
+function autoImagebedOn() { return autoImagebed !== false && Imagebed.supports(); }
 
 function blobToDataUrl(blob) {
   return new Promise(function (resolve, reject) {
@@ -3475,80 +3475,80 @@ function blobToDataUrl(blob) {
 }
 
 /**
- * 单一出口：手动「存进图库」与导出后的自动存档走同一个函数，只有 dedupe 不同。
+ * 单一出口：手动「存进图床」与导出后的自动存档走同一个函数，只有 dedupe 不同。
  * 复制成两份迟早会漂移成「手动存的图和自动存的不是同一张」。
  */
-async function putChartToGallery(blob, fname, w, h, dedupe) {
-  if (!Gallery.supports()) throw new Error('没连上工作台，图库用不了');
+async function putChartToImagebed(blob, fname, w, h, dedupe) {
+  if (!Imagebed.supports()) throw new Error('没连上工作台，图床用不了');
   var dataUrl = await blobToDataUrl(blob);
-  return Gallery.put({
+  return Imagebed.put({
     dataUrl: dataUrl,
     title: fname,
-    // 标题那行文字一起存进 note：图库里搜「尺码表」能搜到，
+    // 标题那行文字一起存进 note：图床里搜「尺码表」能搜到，
     // 也省得为了确认是哪张再开一次图
     note: w + '×' + h + ' · PNG',
     dedupe: dedupe === true,
   });
 }
 
-/** 手动「存进图库」：要按钮忙态、失败要看得见 —— 这是用户主动发起的动作 */
-async function saveChartToGallery(blob, fname, w, h) {
-  var btn = document.getElementById('btnChartToGallery');
+/** 手动「存进图床」：要按钮忙态、失败要看得见 —— 这是用户主动发起的动作 */
+async function saveChartToImagebed(blob, fname, w, h) {
+  var btn = document.getElementById('btnChartToImagebed');
   var old = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
   try {
-    var item = await putChartToGallery(blob, fname, w, h, false);
-    showToast('已存进图库' + (item && item.title ? '：' + item.title : ''));
+    var item = await putChartToImagebed(blob, fname, w, h, false);
+    showToast('已存进图床' + (item && item.title ? '：' + item.title : ''));
   } catch (err) {
-    showToast('存图库失败：' + String(err && err.message || err));
+    showToast('存图床失败：' + String(err && err.message || err));
   } finally {
     if (btn) { btn.textContent = old; btn.disabled = false; }
   }
 }
 
 /** 导出后的自动留档：失败只提示，不改「导出已成功」这个事实 */
-async function archiveChartToGallery(blob, fname, w, h) {
-  if (!autoGalleryOn()) return;
+async function archiveChartToImagebed(blob, fname, w, h) {
+  if (!autoImagebedOn()) return;
   try {
-    var item = await putChartToGallery(blob, fname, w, h, true);
-    showToast(item && item.dup ? '图库里已有这一份' : '已自动存入图库：' + (item && item.title || fname));
+    var item = await putChartToImagebed(blob, fname, w, h, true);
+    showToast(item && item.dup ? '图床里已有这一份' : '已自动存入图床：' + (item && item.title || fname));
     document.body.dataset.autoArchived = '1';
   } catch (err) {
-    showToast('自动存图库失败：' + String(err && err.message || err));
+    showToast('自动存图床失败：' + String(err && err.message || err));
   }
 }
 
-/** 「存进图库」按钮 → 复用 doExport 的渲染管线，只换投递去处 */
-function exportToGallery() {
-  if (!Gallery.supports()) { showToast('没连上工作台，图库用不了'); return; }
+/** 「存进图床」按钮 → 复用 doExport 的渲染管线，只换投递去处 */
+function exportToImagebed() {
+  if (!Imagebed.supports()) { showToast('没连上工作台，图床用不了'); return; }
   exportDest = 'gallery';
   doExport(false);
 }
 
 /** 开关只在连上宿主时出现；改动立刻写库，不等别的保存动作 */
-function syncAutoGalleryUI() {
-  var line = document.getElementById('chkAutoGalleryLine');
+function syncAutoImagebedUI() {
+  var line = document.getElementById('chkAutoImagebedLine');
   if (!line) return;
-  line.hidden = !Gallery.supports();
-  var box = document.getElementById('chkAutoGallery');
-  if (box) box.checked = autoGallery !== false;
+  line.hidden = !Imagebed.supports();
+  var box = document.getElementById('chkAutoImagebed');
+  if (box) box.checked = autoImagebed !== false;
   // 供 e2e 断言：单机打开时这两个 data-* 不会出现
-  document.body.dataset.autoGallery = String(autoGallery !== false);
+  document.body.dataset.autoImagebed = String(autoImagebed !== false);
 }
 
-function loadAutoGalleryPref() {
-  if (!Gallery.connected()) return;
+function loadAutoImagebedPref() {
+  if (!Imagebed.connected()) return;
   // 只有用户明确关过（存 "0"）才是关；读不到一律按开 ——
   // 这个开关的方向是"宁可多存一张，也别丢一张"
-  Gallery.kvGet(KV_AUTO_GALLERY).then(function (v) {
-    if (v === '0' || v === '1') { autoGallery = v !== '0'; syncAutoGalleryUI(); }
+  Imagebed.kvGet(KV_AUTO_GALLERY).then(function (v) {
+    if (v === '0' || v === '1') { autoImagebed = v !== '0'; syncAutoImagebedUI(); }
   }).catch(function () { /* 读不到就用默认的开 */ });
 }
 
-document.getElementById('chkAutoGallery').addEventListener('change', function () {
-  autoGallery = this.checked;
-  syncAutoGalleryUI();
-  Gallery.kvSet(KV_AUTO_GALLERY, autoGallery ? '1' : '0').catch(function () {
+document.getElementById('chkAutoImagebed').addEventListener('change', function () {
+  autoImagebed = this.checked;
+  syncAutoImagebedUI();
+  Imagebed.kvSet(KV_AUTO_GALLERY, autoImagebed ? '1' : '0').catch(function () {
     showToast('开关没能写进工作台（下次打开会回到默认的开）');
   });
 });

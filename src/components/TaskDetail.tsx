@@ -98,7 +98,7 @@ export default function TaskDetail() {
 
   // 工具与设置占满右半区，此时面板整体让位。
   //
-  // 图库同理，但理由不同：图库是**一片缩略图墙**，本来就该占满可用宽度，
+  // 图床同理，但理由不同：图床是**一片缩略图墙**，本来就该占满可用宽度，
   // 而且它有自己的全屏预览。留一个 360px 的空详情面板在那儿，
   // 既挤掉一格图（网格按 auto-fill 排，少 360px 就少一整列），
   // 又让用户以为"这些图也能扔进详情里"。
@@ -107,7 +107,7 @@ export default function TaskDetail() {
   // 面板里只可能显示"上一次看过的那条"（shownTask 是兜底值）——
   // 一个和当前界面毫无关系的任务详情挂在对话旁边，纯属误导。
   const visible =
-    !activeToolId && !settingsOpen && view !== "gallery" && view !== "agent";
+    !activeToolId && !settingsOpen && view !== "imagebed" && view !== "agent";
 
   // 收起（让位）时选中的对象已经不该再显示，但动画还没播完，留一份内容给它滑
   const lastTask = useRef<Task | null>(null);

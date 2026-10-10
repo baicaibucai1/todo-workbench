@@ -441,7 +441,7 @@ export const AGENT_TOOLS: AgentToolSpec[] = [
         capabilities: S({
           type: "array",
           description:
-            '要申请的宿主能力，目前可写："gallery"（读写图库）、"task"（注入组件读当前那条待办）。' +
+            '要申请的宿主能力，目前可写："gallery"（读写图床）、"task"（注入组件读当前那条待办）。' +
             "源码里用了 gallery.* / task.get 就必须在这里声明，否则试跑会被拒",
           items: S({ type: "string" }),
         }),

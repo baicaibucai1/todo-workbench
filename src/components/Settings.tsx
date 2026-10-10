@@ -146,14 +146,14 @@ export default function Settings() {
     // 那些文件会永远留在磁盘上、也没有任何记录指向它们。
     // 顺序反了就是"删了数据但没删文件"，而且悄无声息。
     //
-    // 图库和附件**共用同一个内容寻址仓库**（同一份字节只存一份），
+    // 图床和附件**共用同一个内容寻址仓库**（同一份字节只存一份），
     // 所以两边都要收，并用 Set 去重 —— 否则同一路径会被删两次
     // （第二次返回 false，白记一次"没删掉"的日志）。
     const files = [
       ...new Set(
         [
           ...(await repo.fetchAllAttachments()).map((a) => a.relPath),
-          ...(await repo.fetchAllGallery()).map((g) => g.relPath),
+          ...(await repo.fetchAllImagebed()).map((g) => g.relPath),
         ].filter((p): p is string => !!p),
       ),
     ];
