@@ -422,12 +422,12 @@ await page.waitForTimeout(600);
 await page.locator('button[data-section="tools"]').click();
 await page.waitForTimeout(500);
 
-// 5 = image-crop / size-chart / ai-gen / scratchpad / notes。
+// 6 = image-crop / size-chart / ai-gen / scratchpad / notes / abnormal-ticket。
 // 五子棋不算：它是 tests/fixtures/gomoku/ 下的编写标准样本，不是产品里的工具。
 // 再加内置工具时这里要跟着改 —— 写死数字是为了让"多出一个陌生工具"能被立刻发现，
 // 而不是悄无声息地出现在用户的侧边栏里。
 const toolRows = await page.locator("[data-tool-row]").count();
-check("设置里列出了全部工具", toolRows === 5, String(toolRows));
+check("设置里列出了全部工具", toolRows === 6, String(toolRows));
 check("每个工具一行（图片裁剪）", (await page.locator("[data-tool-row='image-crop']").count()) === 1);
 check(
   "标了来源：内置",

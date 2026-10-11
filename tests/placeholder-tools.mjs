@@ -104,11 +104,11 @@ check(
 // （连带那个曾经叫「特殊单号记录」的占位工具一起）。
 const toolCount = await page.locator('aside [data-nav^="tool:"]').count();
 info("工具数", toolCount);
-// 4 = image-crop / size-chart / ai-gen / notes。
+// 5 = image-crop / size-chart / ai-gen / notes / abnormal-ticket。
 // 不算「模板」（scratchpad）：它是给写工具的人照抄的样板，默认停用，
 // 要的人自己去 设置 → 工具 里打开。
 // 写死数字是故意的：多出一个陌生工具时能立刻被抓到，而不是悄悄挂上用户的侧边栏。
-check("工具区正好四个工具", toolCount === 4, String(toolCount));
+check("工具区正好五个工具", toolCount === 5, String(toolCount));
 check("初始无控制台错误", errors.length === 0, errors.slice(0, 3).join(" | "));
 
 // 越界防护：工具只能发裸表名，宿主强制拼前缀 ——

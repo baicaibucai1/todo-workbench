@@ -195,6 +195,47 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     author: "内置",
     capabilities: ["gallery"],
   },
+  {
+    // 异常单号登记：登记 → 看 → 推进状态 → 删 的闭环，数据落在自己的私有表里
+    // （tool_abnormal_ticket_tickets），与 core_tasks 和别的工具物理隔开。
+    //
+    // 与上面「模板」的区别要说清楚，否则容易被当成两个重复的东西：
+    //   · 模板（scratchpad）是**教学样板**，定位是"工具怎么写"，默认停用；
+    //   · 这个是**给用户用的功能**，为某个具体业务（异常单）量身做的。
+    // 两者都用自己的私有表，表名按 id 隔离，互不干扰。
+    id: "abnormal-ticket",
+    name: "异常单号登记",
+    version: "0.3.0",
+    description:
+      "登记异常单号：记下订单号、异常内容、类型、等级与处理状态，可一键呼起拼多多商家客户端打开那张订单。数据存在工具自己的表里，与待办数据互不干扰",
+    // receipt（单据）已在 icons.ts 白名单里；写错会静默退回包裹图标
+    icon: "receipt",
+    entry: "index.html",
+    dbVersion: 2,
+    author: "内置",
+    schema: {
+      tables: [
+        {
+          name: "tickets",
+          columns: [
+            { name: "id", type: "text", pk: true },
+            { name: "code", type: "text" },
+            { name: "order_sn", type: "text" },
+            { name: "title", type: "text" },
+            { name: "category", type: "text" },
+            { name: "level", type: "text" },
+            { name: "status", type: "text" },
+            { name: "reporter", type: "text" },
+            { name: "occurred_at", type: "text" },
+            { name: "note", type: "text" },
+            { name: "created_at", type: "text" },
+            { name: "updated_at", type: "text" },
+          ],
+          indexes: [{ columns: ["created_at"] }],
+        },
+      ],
+    },
+  },
   // 这里**没有五子棋**，是故意的。
   //
   // 它是《单 HTML 工具编写标准》的活样本，当初为了验证「AI 能不能自己写出

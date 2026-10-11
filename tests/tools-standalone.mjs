@@ -300,7 +300,343 @@ console.log("\n=== 5. AI 生成 ai-gen ===");
 }
 
 /* ==================================================================
- * 6. 深浅色：独立打开时跟系统走
+ * 6. 异常单号登记（abnormal-ticket）
+ *
+ * 它跟上面几个的区别：那几个是"编辑器 / 生成器"，它是一份**登记台账**。
+ * 界面分「登记」与「查看」两个页签，查看页是左右分栏（左列表 / 右详情+处理区）。
+ * 所以这里验的重点是：
+ *   · 一条记录能不能走完 登记 → 找到它 → 处理 → 删 这条闭环；
+ *   · 分栏是不是真的分了（左右并排，不是堆着）；
+ *   · 右栏的处理备注**边打边存**，刷新后还在；
+ *   · 独立态下这些全都落 localStorage。
+ * ================================================================== */
+console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
+{
+  await expectCommon("abnormal-ticket", "异常单号", "file");
+  await wipeLocal("abnormal-ticket");
+  await openStandalone("abnormal-ticket", "file");
+
+  /* ---------- 登记页 ---------- */
+  const boot = await page.evaluate(() => ({
+    createVisible: !document.getElementById("view-create").hidden,
+    browseHidden: document.getElementById("view-browse").hidden,
+  }));
+  check("异常单：默认停在「登记」页", boot.createVisible && boot.browseHidden, JSON.stringify(boot));
+
+  // 只填内容与订单号，单号留空 —— 该自动生成 YC-<当日>-<三位序号>
+  await page.fill("#title", "来料尺寸超差");
+  await page.fill("#orderSn", "261011-442394294633154");
+  await page.waitForTimeout(250);
+
+  /* 订单号格式提示（就在登记页验，因为登记完输入框会清空）。
+     真·拼多多单号是 YYMMDD-数字，前 6 位 = 下单日期 —— 规则来自用户的 make-url.mjs。 */
+  const snHint = await page.evaluate(() => {
+    const el = document.getElementById("snHint");
+    return { text: el ? el.textContent : "(没有)", cls: el ? el.className : "" };
+  });
+  check("异常单：订单号合形状时提示里给出下单日期",
+    /下单日期/.test(snHint.text) && /2026/.test(snHint.text), snHint.text);
+  check("异常单：合形状的提示走「正常」色（不是警告色）",
+    /\bok\b/.test(snHint.cls) && !/\bbad\b/.test(snHint.cls), snHint.cls);
+
+  await page.click("#add");
+  await page.waitForTimeout(500);
+
+  const stayed = await page.evaluate(() => ({
+    on: !document.getElementById("view-create").hidden,
+    cleared: document.getElementById("title").value === "",
+    codeHint: document.getElementById("codeHint").textContent,
+  }));
+  check("异常单：登记后留在登记页（现场录单是一条接一条）", stayed.on === true, String(stayed.on));
+  check("异常单：登记后清空了内容输入框", stayed.cleared === true, String(stayed.cleared));
+
+  /* ---------- 查看页：左右分栏 ---------- */
+  await page.click("#tab-browse");
+  await page.waitForTimeout(400);
+
+  const split = await page.evaluate(() => {
+    const left = document.querySelector("#view-browse .pane-left");
+    const right = document.querySelector("#view-browse .pane-right");
+    if (!left || !right) return { both: false };
+    const lr = left.getBoundingClientRect();
+    const rr = right.getBoundingClientRect();
+    return {
+      both: true,
+      // 并排：两栏顶部齐平，且右栏确实在左栏右边（不是换行堆在下面）
+      sideBySide: Math.abs(lr.top - rr.top) < 40 && rr.left >= lr.left + lr.width - 4,
+      widths: [Math.round(lr.width), Math.round(rr.width)],
+    };
+  });
+  check("异常单：查看页是左右分栏（右栏在左栏右边，不是堆在下面）",
+    split.both === true && split.sideBySide === true, JSON.stringify(split));
+
+  const list = await page.evaluate(() => ({
+    cards: document.querySelectorAll(".ticket").length,
+    code: (document.querySelector(".ticket .code") || {}).textContent || "",
+    badge: (document.querySelector(".ticket .badge") || {}).textContent || "",
+    stats: (document.getElementById("stats").textContent || "").replace(/\s+/g, " "),
+    meta: document.getElementById("meta").textContent,
+  }));
+  check("异常单：列表里能看到刚登记的那条", list.cards === 1, `cards=${list.cards}`);
+  check("异常单：单号按格式自动生成", /^YC-\d{8}-\d{3}$/.test(list.code), list.code);
+  check("异常单：新登记的默认是「待处理」", list.badge === "待处理", list.badge);
+  check("异常单：统计条跟着动了", /待处理\s*1/.test(list.stats), list.stats);
+  check("异常单：副标题说清了数据存在浏览器里", /浏览器|localStorage/.test(list.meta), list.meta);
+
+  /* ---------- 右栏：详情 + 处理区 ---------- */
+  const detail = await page.evaluate(() => ({
+    code: (document.querySelector("#detail .d-code") || {}).textContent || "",
+    title: (document.querySelector("#detail .d-title") || {}).textContent || "",
+    hasNote: !!document.getElementById("d-note"),
+    act: (document.querySelector('#detail button[data-act="advance"]') || {}).textContent || "",
+    selCount: document.querySelectorAll('.ticket[aria-selected="true"]').length,
+  }));
+  check("异常单：右栏默认选中第一条并显示它的详情",
+    detail.code === list.code && /来料尺寸超差/.test(detail.title), JSON.stringify(detail));
+  check("异常单：左栏那一行被标成选中态", detail.selCount === 1, String(detail.selCount));
+  check("异常单：右栏有处理区（处理情况输入框）", detail.hasNote === true, String(detail.hasNote));
+  check("异常单：处理按钮文字跟着状态走", detail.act === "开始处理", detail.act);
+
+  /* ---------- 订单号 + 呼起本地客户端 ----------
+   * 这块的核心是**链接拼得对不对**：少一个参数、拼接顺序错了，
+   * 客户端那边就是"什么都没发生"，而那是最难查的症状。
+   * 所以断言拿的是按钮 title 里的整条 URL，逐字符比对。 */
+  const client = await page.evaluate(() => {
+    const btn = document.querySelector('#detail button[data-act="open-client"]');
+    return {
+      hasBtn: !!btn,
+      title: btn ? btn.getAttribute("title") : "",
+      detailText: document.getElementById("detail").innerText || "",
+      cfgHint: (document.getElementById("cfgHint") || {}).textContent || "",
+    };
+  });
+  check("异常单：详情里显示订单号", client.detailText.indexOf("261011-442394294633154") >= 0,
+    String(client.detailText.indexOf("261011-442394294633154") >= 0));
+  check("异常单：右栏给出「呼起客户端」按钮", client.hasBtn === true, String(client.hasBtn));
+  check("异常单：呼起链接拼对了（协议 + OpeId + mallcsid + ordersn）",
+    client.title === "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_671782974&ordersn=261011-442394294633154",
+    client.title);
+  check("异常单：客服 ID 有默认值（取 make-url.mjs 那个）", /cs_671782974/.test(client.cfgHint), client.cfgHint);
+
+  /* 列表行里也要能直接呼起 —— 用户要的是"每一个单号都能一键唤醒"，
+     不用先选中再点右栏。点行里的「↗」不该改变右栏选中的那条。 */
+  const rowWake = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll(".ticket")];
+    const withSn = rows.filter((r) => r.querySelector('button[data-act="open-client"]'));
+    const btn = withSn[0] ? withSn[0].querySelector('button[data-act="open-client"]') : null;
+    return {
+      total: rows.length,
+      withBtn: withSn.length,
+      sn: btn ? btn.getAttribute("data-sn") : "",
+      title: btn ? btn.getAttribute("title") : "",
+      text: btn ? btn.textContent.trim() : "",
+    };
+  });
+  check("异常单：有订单号的行里直接挂着「↗」呼起按钮",
+    rowWake.total === 1 && rowWake.withBtn === 1 && rowWake.text === "↗", JSON.stringify(rowWake));
+  check("异常单：行里的「↗」带的单号就是这一条的",
+    rowWake.sn === "261011-442394294633154", rowWake.sn);
+  check("异常单：行里「↗」的 title 说清了会打开哪一单",
+    rowWake.title.indexOf("261011-442394294633154") >= 0, rowWake.title);
+
+  // 点行里的「↗」→ 不改右栏选中（扫单时不该打乱正在处理的那条）。
+  //
+  // ⚠️ 点这个按钮会走 openClient()：它造一个 <a href="pddim:…"> 再 .click()，
+  // 也就是**真的去拉系统里的拼多多商家版**。测试不该真拉，而且 headless 下
+  // 那一次外部协议跳转会让之后所有 Playwright 坐标点击失灵（报"成功"但事件不到）。
+  // 所以把 <a>.click 临时换成空操作 —— 事件链照走（能验"不改选中"），系统不被惊动。
+  const beforeSel = await page.evaluate(() =>
+    (document.querySelector('.ticket[aria-selected="true"] .code') || {}).textContent || "");
+  await page.evaluate(() => {
+    window.__realAnchorClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () { /* 测试桩：不真跳协议 */ };
+  });
+  await page.click('.ticket button[data-act="open-client"]');
+  await page.waitForTimeout(500);
+  const wakeRan = await page.evaluate(() => {
+    const t = document.querySelector(".toast, #toast");
+    return t ? t.textContent : "";
+  });
+  await page.evaluate(() => { HTMLAnchorElement.prototype.click = window.__realAnchorClick; });
+  check("异常单：点行里「↗」确实走到呼起那一步（给了提示）", /呼起/.test(wakeRan), wakeRan);
+  const afterSel = await page.evaluate(() => ({
+    sel: (document.querySelector('.ticket[aria-selected="true"] .code') || {}).textContent || "",
+    selCount: document.querySelectorAll('.ticket[aria-selected="true"]').length,
+  }));
+  check("异常单：点行里「↗」不改右栏选中的那条",
+    afterSel.sel === beforeSel && afterSel.selCount === 1, JSON.stringify({ beforeSel, ...afterSel }));
+
+  /* ---------- 右栏也给出这条单号的说明 ---------- */
+  const detailSnHint = await page.evaluate(() => {
+    const el = document.querySelector("#detail .snhint");
+    return el ? el.textContent : "(没有)";
+  });
+  check("异常单：右栏也给出了这条单号的说明", /下单日期/.test(detailSnHint), detailSnHint);
+
+  // 换成别的客服 ID，链接要跟着变（换店铺/换客服时用得上）。
+  // 配置藏在登记页的折叠区里，所以要先切回去、再把它展开。
+  await page.click("#tab-create");
+  await page.evaluate(() => { document.getElementById("clientBox").open = true; });
+  await page.fill("#mallcsid", "cs_999999999");
+  await page.click("#saveCfg");
+  await page.waitForTimeout(400);
+  await page.click("#tab-browse");
+  await page.waitForTimeout(300);
+  const cfg2 = await page.evaluate(() => {
+    const btn = document.querySelector('#detail button[data-act="open-client"]');
+    return { title: btn ? btn.getAttribute("title") : "", hint: (document.getElementById("cfgHint") || {}).textContent || "" };
+  });
+  check("异常单：改客服 ID 后链接跟着变",
+    cfg2.title === "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_999999999&ordersn=261011-442394294633154",
+    cfg2.title);
+
+  // 处理备注边打边存
+  await page.fill("#d-note", "已通知供应商，等回料复检");
+  await page.waitForTimeout(1300);
+  const savedTip = await page.evaluate(() => (document.getElementById("d-saved") || {}).textContent || "");
+  check("异常单：处理情况自动保存了", /已保存/.test(savedTip), savedTip);
+
+  /* ---------- 刷新：靠 localStorage 落住 ---------- */
+  await openStandalone("abnormal-ticket", "file");
+  await page.click("#tab-browse");
+  await page.waitForTimeout(400);
+  const afterReload = await page.evaluate(() => ({
+    cards: document.querySelectorAll(".ticket").length,
+    code: (document.querySelector(".ticket .code") || {}).textContent || "",
+    note: (document.getElementById("d-note") || {}).value || "",
+    hasOrderSn: (document.getElementById("detail").innerText || "").indexOf("261011-442394294633154") >= 0,
+    cfg: (document.getElementById("mallcsid") || {}).value || "",
+  }));
+  check("异常单：刷新后单号还在（真的落盘了）",
+    afterReload.cards === 1 && afterReload.code === list.code,
+    `${afterReload.cards} 张 / ${afterReload.code}`);
+  check("异常单：处理情况也还在（备注真的落盘了）",
+    /已通知供应商/.test(afterReload.note), afterReload.note.slice(0, 24));
+  check("异常单：订单号刷新后也还在（是存进表里的，不是内存）",
+    afterReload.hasOrderSn === true, String(afterReload.hasOrderSn));
+  check("异常单：改过的客服 ID 刷新后还在（独立态落 localStorage）",
+    afterReload.cfg === "cs_999999999", afterReload.cfg);
+
+  /* ---------- 状态推进（在右栏处理区点） ---------- */
+  await page.click('#detail button[data-act="advance"]');
+  await page.waitForTimeout(500);
+  const s1 = await page.evaluate(() => (document.querySelector("#detail .d-head .badge") || {}).textContent);
+  check("异常单：右栏推进到「处理中」", s1 === "处理中", String(s1));
+
+  await page.click('#detail button[data-act="advance"]');
+  await page.waitForTimeout(500);
+  const s2 = await page.evaluate(() => {
+    const item = document.querySelector(".ticket");
+    const btn = document.querySelector('#detail button[data-act="advance"]');
+    return {
+      badge: (document.querySelector("#detail .d-head .badge") || {}).textContent || "",
+      listStruck: item ? item.className.indexOf("s-done") >= 0 : false,
+      act: (btn || {}).textContent || "",
+      noteKept: (document.getElementById("d-note") || {}).value || "",
+    };
+  });
+  check("异常单：再推进到「已关闭」", s2.badge === "已关闭", s2.badge);
+  check("异常单：左栏那一行也跟着变成关闭样式", s2.listStruck === true, String(s2.listStruck));
+  check("异常单：关闭后按钮变成「重新打开」", s2.act === "重新打开", s2.act);
+  check("异常单：推进状态没有把处理情况弄丢", /已通知供应商/.test(s2.noteKept), s2.noteKept.slice(0, 24));
+
+  /* ---------- 搜索：筛掉的是显示，不是数据 ---------- */
+  await page.fill("#search", "这个关键词不存在");
+  await page.waitForTimeout(300);
+  const none = await page.evaluate(() => document.querySelectorAll(".ticket").length);
+  check("异常单：搜不到时列表空着", none === 0, String(none));
+  await page.fill("#search", "");
+  await page.waitForTimeout(300);
+  const back = await page.evaluate(() => document.querySelectorAll(".ticket").length);
+  check("异常单：清掉搜索又回来了（数据没被筛掉）", back === 1, String(back));
+
+  /* ---------- 删除（右栏） ---------- */
+  await page.click('#detail button[data-act="del"]');
+  await page.waitForTimeout(500);
+  const afterDel = await page.evaluate(() => ({
+    cards: document.querySelectorAll(".ticket").length,
+    detailText: document.getElementById("detail").textContent || "",
+  }));
+  check("异常单：删除也生效", afterDel.cards === 0, String(afterDel.cards));
+  check("异常单：删掉后右栏回到空态（不挂着刚删的那条）",
+    /从左边挑一条|还没有登记过/.test(afterDel.detailText), afterDel.detailText.slice(0, 30));
+
+  /* ---------- 没填订单号 → 呼起按钮该禁用 ----------
+     不要给一个"能点、但点了什么都不发生"的按钮 —— 那比藏起来更难查。 */
+  await page.click("#tab-create");
+  await page.fill("#title", "没订单号的异常");
+  await page.click("#add");
+  await page.waitForTimeout(400);
+  await page.click("#tab-browse");
+  await page.waitForTimeout(300);
+  await page.click(".ticket");               // 第一行 = 最新那条（列表按登记时间倒序）
+  await page.waitForTimeout(300);
+  const noSn = await page.evaluate(() => {
+    const open = document.querySelector('#detail button[data-act="open-client"]');
+    const any = document.querySelector("#detail .client-row button");
+    return { hasOpen: !!open, disabled: any ? any.disabled : null, text: any ? any.textContent.trim() : "" };
+  });
+  check("异常单：没填订单号时「呼起客户端」是禁用的",
+    noSn.hasOpen === false && noSn.disabled === true, JSON.stringify(noSn));
+
+  /* ---------- 格式存疑的单号 ----------
+     用户桌面 pdd-launcher 里真有一条「订单-格式存疑-6055793709660380.url」：
+     一长串纯数字，不是 YYMMDD-数字 那个形状。客户端会弹起来、但定位不到那张单 ——
+     最难的正是这种"看着成功了其实没有"，所以：
+       ① 输入时就给警告  ② 行里的「↗」照给（点了会弹，只是可能定位不到）
+  */
+  await page.click("#tab-create");
+  await page.fill("#title", "格式存疑的单号");
+  await page.fill("#orderSn", "6055793709660380");
+  await page.waitForTimeout(250);
+  const weirdHint = await page.evaluate(() => {
+    const el = document.getElementById("snHint");
+    return { text: el ? el.textContent : "", cls: el ? el.className : "" };
+  });
+  check("异常单：单号不合形状时提示说「格式存疑」", /格式存疑/.test(weirdHint.text), weirdHint.text);
+  check("异常单：不合形状的提示走警告色", /\bbad\b/.test(weirdHint.cls), weirdHint.cls);
+
+  await page.click("#add");
+  await page.waitForTimeout(450);
+  const weirdAfterAdd = await page.evaluate(() => ({
+    hint: (document.getElementById("snHint") || {}).textContent || "",
+    snCleared: (document.getElementById("orderSn") || {}).value === "",
+  }));
+  check("异常单：登记后格式提示跟着清掉",
+    weirdAfterAdd.hint === "" && weirdAfterAdd.snCleared === true, JSON.stringify(weirdAfterAdd));
+
+  await page.click("#tab-browse");
+  await page.waitForTimeout(400);
+  // 选中有问题的那条，顺便看右栏的提示
+  await page.evaluate(() => {
+    const rows = [...document.querySelectorAll(".ticket")];
+    const hit = rows.find((r) => r.querySelector('button[data-act="open-client"][data-sn="6055793709660380"]'));
+    if (hit) hit.click();
+  });
+  await page.waitForTimeout(400);
+  const weirdRow = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll(".ticket")];
+    const hit = rows.find((r) => r.querySelector('button[data-act="open-client"][data-sn="6055793709660380"]'));
+    return {
+      hasBtn: !!hit,
+      title: hit ? hit.querySelector("button").getAttribute("title") : "",
+      detailBad: !!document.querySelector("#detail .snhint.bad"),
+    };
+  });
+  check("异常单：格式存疑的那条照样有「↗」（客户端会弹，只是可能定位不到）",
+    weirdRow.hasBtn === true, JSON.stringify(weirdRow));
+  check("异常单：那条的按钮 title 里提醒了格式问题",
+    /格式存疑|定位不到/.test(weirdRow.title), weirdRow.title);
+  check("异常单：选中它时右栏也给警告（不是只在登记页说）",
+    weirdRow.detailBad === true, String(weirdRow.detailBad));
+
+  await wipeLocal("abnormal-ticket");
+
+  await expectCommon("abnormal-ticket", "异常单号", "http");
+}
+
+/* ==================================================================
+ * 7. 深浅色：独立打开时跟系统走
  *
  * 独立态没有宿主推主题，只能看 prefers-color-scheme。这里强制两种配色
  * 各开一遍，然后**按面积**算底色到底翻没翻过来 ——
@@ -309,7 +645,7 @@ console.log("\n=== 5. AI 生成 ai-gen ===");
  *
  * 判据是两头的占比，不是具体色值：色值会随设计变，占比不会。
  * ================================================================== */
-console.log("\n=== 6. 深浅色（独立打开跟系统走）===");
+console.log("\n=== 7. 深浅色（独立打开跟系统走）===");
 
 const THEME_TOOLS = [
   ["image-crop", "图片裁剪"],
@@ -317,6 +653,7 @@ const THEME_TOOLS = [
   ["scratchpad", "模板"],
   ["notes", "便签"],
   ["ai-gen", "AI 生成"],
+  ["abnormal-ticket", "异常单号"],
 ];
 
 /**

@@ -74,6 +74,45 @@ const SUITES = [
 const rows = [];
 
 /**
+ * 快速通道：日常改完代码先跑这几个，约 2 分钟；全量留给提交前 / 发版前。
+ *
+ * 入选标准是「坏起来最要命、且能挡住别人」：
+ *   task-detail    选中浮起 / 详情与列表同源 / 分区排序 —— 核心交互
+ *   daily-settings 「我的一天」分组与设置持久化 —— 曾经因为夹具种错源红过 4 条，
+ *                  它是"数据没种对"这类静默失败的第一个报警器
+ *   task-drag      列表内拖拽 + 排序开关 —— 新功能，且会牵动 sort_order 全库共用的那列
+ *   todo-extras    行内展开子任务 —— 行内布局改动最容易碰坏的
+ *
+ * ⚠️ 它**不替代** npm run smoke / sync:test / agent:test（那是数据层，另跑）。
+ */
+const QUICK = ["task-detail.mjs", "task-drag.mjs", "daily-settings.mjs", "todo-extras.mjs"];
+
+const argv = process.argv.slice(2);
+let suites = SUITES;
+if (argv.includes("--quick")) {
+  const want = new Set(QUICK);
+  suites = SUITES.filter(([f]) => want.has(f));
+} else if (argv.includes("--list")) {
+  for (const [f] of SUITES) console.log(f);
+  process.exit(0);
+} else {
+  // `--only a b` 或直接写位置参数（按子串匹配，可写 task 这种前缀）
+  const onlyIdx = argv.indexOf("--only");
+  const only = (onlyIdx >= 0 ? argv.slice(onlyIdx + 1) : argv).filter((a) => !a.startsWith("--"));
+  if (only.length) suites = SUITES.filter(([f]) => only.some((o) => f.includes(o)));
+}
+
+if (suites.length === 0) {
+  console.error(`没有匹配的套件。可用 --list 看全部 ${SUITES.length} 个。`);
+  process.exit(1);
+}
+console.log(
+  suites.length === SUITES.length
+    ? `全量：${suites.length} 个套件\n`
+    : `只跑 ${suites.length} 个套件（共 ${SUITES.length} 个）：${suites.map(([f]) => f).join(", ")}\n`,
+);
+
+/**
  * 套件之间的喘息时间。
  *
  * 上一个套件的 Edge 进程不是 close() 一返回就彻底消失的；紧接着拉起下一个时，
@@ -83,7 +122,7 @@ const rows = [];
  */
 const settle = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-for (const [file, args] of SUITES) {
+for (const [file, args] of suites) {
   const t0 = Date.now();
   const r = spawnSync(process.execPath, [`tests/${file}`, ...args], {
     encoding: "utf8",

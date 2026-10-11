@@ -1,0 +1,1086 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>异常单号登记</title>
+<!-- 内联 favicon：不写的话浏览器会去要 /favicon.ico，控制台留一条 404 红字 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23EA580C'/%3E%3Cstop offset='1' stop-color='%23FACC15'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='1' y='1' width='30' height='30' rx='6.6' fill='url(%23g)'/%3E%3Crect x='4' y='4.7' width='24' height='22.6' rx='4.4' fill='%23fff'/%3E%3Cpath d='M9 12h14M9 16.4h14M9 20.8h7' stroke='%23D9480F' stroke-width='2.4' stroke-linecap='round'/%3E%3Ccircle cx='24.4' cy='23.4' r='4.4' fill='%23D9480F'/%3E%3Cpath d='M24.4 21.3v2.9' stroke='%23fff' stroke-width='1.7' stroke-linecap='round'/%3E%3Ccircle cx='24.4' cy='25.7' r='.9' fill='%23fff'/%3E%3C/svg%3E" />
+<!--
+  异常单号登记。
+
+  界面分两块，靠顶部两个页签切：
+    · 登记 —— 只干一件事：把一条异常快速录进去（连续录入不被别的东西打断）
+    · 查看 —— 左右分栏：左边是单号列表（找），右边是选中那条的详情 + 处理区（办）
+
+  为什么把「看」和「办」放在同一屏：异常单的日常动作是"对着一条单子看情况、改状态、
+  写处理备注"，来回跳页面是最烦的。列表只负责"找到它"，其余都在右栏完成。
+
+  数据层见文末说明：manifest 里声明了一张私有表 tickets，宿主建在
+  tool_abnormal_ticket_tickets 命名空间下 —— 跟待办和别的工具物理隔开。
+  脱离工作台单独打开也能用（数据落浏览器本地）。约定见
+  docs/tool-authoring-and-injection.md「独立运行这一档」。
+-->
+<style>
+  :root {
+    --bg: #ffffff; --fg: #2c2c2a; --fg2: #5f5e5b; --dim: #918f89;
+    --line: #e6e4dd; --chip: #f2f0ea; --accent: #378add; --danger: #a32d2d;
+    --ok: #2f9e63; --warn: #c9820b;
+    --sel: #eef4fe;                     /* 列表选中行的底色 */
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+    color-scheme: light;
+  }
+  html[data-theme="dark"] {
+    --bg: #1c1c1a; --fg: #e8e6e0; --fg2: #b3b0a8; --dim: #8a8780;
+    /* ★ 边框在浅色里比面板暗、在深色里必须比面板亮，否则整条线消失 */
+    --line: #35342f; --chip: #2a2925; --accent: #5b9de8; --danger: #e07272;
+    --ok: #4ec78a; --warn: #e0b458;
+    --sel: #24303f;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; overflow: hidden;
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column;
+  }
+  /* ★ 约定之二：宿主专属的控件标 data-host-only，靠这两条 CSS 藏。
+     不能靠 el.hidden —— 作者样式里的 display:inline-flex / flex 会盖掉
+     浏览器默认的 [hidden]{display:none}，控件会照常露在界面上。 */
+  body:not([data-bind-state="bound"]) [data-host-only],
+  body:not([data-gallery="on"]) [data-host-gallery] { display: none !important; }
+
+  /* 页签切换同理：作者样式里有 display:flex，所以这条 !important 不能省 */
+  .view[hidden] { display: none !important; }
+
+  input, select, textarea {
+    font: inherit; color: var(--fg); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px;
+  }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+  input::placeholder, textarea::placeholder { color: var(--dim); }
+  button {
+    font: inherit; border-radius: 7px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--fg); padding: 7px 13px; cursor: pointer; white-space: nowrap;
+  }
+  button:hover { background: var(--chip); }
+  button.primary { background: var(--accent); border-color: transparent; color: #fff; }
+  button.primary:hover { filter: brightness(1.06); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.tiny { padding: 3px 9px; font-size: 12px; border-radius: 6px; }
+  button.danger { color: var(--danger); }
+
+  /* ---- 顶部 ---- */
+  .top { padding: 14px 20px 0; max-width: 1120px; width: 100%; margin: 0 auto; }
+  .head { display: flex; align-items: center; gap: 10px; }
+  h1 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
+  /* ★ 约定之一：宿主状态位。四态文案由 JS 填 */
+  .host-dot {
+    display: inline-flex; align-items: center; gap: 5px; margin-left: auto;
+    font-size: 11.5px; color: var(--dim); white-space: nowrap;
+  }
+  .host-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+  .host-dot.ok::before { background: var(--ok); }
+  .host-dot.warn::before { background: var(--warn); }
+  .sub { color: var(--dim); font-size: 12px; }
+
+  .tabs { display: flex; gap: 4px; margin: 12px 0 0; border-bottom: 1px solid var(--line); }
+  .tabs button {
+    border: none; background: none; border-radius: 6px 6px 0 0; padding: 7px 14px 8px;
+    color: var(--dim); border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tabs button:hover { background: var(--chip); color: var(--fg2); }
+  .tabs button[aria-selected="true"] { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
+
+  /* ---- 主体 ---- */
+  .body { flex: 1; min-height: 0; max-width: 1120px; width: 100%; margin: 0 auto; padding: 12px 20px 16px; display: flex; }
+  .view { flex: 1; min-height: 0; display: flex; }
+  #view-create { display: block; overflow-y: auto; }
+
+  /* ---- 登记 ---- */
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .card h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--fg2); }
+  .r { display: flex; gap: 8px; flex-wrap: wrap; }
+  .r + .r, .r + input, input + .r { margin-top: 8px; }
+  .r > .grow { flex: 1 1 220px; min-width: 0; }
+  #code, #orderSn { flex: 1 1 200px; font-family: var(--mono); font-size: 13px; }
+  /* 订单号 + 它下面那条格式提示要捆在一起：提示得贴在订单号框正下方，
+     不能横铺一整行 —— 那样看着像在说左边的「异常单号」。 */
+  .r-sn { align-items: flex-start; }
+  .snwrap { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; }
+  .snwrap > #orderSn { flex: 0 0 auto; width: 100%; }
+  .snwrap .hint { margin-top: 4px; }
+  #category { flex: 0 0 104px; }
+  #level { flex: 0 0 88px; }
+  #title { width: 100%; }
+  #reporter { flex: 1 1 120px; }
+  #occurred { flex: 0 0 150px; }
+  #mallcsid { flex: 1 1 220px; font-family: var(--mono); font-size: 13px; }
+  .hint { color: var(--dim); font-size: 11.5px; margin-top: 8px; }
+  .hint code, .cfg-note code { font-family: var(--mono); color: var(--fg2); }
+  .cfg-note { color: var(--dim); font-size: 11.5px; margin: 0 0 8px; }
+
+  /* ---- 查看：左右分栏 ---- */
+  #view-browse { gap: 12px; }
+  .pane-left { flex: 0 0 306px; min-width: 0; display: flex; flex-direction: column; }
+  .pane-right { flex: 1 1 auto; min-width: 0; border-left: 1px solid var(--line); padding-left: 14px; display: flex; flex-direction: column; }
+  .filters { display: flex; gap: 6px; margin-bottom: 8px; }
+  #search { flex: 1 1 auto; min-width: 0; }
+  #filter { flex: 0 0 104px; }
+  .stats { color: var(--dim); font-size: 11.5px; margin-bottom: 6px; }
+  .stats b { color: var(--fg2); font-weight: 600; }
+  .list { flex: 1; overflow-y: auto; min-height: 0; }
+
+  .ticket { border: 1px solid transparent; border-left-width: 3px; border-radius: 8px; padding: 7px 9px; cursor: pointer; }
+  .ticket + .ticket { margin-top: 2px; }
+  .ticket:hover { background: var(--chip); }
+  .ticket[aria-selected="true"] { background: var(--sel); border-color: var(--line); border-left-color: var(--accent); }
+  .ticket .l1 { display: flex; align-items: center; gap: 7px; }
+  .ticket .code { font-family: var(--mono); font-size: 12.5px; font-weight: 600; letter-spacing: .2px; }
+  .ticket .title { margin-top: 1px; font-size: 12.5px; color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ticket .when { margin-left: auto; color: var(--dim); font-size: 11px; white-space: nowrap; flex: 0 0 auto; }
+  .ticket.s-done .code, .ticket.s-done .title { color: var(--dim); }
+
+  /* 行内「↗」：有订单号才有。平时压暗（不喧宾夺主），指到行上或选中时提亮。
+     点它 = 直接呼起客户端，不会改右栏选中的那条 —— 扫单时一条条点着走。 */
+  .ticket .wake { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 18px; padding: 0; border-radius: 5px; font-size: 11px; line-height: 1;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg2); cursor: pointer; opacity: .55; }
+  .ticket:hover .wake, .ticket[aria-selected="true"] .wake { opacity: 1; }
+  .ticket .wake:hover { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+
+  /* 订单号格式提示：合形状的走「说明」，不合形状的走「警告」 */
+  .snhint.ok { color: var(--ok); }
+  .snhint.bad { color: var(--warn); }
+
+  .badge { font-size: 11px; border-radius: 5px; padding: 1px 6px; background: var(--chip); color: var(--fg2); white-space: nowrap; flex: 0 0 auto; }
+  .badge.wait { color: var(--warn); }
+  .badge.doing { color: var(--accent); }
+  .badge.done { color: var(--ok); }
+
+  /* ---- 右栏：详情 + 处理 ---- */
+  .detail { flex: 1; overflow-y: auto; min-height: 0; }
+  .d-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .d-code { font-family: var(--mono); font-size: 15px; font-weight: 600; letter-spacing: .2px; }
+  .d-title { margin: 8px 0 12px; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+  .kv { display: grid; grid-template-columns: 76px 1fr; gap: 5px 10px; font-size: 12.5px; }
+  .kv dt { color: var(--dim); }
+  .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .sect { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+  .sect > label { display: block; font-size: 12.5px; color: var(--fg2); margin-bottom: 6px; }
+  #d-note { width: 100%; min-height: 96px; resize: vertical; font-family: inherit; }
+  .client-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .d-ops { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+  .saved { color: var(--dim); font-size: 11.5px; margin-left: auto; }
+
+  .empty { color: var(--dim); font-size: 13px; text-align: center; margin: auto 0; padding: 0 10px; }
+  .empty code { font-family: var(--mono); color: var(--fg2); }
+
+  /* 窄一点就上下堆叠：左栏列表给固定高度，右栏接着往下 */
+  @media (max-width: 720px) {
+    #view-browse { flex-direction: column; }
+    .pane-left { flex: 0 0 42%; }
+    .pane-right { border-left: none; border-top: 1px solid var(--line); padding-left: 0; padding-top: 10px; }
+  }
+
+  #toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(8px);
+    background: var(--chip); color: var(--fg2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 14px; font-size: 12.5px; opacity: 0; transition: .18s; pointer-events: none; max-width: 80vw; }
+  #toast.on { opacity: 1; transform: translateX(-50%); }
+  details { margin-top: 10px; color: var(--dim); font-size: 12px; }
+  pre { background: var(--chip); padding: 8px 10px; border-radius: 7px; overflow-x: auto; font-size: 11.5px; color: var(--fg2); }
+</style>
+</head>
+<!-- data-bind-state 在 HTML 里就写上，别留"还没设"的空窗 -->
+<body data-bind-state="booting">
+<div class="top">
+  <div class="head">
+    <h1>异常单号登记</h1>
+    <span class="host-dot" id="hostState">连接中…</span>
+  </div>
+  <div class="sub" id="meta">连接中…</div>
+  <div class="tabs" role="tablist">
+    <button id="tab-create" data-tab="create" role="tab" aria-selected="true">登记</button>
+    <button id="tab-browse" data-tab="browse" role="tab" aria-selected="false">查看</button>
+  </div>
+</div>
+
+<div class="body">
+  <!-- ============ 一、登记 ============ -->
+  <section class="view" id="view-create">
+    <div class="card" style="max-width:640px">
+      <h2>登记一条异常</h2>
+      <div class="r r-sn">
+        <input id="code" placeholder="异常单号（留空自动生成）" />
+        <span class="snwrap">
+          <input id="orderSn" placeholder="订单号（粘贴拼多多单号，如 261010-257666640262557）" />
+          <span class="hint snhint" id="snHint"></span>
+        </span>
+      </div>
+      <div class="r">
+        <select id="category" title="异常类型"></select>
+        <select id="level" title="严重程度"></select>
+        <input id="reporter" placeholder="登记人" />
+        <input id="occurred" type="date" title="发生日期" />
+      </div>
+      <input id="title" placeholder="异常内容 —— 一句话说清发生了什么（必填）" />
+      <div class="r">
+        <button class="primary" id="add">登记</button>
+      </div>
+      <div class="hint" id="codeHint"></div>
+    </div>
+
+    <!-- 呼起本地客户端：靠自定义协议（pddim:…）把拼多多商家版拉起来并打开那张订单。
+         只有「客服 ID」是需要用户自己填的一次性配置，订单号是每条单自带的。 -->
+    <details style="max-width:640px" id="clientBox">
+      <summary>呼起本地客户端（拼多多商家版）</summary>
+      <p class="cfg-note" style="margin-top:8px">
+        点「呼起客户端」会打开 <code>pddim:sendmsg/?OpeId=open_order&amp;mallcsid=…&amp;ordersn=…</code>，
+        把本机的拼多多商家版拉起来并跳到你那条单。需要本机装了商家版客户端。
+      </p>
+      <p class="cfg-note">
+        <b>客服 ID</b>（<code>mallcsid</code>）在拼多多后台能看到，形如 <code>cs_671782974</code> ——
+        它是<b>按店铺/客服分的</b>，换店就得换一个。
+        <b>订单号</b>（<code>ordersn</code>）是每条单自带的，格式为 <code>YYMMDD-数字</code>。
+      </p>
+      <div class="r">
+        <input id="mallcsid" placeholder="客服 ID（cs_…）" />
+        <button id="saveCfg">保存</button>
+      </div>
+      <div class="hint" id="cfgHint"></div>
+    </details>
+
+    <details data-host-only style="max-width:640px">
+      <summary>这张表在数据库里是什么样</summary>
+      <pre id="schema">…</pre>
+    </details>
+  </section>
+
+  <!-- ============ 二、查看：左列表 / 右详情 ============ -->
+  <section class="view" id="view-browse" hidden>
+    <div class="pane-left">
+      <div class="filters">
+        <input id="search" placeholder="搜单号 / 内容 / 登记人" />
+        <select id="filter"></select>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="list" id="list"></div>
+    </div>
+    <div class="pane-right">
+      <div class="detail" id="detail"></div>
+    </div>
+  </section>
+</div>
+<div id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOOL_ID = "abnormal-ticket";     // 独立运行时的 localStorage 前缀要带它
+  var TOOL_SOURCE = "workbench-tool";
+  var HOST_SOURCE = "workbench-host";
+  var TABLE = "tickets";               // 裸表名，宿主会拼成 tool_abnormal_ticket_tickets
+
+  /* 这三组是"业务字典"。demo 阶段先写死，以后要改就改这里 —— 想做成可配置
+     的话，正好可以把它们放进 kv（kv 是给配置准备的，表是给记录准备的）。 */
+  var CATEGORIES = ["来料", "制程", "成品", "客诉", "其他"];
+  var LEVELS = ["轻微", "一般", "严重"];
+  var STATUSES = ["待处理", "处理中", "已关闭"];
+  var CODE_PREFIX = "YC";
+
+  var seq = 0;
+  var waiting = new Map();
+  var ctx = null;
+
+  /* ==================================================================
+   * 一、宿主状态机
+   * ------------------------------------------------------------------
+   *   booting    —— 开机，还不知道自己在哪
+   *   bound      —— 收到 tool:context（或 info 的回包），在工作台里
+   *   standalone —— 超时没等到，且 parent === window：独立打开
+   *   error      —— 超时没等到，但确实被嵌在某页里：桥没接上
+   * ================================================================== */
+  var LABEL = { booting: "连接中…", bound: "已连工作台", standalone: "独立运行", error: "未连接宿主" };
+  var state = "booting";
+
+  var settleResolve = null;
+  /** 状态落定（不再是 booting）时兑现，数据层要等它 */
+  var settle = new Promise(function (res) { settleResolve = res; });
+
+  function setState(next) {
+    state = next;
+    document.body.dataset.bindState = next;
+    paintHostDot();
+    showMeta();
+    if (next !== "booting" && settleResolve) { var r = settleResolve; settleResolve = null; r(); }
+  }
+
+  function paintHostDot() {
+    var dot = document.getElementById("hostState");
+    if (!dot) return;
+    dot.textContent = LABEL[state] || state;
+    dot.className = "host-dot" + (state === "bound" ? " ok" : state === "booting" ? "" : " warn");
+  }
+
+  /** 只在连着宿主时才发请求；独立态发出去也只会等到超时 */
+  function bound() { return state === "bound"; }
+
+  /* ================= 与宿主通信 ================= */
+
+  function call(op, payload) {
+    var id = "r" + ++seq;
+    return new Promise(function (resolve, reject) {
+      waiting.set(id, { resolve: resolve, reject: reject });
+      parent.postMessage({ source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} }, "*");
+      setTimeout(function () {
+        if (waiting.delete(id)) reject(new Error("宿主没有回应（" + op + "）"));
+      }, 10000);
+    }).then(function (res) {
+      if (!res.ok) throw new Error(String(res.error || "宿主拒绝了这次请求"));
+      return res.data;
+    });
+  }
+
+  window.addEventListener("message", function (e) {
+    var m = e.data;
+    if (!m || m.source !== HOST_SOURCE) return;
+
+    if (m.type === "tool:response") {
+      var w = waiting.get(m.id);
+      if (w) { waiting.delete(m.id); w.resolve({ ok: m.ok, data: m.data, error: m.error }); }
+      return;
+    }
+    if (m.type === "tool:context") {
+      ctx = m.data;
+      // 主题：宿主推什么用什么。独立打开时由下面的 fallback 跟系统走
+      if (ctx && ctx.theme) document.documentElement.dataset.theme = ctx.theme;
+      // 图床通道开没开（这个工具暂时没用图床，先盖着，以后加附图就现成）
+      document.body.dataset.gallery = (ctx && ctx.gallery) ? "on" : "off";
+      setState("bound");
+      bootstrapHostBits();
+      return;
+    }
+    if (m.type === "tool:event") {
+      // 宿主在「设置 → 数据库」里清空了这个工具的命名空间：
+      // 表会被立刻重建成空表，但界面上摆的仍是旧列表，得重新拉一次
+      if (m.event === "schema:reset") {
+        selectedId = null;
+        void load();
+        toast("这段数据已被清空");
+        return;
+      }
+      toast("收到事件：" + m.event);
+    }
+  });
+
+  /* ==================================================================
+   * 二、数据门面：一套接口，两套实现
+   * ------------------------------------------------------------------
+   * 上面那半边是宿主（row.*），下面那半边是独立运行时的 localStorage。
+   * 调用方（load / add / advance / remove / saveNote）只认这个门面。
+   * ================================================================== */
+
+  var memFallback = Object.create(null);
+  var storageOk = true;
+  function keyOf(table) { return "wbtool:" + TOOL_ID + ":t:" + table; }
+
+  function readTable(table) {
+    try {
+      var raw = localStorage.getItem(keyOf(table));
+      storageOk = true;
+      return raw ? (JSON.parse(raw) || []) : [];
+    } catch (e) {
+      // 隐私模式 / 存储被禁：退到内存，界面上会说明"刷新即丢"
+      storageOk = false;
+      return memFallback[table] || [];
+    }
+  }
+  function writeTable(table, rows) {
+    memFallback[table] = rows;
+    try { localStorage.setItem(keyOf(table), JSON.stringify(rows)); storageOk = true; }
+    catch (e) { storageOk = false; }
+  }
+
+  /* 本地兜底只实现这个工具真正用到的那几个形态：
+     等值 where / orderBy / limit —— 不写通用 SQL。 */
+  var Local = {
+    select: function (a) {
+      var rows = readTable(a.table).slice();
+      if (a.where) {
+        rows = rows.filter(function (r) {
+          return Object.keys(a.where).every(function (k) { return r[k] === a.where[k]; });
+        });
+      }
+      var col = a.orderBy || "created_at";
+      var dir = a.orderDir === "asc" ? 1 : -1;
+      rows.sort(function (x, y) {
+        var vx = String(x[col] == null ? "" : x[col]);
+        var vy = String(y[col] == null ? "" : y[col]);
+        return vx < vy ? -dir : vx > vy ? dir : 0;
+      });
+      return { rows: rows.slice(0, a.limit || rows.length) };
+    },
+    insert: function (a) {
+      var rows = readTable(a.table);
+      var at = rows.findIndex(function (r) { return r.id === a.row.id; });
+      if (at >= 0) rows[at] = a.row; else rows.push(a.row);
+      writeTable(a.table, rows);
+      return { ok: true };
+    },
+    update: function (a) {
+      var rows = readTable(a.table);
+      var at = rows.findIndex(function (r) { return r.id === a.id; });
+      if (at < 0) return { ok: false };
+      var next = {};
+      Object.keys(rows[at]).forEach(function (k) { next[k] = rows[at][k]; });
+      Object.keys(a.patch || {}).forEach(function (k) { next[k] = a.patch[k]; });
+      rows[at] = next;
+      writeTable(a.table, rows);
+      return { ok: true };
+    },
+    del: function (a) {
+      writeTable(a.table, readTable(a.table).filter(function (r) { return r.id !== a.id; }));
+      return { ok: true };
+    },
+  };
+
+  /** 门面。等状态落定再决定走哪条路 —— booting 期间发请求会白等一次超时 */
+  function route(hostOp, localFn) {
+    return function (arg) {
+      return settle.then(function () {
+        if (bound()) return call(hostOp, arg);
+        // 被嵌在某页里却没接到宿主：这时候往浏览器本地写是**悄悄换了个地方存**，
+        // 用户会以为写进了工作台。宁可报错也不静默改落点。
+        if (state === "error") throw new Error("没接到工作台的回应，这条数据没有落点");
+        return localFn(arg);
+      });
+    };
+  }
+  var Db = {
+    select: route("row.select", Local.select),
+    insert: route("row.insert", Local.insert),
+    update: route("row.update", Local.update),
+    del: route("row.delete", Local.del),
+  };
+
+  /* 配置（客服 ID）：宿主走 kv.*，独立运行走 localStorage。
+     kv 是给"配置"准备的、表是给"记录"准备的 —— 所以它不进 tickets 表。 */
+  var cfg = { mallcsid: "" };
+  // 默认值取自 make-url.mjs（用户自己的脚本）里的 cs_671782974；
+  // 换店铺 / 换客服时界面上能改，改完落 localStorage（或宿主的 kv）。
+  var DEFAULT_MALLCSID = "cs_671782974";
+  function cfgKey() { return "wbtool:" + TOOL_ID + ":cfg:mallcsid"; }
+
+  var LocalCfg = {
+    get: function () {
+      try { return { value: localStorage.getItem(cfgKey()) }; } catch (e) { return { value: null }; }
+    },
+    set: function (a) {
+      try { localStorage.setItem(cfgKey(), String(a.value)); return { ok: true }; }
+      catch (e) { return { ok: false }; }
+    },
+  };
+  var Cfg = {
+    get: route("kv.get", LocalCfg.get),
+    set: route("kv.set", LocalCfg.set),
+  };
+
+  async function loadCfg() {
+    try {
+      var res = await Cfg.get({ key: "mallcsid" });
+      cfg.mallcsid = (res && res.value) || DEFAULT_MALLCSID;
+    } catch (e) {
+      cfg.mallcsid = DEFAULT_MALLCSID;
+    }
+    document.getElementById("mallcsid").value = cfg.mallcsid;
+    showCfgHint();
+    showSnHint();     // 订单号框初始化时是空的，这条会自己清掉
+  }
+
+  async function saveCfg() {
+    var v = document.getElementById("mallcsid").value.trim();
+    cfg.mallcsid = v;
+    try {
+      await Cfg.set({ key: "mallcsid", value: v });
+      showCfgHint();
+      renderDetail();
+      toast(v ? "客服 ID 已保存" : "已清空客服 ID");
+    } catch (err) { toast("存不上：" + err.message); }
+  }
+
+  function showCfgHint() {
+    var el = document.getElementById("cfgHint");
+    if (!el) return;
+    el.textContent = cfg.mallcsid
+      ? "当前客服 ID：" + cfg.mallcsid + "（呼起时用它拼链接）"
+      : "还没填客服 ID —— 填了才能呼起客户端。";
+  }
+
+  /** 登记页：订单号输入框下面那条实时提示（边打边说它像不像拼多多单号） */
+  function showSnHint() {
+    var el = document.getElementById("snHint");
+    if (!el) return;
+    var info = snInfo((document.getElementById("orderSn") || {}).value);
+    el.textContent = info.text;
+    el.className = "hint snhint" + (info.state === "ok" ? " ok" : info.state === "weird" ? " bad" : "");
+  }
+
+  /* ---------------- 小工具 ---------------- */
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+  function pad(n) { return n < 10 ? "0" + n : "" + n; }
+  function ymd(d) { return "" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()); }
+
+  /** ISO → "10-11 17:20"（本地时区） */
+  function timeText(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    return pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+  /** ISO → "2026-10-11 17:20" */
+  function fullTime(iso) {
+    if (!iso) return "—";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " +
+      pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+  /** "2026-10-09" → "2026-10-09"（原样，非法就返回空） */
+  function dayText(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ""));
+    return m ? m[0] : "";
+  }
+
+  var toastTimer = null;
+  function toast(text) {
+    var el = document.getElementById("toast");
+    el.textContent = text;
+    el.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove("on"); }, 2600);
+  }
+
+  /** 副标题：把"数据现在存在哪"说清楚 —— 独立态说"浏览器里"，不让用户对着报错发懵 */
+  function showMeta() {
+    var el = document.getElementById("meta");
+    if (state === "standalone") {
+      el.textContent = "独立运行 · 数据存在这个浏览器里（" +
+        (storageOk ? "localStorage" : "内存，刷新即丢") + "）";
+      return;
+    }
+    if (state === "error") { el.textContent = "被嵌进了某个页面，但一直没接到工作台的回应"; return; }
+    if (state === "booting") { el.textContent = "连接中…"; return; }
+    if (!ctx) { el.textContent = "还没收到宿主的运行上下文"; return; }
+    el.textContent =
+      "存在 " + ctx.tablePrefix + TABLE + " · " +
+      (ctx.driver === "sqlite" ? "SQLite" : "内存库") +
+      " · schema v" + ctx.schemaVersion + " · " + (ctx.runtime === "desktop" ? "桌面版" : "浏览器");
+  }
+
+  /* ---------------- 单号 ---------------- */
+
+  /**
+   * 生成单号：YC-<yyyymmdd>-<三位序号>。
+   *
+   * 序号从"当前已加载的这批数据"里算最大值 +1。⚠️ 它只在这批数据里找，
+   * 所以 limit 之外的老单号是不算数的（demo 阶段够用）。
+   * 真要做到永不撞号，得再加一张"计数表"或用 kv 存当天序号 —— 留到细化时做。
+   */
+  function genCode(rows) {
+    var prefix = CODE_PREFIX + "-" + ymd(new Date()) + "-";
+    var max = 0;
+    rows.forEach(function (r) {
+      var c = String(r.code || "");
+      if (c.indexOf(prefix) !== 0) return;
+      var n = parseInt(c.slice(prefix.length), 10);
+      if (!isNaN(n) && n > max) max = n;
+    });
+    var next = max + 1;
+    return prefix + (next < 10 ? "00" + next : next < 100 ? "0" + next : "" + next);
+  }
+
+  function refreshCodeHint() {
+    var el = document.getElementById("codeHint");
+    if (!el) return;
+    el.textContent = "单号留空会自动按 " + CODE_PREFIX + "-" + ymd(new Date()) + "-001 往下排";
+  }
+
+  /* ---------------- 状态 ---------------- */
+
+  var allRows = [];      // 最近一次从库里拉回来的全部
+  var shown = [];        // 左栏当前显示的那些（过滤后）
+  var selectedId = null;
+
+  function findRow(id) {
+    return allRows.filter(function (r) { return r.id === id; })[0] || null;
+  }
+  function statusOf(r) { return r.status || STATUSES[0]; }
+  function badgeOf(status) {
+    var cls = status === "待处理" ? "wait" : status === "处理中" ? "doing" : "done";
+    return '<span class="badge ' + cls + '">' + esc(status) + "</span>";
+  }
+  /** 状态机：待处理 → 处理中 → 已关闭 → 待处理（重新打开） */
+  function nextStatus(cur) {
+    if (cur === "待处理") return "处理中";
+    if (cur === "处理中") return "已关闭";
+    return "待处理";
+  }
+  function actOf(status) {
+    return status === "待处理" ? "开始处理" : status === "处理中" ? "关闭" : "重新打开";
+  }
+
+  /* ---------------- 渲染：左栏列表 ---------------- */
+
+  function renderList() {
+    var el = document.getElementById("list");
+    if (!allRows.length) {
+      el.innerHTML = '<div class="empty" style="padding:26px 8px">还没有登记过异常单。</div>';
+      return;
+    }
+    if (!shown.length) { el.innerHTML = '<div class="empty" style="padding:26px 8px">没有符合条件的单号。</div>'; return; }
+
+    el.innerHTML = shown.map(function (r) {
+      var st = statusOf(r);
+      var sn = String(r.order_sn || "").trim();
+      // 有订单号的行直接挂一个「↗」—— 不用先选中、再点右栏，扫单时一条条点着走。
+      // 单号不合形状也照给（客户端会弹起来，只是可能定位不到），但 title 里会说明。
+      var wake = sn
+        ? '<button class="wake" data-act="open-client" data-sn="' + esc(sn) + '"' +
+          ' title="' + esc(snInfo(sn).ok ? "呼起商家版打开 " + sn : snInfo(sn).text) + '">↗</button>'
+        : "";
+      return '<div class="ticket' + (st === "已关闭" ? " s-done" : "") + '" data-ticket data-id="' + esc(r.id) + '"' +
+        ' role="option" aria-selected="' + (r.id === selectedId ? "true" : "false") + '">' +
+        '<div class="l1">' +
+          '<span class="code">' + esc(r.code || "(未编号)") + "</span>" +
+          badgeOf(st) +
+          wake +
+          '<span class="when">' + timeText(r.created_at) + "</span>" +
+        "</div>" +
+        '<div class="title">' + esc(r.title || "(无内容)") + "</div>" +
+      "</div>";
+    }).join("");
+  }
+
+  function renderStats() {
+    var el = document.getElementById("stats");
+    var n = function (s) { return allRows.filter(function (r) { return statusOf(r) === s; }).length; };
+    el.innerHTML = "共 <b>" + allRows.length + "</b> 条 · 待处理 <b>" + n("待处理") +
+      "</b> · 处理中 <b>" + n("处理中") + "</b> · 已关闭 <b>" + n("已关闭") + "</b>";
+  }
+
+  /* ---------------- 呼起本地客户端 ---------------- */
+
+  /**
+   * 判断单号像不像拼多多订单编号。
+   *
+   * 规则来自用户自己的 make-url.mjs：真·拼多多订单编号是 `YYMMDD-数字`
+   * （例：261010-257666640262557），前 6 位就是下单日期。
+   * 不符合这个形状的（比如一长串纯数字）客户端**照样会弹起来，但定位不到那张订单** ——
+   * 那是最难查的症状，所以界面上要提前说一句。
+   */
+  var PDD_SN_RE = /^\d{6}-\d+$/;
+  function snInfo(sn) {
+    var s = String(sn || "").trim();
+    if (!s) return { state: "empty", ok: false, text: "" };
+    if (PDD_SN_RE.test(s)) {
+      // 单号前 6 位就是下单日期（YYMMDD）—— 补成完整年份，别让人读成 "26 年"
+      var yy = Number(s.slice(0, 2));
+      var date = (2000 + yy) + " 年 " + s.slice(2, 4) + " 月 " + s.slice(4, 6) + " 日";
+      return { state: "ok", ok: true, date: date, text: "拼多多订单号，下单日期 " + date };
+    }
+    return {
+      state: "weird", ok: false,
+      text: "格式存疑：拼多多单号形如 261010-257666640262557，这一串客户端可能定位不到",
+    };
+  }
+
+  /** 拼出拼多多商家版的协议链接。客服 ID 没配、或这条没订单号时返回空串 */
+  function buildClientUrl(orderSn) {
+    var sn = String(orderSn || "").trim();
+    var cs = String(cfg.mallcsid || "").trim();
+    if (!sn || !cs) return "";
+    return "pddim:sendmsg/?OpeId=open_order&mallcsid=" + encodeURIComponent(cs) +
+      "&ordersn=" + encodeURIComponent(sn);
+  }
+
+  function clientBtns(r) {
+    if (!String(r.order_sn || "").trim()) {
+      return '<button disabled title="这条没填订单号 —— 呼不了">呼起客户端</button>';
+    }
+    if (!String(cfg.mallcsid || "").trim()) {
+      return '<button disabled title="先去「登记」页下面的「呼起本地客户端」里填客服 ID">呼起客户端</button>' +
+        '<span class="cfg-note" style="margin:0">还没配客服 ID</span>';
+    }
+    return '<button class="primary" data-act="open-client" title="' + esc(buildClientUrl(r.order_sn)) + '">呼起客户端</button>' +
+      '<button data-act="copy-link" title="复制链接，粘到浏览器地址栏也能跳">复制链接</button>';
+  }
+
+  /** 右栏：订单号那一条下面挂的说明（下单日期 / 格式存疑） */
+  function snDetailHint(r) {
+    var info = snInfo(r.order_sn);
+    if (!info.text) return "";
+    return '<div class="hint snhint ' + (info.ok ? "ok" : "bad") + '" style="margin:-2px 0 10px">' +
+      esc(info.text) + "</div>";
+  }
+
+  /**
+   * 呼起客户端。
+   *
+   * ⚠️ 两个坑都在这儿：
+   *   1. 用一个真的 <a> 并 .click()，**不是** location.href = url —— 自定义协议必须有
+   *      用户手势，脚本直接改 location 在部分浏览器里会被静默拦掉（什么也不发生）。
+   *   2. 工具跑在宿主的 iframe 里，那个 iframe 的 sandbox **没开 allow-top-navigation**，
+   *      所以只能让 iframe 自己导航，不能指挥顶层窗口去跳。
+   *
+   * 桌面端（WebView2）对自定义协议的支持与浏览器不同，跳不动时给一条退路：
+   * 界面上同时提供「复制链接」。
+   */
+  function openClient(orderSn) {
+    var url = buildClientUrl(orderSn);
+    if (!url) { toast("这条没有订单号，或者还没配客服 ID"); return; }
+    var a = document.createElement("a");
+    a.href = url;
+    a.rel = "noopener";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast("已发出呼起请求 —— 没反应就点「复制链接」粘到地址栏试试");
+  }
+
+  function copyClientUrl(orderSn) {
+    var url = buildClientUrl(orderSn);
+    if (!url) { toast("这条没有订单号，或者还没配客服 ID"); return; }
+    try {
+      navigator.clipboard.writeText(url).then(
+        function () { toast("链接已复制"); },
+        function () { toast(url); },
+      );
+    } catch (e) { toast(url); }
+  }
+
+  /* ---------------- 渲染：右栏详情 / 处理区 ---------------- */
+
+  function renderDetail() {
+    var el = document.getElementById("detail");
+    var r = selectedId ? findRow(selectedId) : null;
+
+    if (!r) {
+      el.innerHTML = '<div class="empty">' +
+        (allRows.length ? "从左边挑一条单号，这里显示它的详情和处理区。" : "还没有登记过异常单，先到「登记」页加一条。") +
+        "</div>";
+      return;
+    }
+
+    var st = statusOf(r);
+    var kv = [
+      ["订单号", r.order_sn],
+      ["类型", r.category],
+      ["等级", r.level],
+      ["登记人", r.reporter],
+      ["发生日期", dayText(r.occurred_at)],
+      ["登记时间", fullTime(r.created_at)],
+      ["最近更新", fullTime(r.updated_at)],
+    ].map(function (pair) {
+      return "<dt>" + esc(pair[0]) + "</dt><dd>" + (pair[1] ? esc(pair[1]) : '<span style="color:var(--dim)">—</span>') + "</dd>";
+    }).join("");
+
+    el.innerHTML =
+      '<div class="d-head">' +
+        '<span class="d-code">' + esc(r.code || "(未编号)") + "</span>" +
+        badgeOf(st) +
+      "</div>" +
+      '<div class="d-title">' + esc(r.title || "(无内容)") + "</div>" +
+      '<dl class="kv">' + kv + "</dl>" +
+      '<div class="sect">' +
+        '<div class="client-row">' + clientBtns(r) + "</div>" +
+        snDetailHint(r) +
+        '<label for="d-note">处理情况</label>' +
+        '<textarea id="d-note" placeholder="写清怎么处理的、卡在哪、谁在跟 —— 边打边存"></textarea>' +
+        '<div class="d-ops">' +
+          '<button class="primary" data-act="advance">' + esc(actOf(st)) + "</button>" +
+          '<button class="danger" data-act="del">删除</button>' +
+          '<span class="saved" id="d-saved"></span>' +
+        "</div>" +
+      "</div>";
+
+    // 备注要先灌进去再挂监听，否则第一次输入会被自己的赋值触发
+    document.getElementById("d-note").value = r.note || "";
+  }
+
+  function markSaved(text) {
+    var el = document.getElementById("d-saved");
+    if (el) el.textContent = text;
+  }
+
+  /* ---------------- 读 / 写 ---------------- */
+
+  function pickVisible() {
+    var q = document.getElementById("search").value.trim().toLowerCase();
+    var f = document.getElementById("filter").value;
+    return allRows.filter(function (r) {
+      if (f && f !== "*" && statusOf(r) !== f) return false;
+      if (!q) return true;
+      return [r.code, r.order_sn, r.title, r.reporter, r.category, r.note].some(function (v) {
+        return String(v || "").toLowerCase().indexOf(q) >= 0;
+      });
+    });
+  }
+
+  function repaint() {
+    shown = pickVisible();
+    renderList();
+    renderStats();
+  }
+
+  async function load() {
+    try {
+      var res = await Db.select({ table: TABLE, orderBy: "created_at", orderDir: "desc", limit: 200 });
+      allRows = (res && res.rows) || [];
+      // 选中的那条要是没了（被删/被清库），把选中清掉，免得右栏挂着幽灵
+      if (selectedId && !findRow(selectedId)) selectedId = null;
+      repaint();
+      renderDetail();
+      refreshCodeHint();
+      if (state === "standalone") showMeta();   // 读到了才知道 localStorage 通不通，副标题要跟上
+    } catch (err) {
+      document.getElementById("list").innerHTML =
+        '<div class="empty">读不到数据：' + esc(err.message) + "</div>";
+    }
+  }
+
+  async function add() {
+    var title = document.getElementById("title").value.trim();
+    if (!title) { toast("先写清异常内容"); document.getElementById("title").focus(); return; }
+
+    var code = document.getElementById("code").value.trim() || genCode(allRows);
+    if (findRowByCode(code)) { toast("单号 " + code + " 已经登记过了"); return; }
+
+    var now = new Date().toISOString();
+    try {
+      await Db.insert({
+        table: TABLE,
+        row: {
+          id: "t-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),   // ★ 主键必须自己给
+          code: code,
+          order_sn: document.getElementById("orderSn").value.trim(),
+          title: title,
+          category: document.getElementById("category").value,
+          level: document.getElementById("level").value,
+          status: STATUSES[0],
+          reporter: document.getElementById("reporter").value.trim(),
+          occurred_at: document.getElementById("occurred").value || "",
+          note: "",
+          created_at: now,
+          updated_at: now,
+        },
+      });
+      document.getElementById("code").value = "";
+      document.getElementById("orderSn").value = "";
+      document.getElementById("title").value = "";
+      showSnHint();        // 清空后那条格式提示也要跟着消掉
+      await load();
+      // 故意**不**自动跳到「查看」：现场录单常常是一条接一条，
+      // 跳走反而要手动跳回来。要确认就去查看页，它已经在最上面。
+      toast(code + " 已登记");
+      document.getElementById("title").focus();
+    } catch (err) {
+      toast("登记失败：" + err.message);
+    }
+  }
+
+  function findRowByCode(code) {
+    return allRows.filter(function (r) { return String(r.code || "") === code; })[0] || null;
+  }
+
+  async function advance(id) {
+    var row = findRow(id);
+    if (!row) return;
+    var next = nextStatus(statusOf(row));
+    try {
+      await Db.update({ table: TABLE, id: id, patch: { status: next, updated_at: new Date().toISOString() } });
+      await load();
+      toast("已改为「" + next + "」");
+    } catch (err) { toast("改不动：" + err.message); }
+  }
+
+  async function remove(id) {
+    try {
+      await Db.del({ table: TABLE, id: id });
+      await load();
+      toast("已删除");
+    } catch (err) { toast("删不掉：" + err.message); }
+  }
+
+  /* 备注自动保存：输入停下 700ms 写一次。
+     ⚠️ 存完**不重载整表** —— load() 会把右栏整个重建，正在打字的 textarea 会丢焦点和光标。
+     所以这里只更新内存里的那一行，列表也不动（备注不进列表）。 */
+  var noteTimer = null;
+  function scheduleNoteSave() {
+    markSaved("…");
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(function () { void saveNote(); }, 700);
+  }
+  async function saveNote() {
+    var ta = document.getElementById("d-note");
+    if (!ta || !selectedId) return;
+    var row = findRow(selectedId);
+    if (!row) return;
+    var val = ta.value;
+    if (String(row.note || "") === val) { markSaved("已保存"); return; }
+    try {
+      var now = new Date().toISOString();
+      await Db.update({ table: TABLE, id: selectedId, patch: { note: val, updated_at: now } });
+      row.note = val;
+      row.updated_at = now;
+      markSaved("已保存 " + timeText(now));
+    } catch (err) {
+      markSaved("");
+      toast("备注没存上：" + err.message);
+    }
+  }
+
+  /** 切页签。切到查看时，若还没选中就默认选第一条 —— 右栏空着会让人以为坏了 */
+  function setTab(name) {
+    document.getElementById("tab-create").setAttribute("aria-selected", name === "create" ? "true" : "false");
+    document.getElementById("tab-browse").setAttribute("aria-selected", name === "browse" ? "true" : "false");
+    document.getElementById("view-create").hidden = name !== "create";
+    document.getElementById("view-browse").hidden = name !== "browse";
+    if (name === "browse") {
+      if (!selectedId && shown.length) selectedId = shown[0].id;
+      repaint();
+      renderDetail();
+    } else {
+      document.getElementById("title").focus();
+    }
+  }
+
+  /* ---------------- 填充下拉 ---------------- */
+
+  function fillSelect(el, items, selected) {
+    el.innerHTML = items.map(function (v) {
+      return '<option value="' + esc(v) + '"' + (v === selected ? " selected" : "") + ">" + esc(v) + "</option>";
+    }).join("");
+  }
+  fillSelect(document.getElementById("category"), CATEGORIES);
+  fillSelect(document.getElementById("level"), LEVELS, "一般");
+  document.getElementById("filter").innerHTML =
+    '<option value="*">全部状态</option>' +
+    STATUSES.map(function (s) { return '<option value="' + esc(s) + '">' + esc(s) + "</option>"; }).join("");
+  document.getElementById("occurred").value =
+    "" + new Date().getFullYear() + "-" + pad(new Date().getMonth() + 1) + "-" + pad(new Date().getDate());
+
+  /* ---------------- 事件 ---------------- */
+
+  document.getElementById("tab-create").addEventListener("click", function () { setTab("create"); });
+  document.getElementById("tab-browse").addEventListener("click", function () { setTab("browse"); });
+
+  document.getElementById("add").addEventListener("click", function () { void add(); });
+  document.getElementById("saveCfg").addEventListener("click", function () { void saveCfg(); });
+  document.getElementById("mallcsid").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); void saveCfg(); }
+  });
+  document.getElementById("title").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); void add(); }
+  });
+  // 订单号边打边说它像不像拼多多单号 —— 格式不对时客户端会弹起来却定位不到，
+  // 那是最难查的症状，所以在这儿提前拦住。
+  document.getElementById("orderSn").addEventListener("input", showSnHint);
+  document.getElementById("orderSn").addEventListener("paste", function () {
+    setTimeout(showSnHint, 0);     // 粘贴要先等浏览器把值写进去
+  });
+
+  document.getElementById("search").addEventListener("input", function () {
+    repaint();
+    renderDetail();     // 选中的那条可能被筛掉了，右栏要跟上
+  });
+  document.getElementById("filter").addEventListener("change", function () {
+    repaint();
+    renderDetail();
+  });
+
+  // 左栏：点行里的「↗」→ 直接呼起（**不**改变选中，扫单时不打乱右栏）；
+  //       点其它地方 → 选中这一行
+  document.getElementById("list").addEventListener("click", function (e) {
+    var wake = e.target.closest('button[data-act="open-client"]');
+    if (wake) {
+      e.stopPropagation();
+      openClient(wake.getAttribute("data-sn"));
+      return;
+    }
+    var item = e.target.closest("[data-ticket]");
+    if (!item) return;
+    selectedId = item.getAttribute("data-id");
+    renderList();
+    renderDetail();
+  });
+
+  // 右栏：处理动作
+  document.getElementById("detail").addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-act]");
+    if (!btn || !selectedId) return;
+    var act = btn.getAttribute("data-act");
+    var row = findRow(selectedId);
+    if (act === "advance") { void saveNote().then(function () { return advance(selectedId); }); }
+    else if (act === "del") { void remove(selectedId); }
+    else if (act === "open-client") { void saveNote(); openClient(row && row.order_sn); }
+    else if (act === "copy-link") { copyClientUrl(row && row.order_sn); }
+  });
+  document.getElementById("detail").addEventListener("input", function (e) {
+    if (e.target && e.target.id === "d-note") scheduleNoteSave();
+  });
+
+  /* ---------------- 只有连着宿主才有的那点东西 ---------------- */
+
+  function bootstrapHostBits() {
+    void (async function () {
+      try {
+        var info = await call("schema.info", {});
+        document.getElementById("schema").textContent = JSON.stringify(info, null, 2);
+      } catch (err) {
+        document.getElementById("schema").textContent = "读不到表结构：" + err.message;
+      }
+      await load();
+    })();
+  }
+
+  /* ---------------- 启动 ---------------- */
+
+  (function boot() {
+    paintHostDot();
+    showMeta();
+    refreshCodeHint();
+
+    // 独立打开时没有宿主推主题，跟系统走。宿主一旦连上会用 ctx.theme 覆盖掉
+    try {
+      if (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) {
+        document.documentElement.dataset.theme = "dark";
+      }
+    } catch (err) { /* 老浏览器没有 matchMedia，保持浅色 */ }
+
+    // 超时兜底：到点还没有上下文，就按"在不在 iframe 里"分类
+    setTimeout(function () {
+      if (state !== "booting") return;
+      setState(parent === window ? "standalone" : "error");
+      void load();
+    }, 1200);
+
+    // 配置：不管连没连上宿主都要读（独立态读本地那份）
+    void settle.then(function () { void loadCfg(); });
+
+    // 连上宿主那一次：上面那个超时器不会再开火，改成从宿主拉数据
+    void settle.then(function () {
+      if (bound()) bootstrapHostBits();
+    });
+  })();
+})();
+</script>
+</body>
+</html>
