@@ -546,6 +546,72 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   check("异常单：保存店铺表时报告了改名影响了几条单子",
     saved.first === "拾野" && /换到新名字/.test(saved.toast), saved.toast);
 
+  /* ---------- 粘 ERP 链接 ----------
+   * ★ 客服 ID 是 ERP 生成的，用户没法凭空知道 —— 所以正门是"把 ERP 给的那条
+   * 链接粘进来"，从里面抠 mallcsid / ordersn，而不是让人去填一个看不出所以然的 ID。
+   * 三条路径都要验：认得出来（表里已有）、不认识（填进空行）、粘错了。 */
+  const ERP1 = "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_999999999&ordersn=261011-648659679643144";
+  await page.fill("#erpLink", ERP1);
+  await page.waitForTimeout(800);
+  const hitKnown = await page.evaluate(() => ({
+    hint: (document.getElementById("erpHint") || {}).textContent || "",
+    cls: (document.getElementById("erpHint") || {}).className || "",
+    sn: document.getElementById("orderSn").value,
+    store: document.getElementById("store").value,
+  }));
+  check("异常单：粘已知店铺的 ERP 链接，订单号和店铺一起认出来",
+    hitKnown.sn === "261011-648659679643144" && hitKnown.store === "拾野" && /\bok\b/.test(hitKnown.cls),
+    JSON.stringify(hitKnown));
+
+  const ERP2 = "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_800000007&ordersn=261011-362765391472941";
+  await page.fill("#erpLink", ERP2);
+  await page.waitForTimeout(900);
+  const hitNew = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("#stores .store-row")];
+    return {
+      hint: (document.getElementById("erpHint") || {}).textContent || "",
+      store: document.getElementById("store").value,
+      filled: rows.map((r) => r.querySelector("input.cs").value).filter(Boolean),
+      count: rows.length,
+    };
+  });
+  check("异常单：陌生的客服 ID 填进一个空行（不新建、也不动已经配好的那几个）",
+    hitNew.count === 8 && hitNew.filled.length === 2 && hitNew.filled[1] === "cs_800000007",
+    JSON.stringify(hitNew));
+  check("异常单：认出陌生的 ID 之后说明白了它记到了哪个店",
+    /记到了/.test(hitNew.hint) && /cs_800000007/.test(hitNew.hint), hitNew.hint);
+
+  await page.fill("#erpLink", "先填个别的");
+  await page.fill("#erpLink", ERP2);
+  await page.waitForTimeout(800);
+  const again = await page.evaluate(() => ({
+    hint: (document.getElementById("erpHint") || {}).textContent || "",
+    filled: [...document.querySelectorAll("#stores .store-row input.cs")].map((i) => i.value).filter(Boolean).length,
+  }));
+  check("异常单：同一个客服 ID 再粘一次是「认出」，不会又加一个店",
+    /店铺「/.test(again.hint) && again.filled === 2, JSON.stringify(again));
+
+  await page.fill("#erpLink", "https://example.com/abc");
+  await page.waitForTimeout(500);
+  const bad = await page.evaluate(() => ({
+    hint: (document.getElementById("erpHint") || {}).textContent || "",
+    cls: (document.getElementById("erpHint") || {}).className || "",
+  }));
+  check("异常单：粘的不是 pddim 链接时，说清正确的形状",
+    /pddim:sendmsg/.test(bad.hint) && /\bbad\b/.test(bad.cls), JSON.stringify(bad));
+
+  // 店铺表的「客服 ID」框里直接粘整条链接，也要当场抠出来
+  await page.fill("#stores .store-row:nth-child(3) input.cs",
+    "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_777777777&ordersn=261011-103945367091884");
+  await page.evaluate(() => {
+    const inp = document.querySelectorAll("#stores .store-row input.cs")[2];
+    inp.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await page.waitForTimeout(300);
+  const csPasted = await page.evaluate(() => document.querySelectorAll("#stores .store-row input.cs")[2].value);
+  check("异常单：店铺表的「客服 ID」框里粘整条链接也会抠出 cs_…",
+    csPasted === "cs_777777777", csPasted);
+
   await page.click("#tab-browse");
   await page.waitForTimeout(500);
   const cfg2 = await page.evaluate(() => {
@@ -704,6 +770,30 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     /格式存疑|定位不到/.test(weirdRow.title), weirdRow.title);
   check("异常单：选中它时右栏也给警告（不是只在登记页说）",
     weirdRow.detailBad === true, String(weirdRow.detailBad));
+
+  /* ---------- 走一遍 ERP 链接的完整登记 ----------
+     放在最后：这一步会多一条记录，前面的计数断言不该被它影响。 */
+  await page.click("#tab-create");
+  await page.evaluate(() => { document.getElementById("clientBox").open = true; });
+  await page.waitForTimeout(300);
+  await page.fill("#erpLink", "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_999999999&ordersn=261011-109827858042143");
+  await page.waitForTimeout(800);
+  const beforeAdd = await page.evaluate(() => ({
+    sn: document.getElementById("orderSn").value,
+    store: document.getElementById("store").value,
+  }));
+  await page.fill("#title", "ERP 链接流进来的一条");
+  await page.click("#add");
+  await page.waitForTimeout(800);
+  const afterAdd = await page.evaluate(() => ({
+    linkCleared: document.getElementById("erpLink").value === "",
+    hintCleared: (document.getElementById("erpHint") || {}).textContent === "",
+    storeKept: document.getElementById("store").value,
+  }));
+  check("异常单：从 ERP 链接一路登记下来，店铺留着、链接框清掉（下一条是另一条链接）",
+    beforeAdd.sn === "261011-109827858042143" && beforeAdd.store === "拾野" &&
+      afterAdd.linkCleared && afterAdd.hintCleared && afterAdd.storeKept === "拾野",
+    JSON.stringify({ beforeAdd, afterAdd }));
 
   await wipeLocal("abnormal-ticket");
 

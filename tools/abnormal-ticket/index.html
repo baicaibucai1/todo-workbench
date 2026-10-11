@@ -114,6 +114,9 @@
   #category { flex: 0 0 104px; }
   #level { flex: 0 0 88px; }
   #title { width: 100%; }
+  /* ERP 链接那一格：等宽字体，一眼能看出粘进去的是不是整条链接 */
+  #erpLink { width: 100%; font-family: var(--mono); font-size: 12px; }
+  #erpLink + .hint { margin-top: 4px; }
   #reporter { flex: 1 1 120px; }
   #occurred { flex: 0 0 150px; }
   #store { flex: 0 0 132px; }
@@ -222,6 +225,10 @@
   <section class="view" id="view-create">
     <div class="card" style="max-width:640px">
       <h2>登记一条异常</h2>
+      <!-- 客服 ID 是 ERP 生成的、用户没法凭空知道，所以正门是「粘链接」：
+           那条链接里本来就有 mallcsid 和 ordersn，抠出来就行，不用人去认 ID。 -->
+      <input id="erpLink" placeholder="把 ERP 给的那条链接粘到这里（pddim:…）—— 自动认出店铺和订单号" />
+      <div class="hint snhint" id="erpHint"></div>
       <div class="r r-sn">
         <select id="store" title="这条单是哪个店铺的 —— 呼起客户端时按它取对应的客服 ID"></select>
         <input id="code" placeholder="异常单号（留空自动生成）" />
@@ -252,8 +259,13 @@
         把本机的拼多多商家版拉起来并跳到你那条单。需要本机装了商家版客户端。
       </p>
       <p class="cfg-note">
-        <b>客服 ID</b>（<code>mallcsid</code>）在拼多多后台能看到，形如 <code>cs_671782974</code> ——
-        它<b>按店铺分</b>，每个店一个。这里配好之后，登记时选店铺、呼起时自动用对应那个。
+        <b>客服 ID 是 ERP 生成的，不用你去认</b> —— 把 ERP 给的那条链接整条粘进右边的
+        「客服 ID」框里，会自动把 <code>cs_…</code> 抠出来；或者干脆在登记时把链接粘到
+        上面那个「ERP 链接」框，连店铺一起认。
+      </p>
+      <p class="cfg-note">
+        <b>客服 ID</b>（<code>mallcsid</code>）<b>按店铺分</b>，每个店一个。
+        这里配好之后，登记时选店铺、呼起时自动用对应那个。
         <b>订单号</b>（<code>ordersn</code>）是每条单自带的，格式为 <code>YYMMDD-数字</code>。
       </p>
       <div id="stores" class="stores"></div>
@@ -583,10 +595,13 @@
     var rows = document.querySelectorAll("#stores .store-row");
     var out = [];
     for (var i = 0; i < rows.length; i++) {
+      var csRaw = rows[i].querySelector("input.cs").value.trim();
+      // 粘进来整条链接也认 —— 客服 ID 是 ERP 生成的，用户手上只有链接
+      var hit = parseClientUrl(csRaw);
       out.push({
         was: rows[i].getAttribute("data-was") || "",
         name: rows[i].querySelector("input.name").value.trim(),
-        mallcsid: rows[i].querySelector("input.cs").value.trim(),
+        mallcsid: hit && hit.mallcsid ? hit.mallcsid : csRaw,
       });
     }
     return out;
@@ -861,6 +876,111 @@
     };
   }
 
+  /**
+   * 从一条 pddim 链接里抠出 mallcsid 与 ordersn。
+   *
+   * ★ 为什么需要它：**客服 ID 是 ERP 生成的，用户没法凭空知道**。
+   * 但那条链接是 ERP 给的、里面本来就写着 mallcsid 和 ordersn ——
+   * 所以正门是"把链接粘进来"，不是"请填客服 ID"。
+   * 两处都走这个函数：登记页的「ERP 链接」框、店铺表里的「客服 ID」框。
+   *
+   * 认不出来（不是 pddim / 没有这两个参数）返回 null，调用方给一句人话。
+   */
+  function parseClientUrl(raw) {
+    var s = String(raw || "").trim();
+    if (s.indexOf("pddim:") !== 0) return null;
+    var cs = /[?&]mallcsid=([^&\s]+)/i.exec(s);
+    var sn = /[?&]ordersn=([^&\s]+)/i.exec(s);
+    if (!cs && !sn) return null;
+    var dec = function (v) {
+      try { return decodeURIComponent(v); } catch (e) { return v; }
+    };
+    return {
+      mallcsid: cs ? dec(cs[1]).trim() : "",
+      ordersn: sn ? dec(sn[1]).trim() : "",
+    };
+  }
+
+  /** 存店铺表（从登记页认链接时也要落盘，否则刷新就没了） */
+  async function persistStores(list) {
+    await Cfg.set({ key: STORE_KEY, value: JSON.stringify(list) });
+  }
+
+  /** 给新店铺挑一个不撞车的默认名 */
+  function nextStoreName(list) {
+    var n = list.length + 1;
+    while (list.some(function (s) { return s.name === "店铺 " + n; })) n++;
+    return "店铺 " + n;
+  }
+
+  /**
+   * 把一条 ERP 链接应用到登记页：订单号填上，店铺认出来。
+   *
+   * 认店铺的顺序（都是"尽量不打扰用户"）：
+   *   ① 表里已经有这个客服 ID → 直接选中那个店
+   *   ② 当前选中的店铺还空着客服 ID → 就填它
+   *   ③ 表里还有别的空行 → 填第一个空行
+   *   ④ 全填满了 → 新建一个店，等用户改名
+   * 不做"静默地改一堆东西"：每一步都在下面那行提示里说清做了什么。
+   */
+  async function applyErpLink(raw) {
+    var el = document.getElementById("erpHint");
+    var text = String(raw || "").trim();
+    var hit = parseClientUrl(text);
+    if (!hit) {
+      el.className = "hint snhint" + (text ? " bad" : "");
+      el.textContent = text
+        ? "这不像 pddim 链接 —— 形如 pddim:sendmsg/?OpeId=open_order&mallcsid=cs_…&ordersn=…"
+        : "";
+      return;
+    }
+
+    var said = [];
+    if (hit.ordersn) {
+      document.getElementById("orderSn").value = hit.ordersn;
+      showSnHint();
+      said.push("订单号 " + hit.ordersn);
+    }
+
+    if (hit.mallcsid) {
+      var known = cfg.stores.filter(function (s) { return String(s.mallcsid || "").trim() === hit.mallcsid; })[0];
+      if (known) {
+        document.getElementById("store").value = known.name;
+        said.push("店铺「" + known.name + "」");
+      } else {
+        var cur = findStore(document.getElementById("store").value);
+        var target = (cur && !String(cur.mallcsid || "").trim()) ? cur : null;
+        if (!target) target = cfg.stores.filter(function (s) { return !String(s.mallcsid || "").trim(); })[0];
+        try {
+          if (target) {
+            target.mallcsid = hit.mallcsid;
+            await persistStores(cfg.stores);
+            renderStores();
+            fillStoreSelect();
+            document.getElementById("store").value = target.name;
+            said.push("客服 ID " + hit.mallcsid + " 记到了「" + target.name + "」");
+          } else {
+            var next = tidyStores(readStoresFromDom());
+            next.push({ name: nextStoreName(next), mallcsid: hit.mallcsid });
+            cfg.stores = next;
+            await persistStores(next);
+            renderStores();
+            fillStoreSelect();
+            document.getElementById("store").value = next[next.length - 1].name;
+            said.push("新加了一个店铺（" + hit.mallcsid + "）—— 去下面给它改个名字");
+          }
+        } catch (err) {
+          el.className = "hint snhint bad";
+          el.textContent = "店铺表存不上：" + friendlyErr(err);
+          return;
+        }
+      }
+    }
+
+    el.className = "hint snhint ok";
+    el.textContent = "认出来了：" + (said.length ? said.join(" · ") : "链接里没有订单号也没有客服 ID");
+  }
+
   /** 拼出拼多多商家版的协议链接。单号缺失、店铺没记、或那个店没配客服 ID 时返回空串 */
   function buildClientUrl(orderSn, storeName) {
     var sn = String(orderSn || "").trim();
@@ -1077,6 +1197,11 @@
       document.getElementById("code").value = "";
       document.getElementById("orderSn").value = "";
       document.getElementById("title").value = "";
+      // ERP 链接也清掉：下一条单是另一条链接。店铺**不清** —— 连着录同一个店的单是常态
+      document.getElementById("erpLink").value = "";
+      var eh = document.getElementById("erpHint");
+      eh.className = "hint snhint";
+      eh.textContent = "";
       showSnHint();        // 清空后那条格式提示也要跟着消掉
       await load();
       // 故意**不**自动跳到「查看」：现场录单常常是一条接一条，
@@ -1215,6 +1340,31 @@
     cfg.stores = list;
     renderStores();
     showCfgHint();
+  });
+
+  /* 客服 ID 框里粘整条链接也认：粘完**当场**把 cs_… 抠出来显示在框里，
+     而不是等保存时才偷偷换掉 —— 那样用户会以为自己粘错了。 */
+  function normalizeCsInput(inp) {
+    if (!inp) return;
+    var hit = parseClientUrl(inp.value);
+    if (hit && hit.mallcsid) {
+      inp.value = hit.mallcsid;
+      var row = inp.closest(".store-row");
+      if (row) row.classList.remove("empty-cs");
+    }
+  }
+  document.getElementById("stores").addEventListener("change", function (e) {
+    normalizeCsInput(e.target.closest ? e.target.closest("input.cs") : null);
+  });
+  document.getElementById("stores").addEventListener("paste", function (e) {
+    var inp = e.target.closest ? e.target.closest("input.cs") : null;
+    if (!inp) return;
+    setTimeout(function () { normalizeCsInput(inp); }, 0);   // 粘贴要先等浏览器把值写进去
+  });
+
+  // ERP 链接框：粘进来就认，不要求再点一次按钮 —— 用户手上本来就是一条链接
+  document.getElementById("erpLink").addEventListener("input", function (e) {
+    void applyErpLink(e.target.value);
   });
   document.getElementById("title").addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); void add(); }
