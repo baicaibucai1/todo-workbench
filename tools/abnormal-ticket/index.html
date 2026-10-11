@@ -503,11 +503,19 @@
    * ------------------------------------------------------------------ */
   var cfg = { stores: [] };
   var STORE_KEY = "stores";
-  // 用户报了 8 个店铺。只有第一个的客服 ID 是已知的（来自他给的 pddim 链接
-  // 与桌面上那份 make-url.mjs），其余留空等他自己填。
+  /**
+   * 已经**实测确认**的 (店铺名, 客服 ID)。
+   *
+   * 5 店这条是用户验过的：拿 `cs_355831479` 拼上另一个订单号（261011-638037532203456），
+   * 客户端确实打开了那张单 —— 所以 `mallcsid` 就是"哪个店"的意思，不是每个订单一个。
+   * 其余 7 行留空，等用户把 ERP 给的链接粘进来（不用知道 ID）。
+   */
+  var KNOWN_STORES = [{ name: "拼多多5店", mallcsid: "cs_355831479" }];
   function defaultStores() {
     var out = [];
-    for (var i = 1; i <= 8; i++) out.push({ name: "店铺 " + i, mallcsid: i === 1 ? "cs_671782974" : "" });
+    for (var i = 1; i <= 8; i++) {
+      out.push(KNOWN_STORES[i - 1] || { name: "店铺 " + i, mallcsid: "" });
+    }
     return out;
   }
 

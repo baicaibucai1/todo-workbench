@@ -414,7 +414,7 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     String(client.detailText.indexOf("261011-442394294633154") >= 0));
   check("异常单：右栏给出「呼起客户端」按钮", client.hasBtn === true, String(client.hasBtn));
   check("异常单：呼起链接拼对了（协议 + OpeId + mallcsid + ordersn）",
-    client.title === "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_671782974&ordersn=261011-442394294633154",
+    client.title === "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_355831479&ordersn=261011-442394294633154",
     client.title);
   /* ---------- 店铺表：8 个店铺，各配一个客服 ID ----------
    * 用户有 8 个店铺，每条单属于其中一个 —— 呼起必须用**那个店的** mallcsid。
@@ -432,15 +432,15 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     };
   });
   check("异常单：配置区是一张 8 个店铺的表（用户有 8 个店）",
-    stores.rows === 8 && stores.names[0] === "店铺 1", JSON.stringify(stores.names));
-  check("异常单：第一个店铺带着已知的客服 ID（取自 make-url.mjs）",
-    stores.firstCs === "cs_671782974", stores.firstCs);
+    stores.rows === 8 && stores.names[0] === "拼多多5店", JSON.stringify(stores.names));
+  check("异常单：第一个店铺是实测确认过的「拼多多5店」",
+    stores.firstCs === "cs_355831479", stores.firstCs);
   check("异常单：还没填客服 ID 的店铺被标出来并被提示",
     stores.missing === 7 && /缺的那几/.test(stores.hint), `${stores.missing} 行 / ${stores.hint}`);
   check("异常单：登记页有店铺下拉，选项和店铺表一致",
-    stores.options.length === 8 && stores.options[0] === "店铺 1", JSON.stringify(stores.options));
+    stores.options.length === 8 && stores.options[0] === "拼多多5店", JSON.stringify(stores.options));
   check("异常单：登记时选的店铺记到了单子上（没选就是第一个）",
-    client.detailText.indexOf("店铺 1") >= 0, client.detailText.slice(0, 60));
+    client.detailText.indexOf("拼多多5店") >= 0, client.detailText.slice(0, 60));
 
   /* 列表行里也要能直接呼起 —— 用户要的是"每一个单号都能一键唤醒"，
      不用先选中再点右栏。点行里的「↗」不该改变右栏选中的那条。 */
@@ -517,7 +517,7 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     noCs.rowStore === "店铺 3" && /客服 ID/.test(noCs.rowTip), JSON.stringify(noCs.rowTip));
 
   // 换回店铺 1 —— 走右栏那个店铺下拉（登记时选错了就靠它改）
-  await page.selectOption("#d-store", "店铺 1");
+  await page.selectOption("#d-store", "拼多多5店");
   await page.waitForTimeout(800);
   const backTo1 = await page.evaluate(() => {
     const btn = document.querySelector('#detail button[data-act="open-client"]');
@@ -527,8 +527,8 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     };
   });
   check("异常单：右栏换店铺后链接跟着换、kv 里的店铺也改过来了",
-    backTo1.url === "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_671782974&ordersn=261011-442394294633154" &&
-      backTo1.kv === "店铺 1", JSON.stringify(backTo1));
+    backTo1.url === "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_355831479&ordersn=261011-442394294633154" &&
+      backTo1.kv === "拼多多5店", JSON.stringify(backTo1));
 
   /* ---------- 改店铺名 / 改客服 ID ----------
      改名要**带着已登记的单子一起走**：单子上记的是店铺名，不跟过去那些单子就会
