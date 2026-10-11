@@ -222,6 +222,52 @@ fetched = (await repo.fetchTasks({ view: "all", includeDone: true })).find(
 );
 check("非白名单字段被忽略且不报错", fetched?.title === "改名后的任务");
 
+/* ---------- 2.5 手动排序（列表内拖拽落库走的就是这一条） ---------- */
+
+const dragA = await repo.createTask({ listId: workList.id, title: "排序甲" });
+const dragB = await repo.createTask({ listId: workList.id, title: "排序乙" });
+const dragC = await repo.createTask({ listId: workList.id, title: "排序丙" });
+const dragIds = [dragA, dragB, dragC].map((t) => t.id);
+const sortOf = async () =>
+  (await repo.fetchTasks({ view: "list", listId: workList.id }))
+    .filter((t) => dragIds.includes(t.id))
+    .map((t) => t.title);
+const numbersOf = async () =>
+  (await repo.fetchTasks({ view: "list", listId: workList.id, includeDone: true }))
+    .filter((t) => dragIds.includes(t.id))
+    .map((t) => t.sortOrder);
+
+// 新任务排在最前，所以建完是 丙、乙、甲
+check("三条新建任务按新建顺序倒着排", JSON.stringify(await sortOf()) === JSON.stringify(["排序丙", "排序乙", "排序甲"]), JSON.stringify(await sortOf()));
+
+// 另一张清单里的任务：**组外**的行不该被这次重排碰到
+const otherList = await repo.createList("另一张清单");
+const outsider = await repo.createTask({ listId: otherList.id, title: "组外的任务" });
+
+const numbersBefore = (await numbersOf()).slice().sort((x, y) => x - y);
+await repo.reorderTasks([dragA.id, dragB.id, dragC.id]);
+check("手动排序改成传入的顺序", JSON.stringify(await sortOf()) === JSON.stringify(["排序甲", "排序乙", "排序丙"]), JSON.stringify(await sortOf()));
+
+/*
+ * 关键：序号集合不变。
+ *
+ * sort_order 是全库共用的一列，如果重排时重新编号（0,1,2…），撞上别的清单
+ * 里已有的序号之后，ORDER BY 会退化成按创建时间排 —— 表现是"拖了一下这张
+ * 清单，另一张的顺序也跟着乱了"。
+ */
+const numbersAfter = (await numbersOf()).slice().sort((x, y) => x - y);
+check("重排只换顺序，不重新编号", JSON.stringify(numbersAfter) === JSON.stringify(numbersBefore), `${JSON.stringify(numbersBefore)} → ${JSON.stringify(numbersAfter)}`);
+
+const outsiderAfter = (await repo.fetchTasks({ view: "list", listId: otherList.id }))[0];
+check("组外的任务没被碰到", outsiderAfter?.id === outsider.id && outsiderAfter?.sortOrder === outsider.sortOrder);
+
+// 幂等与边界：同序重排、只给一条、空数组都不该有事
+await repo.reorderTasks([dragA.id, dragB.id, dragC.id]);
+check("同样顺序再排一次不变", JSON.stringify(await sortOf()) === JSON.stringify(["排序甲", "排序乙", "排序丙"]));
+await repo.reorderTasks([dragA.id]);
+await repo.reorderTasks([]);
+check("不足两条时是空操作", JSON.stringify(await sortOf()) === JSON.stringify(["排序甲", "排序乙", "排序丙"]));
+
 await repo.deleteTask(created.id);
 const afterDelete = await repo.fetchTasks({ view: "all", includeDone: true });
 check("软删除后查询不到", !afterDelete.some((t) => t.id === created.id));

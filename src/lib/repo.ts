@@ -107,15 +107,22 @@ const toList = (r: RawList): TaskList => ({
 
 /* ------------------------------ 列表 ------------------------------ */
 
-/** To Do 默认主题色板，新建列表时按序取用 */
+/**
+ * 清单色板，新建清单按**顺序**取用（第 1 个清单拿第 1 个颜色）。
+ *
+ * 玫红挪到末尾而不是删掉：它还是老清单的颜色，色板里要能选得到。
+ * 首位换成图标那套橙黄（`#ea580c` = 应用图标的 ORANGE），
+ * 于是"新装的界面、新建的清单"和图标是同一种颜色语言。
+ */
 export const LIST_COLORS = [
-  "#d4537e",
+  "#ea580c",
   "#378add",
   "#1d9e75",
   "#ba7517",
   "#534ab7",
   "#d85a30",
   "#888780",
+  "#d4537e",
 ];
 
 /**
@@ -370,6 +377,45 @@ export async function deleteTask(id: string): Promise<void> {
     { sql: `DELETE FROM core_steps WHERE task_id = ?`, params: [id] },
     { sql: `DELETE FROM core_task_links WHERE task_id = ? OR linked_id = ?`, params: [id, id] },
   ]);
+}
+
+/**
+ * 手动排序：把这组 id 按**传入的顺序**重排。
+ *
+ * ------------------------------------------------------------------
+ * 为什么是"重新分配这一组已有的序号"，而不是重新编号 0,1,2…
+ * ------------------------------------------------------------------
+ * `sort_order` 是**全库共用**的一列（ORDER BY 是 `done, sort_order, created_at`），
+ * 不是"每个清单内部从 0 开始"。重新编号会和别的清单里已经存在的序号撞上，
+ * 而序号相同就退化成按创建时间排 —— 表现是"拖了一下 A 清单，B 清单的顺序
+ * 也跟着乱了"，且完全看不出两者有关系。
+ *
+ * 所以这里只把这一组当前占用的序号**排序后重新发回去**（第 i 个拿到第 i 小的
+ * 那个值）：组内相对顺序变成传入的顺序，组外一行都不碰，序号的取值集合也不变。
+ *
+ * ⚠️ MemoryDb 的 WHERE 不认 `IN`（会静默什么都查不到），所以逐条查。
+ *
+ * @param ids 新的先后顺序（只传参与排序的那一组，通常是当前分组里的待办）
+ */
+export async function reorderTasks(ids: string[]): Promise<void> {
+  if (ids.length < 2) return;
+
+  const cur: number[] = [];
+  for (const id of ids) {
+    const rows = await db().select<{ sort_order: number }>(
+      `SELECT sort_order FROM core_tasks WHERE id = ?`,
+      [id],
+    );
+    cur.push(rows[0]?.sort_order ?? 0);
+  }
+
+  const slots = [...cur].sort((a, b) => a - b);
+  await db().transaction(
+    ids.map((id, i) => ({
+      sql: `UPDATE core_tasks SET sort_order = ?, updated_at = ? WHERE id = ?`,
+      params: [slots[i], now(), id],
+    })),
+  );
 }
 
 /**

@@ -1,10 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Star,
   Sun,
   Trash2,
   CalendarDays,
-  MoreHorizontal,
+  ArrowDownUp,
   Lightbulb,
   Circle,
   CheckCircle2,
@@ -17,7 +17,12 @@ import { useStore } from "../store";
 import TaskRow from "./TaskRow";
 import OrderRow from "./OrderRow";
 import OrderCreateDialog from "./OrderCreateDialog";
-import { groupRows, type Row as RowsRow } from "../lib/rows";
+import {
+  groupRows,
+  resolveSortByDate,
+  type Row as RowsRow,
+  type Section,
+} from "../lib/rows";
 import { SETTINGS } from "../lib/settings";
 import {
   SCRIM,
@@ -97,6 +102,9 @@ export default function TaskList() {
     removeTask,
     renameTask,
     setDueDate,
+    reorderTasks,
+    sortByDate: sortByDateOverride,
+    setSortByDate,
     advanceOrder,
     toggleOrderImportant,
     removeOrder,
@@ -117,7 +125,18 @@ export default function TaskList() {
    */
   const [orderFormTitle, setOrderFormTitle] = useState<string | null>(null);
   const [showDone, setShowDone] = useState(false);
-  const [sortByDate, setSortByDate] = useState(false);
+  /**
+   * 排序方式：true = 按日期，false = 自定义顺序（**这时行可以拖**）。
+   *
+   * 放在 store 里（`sortByDate`，null = 视图默认）而不是组件里：
+   * 「自动选中第一行」必须和列表用同一份排序规则，各存一份就会错位
+   * （见 lib/rows.ts 里 resolveSortByDate 的说明）。
+   *
+   * ⚠️ 这个开关以前只换按钮的 tooltip，没接到任何排序上（按钮是死的）；
+   * 现在它真的决定分组怎么排、哪些行能拖。
+   */
+  const sortByDate = resolveSortByDate(view, sortByDateOverride);
+  const toggleSort = () => setSortByDate(!sortByDate);
   /**
    * 加载失败的那张壁纸。
    *
@@ -185,7 +204,120 @@ export default function TaskList() {
 
   // 分组排序全部交给 lib/rows.ts —— store 选第一条时用的是同一份，
   // 保证「高亮的行」和「右侧展开的详情」永远指同一条记录
-  const grouped = useMemo(() => groupRows(tasks, orders, view), [tasks, orders, view]);
+  const grouped = useMemo(
+    () => groupRows(tasks, orders, view, sortByDate),
+    [tasks, orders, view, sortByDate],
+  );
+
+  /* ------------------------------------------------------------------ *
+   * 拖拽排序
+   * ------------------------------------------------------------------ */
+
+  /**
+   * 一次拖拽的全部现场。用 ref 而不是 state：拖动过程中 pointermove
+   * 每帧都在算落点，走 state 会让整个列表跟着重渲染几十次。
+   */
+  const dragRef = useRef<{
+    section: string;
+    ids: string[];
+    rects: { top: number; height: number }[];
+    from: number;
+    to: number;
+  } | null>(null);
+  /** 只有"拖的是谁、落在第几位"进 state —— 渲染预览用 */
+  const [dragView, setDragView] = useState<{ section: string; id: string; to: number } | null>(
+    null,
+  );
+
+  /**
+   * 按下把手。用 pointer 事件 + window 监听，而不是 HTML5 的 draggable：
+   * 后者在 Playwright 里不好驱动（要合成 dragstart/drop 一串事件），
+   * 而 pointer 事件就是普通鼠标事件，e2e 用 mouse.down/move/up 就能真拖一遍。
+   */
+  const beginDrag = (e: React.PointerEvent, section: Section, id: string) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+
+    // 行矩形在**按下这一刻**量一次就够：拖动过程中不改布局（落点是实时重排
+    // 的，但那是渲染层的事，量新的反而会被自己的预览带着抖）
+    const nodes = Array.from(
+      document.querySelectorAll<HTMLElement>(`[data-drag-row="${section.key}"]`),
+    );
+    const ids = nodes.map((n) => n.dataset.taskId ?? "").filter(Boolean);
+    const rects = nodes.map((n) => {
+      const r = n.getBoundingClientRect();
+      return { top: r.top, height: r.height };
+    });
+    const from = ids.indexOf(id);
+    if (from < 0 || ids.length < 2) return;
+
+    dragRef.current = { section: section.key, ids, rects, from, to: from };
+    setDragView({ section: section.key, id, to: from });
+
+    const move = (ev: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      // 落点 = "指针越过了几条行的中线"
+      let ins = d.rects.length;
+      for (let k = 0; k < d.rects.length; k++) {
+        if (ev.clientY < d.rects[k].top + d.rects[k].height / 2) {
+          ins = k;
+          break;
+        }
+      }
+      const to = ins > d.from ? ins - 1 : ins;
+      if (to !== d.to) {
+        d.to = to;
+        setDragView({ section: d.section, id: d.ids[d.from], to });
+      }
+    };
+
+    const finish = (commit: boolean) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      const d = dragRef.current;
+      dragRef.current = null;
+      setDragView(null);
+      if (!commit || !d || d.to === d.from) return;
+      const next = [...d.ids];
+      const [moved] = next.splice(d.from, 1);
+      next.splice(d.to, 0, moved);
+      void reorderTasks(next);
+    };
+    const up = () => finish(true);
+    const cancel = () => finish(false);
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+  };
+
+  /**
+   * 拖动中的**预览顺序**：把被拖的那条挪到落点上，其余原地不动。
+   *
+   * 直接改渲染顺序而不是画一条"会落在哪儿"的指示线：后者在"拖到最后一位"
+   * 时只能画在最后一行上方，说的和实际落点不一致。
+   * 流程任务行不参与（它们按日期排），所以只在待办占的那几个槽位里换。
+   */
+  const previewItems = (section: Section): RowsRow[] => {
+    const d = dragView;
+    if (!d || d.section !== section.key) return section.items;
+    const slots: number[] = [];
+    section.items.forEach((r, i) => {
+      if (r.kind === "task") slots.push(i);
+    });
+    const taskRows = slots.map((i) => section.items[i]);
+    const from = taskRows.findIndex((r) => r.kind === "task" && r.task.id === d.id);
+    if (from < 0) return section.items;
+    const [moved] = taskRows.splice(from, 1);
+    taskRows.splice(d.to, 0, moved);
+    const next = [...section.items];
+    slots.forEach((pos, k) => {
+      next[pos] = taskRows[k];
+    });
+    return next;
+  };
 
   const submit = async () => {
     if (!draft.trim()) return;
@@ -216,7 +348,13 @@ export default function TaskList() {
       ? activeTaskId === row.task.id
       : activeOrderId === row.order.id;
 
-  const renderRow = (row: Row, i: number, items: Row[], showDate: boolean) =>
+  const renderRow = (
+    row: Row,
+    i: number,
+    items: Row[],
+    showDate: boolean,
+    section?: Section,
+  ) =>
     row.kind === "task" ? (
       <TaskRow
         key={row.task.id}
@@ -234,6 +372,17 @@ export default function TaskList() {
         onRename={(t) => void renameTask(row.task.id, t)}
         onSetDueDate={(d) => void setDueDate(row.task.id, d)}
         onOpen={() => openTask(row.task.id)}
+        /* 只有"自定义顺序"的分组给把手：按日期排的分组里拖一下没有意义，
+           松手它就会被日期排回去 —— 不给把手才不会让人以为坏了 */
+        drag={
+          section?.manual
+            ? {
+                section: section.key,
+                onStart: (e) => beginDrag(e, section, row.task.id),
+                dragging: dragView?.id === row.task.id,
+              }
+            : undefined
+        }
       />
     ) : (
       <OrderRow
@@ -305,11 +454,13 @@ export default function TaskList() {
             </button>
           )}
           <button
-            onClick={() => setSortByDate((v) => !v)}
+            onClick={toggleSort}
             className="grid size-8 place-items-center rounded-md bg-white/20 text-white hover:bg-white/30"
-            title={sortByDate ? "按自定义顺序" : "按日期排序"}
+            title={sortByDate ? "改为自定义顺序（可拖动）" : "按日期排序"}
+            // 排序方式写进 dataset：光看图标分不出当前是哪一种，自动化要有确定读法
+            data-sort-by-date={sortByDate ? "1" : "0"}
           >
-            <MoreHorizontal size={16} />
+            <ArrowDownUp size={16} />
           </button>
         </div>
       </div>
@@ -343,12 +494,13 @@ export default function TaskList() {
                   它的投影必须能溢出到容器外面 —— 裁掉就成了半张卡。
                   代价是圆角改由行自己兜住（lib/rowStyle 的 first / last）。 */}
               <div className="rounded-lg bg-surface shadow-[0_1px_3px_rgba(0,0,0,0.12)]">
-                {section.items.map((row, i) =>
+                {previewItems(section).map((row, i) =>
                   renderRow(
                     row,
                     i,
                     section.items,
                     view === "all" || view === "list" || view === "orders",
+                    section,
                   ),
                 )}
               </div>

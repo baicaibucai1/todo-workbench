@@ -16,6 +16,9 @@ const SUITES = [
   ["task-detail.mjs", []],
   ["todo-extras.mjs", []],
   ["daily-settings.mjs", []],
+  // 列表内拖拽排序：拖完落库（刷新还在）、按日期排的分组不给把手、
+  // 头部那个排序开关是真的接在排序上的（它曾经只改 tooltip）
+  ["task-drag.mjs", []],
   // 同步分区：只验界面这一层（默认只勾待办、勾选落库、演示模式下的禁用态）。
   // 合并算法与写回走的是 Node 侧的 npm run sync:test —— 那边不需要浏览器，
   // 也不会因为多开一个渲染进程而拖慢这一轮。

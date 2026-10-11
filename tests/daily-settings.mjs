@@ -112,7 +112,9 @@ check("新任务带每日标记", (await newRow.locator("[data-repeat-badge]").c
 
 console.log("\n3. 完成每日任务，状态正确");
 // 勾完成后会立刻移出活动列表、收进「已完成」折叠区（与 To Do 一致）
-await newRow.locator("button").first().click(); // 完成勾选圈
+// 按钩子点，不写"行内第一个 button"：行里现在还有拖拽把手（排在勾选圈前面），
+// 靠顺序点会点空 —— 而且报错会说是"任务没从列表里移出"，看不出是点错了地方
+await newRow.locator("[data-toggle-done]").click();
 await page.waitForTimeout(700);
 const stillActive = await rows().filter({ hasText: "每天喝水 2L" }).count();
 check("勾选后从活动列表移出", stillActive === 0, `count=${stillActive}`);
@@ -124,7 +126,7 @@ check("已完成分组里能看到这条", (await doneRow.count()) === 1);
 check("已完成行有删除线", (await doneRow.locator(".line-through").count()) === 1);
 
 // 取消完成，让它回到未完成，后面的用例仍在干净状态上跑
-await doneRow.locator("button").first().click();
+await doneRow.locator("[data-toggle-done]").click();
 await page.waitForTimeout(600);
 
 console.log("\n4. 详情面板可以设置重复规则");

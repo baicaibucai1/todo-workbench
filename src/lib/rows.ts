@@ -14,6 +14,13 @@ export type Section = {
   label: string;
   overdue: boolean;
   items: Row[];
+  /**
+   * 这一节是不是"自定义顺序"（按 `sort_order` 排的）。
+   *
+   * 只有这种节里的待办**可以拖动排序** —— 按日期排的节里拖一条没有任何意义
+   * （松手后它又会被日期排回去），所以界面据此决定要不要给拖拽把手。
+   */
+  manual: boolean;
 };
 
 /** 一行参与排序的日期：待办看截止日，流程任务先看开始日再看交付日 */
@@ -41,11 +48,33 @@ function byDate(rows: Row[]): Row[] {
  * 就会出现「高亮的是第 3 行、详情却是第 1 行」这种没人能一眼看穿的错位。
  * 之前踩过：备注写进了 A 任务，界面上打开的却是 B。
  */
+/**
+ * 这一视图当前到底是"按日期"还是"自定义顺序"。
+ *
+ * 单独抽出来是因为**两个地方必须算出同一个答案**：
+ * 列表渲染（`groupRows`）和"自动选中第一行"（`firstVisibleRow`）。
+ * 各写一遍就会退化成"高亮的是第 3 行、详情却是第 1 行"—— 那个坑踩过一次。
+ *
+ * @param override 界面上那个排序开关；`null` = 用视图自己的默认
+ */
+export function resolveSortByDate(view: string, override?: boolean | null): boolean {
+  return override ?? (view === "all" || view === "myday");
+}
+
 export function groupRows(
   tasks: Task[],
   orders: WorkOrder[],
   view: string,
+  /**
+   * 这一节要不要按日期排。
+   *
+   * 不传 = 用视图自己的默认（「全部」与「我的一天」按日期，清单与「重要」按
+   * 自定义顺序）；传了就是界面上那个排序开关的状态。
+   * 只有 `false`（自定义顺序）时待办才可以拖动排序。
+   */
+  sortByDate?: boolean,
 ): { sections: Section[]; done: Row[] } {
+  const useDate = resolveSortByDate(view, sortByDate);
   const activeTasks = tasks.filter((t) => !t.done);
   const doneTasks = tasks.filter((t) => t.done);
   const openOrders = orders.filter((o) => !o.closed);
@@ -74,12 +103,22 @@ export function groupRows(
       .map((task) => ({ kind: "task" as const, task }));
     return {
       sections: [
-        { key: "today", label: "今日任务", overdue: false, items: byDate(once) },
         {
+          key: "today",
+          label: "今日任务",
+          overdue: false,
+          items: useDate ? byDate(once) : once,
+          manual: !useDate,
+        },
+        {
+          // 每日任务**永远**是自定义顺序：它们没有截止日，按日期排只会
+          // 全部落在"9999-99-99"那一档里，退化成看不出规律的顺序。
+          // 所以即使在按日期模式下，这一节也允许拖动。
           key: "daily",
           label: "每日任务",
           overdue: false,
           items: daily.map((task) => ({ kind: "task" as const, task })),
+          manual: true,
         },
       ].filter((s) => s.items.length > 0),
       done,
@@ -96,8 +135,8 @@ export function groupRows(
       os.map((order) => ({ kind: "order" as const, order }));
     return {
       sections: [
-        { key: "open", label: "进行中", overdue: false, items: byDate(asRows(openOrders)) },
-        { key: "closed", label: "已完成", overdue: false, items: byDate(asRows(closedOrders)) },
+        { key: "open", label: "进行中", overdue: false, items: byDate(asRows(openOrders)), manual: false },
+        { key: "closed", label: "已完成", overdue: false, items: byDate(asRows(closedOrders)), manual: false },
       ].filter((s) => s.items.length > 0),
       done: [],
     };
@@ -129,7 +168,8 @@ export function groupRows(
         key: "active",
         label: "",
         overdue: false,
-        items: view === "all" ? byDate(all) : all,
+        items: useDate ? byDate(all) : all,
+        manual: !useDate,
       },
     ],
     done,
@@ -146,8 +186,14 @@ export function firstVisibleRow(
   tasks: Task[],
   orders: WorkOrder[],
   view: string,
+  sortOverride?: boolean | null,
 ): Row | null {
-  const { sections } = groupRows(tasks, orders, view);
+  const { sections } = groupRows(
+    tasks,
+    orders,
+    view,
+    resolveSortByDate(view, sortOverride),
+  );
   for (const s of sections) {
     if (s.items.length) return s.items[0];
   }

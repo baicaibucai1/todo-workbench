@@ -10,6 +10,7 @@ import {
   Repeat,
   ListChecks,
   Clock,
+  GripVertical,
 } from "lucide-react";
 import type { Step, Task } from "../types";
 import { today, addDays } from "../lib/repo";
@@ -37,6 +38,18 @@ interface Props {
   onSetDueDate: (date: string | null) => void;
   /** 点击行打开右侧详情 */
   onOpen: () => void;
+  /**
+   * 拖拽排序。不传 = 这一行不能拖（按日期排的分组、搜索结果、已完成区）。
+   *
+   * `section` 是它所在的分组 key：拖拽要按"同一分组内的待办"算落点，
+   * 自动化也靠 `[data-drag-row="<section>"]` 读出当前可见顺序。
+   */
+  drag?: {
+    section: string;
+    onStart: (e: React.PointerEvent) => void;
+    /** 正被拖着的那一行（半透明 + 轻微抬起，好和"它已经落到哪儿了"区别开） */
+    dragging: boolean;
+  };
 }
 
 /** 展开/收起的时长，JS 那边的卸载定时必须与 CSS 的 duration 对上 */
@@ -67,6 +80,7 @@ export default function TaskRow({
   onRename,
   onSetDueDate,
   onOpen,
+  drag,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(task.title);
@@ -148,14 +162,34 @@ export default function TaskRow({
         if ((e.target as HTMLElement).closest("button")) return;
         onOpen();
       }}
+      // 拖动排序：这一行属于哪个可拖的分组（自动化按它取"当前可见的顺序"）
+      data-drag-row={drag?.section}
+      data-drag-state={drag ? (drag.dragging ? "dragging" : "idle") : undefined}
       // 选中态是"整行抬起"（见 lib/rowStyle），transition 要连着阴影和位移一起
       className={`group relative flex cursor-pointer items-start gap-3 px-3.5 py-2.5 transition-[background-color,box-shadow,transform] duration-150 ${rowSurfaceClass(
         { active, first, last, prevActive },
-      )}`}
+      )} ${drag?.dragging ? "opacity-60 shadow-[0_6px_18px_rgba(0,0,0,0.18)]" : ""}`}
     >
+      {drag && (
+        /* 拖拽把手。独立做一个而不是让整行可拖：行上有勾选圈 / 星标 / 删除
+           三个按钮，整行可拖会和"点一下打开详情"抢手势。 */
+        <button
+          data-drag-handle
+          title="拖动排序"
+          aria-label="拖动排序"
+          onPointerDown={drag.onStart}
+          onClick={(e) => e.stopPropagation()}
+          className="mt-[1px] grid size-[19px] shrink-0 cursor-grab place-items-center rounded text-fg-dim opacity-0 transition-opacity hover:bg-hover hover:text-fg group-hover:opacity-70"
+        >
+          <GripVertical size={13} />
+        </button>
+      )}
       {/* 完成勾选圈 */}
       <button
         onClick={onToggleDone}
+        // 稳定的选择钩子：行内现在还有拖拽把手（它排在勾选圈**前面**），
+        // 靠"行内第一个 button"去点会点空 —— 自动化要有不会随装饰元素漂移的读法
+        data-toggle-done
         title={task.done ? "标记为未完成" : "标记为已完成"}
         className="mt-[1px] grid size-[19px] shrink-0 place-items-center rounded-full border-[1.5px] transition-colors"
         style={{

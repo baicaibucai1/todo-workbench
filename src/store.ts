@@ -397,6 +397,14 @@ interface State {
   openFlowEditor: (flowId: string | null) => void;
   /** 自动选中当前列表的第一条，让右侧详情始终有内容 */
   selectFirst: () => void;
+  /**
+   * 排序模式。`null` = 用视图自己的默认（见 lib/rows.ts 的 resolveSortByDate）。
+   *
+   * 放在 store 而不是组件里：自动选中第一行（selectFirst）必须和列表用同一份
+   * 排序规则，各存一份就会错位。
+   */
+  sortByDate: boolean | null;
+  setSortByDate: (v: boolean | null) => void;
   /** 改任务的任意白名单字段（备注、所属列表、提醒等），改完自动刷新 */
   patchTask: (id: string, patch: Partial<Task>) => Promise<void>;
   setSearch: (q: string) => void;
@@ -469,6 +477,8 @@ interface State {
   renameTask: (id: string, title: string) => Promise<void>;
   setDueDate: (id: string, date: string | null) => Promise<void>;
   setRepeat: (id: string, repeat: Repeat) => Promise<void>;
+  /** 手动排序：ids 是拖完之后的新顺序（见 repo.reorderTasks 的说明） */
+  reorderTasks: (ids: string[]) => Promise<void>;
 
   addList: (name: string) => Promise<void>;
   renameList: (id: string, name: string) => Promise<void>;
@@ -506,6 +516,7 @@ export const useStore = create<State>((set, get) => ({
 
   view: "myday",
   activeListId: null,
+  sortByDate: null,
 
   search: "",
   activeToolId: null,
@@ -665,6 +676,10 @@ export const useStore = create<State>((set, get) => ({
       view,
       activeListId: view === "list" ? (listId ?? null) : null,
       activeToolId: null,
+      // 排序模式跟着视图回到默认：每个视图有自己的默认
+      // （全部/我的一天按日期，清单/重要按自定义），把上一个视图的选择
+      // 带过去等于"我明明没点过那个开关，顺序却变了"
+      sortByDate: null,
       // 离开工具不等于关掉它：保持状态开着时它继续挂在后台（见 aliveToolIds）
       aliveToolIds: aliveAfterOpen(get(), null),
       // 切视图时清掉当前选中：详情属于"某一条记录"，视图变了它大概率不在新列表里。
@@ -795,11 +810,14 @@ export const useStore = create<State>((set, get) => ({
    * 现在只要列表怎么排，选中就怎么选。
    */
   selectFirst: () => {
-    const { tasks, orders, view } = get();
+    // 排序模式要带上：用户把某个视图切成了"自定义顺序"，列表按那个排，
+    // 自动选中的第一条也得按那个排（见 lib/rows.ts 里 resolveSortByDate 的说明）
+    const { tasks, orders, view, sortByDate } = get();
     const first = firstVisibleRow(
       tasks,
       orders,
       view,
+      sortByDate,
     );
     if (!first) {
       set({ activeTaskId: null, activeOrderId: null });
@@ -1001,6 +1019,10 @@ export const useStore = create<State>((set, get) => ({
     void get().refresh();
   },
 
+  setSortByDate: (v) => {
+    set({ sortByDate: v });
+  },
+
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
 
   addTask: async (title, opts) => {
@@ -1013,7 +1035,9 @@ export const useStore = create<State>((set, get) => ({
     const listId =
       view === "list" && activeListId ? activeListId : (lists[0]?.id ?? null);
     if (!listId) {
-      const created = await repo.createList("任务", "#d4537e");
+      // 不写死颜色：让它跟色板走（见 repo.LIST_COLORS 的说明），
+      // 免得"这儿一个默认色、色板里一个默认色"将来走到一起去
+      const created = await repo.createList("任务");
       await repo.createTask({ listId: created.id, title: t, myDay: view === "myday", repeat });
     } else {
       await repo.createTask({
@@ -1220,6 +1244,33 @@ export const useStore = create<State>((set, get) => ({
 
   setDueDate: async (id, date) => {
     await repo.updateTask(id, { dueDate: date });
+    await get().refresh();
+  },
+
+  /*
+   * 手动排序：**先改内存再落库**。
+   *
+   * 拖拽结束时界面已经把行的位置画好了，如果这里还等落库 + refresh 回来
+   * 才动，行会先弹回原位再跳到新位置 —— 一次明显的闪动。所以先按新顺序
+   * 把 store.tasks 重排一遍（refresh 回来后顺序一致，不会二次跳动）。
+   */
+  reorderTasks: async (ids) => {
+    set((s) => {
+      const byId = new Map(s.tasks.map((t) => [t.id, t]));
+      // 只在"参与者原来占的那几个位置"上放新顺序，其余行原地不动 ——
+      // 直接整数组 sort 会把没参与的任务顶到前面去
+      const slots: number[] = [];
+      s.tasks.forEach((t, i) => {
+        if (ids.includes(t.id)) slots.push(i);
+      });
+      const next = [...s.tasks];
+      slots.forEach((slot, k) => {
+        const t = byId.get(ids[k]);
+        if (t) next[slot] = t;
+      });
+      return { tasks: next };
+    });
+    await repo.reorderTasks(ids);
     await get().refresh();
   },
 
