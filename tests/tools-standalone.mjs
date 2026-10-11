@@ -416,7 +416,31 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   check("异常单：呼起链接拼对了（协议 + OpeId + mallcsid + ordersn）",
     client.title === "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_671782974&ordersn=261011-442394294633154",
     client.title);
-  check("异常单：客服 ID 有默认值（取 make-url.mjs 那个）", /cs_671782974/.test(client.cfgHint), client.cfgHint);
+  /* ---------- 店铺表：8 个店铺，各配一个客服 ID ----------
+   * 用户有 8 个店铺，每条单属于其中一个 —— 呼起必须用**那个店的** mallcsid。
+   * 只留一个全局客服 ID 的话，每次呼起前都得手动切一次；切错了的链接照样把客户端
+   * 弹起来、只是定位不到订单，界面上一点报错都没有。 */
+  const stores = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("#stores .store-row")];
+    return {
+      rows: rows.length,
+      names: rows.map((r) => r.querySelector("input.name").value),
+      firstCs: rows[0] ? rows[0].querySelector("input.cs").value : "",
+      missing: rows.filter((r) => r.classList.contains("empty-cs")).length,
+      options: [...document.querySelectorAll("#store option")].map((o) => o.value),
+      hint: (document.getElementById("cfgHint") || {}).textContent || "",
+    };
+  });
+  check("异常单：配置区是一张 8 个店铺的表（用户有 8 个店）",
+    stores.rows === 8 && stores.names[0] === "店铺 1", JSON.stringify(stores.names));
+  check("异常单：第一个店铺带着已知的客服 ID（取自 make-url.mjs）",
+    stores.firstCs === "cs_671782974", stores.firstCs);
+  check("异常单：还没填客服 ID 的店铺被标出来并被提示",
+    stores.missing === 7 && /缺的那几/.test(stores.hint), `${stores.missing} 行 / ${stores.hint}`);
+  check("异常单：登记页有店铺下拉，选项和店铺表一致",
+    stores.options.length === 8 && stores.options[0] === "店铺 1", JSON.stringify(stores.options));
+  check("异常单：登记时选的店铺记到了单子上（没选就是第一个）",
+    client.detailText.indexOf("店铺 1") >= 0, client.detailText.slice(0, 60));
 
   /* 列表行里也要能直接呼起 —— 用户要的是"每一个单号都能一键唤醒"，
      不用先选中再点右栏。点行里的「↗」不该改变右栏选中的那条。 */
@@ -473,22 +497,70 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   });
   check("异常单：右栏也给出了这条单号的说明", /下单日期/.test(detailSnHint), detailSnHint);
 
-  // 换成别的客服 ID，链接要跟着变（换店铺/换客服时用得上）。
-  // 配置藏在登记页的折叠区里，所以要先切回去、再把它展开。
+  /* ---------- 换店铺：没配客服 ID 的店不能假装能呼起 ----------
+     用户有 8 个店，一开始只有 1 个填了客服 ID —— 选了别的店时必须**说清为什么**
+     呼不起来，而不是给一个能点但什么都不发生的按钮。 */
+  await page.selectOption("#d-store", "店铺 3");
+  await page.waitForTimeout(800);
+  const noCs = await page.evaluate(() => {
+    const wake = document.querySelector(".ticket button.wake");
+    return {
+      hasOpen: !!document.querySelector('#detail button[data-act="open-client"]'),
+      note: (document.querySelector("#detail .cfg-note") || {}).textContent || "",
+      rowStore: wake ? wake.getAttribute("data-store") : "",
+      rowTip: wake ? wake.getAttribute("title") : "",
+    };
+  });
+  check("异常单：换成没配客服 ID 的店铺后，呼起按钮禁用并说明原因",
+    noCs.hasOpen === false && /还没填客服 ID/.test(noCs.note), JSON.stringify(noCs));
+  check("异常单：行里的「↗」跟着这条单的店铺走，提示也换了",
+    noCs.rowStore === "店铺 3" && /客服 ID/.test(noCs.rowTip), JSON.stringify(noCs.rowTip));
+
+  // 换回店铺 1 —— 走右栏那个店铺下拉（登记时选错了就靠它改）
+  await page.selectOption("#d-store", "店铺 1");
+  await page.waitForTimeout(800);
+  const backTo1 = await page.evaluate(() => {
+    const btn = document.querySelector('#detail button[data-act="open-client"]');
+    return {
+      url: btn ? btn.getAttribute("title") : "(禁用)",
+      kv: (document.querySelectorAll("#detail .kv dd")[1] || {}).textContent || "",
+    };
+  });
+  check("异常单：右栏换店铺后链接跟着换、kv 里的店铺也改过来了",
+    backTo1.url === "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_671782974&ordersn=261011-442394294633154" &&
+      backTo1.kv === "店铺 1", JSON.stringify(backTo1));
+
+  /* ---------- 改店铺名 / 改客服 ID ----------
+     改名要**带着已登记的单子一起走**：单子上记的是店铺名，不跟过去那些单子就会
+     变成"店铺不在表里了"、静悄悄地呼不起来，而用户只是把「店铺 1」改成了真名字。 */
   await page.click("#tab-create");
   await page.evaluate(() => { document.getElementById("clientBox").open = true; });
-  await page.fill("#mallcsid", "cs_999999999");
+  await page.fill("#stores .store-row:first-child input.name", "拾野");
+  await page.fill("#stores .store-row:first-child input.cs", "cs_999999999");
   await page.click("#saveCfg");
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1000);
+  const saved = await page.evaluate(() => ({
+    toast: (document.getElementById("toast") || {}).textContent || "",
+    first: (document.querySelector("#stores .store-row input.name") || {}).value,
+  }));
+  check("异常单：保存店铺表时报告了改名影响了几条单子",
+    saved.first === "拾野" && /换到新名字/.test(saved.toast), saved.toast);
+
   await page.click("#tab-browse");
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(500);
   const cfg2 = await page.evaluate(() => {
     const btn = document.querySelector('#detail button[data-act="open-client"]');
-    return { title: btn ? btn.getAttribute("title") : "", hint: (document.getElementById("cfgHint") || {}).textContent || "" };
+    return {
+      title: btn ? btn.getAttribute("title") : "(禁用)",
+      kv: (document.querySelectorAll("#detail .kv dd")[1] || {}).textContent || "",
+      picker: (document.getElementById("d-store") || {}).value || "",
+    };
   });
   check("异常单：改客服 ID 后链接跟着变",
     cfg2.title === "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_999999999&ordersn=261011-442394294633154",
     cfg2.title);
+  check("异常单：改了店铺名，单子上那条也跟着改了（改名传播）",
+    cfg2.kv === "拾野" && cfg2.picker === "拾野", `kv=${cfg2.kv} picker=${cfg2.picker}`);
 
   // 处理备注边打边存
   await page.fill("#d-note", "已通知供应商，等回料复检");
@@ -505,7 +577,9 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     code: (document.querySelector(".ticket .code") || {}).textContent || "",
     note: (document.getElementById("d-note") || {}).value || "",
     hasOrderSn: (document.getElementById("detail").innerText || "").indexOf("261011-442394294633154") >= 0,
-    cfg: (document.getElementById("mallcsid") || {}).value || "",
+    cfg: (document.querySelector("#stores .store-row:first-child input.name") || {}).value || "",
+    cs: (document.querySelector("#stores .store-row:first-child input.cs") || {}).value || "",
+    storeRows: document.querySelectorAll("#stores .store-row").length,
   }));
   check("异常单：刷新后单号还在（真的落盘了）",
     afterReload.cards === 1 && afterReload.code === list.code,
@@ -514,8 +588,9 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     /已通知供应商/.test(afterReload.note), afterReload.note.slice(0, 24));
   check("异常单：订单号刷新后也还在（是存进表里的，不是内存）",
     afterReload.hasOrderSn === true, String(afterReload.hasOrderSn));
-  check("异常单：改过的客服 ID 刷新后还在（独立态落 localStorage）",
-    afterReload.cfg === "cs_999999999", afterReload.cfg);
+  check("异常单：改过的店铺表刷新后还在（独立态落 localStorage）",
+    afterReload.cfg === "拾野" && afterReload.cs === "cs_999999999" && afterReload.storeRows === 8,
+    `${afterReload.storeRows} 行 / ${afterReload.cfg} / ${afterReload.cs}`);
 
   /* ---------- 状态推进（在右栏处理区点） ---------- */
   await page.click('#detail button[data-act="advance"]');

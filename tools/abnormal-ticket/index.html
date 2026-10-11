@@ -116,7 +116,14 @@
   #title { width: 100%; }
   #reporter { flex: 1 1 120px; }
   #occurred { flex: 0 0 150px; }
-  #mallcsid { flex: 1 1 220px; font-family: var(--mono); font-size: 13px; }
+  #store { flex: 0 0 132px; }
+  .stores { display: flex; flex-direction: column; gap: 6px; }
+  .store-row { display: flex; align-items: center; gap: 6px; }
+  .store-row .idx { flex: 0 0 20px; color: var(--dim); font-size: 11.5px; text-align: right; }
+  .store-row input { flex: 1 1 120px; font-size: 12.5px; }
+  .store-row input.cs { flex: 1 1 150px; font-family: var(--mono); }
+  .store-row button { flex: 0 0 auto; padding: 4px 8px; font-size: 12px; }
+  .store-row.empty-cs input.cs { border-color: var(--warn); }
   .hint { color: var(--dim); font-size: 11.5px; margin-top: 8px; }
   .hint code, .cfg-note code { font-family: var(--mono); color: var(--fg2); }
   .cfg-note { color: var(--dim); font-size: 11.5px; margin: 0 0 8px; }
@@ -172,6 +179,9 @@
   .sect > label { display: block; font-size: 12.5px; color: var(--fg2); margin-bottom: 6px; }
   #d-note { width: 100%; min-height: 96px; resize: vertical; font-family: inherit; }
   .client-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  /* 右栏的店铺选择：它决定呼起时用哪个客服 ID，所以摆在呼起按钮正上方 */
+  .store-line { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12.5px; color: var(--fg2); }
+  .store-line select { flex: 1 1 150px; max-width: 260px; font-size: 12.5px; }
   .d-ops { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
   .saved { color: var(--dim); font-size: 11.5px; margin-left: auto; }
 
@@ -213,9 +223,10 @@
     <div class="card" style="max-width:640px">
       <h2>登记一条异常</h2>
       <div class="r r-sn">
+        <select id="store" title="这条单是哪个店铺的 —— 呼起客户端时按它取对应的客服 ID"></select>
         <input id="code" placeholder="异常单号（留空自动生成）" />
         <span class="snwrap">
-          <input id="orderSn" placeholder="订单号（粘贴拼多多单号，如 261010-257666640262557）" />
+          <input id="orderSn" placeholder="订单号（粘贴拼多多单号，如 261011-109827858042143）" />
           <span class="hint snhint" id="snHint"></span>
         </span>
       </div>
@@ -233,21 +244,22 @@
     </div>
 
     <!-- 呼起本地客户端：靠自定义协议（pddim:…）把拼多多商家版拉起来并打开那张订单。
-         只有「客服 ID」是需要用户自己填的一次性配置，订单号是每条单自带的。 -->
+         订单号是每条单自带的；**客服 ID 按店铺分**，所以这里配的是一张店铺表。 -->
     <details style="max-width:640px" id="clientBox">
-      <summary>呼起本地客户端（拼多多商家版）</summary>
+      <summary>店铺与客服 ID（呼起本地客户端用）</summary>
       <p class="cfg-note" style="margin-top:8px">
         点「呼起客户端」会打开 <code>pddim:sendmsg/?OpeId=open_order&amp;mallcsid=…&amp;ordersn=…</code>，
         把本机的拼多多商家版拉起来并跳到你那条单。需要本机装了商家版客户端。
       </p>
       <p class="cfg-note">
         <b>客服 ID</b>（<code>mallcsid</code>）在拼多多后台能看到，形如 <code>cs_671782974</code> ——
-        它是<b>按店铺/客服分的</b>，换店就得换一个。
+        它<b>按店铺分</b>，每个店一个。这里配好之后，登记时选店铺、呼起时自动用对应那个。
         <b>订单号</b>（<code>ordersn</code>）是每条单自带的，格式为 <code>YYMMDD-数字</code>。
       </p>
-      <div class="r">
-        <input id="mallcsid" placeholder="客服 ID（cs_…）" />
-        <button id="saveCfg">保存</button>
+      <div id="stores" class="stores"></div>
+      <div class="r" style="margin-top:8px">
+        <button id="addStore">+ 加一个店铺</button>
+        <button class="primary" id="saveCfg">保存店铺表</button>
       </div>
       <div class="hint" id="cfgHint"></div>
     </details>
@@ -466,57 +478,196 @@
     del: route("row.delete", Local.del),
   };
 
-  /* 配置（客服 ID）：宿主走 kv.*，独立运行走 localStorage。
-     kv 是给"配置"准备的、表是给"记录"准备的 —— 所以它不进 tickets 表。 */
-  var cfg = { mallcsid: "" };
-  // 默认值取自 make-url.mjs（用户自己的脚本）里的 cs_671782974；
-  // 换店铺 / 换客服时界面上能改，改完落 localStorage（或宿主的 kv）。
-  var DEFAULT_MALLCSID = "cs_671782974";
-  function cfgKey() { return "wbtool:" + TOOL_ID + ":cfg:mallcsid"; }
+  /* ------------------------------------------------------------------
+   * 配置：一张店铺表（店铺名 + 各自的客服 ID）
+   *
+   * ★ 为什么是"一张表"而不是"当前客服 ID"一个值：
+   *   用户有 8 个店铺，每条单属于其中一个，呼起时必须用**那个店的** mallcsid。
+   *   只留一个全局值的话，每次呼起前都得手动切一次 —— 切错了那个链接照样弹起
+   *   客户端、只是定位不到订单，界面上一点报错都没有。那是这个工具里最难查的症状。
+   *
+   * 存哪：kv（宿主 core_tool_kv / 独立态 localStorage）。
+   *   kv 是给"配置"准备的、tickets 表是给"记录"准备的 —— 店铺表是配置，单子是记录。
+   * ------------------------------------------------------------------ */
+  var cfg = { stores: [] };
+  var STORE_KEY = "stores";
+  // 用户报了 8 个店铺。只有第一个的客服 ID 是已知的（来自他给的 pddim 链接
+  // 与桌面上那份 make-url.mjs），其余留空等他自己填。
+  function defaultStores() {
+    var out = [];
+    for (var i = 1; i <= 8; i++) out.push({ name: "店铺 " + i, mallcsid: i === 1 ? "cs_671782974" : "" });
+    return out;
+  }
 
   var LocalCfg = {
-    get: function () {
-      try { return { value: localStorage.getItem(cfgKey()) }; } catch (e) { return { value: null }; }
+    get: function (a) {
+      try { return { value: localStorage.getItem(cfgKey(a && a.key)) }; } catch (e) { return { value: null }; }
     },
     set: function (a) {
-      try { localStorage.setItem(cfgKey(), String(a.value)); return { ok: true }; }
+      try { localStorage.setItem(cfgKey(a && a.key), String(a.value)); return { ok: true }; }
       catch (e) { return { ok: false }; }
     },
   };
+  function cfgKey(key) { return "wbtool:" + TOOL_ID + ":cfg:" + String(key || ""); }
   var Cfg = {
     get: route("kv.get", LocalCfg.get),
     set: route("kv.set", LocalCfg.set),
   };
 
-  async function loadCfg() {
-    try {
-      var res = await Cfg.get({ key: "mallcsid" });
-      cfg.mallcsid = (res && res.value) || DEFAULT_MALLCSID;
-    } catch (e) {
-      cfg.mallcsid = DEFAULT_MALLCSID;
+  /** 店铺表的解析：坏数据一律当"没配过"，不要拿半个数组去驱动界面 */
+  function parseStores(raw) {
+    if (!raw) return null;
+    var arr;
+    try { arr = JSON.parse(raw); } catch (e) { return null; }
+    if (!arr || !arr.length) return null;
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+      var s = arr[i] || {};
+      var name = String(s.name == null ? "" : s.name).trim();
+      if (!name) continue;
+      out.push({ name: name, mallcsid: String(s.mallcsid == null ? "" : s.mallcsid).trim() });
     }
-    document.getElementById("mallcsid").value = cfg.mallcsid;
+    return out.length ? out : null;
+  }
+
+  function findStore(name) {
+    var n = String(name || "").trim();
+    if (!n) return null;
+    for (var i = 0; i < cfg.stores.length; i++) if (cfg.stores[i].name === n) return cfg.stores[i];
+    return null;
+  }
+
+  async function loadCfg() {
+    var raw = null, legacy = null;
+    try {
+      var res = await Cfg.get({ key: STORE_KEY });
+      raw = res && res.value;
+      if (!raw) {
+        // 0.3.0 只配过一个客服 ID。升级上来的话把它填进第一个店铺 —— 别让人重填一遍。
+        var old = await Cfg.get({ key: "mallcsid" });
+        legacy = old && old.value;
+      }
+    } catch (e) { /* 读不到就用默认表 */ }
+
+    var list = parseStores(raw);
+    if (!list && legacy) { list = defaultStores(); list[0].mallcsid = legacy; }
+    cfg.stores = list || defaultStores();
+
+    renderStores();
+    fillStoreSelect();
     showCfgHint();
     showSnHint();     // 订单号框初始化时是空的，这条会自己清掉
   }
 
+  /** 店铺表编辑区：一行 = 店铺名 + 客服 ID + 删除。
+      data-was 记着这一行**渲染时的旧名字** —— 保存时靠它算出"谁改成了什么"，
+      比按索引对齐靠得住（删一行就会让索引整体错位，那会把 A 的改名记到 B 头上）。 */
+  function renderStores() {
+    var box = document.getElementById("stores");
+    if (!box) return;
+    box.innerHTML = cfg.stores.map(function (s, i) {
+      var hasCs = !!String(s.mallcsid || "").trim();
+      var was = s.was != null ? s.was : s.name;     // 编辑期间保留"原本叫什么"，别被中途的重渲染抹掉
+      return '<div class="store-row' + (hasCs ? "" : " empty-cs") + '" data-was="' + esc(was) + '">' +
+        '<span class="idx">' + (i + 1) + "</span>" +
+        '<input class="name" value="' + esc(s.name) + '" placeholder="店铺名（你认得就行）" />' +
+        '<input class="cs" value="' + esc(s.mallcsid) + '" placeholder="客服 ID（cs_…）" />' +
+        '<button data-act="del-store" title="删掉这个店铺">×</button>' +
+      "</div>";
+    }).join("");
+  }
+
+  /** 把编辑区读回来。**与 DOM 行一一对应**（空白行也保留）—— 删行要靠索引定位，
+      跳过空行会让索引错位。要"去掉空白行"的地方走 tidyStores()。 */
+  function readStoresFromDom() {
+    var rows = document.querySelectorAll("#stores .store-row");
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+      out.push({
+        was: rows[i].getAttribute("data-was") || "",
+        name: rows[i].querySelector("input.name").value.trim(),
+        mallcsid: rows[i].querySelector("input.cs").value.trim(),
+      });
+    }
+    return out;
+  }
+
+  /** 去掉完全空白的行；只填了客服 ID 的补一个默认名 */
+  function tidyStores(list) {
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var name = String(list[i].name || "").trim();
+      var cs = String(list[i].mallcsid || "").trim();
+      if (!name && !cs) continue;
+      out.push({ name: name || "店铺 " + (out.length + 1), mallcsid: cs });
+    }
+    return out;
+  }
+
   async function saveCfg() {
-    var v = document.getElementById("mallcsid").value.trim();
-    cfg.mallcsid = v;
+    var rows = readStoresFromDom();
+    var next = tidyStores(rows);
+    if (!next.length) { toast("至少留一个店铺"); return; }
+    var dup = next.map(function (s) { return s.name; }).filter(function (n, i, a) { return a.indexOf(n) !== i; });
+    if (dup.length) { toast("店铺名不能重复：" + dup[0]); return; }
+
+    // 改名要让已登记的单子跟着走 —— 单子上记的是店铺名，不跟就会变成
+    // "店铺不在表里了"、呼不起来，而用户只是把「店铺 1」改成了真名字。
+    var renamed = [];
+    for (var i = 0; i < rows.length; i++) {
+      var was = String(rows[i].was || "").trim();
+      var now = String(rows[i].name || "").trim();
+      if (was && now && was !== now) renamed.push([was, now]);
+    }
+
+    cfg.stores = next;
     try {
-      await Cfg.set({ key: "mallcsid", value: v });
-      showCfgHint();
+      await Cfg.set({ key: STORE_KEY, value: JSON.stringify(next) });
+      var moved = await renameTickets(renamed);
+      renderStores();
+      fillStoreSelect();
+      renderList();
       renderDetail();
-      toast(v ? "客服 ID 已保存" : "已清空客服 ID");
+      toast("已保存 " + next.length + " 个店铺" + (moved ? "，并把 " + moved + " 条单子换到新名字" : ""));
     } catch (err) { toast("存不上：" + err.message); }
+  }
+
+  /** 把单子上的旧店铺名改成新名字（改名传播）。返回改了几条 */
+  async function renameTickets(pairs) {
+    var n = 0;
+    for (var i = 0; i < pairs.length; i++) {
+      var from = pairs[i][0], to = pairs[i][1];
+      var hit = allRows.filter(function (r) { return String(r.store || "") === from; });
+      for (var j = 0; j < hit.length; j++) {
+        try {
+          await Db.update({ table: TABLE, id: hit[j].id, patch: { store: to, updated_at: new Date().toISOString() } });
+          n++;
+        } catch (e) { /* 单条失败不该拖住整张表的保存 */ }
+      }
+    }
+    if (n) await load();
+    return n;
+  }
+
+  function fillStoreSelect() {
+    var el = document.getElementById("store");
+    if (!el) return;
+    var keep = el.value;
+    var names = cfg.stores.map(function (s) { return s.name; });
+    el.innerHTML = names.length
+      ? names.map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + "</option>"; }).join("")
+      : '<option value="">（还没配店铺）</option>';
+    if (keep && names.indexOf(keep) >= 0) el.value = keep;   // 现场录单常常是同一个店，别每次都跳回第一个
   }
 
   function showCfgHint() {
     var el = document.getElementById("cfgHint");
     if (!el) return;
-    el.textContent = cfg.mallcsid
-      ? "当前客服 ID：" + cfg.mallcsid + "（呼起时用它拼链接）"
-      : "还没填客服 ID —— 填了才能呼起客户端。";
+    var ready = cfg.stores.filter(function (s) { return String(s.mallcsid || "").trim(); }).length;
+    el.textContent = "共 " + cfg.stores.length + " 个店铺，" + ready + " 个填好了客服 ID" +
+      (ready < cfg.stores.length
+        ? " —— 缺的那几个用不了（黄框那几行），登记时选了它们也呼不起来。"
+        : " —— 登记时选店铺，呼起时自动用对应的那个。");
   }
 
   /** 登记页：订单号输入框下面那条实时提示（边打边说它像不像拼多多单号） */
@@ -651,10 +802,18 @@
       var st = statusOf(r);
       var sn = String(r.order_sn || "").trim();
       // 有订单号的行直接挂一个「↗」—— 不用先选中、再点右栏，扫单时一条条点着走。
-      // 单号不合形状也照给（客户端会弹起来，只是可能定位不到），但 title 里会说明。
+      // 按钮的提示分三种：能呼起（说清打开哪一单、哪个店）、单号形状可疑（照样能点，
+      // 但要说清"可能定位不到"）、以及压根呼不起来（说清缺什么）。
+      var snState = snInfo(sn);
+      var wakeTip = buildClientUrl(r.order_sn, r.store)
+        ? (snState.ok
+            ? "呼起商家版打开 " + sn + "（" + String(r.store || "").trim() + "）"
+            : snState.text)
+        : whyNoClient(r.order_sn, r.store);
       var wake = sn
         ? '<button class="wake" data-act="open-client" data-sn="' + esc(sn) + '"' +
-          ' title="' + esc(snInfo(sn).ok ? "呼起商家版打开 " + sn : snInfo(sn).text) + '">↗</button>'
+          ' data-store="' + esc(String(r.store || "")) + '"' +
+          ' title="' + esc(wakeTip) + '">↗</button>'
         : "";
       return '<div class="ticket' + (st === "已关闭" ? " s-done" : "") + '" data-ticket data-id="' + esc(r.id) + '"' +
         ' role="option" aria-selected="' + (r.id === selectedId ? "true" : "false") + '">' +
@@ -702,25 +861,54 @@
     };
   }
 
-  /** 拼出拼多多商家版的协议链接。客服 ID 没配、或这条没订单号时返回空串 */
-  function buildClientUrl(orderSn) {
+  /** 拼出拼多多商家版的协议链接。单号缺失、店铺没记、或那个店没配客服 ID 时返回空串 */
+  function buildClientUrl(orderSn, storeName) {
     var sn = String(orderSn || "").trim();
-    var cs = String(cfg.mallcsid || "").trim();
+    var s = findStore(storeName);
+    var cs = s ? String(s.mallcsid || "").trim() : "";
     if (!sn || !cs) return "";
     return "pddim:sendmsg/?OpeId=open_order&mallcsid=" + encodeURIComponent(cs) +
       "&ordersn=" + encodeURIComponent(sn);
   }
 
+  /** 呼不起来的原因（一句话）。能呼起来时返回空串 —— 按钮文案和提示都从这儿取，免得两处说法不一致 */
+  function whyNoClient(orderSn, storeName) {
+    var sn = String(orderSn || "").trim();
+    var name = String(storeName || "").trim();
+    if (!sn) return "这条没填订单号 —— 呼不了";
+    if (!name) return "这条没记店铺 —— 在上面给它挑一个";
+    var s = findStore(name);
+    if (!s) return "店铺「" + name + "」不在店铺表里了 —— 去登记页下面的店铺表补上";
+    if (!String(s.mallcsid || "").trim()) return "店铺「" + name + "」还没填客服 ID —— 去登记页下面的店铺表填";
+    return "";
+  }
+
   function clientBtns(r) {
-    if (!String(r.order_sn || "").trim()) {
-      return '<button disabled title="这条没填订单号 —— 呼不了">呼起客户端</button>';
+    var why = whyNoClient(r.order_sn, r.store);
+    if (why) {
+      return '<button disabled title="' + esc(why) + '">呼起客户端</button>' +
+        '<span class="cfg-note" style="margin:0">' + esc(why) + "</span>";
     }
-    if (!String(cfg.mallcsid || "").trim()) {
-      return '<button disabled title="先去「登记」页下面的「呼起本地客户端」里填客服 ID">呼起客户端</button>' +
-        '<span class="cfg-note" style="margin:0">还没配客服 ID</span>';
-    }
-    return '<button class="primary" data-act="open-client" title="' + esc(buildClientUrl(r.order_sn)) + '">呼起客户端</button>' +
+    var url = buildClientUrl(r.order_sn, r.store);
+    return '<button class="primary" data-act="open-client" title="' + esc(url) + '">呼起客户端</button>' +
       '<button data-act="copy-link" title="复制链接，粘到浏览器地址栏也能跳">复制链接</button>';
+  }
+
+  /** 右栏：店铺选择。单子上记的是店铺名，呼起时按它取客服 ID */
+  function storePicker(r) {
+    var cur = String(r.store || "").trim();
+    var opts = ['<option value="">（未记店铺）</option>'].concat(
+      cfg.stores.map(function (s) {
+        return '<option value="' + esc(s.name) + '"' + (s.name === cur ? " selected" : "") + ">" +
+          esc(s.name) + (String(s.mallcsid || "").trim() ? "" : "（缺客服 ID）") + "</option>";
+      }),
+    );
+    // 单子上记的店铺被从表里删掉了：把原值也列出来，别让它显示成"未记店铺"而看不出发生过什么
+    if (cur && !findStore(cur)) {
+      opts.unshift('<option value="' + esc(cur) + '" selected>' + esc(cur) + "（不在店铺表里）</option>");
+    }
+    return '<div class="store-line"><span>店铺</span><select id="d-store" data-act="set-store">' +
+      opts.join("") + "</select></div>";
   }
 
   /** 右栏：订单号那一条下面挂的说明（下单日期 / 格式存疑） */
@@ -743,9 +931,9 @@
    * 桌面端（WebView2）对自定义协议的支持与浏览器不同，跳不动时给一条退路：
    * 界面上同时提供「复制链接」。
    */
-  function openClient(orderSn) {
-    var url = buildClientUrl(orderSn);
-    if (!url) { toast("这条没有订单号，或者还没配客服 ID"); return; }
+  function openClient(orderSn, storeName) {
+    var url = buildClientUrl(orderSn, storeName);
+    if (!url) { toast(whyNoClient(orderSn, storeName) || "呼不了"); return; }
     var a = document.createElement("a");
     a.href = url;
     a.rel = "noopener";
@@ -753,12 +941,12 @@
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    toast("已发出呼起请求 —— 没反应就点「复制链接」粘到地址栏试试");
+    toast("已向「" + String(storeName || "").trim() + "」发出呼起请求 —— 没反应就点「复制链接」粘到地址栏试试");
   }
 
-  function copyClientUrl(orderSn) {
-    var url = buildClientUrl(orderSn);
-    if (!url) { toast("这条没有订单号，或者还没配客服 ID"); return; }
+  function copyClientUrl(orderSn, storeName) {
+    var url = buildClientUrl(orderSn, storeName);
+    if (!url) { toast(whyNoClient(orderSn, storeName) || "呼不了"); return; }
     try {
       navigator.clipboard.writeText(url).then(
         function () { toast("链接已复制"); },
@@ -783,6 +971,7 @@
     var st = statusOf(r);
     var kv = [
       ["订单号", r.order_sn],
+      ["店铺", r.store],
       ["类型", r.category],
       ["等级", r.level],
       ["登记人", r.reporter],
@@ -801,6 +990,7 @@
       '<div class="d-title">' + esc(r.title || "(无内容)") + "</div>" +
       '<dl class="kv">' + kv + "</dl>" +
       '<div class="sect">' +
+        storePicker(r) +
         '<div class="client-row">' + clientBtns(r) + "</div>" +
         snDetailHint(r) +
         '<label for="d-note">处理情况</label>' +
@@ -872,6 +1062,7 @@
           id: "t-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),   // ★ 主键必须自己给
           code: code,
           order_sn: document.getElementById("orderSn").value.trim(),
+          store: document.getElementById("store").value,
           title: title,
           category: document.getElementById("category").value,
           level: document.getElementById("level").value,
@@ -893,8 +1084,25 @@
       toast(code + " 已登记");
       document.getElementById("title").focus();
     } catch (err) {
-      toast("登记失败：" + err.message);
+      toast("登记失败：" + friendlyErr(err));
     }
+  }
+
+  /**
+   * 把宿主的原话翻译成人能照着做的话。
+   *
+   * 0.4.0 给 tickets 加了 store 列。工具的私有表是 `CREATE TABLE IF NOT EXISTS` 建的，
+   * **已存在的表不会被自动改** —— 老库里那张表还是旧结构，写入 store 会被 SQLite 拒掉，
+   * 原话是 "table tool_abnormal_ticket_tickets has no column named store"。
+   * 照着那句话用户什么也做不了，所以这里指向唯一的出口：设置 → 数据库 → 清理数据。
+   */
+  function friendlyErr(err) {
+    var msg = String((err && err.message) || err || "");
+    if (/no column named|has no column/i.test(msg)) {
+      return "工具表还是旧结构（缺 store 列）。去「设置 → 数据库 → 异常单号登记」点一次" +
+        "「清理数据」，下次打开会按新结构重建 —— 注意那会清掉已登记的记录。";
+    }
+    return msg;
   }
 
   function findRowByCode(code) {
@@ -985,8 +1193,28 @@
 
   document.getElementById("add").addEventListener("click", function () { void add(); });
   document.getElementById("saveCfg").addEventListener("click", function () { void saveCfg(); });
-  document.getElementById("mallcsid").addEventListener("keydown", function (e) {
-    if (e.key === "Enter") { e.preventDefault(); void saveCfg(); }
+  // 店铺表：加一行 / 删一行。删的只是编辑区里的那一行，要点「保存店铺表」才落盘 ——
+  // 否则点错一下就悄悄改了配置。
+  document.getElementById("addStore").addEventListener("click", function () {
+    var list = readStoresFromDom();          // 1:1 带上 was，中途重渲染也不会把改名信息弄丢
+    list.push({ was: "", name: "店铺 " + (list.length + 1), mallcsid: "" });
+    cfg.stores = list;
+    renderStores();
+    showCfgHint();
+    var rows = document.querySelectorAll("#stores .store-row input.name");
+    if (rows.length) rows[rows.length - 1].focus();
+  });
+  document.getElementById("stores").addEventListener("click", function (e) {
+    var btn = e.target.closest('button[data-act="del-store"]');
+    if (!btn) return;
+    var row = btn.closest(".store-row");
+    var all = Array.prototype.slice.call(document.querySelectorAll("#stores .store-row"));
+    var list = readStoresFromDom();          // 与 DOM 行一一对应，所以 idx 可以直接用
+    var idx = all.indexOf(row);
+    if (idx >= 0) list.splice(idx, 1);
+    cfg.stores = list;
+    renderStores();
+    showCfgHint();
   });
   document.getElementById("title").addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); void add(); }
@@ -1013,7 +1241,7 @@
     var wake = e.target.closest('button[data-act="open-client"]');
     if (wake) {
       e.stopPropagation();
-      openClient(wake.getAttribute("data-sn"));
+      openClient(wake.getAttribute("data-sn"), wake.getAttribute("data-store"));
       return;
     }
     var item = e.target.closest("[data-ticket]");
@@ -1031,12 +1259,28 @@
     var row = findRow(selectedId);
     if (act === "advance") { void saveNote().then(function () { return advance(selectedId); }); }
     else if (act === "del") { void remove(selectedId); }
-    else if (act === "open-client") { void saveNote(); openClient(row && row.order_sn); }
-    else if (act === "copy-link") { copyClientUrl(row && row.order_sn); }
+    else if (act === "open-client") { void saveNote(); openClient(row && row.order_sn, row && row.store); }
+    else if (act === "copy-link") { copyClientUrl(row && row.order_sn, row && row.store); }
   });
   document.getElementById("detail").addEventListener("input", function (e) {
     if (e.target && e.target.id === "d-note") scheduleNoteSave();
   });
+  // 右栏换店铺：这是"这条单属于哪个店"的唯一修正入口 —— 登记时选错了就靠它
+  document.getElementById("detail").addEventListener("change", function (e) {
+    if (e.target && e.target.id === "d-store") void setTicketStore(e.target.value);
+  });
+
+  /** 把选中那条的店铺改掉。呼起用的客服 ID 就跟着换 */
+  async function setTicketStore(name) {
+    if (!selectedId) return;
+    var v = String(name || "").trim();
+    try {
+      await saveNote();        // 先把备注落盘，下面 load() 会重建右栏
+      await Db.update({ table: TABLE, id: selectedId, patch: { store: v, updated_at: new Date().toISOString() } });
+      await load();            // load 里会 repaint + renderDetail，右栏的按钮跟着更新
+      toast(v ? "已记到「" + v + "」" : "已清掉店铺");
+    } catch (err) { toast("改店铺失败：" + friendlyErr(err)); }
+  }
 
   /* ---------------- 只有连着宿主才有的那点东西 ---------------- */
 

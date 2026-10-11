@@ -205,13 +205,13 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     // 两者都用自己的私有表，表名按 id 隔离，互不干扰。
     id: "abnormal-ticket",
     name: "异常单号登记",
-    version: "0.3.0",
+    version: "0.4.0",
     description:
-      "登记异常单号：记下订单号、异常内容、类型、等级与处理状态，可一键呼起拼多多商家客户端打开那张订单。数据存在工具自己的表里，与待办数据互不干扰",
+      "登记异常单号：记下订单号、店铺、异常内容、类型、等级与处理状态，可一键呼起拼多多商家客户端打开那张订单。多个店铺各配一个客服 ID，按单子所属店铺呼起。数据存在工具自己的表里，与待办数据互不干扰",
     // receipt（单据）已在 icons.ts 白名单里；写错会静默退回包裹图标
     icon: "receipt",
     entry: "index.html",
-    dbVersion: 2,
+    dbVersion: 3,
     author: "内置",
     schema: {
       tables: [
@@ -221,6 +221,7 @@ const BUILTIN_TOOLS: ToolManifest[] = [
             { name: "id", type: "text", pk: true },
             { name: "code", type: "text" },
             { name: "order_sn", type: "text" },
+            { name: "store", type: "text" },
             { name: "title", type: "text" },
             { name: "category", type: "text" },
             { name: "level", type: "text" },
