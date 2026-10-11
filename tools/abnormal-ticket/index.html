@@ -97,6 +97,7 @@
   .body { flex: 1; min-height: 0; max-width: 1120px; width: 100%; margin: 0 auto; padding: 12px 20px 16px; display: flex; }
   .view { flex: 1; min-height: 0; display: flex; }
   #view-create { display: block; overflow-y: auto; }
+  #view-settings { display: block; overflow-y: auto; }
 
   /* ---- 登记 ---- */
   .card { border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
@@ -117,6 +118,11 @@
   /* ERP 链接那一格：等宽字体，一眼能看出粘进去的是不是整条链接 */
   #erpLink { width: 100%; font-family: var(--mono); font-size: 12px; }
   #erpLink + .hint { margin-top: 4px; }
+  /* 设置页那条「粘一条链接绑店铺」：等宽字体，一眼能看出粘进去的是不是整条链接 */
+  #bindLink { width: 100%; font-family: var(--mono); font-size: 12px; }
+  #bindLink + .hint { margin-top: 4px; }
+  .bindlab { flex: 0 0 auto; color: var(--fg2); font-size: 12.5px; }
+  #bindStore { flex: 1 1 180px; max-width: 280px; }
   #reporter { flex: 1 1 120px; }
   #occurred { flex: 0 0 150px; }
   #store { flex: 0 0 132px; }
@@ -217,6 +223,7 @@
   <div class="tabs" role="tablist">
     <button id="tab-create" data-tab="create" role="tab" aria-selected="true">登记</button>
     <button id="tab-browse" data-tab="browse" role="tab" aria-selected="false">查看</button>
+    <button id="tab-settings" data-tab="settings" role="tab" aria-selected="false">设置</button>
   </div>
 </div>
 
@@ -249,37 +256,6 @@
       </div>
       <div class="hint" id="codeHint"></div>
     </div>
-
-    <!-- 呼起本地客户端：靠自定义协议（pddim:…）把拼多多商家版拉起来并打开那张订单。
-         订单号是每条单自带的；**客服 ID 按店铺分**，所以这里配的是一张店铺表。 -->
-    <details style="max-width:640px" id="clientBox">
-      <summary>店铺与客服 ID（呼起本地客户端用）</summary>
-      <p class="cfg-note" style="margin-top:8px">
-        点「呼起客户端」会打开 <code>pddim:sendmsg/?OpeId=open_order&amp;mallcsid=…&amp;ordersn=…</code>，
-        把本机的拼多多商家版拉起来并跳到你那条单。需要本机装了商家版客户端。
-      </p>
-      <p class="cfg-note">
-        <b>客服 ID 是 ERP 生成的，不用你去认</b> —— 把 ERP 给的那条链接整条粘进右边的
-        「客服 ID」框里，会自动把 <code>cs_…</code> 抠出来；或者干脆在登记时把链接粘到
-        上面那个「ERP 链接」框，连店铺一起认。
-      </p>
-      <p class="cfg-note">
-        <b>客服 ID</b>（<code>mallcsid</code>）<b>按店铺分</b>，每个店一个。
-        这里配好之后，登记时选店铺、呼起时自动用对应那个。
-        <b>订单号</b>（<code>ordersn</code>）是每条单自带的，格式为 <code>YYMMDD-数字</code>。
-      </p>
-      <div id="stores" class="stores"></div>
-      <div class="r" style="margin-top:8px">
-        <button id="addStore">+ 加一个店铺</button>
-        <button class="primary" id="saveCfg">保存店铺表</button>
-      </div>
-      <div class="hint" id="cfgHint"></div>
-    </details>
-
-    <details data-host-only style="max-width:640px">
-      <summary>这张表在数据库里是什么样</summary>
-      <pre id="schema">…</pre>
-    </details>
   </section>
 
   <!-- ============ 二、查看：左列表 / 右详情 ============ -->
@@ -295,6 +271,46 @@
     <div class="pane-right">
       <div class="detail" id="detail"></div>
     </div>
+  </section>
+
+  <!-- ============ 三、设置：店铺与客服 ID ============ -->
+  <section class="view" id="view-settings" hidden>
+    <!-- 传一条链接 → 认出客服 ID → 绑到某个店铺 -->
+    <div class="card" style="max-width:720px">
+      <h2>用一条链接绑定店铺</h2>
+      <p class="cfg-note" style="margin-top:0">
+        <b>客服 ID 是 ERP 生成的，不用你去认</b> —— ERP 给你的每一条唤醒链接里都写着它
+        （<code>mallcsid=cs_…</code>）。粘一条进来，认出来之后绑到对应店铺就行；
+        同一个店的<b>哪一条</b>链接都可以，不必是某张特定的订单。
+      </p>
+      <input id="bindLink" placeholder="把 ERP 给的一条链接粘到这里（pddim:sendmsg/?OpeId=open_order&mallcsid=cs_…&ordersn=…）" />
+      <div class="hint snhint" id="bindHint"></div>
+      <div class="r" style="margin-top:8px">
+        <span class="bindlab">绑到</span>
+        <select id="bindStore" title="这个客服 ID 属于哪个店铺"></select>
+        <button class="primary" id="bindDo">绑定</button>
+      </div>
+      <div class="hint" id="bindMsg"></div>
+    </div>
+
+    <div class="card" style="max-width:720px; margin-top:12px">
+      <h2>店铺表</h2>
+      <p class="cfg-note" style="margin-top:0">
+        每个店铺一个客服 ID。登记时选店铺、呼起客户端时自动用对应那个。
+        「客服 ID」那一格里<b>直接粘整条链接也行</b>，会当场把 <code>cs_…</code> 抠出来。
+      </p>
+      <div id="stores" class="stores"></div>
+      <div class="r" style="margin-top:8px">
+        <button id="addStore">+ 加一个店铺</button>
+        <button class="primary" id="saveCfg">保存店铺表</button>
+      </div>
+      <div class="hint" id="cfgHint"></div>
+    </div>
+
+    <details data-host-only style="max-width:720px; margin-top:12px">
+      <summary>这张表在数据库里是什么样</summary>
+      <pre id="schema">…</pre>
+    </details>
   </section>
 </div>
 <div id="toast"></div>
@@ -575,6 +591,7 @@
 
     renderStores();
     fillStoreSelect();
+    fillBindStore();
     showCfgHint();
     showSnHint();     // 订单号框初始化时是空的，这条会自己清掉
   }
@@ -649,6 +666,7 @@
       var moved = await renameTickets(renamed);
       renderStores();
       fillStoreSelect();
+      fillBindStore();
       renderList();
       renderDetail();
       toast("已保存 " + next.length + " 个店铺" + (moved ? "，并把 " + moved + " 条单子换到新名字" : ""));
@@ -687,10 +705,74 @@
     var el = document.getElementById("cfgHint");
     if (!el) return;
     var ready = cfg.stores.filter(function (s) { return String(s.mallcsid || "").trim(); }).length;
-    el.textContent = "共 " + cfg.stores.length + " 个店铺，" + ready + " 个填好了客服 ID" +
+    el.textContent = "共 " + cfg.stores.length + " 个店铺，" + ready + " 个绑好了客服 ID" +
       (ready < cfg.stores.length
-        ? " —— 缺的那几个用不了（黄框那几行），登记时选了它们也呼不起来。"
+        ? " —— 没绑的那几个用不了（黄框那几行），登记时选了它们也呼不起来。"
         : " —— 登记时选店铺，呼起时自动用对应的那个。");
+  }
+
+  /* ---------------- 设置页：用一条链接把客服 ID 绑到某个店铺 ---------------- */
+
+  /** 「绑到」那个下拉：列出店铺表里**已经保存**的店铺 */
+  function fillBindStore(pick) {
+    var el = document.getElementById("bindStore");
+    if (!el) return;
+    var keep = pick || el.value;
+    el.innerHTML = cfg.stores.length
+      ? cfg.stores.map(function (s) {
+          var cs = String(s.mallcsid || "").trim();
+          return '<option value="' + esc(s.name) + '">' + esc(s.name) +
+            (cs ? "（" + esc(cs) + "）" : "（还没绑）") + "</option>";
+        }).join("")
+      : '<option value="">（先去下面加一个店铺）</option>';
+    if (keep) el.value = keep;
+    if (el.selectedIndex < 0 && el.options.length) el.selectedIndex = 0;
+  }
+
+  /** 读设置页那条链接，认出客服 ID 并把「绑到」指到已经在用它（如果有）的店铺 */
+  function readBindLink() {
+    var box = document.getElementById("bindHint");
+    var text = String((document.getElementById("bindLink") || {}).value || "").trim();
+    var hit = parseClientUrl(text);
+    if (!hit || !hit.mallcsid) {
+      box.className = "hint snhint" + (text ? " bad" : "");
+      box.textContent = text
+        ? "这条链接里没认出客服 ID（mallcsid）—— 它应该形如 pddim:sendmsg/?OpeId=open_order&mallcsid=cs_…&ordersn=…"
+        : "";
+      return null;
+    }
+    box.className = "hint snhint ok";
+    box.textContent = "客服 ID：" + hit.mallcsid +
+      (hit.ordersn ? "（里面的订单号 " + hit.ordersn + " 用不上，绑定时只有客服 ID 有用）" : "");
+    var owner = cfg.stores.filter(function (s) {
+      return String(s.mallcsid || "").trim() === hit.mallcsid;
+    })[0];
+    if (owner) fillBindStore(owner.name);
+    return hit;
+  }
+
+  async function doBind() {
+    var msg = document.getElementById("bindMsg");
+    var hit = parseClientUrl((document.getElementById("bindLink") || {}).value);
+    if (!hit || !hit.mallcsid) { msg.textContent = "先在上面粘一条链接，认出客服 ID 再绑。"; return; }
+    var name = document.getElementById("bindStore").value;
+    var target = findStore(name);
+    if (!target) { msg.textContent = "先在右边选一个店铺；没有合适的就去下面加一个、保存后再回来绑。"; return; }
+    var old = String(target.mallcsid || "").trim();
+    if (old === hit.mallcsid) { msg.textContent = "「" + name + "」已经就是这个客服 ID 了，不用再绑。"; return; }
+
+    target.mallcsid = hit.mallcsid;
+    try {
+      await persistStores(cfg.stores);
+      renderStores();
+      fillBindStore(name);
+      showCfgHint();
+      renderList();
+      renderDetail();
+      msg.textContent = old
+        ? "「" + name + "」的客服 ID 从 " + old + " 改成了 " + hit.mallcsid + "，已保存。"
+        : "「" + name + "」绑上了 " + hit.mallcsid + "，已保存。";
+    } catch (err) { msg.textContent = "存不上：" + friendlyErr(err); }
   }
 
   /** 登记页：订单号输入框下面那条实时提示（边打边说它像不像拼多多单号） */
@@ -911,7 +993,9 @@
 
   /** 存店铺表（从登记页认链接时也要落盘，否则刷新就没了） */
   async function persistStores(list) {
-    await Cfg.set({ key: STORE_KEY, value: JSON.stringify(list) });
+    // 只写该存的字段：列表在编辑期间会带上临时的 was（见 renderStores），别把它也写进 kv
+    var clean = list.map(function (s) { return { name: s.name, mallcsid: s.mallcsid }; });
+    await Cfg.set({ key: STORE_KEY, value: JSON.stringify(clean) });
   }
 
   /** 给新店铺挑一个不撞车的默认名 */
@@ -975,7 +1059,7 @@
             renderStores();
             fillStoreSelect();
             document.getElementById("store").value = next[next.length - 1].name;
-            said.push("新加了一个店铺（" + hit.mallcsid + "）—— 去下面给它改个名字");
+            said.push("新加了一个店铺（" + hit.mallcsid + "）—— 去「设置」页给它改个名字");
           }
         } catch (err) {
           el.className = "hint snhint bad";
@@ -1006,8 +1090,8 @@
     if (!sn) return "这条没填订单号 —— 呼不了";
     if (!name) return "这条没记店铺 —— 在上面给它挑一个";
     var s = findStore(name);
-    if (!s) return "店铺「" + name + "」不在店铺表里了 —— 去登记页下面的店铺表补上";
-    if (!String(s.mallcsid || "").trim()) return "店铺「" + name + "」还没填客服 ID —— 去登记页下面的店铺表填";
+    if (!s) return "店铺「" + name + "」不在店铺表里了 —— 去「设置」页的店铺表补上";
+    if (!String(s.mallcsid || "").trim()) return "店铺「" + name + "」还没绑客服 ID —— 去「设置」页粘一条这个店的链接绑上";
     return "";
   }
 
@@ -1291,14 +1375,16 @@
 
   /** 切页签。切到查看时，若还没选中就默认选第一条 —— 右栏空着会让人以为坏了 */
   function setTab(name) {
-    document.getElementById("tab-create").setAttribute("aria-selected", name === "create" ? "true" : "false");
-    document.getElementById("tab-browse").setAttribute("aria-selected", name === "browse" ? "true" : "false");
-    document.getElementById("view-create").hidden = name !== "create";
-    document.getElementById("view-browse").hidden = name !== "browse";
+    ["create", "browse", "settings"].forEach(function (n) {
+      document.getElementById("tab-" + n).setAttribute("aria-selected", n === name ? "true" : "false");
+      document.getElementById("view-" + n).hidden = n !== name;
+    });
     if (name === "browse") {
       if (!selectedId && shown.length) selectedId = shown[0].id;
       repaint();
       renderDetail();
+    } else if (name === "settings") {
+      fillBindStore();
     } else {
       document.getElementById("title").focus();
     }
@@ -1323,6 +1409,14 @@
 
   document.getElementById("tab-create").addEventListener("click", function () { setTab("create"); });
   document.getElementById("tab-browse").addEventListener("click", function () { setTab("browse"); });
+  document.getElementById("tab-settings").addEventListener("click", function () { setTab("settings"); });
+
+  // 设置页：粘一条 ERP 链接 → 认出客服 ID → 绑到指定店铺
+  document.getElementById("bindLink").addEventListener("input", function () {
+    readBindLink();
+    document.getElementById("bindMsg").textContent = "";   // 链接一改，上一句结果就过期了
+  });
+  document.getElementById("bindDo").addEventListener("click", function () { void doBind(); });
 
   document.getElementById("add").addEventListener("click", function () { void add(); });
   document.getElementById("saveCfg").addEventListener("click", function () { void saveCfg(); });

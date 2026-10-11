@@ -436,7 +436,7 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   check("异常单：第一个店铺是实测确认过的「拼多多5店」",
     stores.firstCs === "cs_355831479", stores.firstCs);
   check("异常单：还没填客服 ID 的店铺被标出来并被提示",
-    stores.missing === 7 && /缺的那几/.test(stores.hint), `${stores.missing} 行 / ${stores.hint}`);
+    stores.missing === 7 && /没绑的那几/.test(stores.hint), `${stores.missing} 行 / ${stores.hint}`);
   check("异常单：登记页有店铺下拉，选项和店铺表一致",
     stores.options.length === 8 && stores.options[0] === "拼多多5店", JSON.stringify(stores.options));
   check("异常单：登记时选的店铺记到了单子上（没选就是第一个）",
@@ -512,7 +512,7 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     };
   });
   check("异常单：换成没配客服 ID 的店铺后，呼起按钮禁用并说明原因",
-    noCs.hasOpen === false && /还没填客服 ID/.test(noCs.note), JSON.stringify(noCs));
+    noCs.hasOpen === false && /还没绑客服 ID/.test(noCs.note), JSON.stringify(noCs));
   check("异常单：行里的「↗」跟着这条单的店铺走，提示也换了",
     noCs.rowStore === "店铺 3" && /客服 ID/.test(noCs.rowTip), JSON.stringify(noCs.rowTip));
 
@@ -530,11 +530,67 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     backTo1.url === "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_355831479&ordersn=261011-442394294633154" &&
       backTo1.kv === "拼多多5店", JSON.stringify(backTo1));
 
+  /* ---------- 设置页：店铺与客服 ID 是独立的一页 ----------
+     用户要的：别把这些挤在登记页里，单独一页，而且要能"传一条链接绑到某个店铺"。 */
+  await page.click("#tab-settings");
+  await page.waitForTimeout(500);
+  const setPage = await page.evaluate(() => ({
+    tabs: ["create", "browse", "settings"].filter((n) => document.getElementById("tab-" + n)).length,
+    shown: ["create", "browse", "settings"].filter((n) => !document.getElementById("view-" + n).hidden),
+    hasBind: !!document.getElementById("bindLink") && !!document.getElementById("bindDo"),
+    bindOpts: [...document.querySelectorAll("#bindStore option")].length,
+    storeRows: [...document.querySelectorAll("#stores .store-row")].length,
+  }));
+  check("异常单：店铺与客服 ID 搬到了独立的「设置」页（三个页签，只显示这一页）",
+    setPage.tabs === 3 && setPage.shown.length === 1 && setPage.shown[0] === "settings" &&
+      setPage.hasBind === true, JSON.stringify(setPage));
+  check("异常单：设置页的店铺表和「绑到」下拉都在", 
+    setPage.storeRows === 8 && setPage.bindOpts === 8, JSON.stringify(setPage));
+
+  /* ---------- 传一条链接，绑到指定店铺 ---------- */
+  const BIND_URL = "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_800000123&ordersn=261011-362765391472941";
+  await page.fill("#bindLink", BIND_URL);
+  await page.waitForTimeout(500);
+  const bindRead = await page.evaluate(() => ({
+    hint: (document.getElementById("bindHint") || {}).textContent || "",
+    cls: (document.getElementById("bindHint") || {}).className || "",
+  }));
+  check("异常单：设置页粘一条链接能认出客服 ID（订单号明说用不上）",
+    /cs_800000123/.test(bindRead.hint) && /用不上/.test(bindRead.hint) && /\bok\b/.test(bindRead.cls),
+    bindRead.hint);
+
+  await page.selectOption("#bindStore", "店铺 3");
+  await page.click("#bindDo");
+  await page.waitForTimeout(700);
+  const bound = await page.evaluate(() => ({
+    msg: (document.getElementById("bindMsg") || {}).textContent || "",
+    cs: (document.querySelectorAll("#stores .store-row input.cs")[2] || {}).value || "",
+    opts: (document.querySelectorAll("#bindStore option")[2] || {}).textContent || "",
+  }));
+  check("异常单：绑定把客服 ID 写进那个店铺并保存",
+    bound.cs === "cs_800000123" && /绑上了/.test(bound.msg), JSON.stringify(bound));
+  check("异常单：绑完「绑到」下拉里那个店也显示出了客服 ID",
+    /cs_800000123/.test(bound.opts), bound.opts);
+
+  // 再来一条同 ID 的链接（同一个店换一张订单）—— 应该认出它已经属于店铺 3
+  await page.fill("#bindLink", BIND_URL + "&z=1");
+  await page.waitForTimeout(500);
+  const bindAgain = await page.evaluate(() => (document.getElementById("bindStore") || {}).value || "");
+  check("异常单：同一个客服 ID 再来一条，自动把「绑到」指到已有的那个店",
+    bindAgain === "店铺 3", bindAgain);
+
+  await page.fill("#bindLink", "https://example.com/x");
+  await page.waitForTimeout(400);
+  const bindBad = await page.evaluate(() => ({
+    hint: (document.getElementById("bindHint") || {}).textContent || "",
+    cls: (document.getElementById("bindHint") || {}).className || "",
+  }));
+  check("异常单：设置页粘的不是 pddim 链接时也说清形状",
+    /mallcsid/.test(bindBad.hint) && /\bbad\b/.test(bindBad.cls), JSON.stringify(bindBad));
+
   /* ---------- 改店铺名 / 改客服 ID ----------
      改名要**带着已登记的单子一起走**：单子上记的是店铺名，不跟过去那些单子就会
-     变成"店铺不在表里了"、静悄悄地呼不起来，而用户只是把「店铺 1」改成了真名字。 */
-  await page.click("#tab-create");
-  await page.evaluate(() => { document.getElementById("clientBox").open = true; });
+     变成"店铺不在表里了"、静悄悄地呼不起来，而用户只是把「拼多多5店」改成了真名字。 */
   await page.fill("#stores .store-row:first-child input.name", "拾野");
   await page.fill("#stores .store-row:first-child input.cs", "cs_999999999");
   await page.click("#saveCfg");
@@ -550,6 +606,8 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
    * ★ 客服 ID 是 ERP 生成的，用户没法凭空知道 —— 所以正门是"把 ERP 给的那条
    * 链接粘进来"，从里面抠 mallcsid / ordersn，而不是让人去填一个看不出所以然的 ID。
    * 三条路径都要验：认得出来（表里已有）、不认识（填进空行）、粘错了。 */
+  await page.click("#tab-create");
+  await page.waitForTimeout(400);
   const ERP1 = "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_999999999&ordersn=261011-648659679643144";
   await page.fill("#erpLink", ERP1);
   await page.waitForTimeout(800);
@@ -575,8 +633,8 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
       count: rows.length,
     };
   });
-  check("异常单：陌生的客服 ID 填进一个空行（不新建、也不动已经配好的那几个）",
-    hitNew.count === 8 && hitNew.filled.length === 2 && hitNew.filled[1] === "cs_800000007",
+  check("异常单：陌生的客服 ID 填进一个空行（不新建、也不动已经绑好的那几个）",
+    hitNew.count === 8 && hitNew.filled.length === 3 && hitNew.filled[1] === "cs_800000007",
     JSON.stringify(hitNew));
   check("异常单：认出陌生的 ID 之后说明白了它记到了哪个店",
     /记到了/.test(hitNew.hint) && /cs_800000007/.test(hitNew.hint), hitNew.hint);
@@ -589,7 +647,7 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     filled: [...document.querySelectorAll("#stores .store-row input.cs")].map((i) => i.value).filter(Boolean).length,
   }));
   check("异常单：同一个客服 ID 再粘一次是「认出」，不会又加一个店",
-    /店铺「/.test(again.hint) && again.filled === 2, JSON.stringify(again));
+    /店铺「/.test(again.hint) && again.filled === 3, JSON.stringify(again));
 
   await page.fill("#erpLink", "https://example.com/abc");
   await page.waitForTimeout(500);
@@ -600,7 +658,9 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   check("异常单：粘的不是 pddim 链接时，说清正确的形状",
     /pddim:sendmsg/.test(bad.hint) && /\bbad\b/.test(bad.cls), JSON.stringify(bad));
 
-  // 店铺表的「客服 ID」框里直接粘整条链接，也要当场抠出来
+  // 店铺表的「客服 ID」框里直接粘整条链接，也要当场抠出来（店铺表在设置页）
+  await page.click("#tab-settings");
+  await page.waitForTimeout(400);
   await page.fill("#stores .store-row:nth-child(3) input.cs",
     "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_777777777&ordersn=261011-103945367091884");
   await page.evaluate(() => {
@@ -774,8 +834,7 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   /* ---------- 走一遍 ERP 链接的完整登记 ----------
      放在最后：这一步会多一条记录，前面的计数断言不该被它影响。 */
   await page.click("#tab-create");
-  await page.evaluate(() => { document.getElementById("clientBox").open = true; });
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(400);
   await page.fill("#erpLink", "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_999999999&ordersn=261011-109827858042143");
   await page.waitForTimeout(800);
   const beforeAdd = await page.evaluate(() => ({
