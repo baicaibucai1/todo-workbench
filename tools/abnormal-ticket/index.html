@@ -142,11 +142,12 @@
   .ticket .when { margin-left: auto; color: var(--dim); font-size: 11px; white-space: nowrap; flex: 0 0 auto; }
   .ticket.s-done .code, .ticket.s-done .title { color: var(--dim); }
 
-  /* 行内「↗」：有订单号才有。平时压暗（不喧宾夺主），指到行上或选中时提亮。
+  /* 行内「↗」：有订单号才有。这个能力是"每条单号都能一键唤醒"，所以得**看得见** ——
+     别做成 hover 才出现的隐藏按钮（那样等于没有）。指到行上/选中时再提亮一档。
      点它 = 直接呼起客户端，不会改右栏选中的那条 —— 扫单时一条条点着走。 */
   .ticket .wake { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-    width: 20px; height: 18px; padding: 0; border-radius: 5px; font-size: 11px; line-height: 1;
-    border: 1px solid var(--line); background: var(--bg); color: var(--fg2); cursor: pointer; opacity: .55; }
+    width: 22px; height: 19px; padding: 0; border-radius: 5px; font-size: 12px; line-height: 1;
+    border: 1px solid var(--line); background: var(--bg); color: var(--accent); cursor: pointer; opacity: .8; }
   .ticket:hover .wake, .ticket[aria-selected="true"] .wake { opacity: 1; }
   .ticket .wake:hover { border-color: var(--accent); color: var(--accent); background: var(--sel); }
 
