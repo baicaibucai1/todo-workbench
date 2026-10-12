@@ -105,29 +105,46 @@
   .r { display: flex; gap: 8px; flex-wrap: wrap; }
   .r + .r, .r + input, input + .r { margin-top: 8px; }
   .r > .grow { flex: 1 1 220px; min-width: 0; }
-  #code { flex: 1 1 150px; font-family: var(--mono); font-size: 12.5px; }
+
+  /* ---- 登记页：一格 = 小标签 + 控件 ----
+     ★ 标签**始终可见**：填了值之后 placeholder 就没了，靠位置去猜"这格是什么"
+     最容易填错（8 个字段排在一起时尤其）。所以每个字段都有个固定的标签行，
+     placeholder 只负责示例 / 补充说明。 */
+  #create-card { max-width: 640px; }
+  #create-card > * + * { margin-top: 11px; }
+  #create-card > h2 + * { margin-top: 0; }        /* h2 自己带 10px，别叠成两截 */
+  .f { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
+  .f > span { font-size: 11px; color: var(--dim); }
+  .f > select, .f > input { width: 100%; }
+  .f-full { width: 100%; }
+  .f-store { flex: 0 0 128px; }
+  .f-track { flex: 1 1 140px; }
+  .f-cat { flex: 0 0 92px; }
+  .f-lvl { flex: 0 0 74px; }
+  .f-code { flex: 1 1 132px; }
+  .f-rep { flex: 1 1 96px; }
+  .f-day { flex: 0 0 126px; }
+  #code { font-family: var(--mono); font-size: 12.5px; }
   #orderSn { font-family: var(--mono); font-size: 13px; }
-  #trackingNo { flex: 1 1 170px; font-family: var(--mono); font-size: 12.5px; }
+  #trackingNo { font-family: var(--mono); font-size: 12.5px; }
   /* 订单号 + 它下面那条格式提示要捆在一起：提示得贴在订单号框正下方，
      不能横铺一整行 —— 那样看着像在说左边的「异常单号」。 */
   .r-sn { align-items: flex-start; }
   .snwrap { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; }
-  .snwrap > #orderSn { flex: 0 0 auto; width: 100%; }
+  .snwrap > .f { flex: 0 0 auto; }
   .snwrap .hint { margin-top: 4px; }
-  #category { flex: 0 0 104px; }
-  #level { flex: 0 0 88px; }
+  /* 按钮行：按钮与"单号怎么生成"那条说明并排（说明贴按钮，不再另起一整行） */
+  .actions { align-items: center; gap: 10px; }
+  .actions .hint { margin-top: 0; }
+  .actions button.primary { padding: 7px 22px; font-size: 13px; }
   #title { width: 100%; }
-  /* ERP 链接那一格：等宽字体，一眼能看出粘进去的是不是整条链接 */
-  #erpLink { width: 100%; font-family: var(--mono); font-size: 12px; }
-  #erpLink + .hint { margin-top: 4px; }
   /* 设置页那条「粘一条链接绑店铺」：等宽字体，一眼能看出粘进去的是不是整条链接 */
   #bindLink { width: 100%; font-family: var(--mono); font-size: 12px; }
   #bindLink + .hint { margin-top: 4px; }
   .bindlab { flex: 0 0 auto; color: var(--fg2); font-size: 12.5px; }
   #bindStore { flex: 1 1 180px; max-width: 280px; }
-  #reporter { flex: 1 1 100px; }
-  #occurred { flex: 0 0 142px; }
-  #store { flex: 0 0 132px; }
+  /* 登记页那几个的宽度由外层的 .f-* 定（控件本身只是填满它所在的那一格）；
+     这里的 flex 规则只留给**不在** .f 里的设置页控件（如 #bindStore）。 */
   .stores { display: flex; flex-direction: column; gap: 6px; }
   .store-row { display: flex; align-items: center; gap: 6px; }
   .store-row .idx { flex: 0 0 20px; color: var(--dim); font-size: 11.5px; text-align: right; }
@@ -239,34 +256,60 @@
 <div class="body">
   <!-- ============ 一、登记 ============ -->
   <section class="view" id="view-create">
-    <div class="card" style="max-width:640px">
+    <div class="card" id="create-card">
       <h2>登记一条异常</h2>
-      <!-- 客服 ID 是 ERP 生成的、用户没法凭空知道，所以正门是「粘链接」：
-           那条链接里本来就有 mallcsid 和 ordersn，抠出来就行，不用人去认 ID。 -->
-      <input id="erpLink" placeholder="把 ERP 给的那条链接粘到这里（pddim:…）—— 自动认出店铺和订单号" />
-      <div class="hint snhint" id="erpHint"></div>
-      <!-- 主线三样：哪个店、哪一单、哪个包裹 -->
+      <!-- 主线三样：哪个店、哪一单、哪个包裹。
+           字段都带**可见的小标签** —— 填了值之后 placeholder 就没了，
+           靠位置去猜"这格是什么"最容易填错，标签一直看得见。 -->
       <div class="r r-sn">
-        <select id="store" title="这条单是哪个店铺的 —— 呼起客户端时按它取对应的客服 ID"></select>
+        <label class="f f-store">
+          <span>店铺</span>
+          <select id="store" title="这条单是哪个店铺的 —— 呼起客户端时按它取对应的客服 ID"></select>
+        </label>
         <span class="snwrap">
-          <input id="orderSn" placeholder="订单号（粘贴拼多多单号，如 261011-109827858042143）" />
+          <label class="f">
+            <span>订单号</span>
+            <!-- 粘 ERP 给的整条链接也认：链接里本来就有订单号和客服 ID -->
+            <input id="orderSn" placeholder="粘单号，或整条 ERP 链接" />
+          </label>
           <span class="hint snhint" id="snHint"></span>
         </span>
-        <input id="trackingNo" placeholder="快递单号（有就填）" />
+        <label class="f f-track">
+          <span>快递单号</span>
+          <input id="trackingNo" placeholder="有就填" />
+        </label>
       </div>
       <!-- 分类与编号这些次要信息 -->
       <div class="r">
-        <select id="category" title="这条单是什么情况 —— 选项在「设置」页里加"></select>
-        <select id="level" title="严重程度"></select>
-        <input id="code" placeholder="异常单号（留空自动生成）" />
-        <input id="reporter" placeholder="登记人" />
-        <input id="occurred" type="date" title="发生日期" />
+        <label class="f f-cat">
+          <span>情况</span>
+          <select id="category" title="这条单是什么情况 —— 选项在「设置」页里加"></select>
+        </label>
+        <label class="f f-lvl">
+          <span>等级</span>
+          <select id="level" title="严重程度"></select>
+        </label>
+        <label class="f f-code">
+          <span>异常单号</span>
+          <input id="code" placeholder="留空自动生成" />
+        </label>
+        <label class="f f-rep">
+          <span>登记人</span>
+          <input id="reporter" placeholder="谁登记的" />
+        </label>
+        <label class="f f-day">
+          <span>发生日期</span>
+          <input id="occurred" type="date" />
+        </label>
       </div>
-      <input id="title" placeholder="异常内容 —— 一句话说清发生了什么（必填）" />
-      <div class="r">
+      <label class="f f-full">
+        <span>异常内容</span>
+        <input id="title" placeholder="一句话说清发生了什么（必填）" />
+      </label>
+      <div class="r actions">
         <button class="primary" id="add">登记</button>
+        <span class="hint" id="codeHint"></span>
       </div>
-      <div class="hint" id="codeHint"></div>
     </div>
   </section>
 
@@ -1164,82 +1207,47 @@
   }
 
   /**
-   * 把一条 ERP 链接应用到登记页：订单号填上，店铺认出来。
+   * 认店铺：把链接里的客服 ID 落到店铺表上，并把登记页的店铺选中它。
    *
-   * 认店铺的顺序（都是"尽量不打扰用户"）：
+   * ★ 为什么是"粘链接"而不是"填客服 ID"：**客服 ID 是 ERP 生成的、用户凭空
+   * 不知道**，但它写在 ERP 给的每一条唤醒链接里（mallcsid=cs_…）。把链接粘进
+   * 订单号框，订单号与店铺一起就有了 —— 不用人去认 ID、也不用再手选店铺。
+   *
+   * 落位的顺序（都是"尽量不打扰用户"）：
    *   ① 表里已经有这个客服 ID → 直接选中那个店
    *   ② 当前选中的店铺还空着客服 ID → 就填它
    *   ③ 表里还有别的空行 → 填第一个空行
    *   ④ 全填满了 → 新建一个店，等用户改名
-   * 不做"静默地改一堆东西"：每一步都在下面那行提示里说清做了什么。
+   * 不做"静默地改一堆东西"：每一步都返回一句话，由调用方说给用户听。
+   * 写不进配置时**抛错**，让调用方去兜（提示"存不上"）。
    */
-  async function applyErpLink(raw) {
-    var el = document.getElementById("erpHint");
-    var text = String(raw || "").trim();
-    var hit = parseClientUrl(text);
-    if (!hit) {
-      // 只粘了个订单号（很常见：手上就这一串）。它是**有用**的，别只回一句"不对" ——
-      // 填到下面的订单号框里，然后说清这个框要的是什么。
-      var snOnly = normSn(text);
-      if (snOnly && PDD_SN_RE.test(snOnly)) {
-        document.getElementById("orderSn").value = snOnly;
-        showSnHint();
-        el.className = "hint snhint bad";
-        el.textContent = "这是个订单号，不是唤醒链接 —— 已经填到下面的「订单号」框了。" +
-          "这个框要的是 ERP 给的那条完整链接（里面有 mallcsid，才认得出是哪个店）。";
-        return;
-      }
-      el.className = "hint snhint" + (text ? " bad" : "");
-      el.textContent = text
-        ? "这不像 pddim 链接 —— 形如 pddim:sendmsg/?OpeId=open_order&mallcsid=cs_…&ordersn=…"
-        : "";
-      return;
+  async function applyLinkStore(mallcsid) {
+    var cs = String(mallcsid || "").trim();
+    if (!cs) return "";
+    var known = cfg.stores.filter(function (s) { return String(s.mallcsid || "").trim() === cs; })[0];
+    if (known) {
+      document.getElementById("store").value = known.name;
+      return "店铺「" + known.name + "」";
     }
-
-    var said = [];
-    if (hit.ordersn) {
-      document.getElementById("orderSn").value = hit.ordersn;
-      showSnHint();
-      said.push("订单号 " + hit.ordersn);
+    var cur = findStore(document.getElementById("store").value);
+    var target = (cur && !String(cur.mallcsid || "").trim()) ? cur : null;
+    if (!target) target = cfg.stores.filter(function (s) { return !String(s.mallcsid || "").trim(); })[0];
+    if (target) {
+      target.mallcsid = cs;
+      await persistStores(cfg.stores);
+      renderStores();
+      fillStoreSelect();
+      document.getElementById("store").value = target.name;
+      return "客服 ID " + cs + " 记到了「" + target.name + "」";
     }
-
-    if (hit.mallcsid) {
-      var known = cfg.stores.filter(function (s) { return String(s.mallcsid || "").trim() === hit.mallcsid; })[0];
-      if (known) {
-        document.getElementById("store").value = known.name;
-        said.push("店铺「" + known.name + "」");
-      } else {
-        var cur = findStore(document.getElementById("store").value);
-        var target = (cur && !String(cur.mallcsid || "").trim()) ? cur : null;
-        if (!target) target = cfg.stores.filter(function (s) { return !String(s.mallcsid || "").trim(); })[0];
-        try {
-          if (target) {
-            target.mallcsid = hit.mallcsid;
-            await persistStores(cfg.stores);
-            renderStores();
-            fillStoreSelect();
-            document.getElementById("store").value = target.name;
-            said.push("客服 ID " + hit.mallcsid + " 记到了「" + target.name + "」");
-          } else {
-            var next = tidyStores(readStoresFromDom());
-            next.push({ name: nextStoreName(next), mallcsid: hit.mallcsid });
-            cfg.stores = next;
-            await persistStores(next);
-            renderStores();
-            fillStoreSelect();
-            document.getElementById("store").value = next[next.length - 1].name;
-            said.push("新加了一个店铺（" + hit.mallcsid + "）—— 去「设置」页给它改个名字");
-          }
-        } catch (err) {
-          el.className = "hint snhint bad";
-          el.textContent = "店铺表存不上：" + friendlyErr(err);
-          return;
-        }
-      }
-    }
-
-    el.className = "hint snhint ok";
-    el.textContent = "认出来了：" + (said.length ? said.join(" · ") : "链接里没有订单号也没有客服 ID");
+    var next = tidyStores(readStoresFromDom());
+    next.push({ name: nextStoreName(next), mallcsid: cs });
+    cfg.stores = next;
+    await persistStores(next);
+    renderStores();
+    fillStoreSelect();
+    document.getElementById("store").value = next[next.length - 1].name;
+    return "新加了一个店铺（" + cs + "）—— 去「设置」页给它改个名字";
   }
 
   /** 拼出拼多多商家版的协议链接。单号缺失、店铺没记、或那个店没配客服 ID 时返回空串 */
@@ -1508,11 +1516,7 @@
       document.getElementById("trackingNo").value = "";
       document.getElementById("title").value = "";
       dupAck = "";
-      // ERP 链接也清掉：下一条单是另一条链接。店铺**不清** —— 连着录同一个店的单是常态
-      document.getElementById("erpLink").value = "";
-      var eh = document.getElementById("erpHint");
-      eh.className = "hint snhint";
-      eh.textContent = "";
+      // 店铺**不清** —— 连着录同一个店的单子是常态
       showSnHint();        // 清空后那条格式提示也要跟着消掉
       await load();
       // 故意**不**自动跳到「查看」：现场录单常常是一条接一条，
@@ -1684,10 +1688,6 @@
     setTimeout(function () { normalizeCsInput(inp); }, 0);   // 粘贴要先等浏览器把值写进去
   });
 
-  // ERP 链接框：粘进来就认，不要求再点一次按钮 —— 用户手上本来就是一条链接
-  document.getElementById("erpLink").addEventListener("input", function (e) {
-    void applyErpLink(e.target.value);
-  });
   document.getElementById("title").addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); void add(); }
   });
@@ -1697,10 +1697,33 @@
     dupAck = "";
     showSnHint();
   });
-  /** 把订单号框里的内容就地洗干净（全角连字符 / 看不见的空白 / 整条链接） */
+  /**
+   * 订单号框：粘进来的东西就地收拾好。
+   *   整条 ERP 链接 → 抠出订单号，**顺便**把链接里的客服 ID 认成店铺
+   *                   （那条链接里有 mallcsid，不用人去认、也不用再手选店铺）；
+   *   手打的单号   → 洗净全角连字符与看不见的空白（当场改掉，让用户看见）。
+   */
   function cleanOrderSnField() {
     var el = document.getElementById("orderSn");
-    var v = normSn(el.value);
+    var raw = String(el.value || "");
+    var hit = parseClientUrl(raw);
+    if (hit) {
+      el.value = hit.ordersn || "";
+      showSnHint();
+      if (hit.mallcsid) {
+        void applyLinkStore(hit.mallcsid).then(function (said) {
+          toast("认出来了：" + (hit.ordersn ? "订单号 " + hit.ordersn + " · " : "") + said);
+        }, function (err) {
+          toast("店铺表存不上：" + friendlyErr(err));
+        });
+      } else if (hit.ordersn) {
+        toast("已从链接里取出订单号（这条链接里没写客服 ID，店铺得自己选）");
+      } else {
+        toast("这条链接里没有订单号，手动填一下");
+      }
+      return;
+    }
+    var v = normSn(raw);
     if (v !== el.value) el.value = v;     // 当场改掉，让用户**看见**清成什么样了
     showSnHint();
   }

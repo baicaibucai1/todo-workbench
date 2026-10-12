@@ -609,32 +609,44 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   check("异常单：保存店铺表时报告了改名影响了几条单子",
     saved.first === "拾野" && /换到新名字/.test(saved.toast), saved.toast);
 
-  /* ---------- 粘 ERP 链接 ----------
+  /* ---------- 粘 ERP 链接（粘在**订单号框**里） ----------
    * ★ 客服 ID 是 ERP 生成的，用户没法凭空知道 —— 所以正门是"把 ERP 给的那条
    * 链接粘进来"，从里面抠 mallcsid / ordersn，而不是让人去填一个看不出所以然的 ID。
-   * 三条路径都要验：认得出来（表里已有）、不认识（填进空行）、粘错了。 */
+   * 0.6.1 起**订单号框一处通吃**：粘单号、粘整条链接都认（链接里那两个参数
+   * 顺手把店铺也认出来），登记页不再另放一个「ERP 链接」框 —— 少一个框，
+   * 也少一次"我这串东西该粘哪个框"的犹豫。
+   * 三条路径都要验：认得出来（表里已有）、不认识（填进空行）、粘错了。
+   * ⚠️ Playwright 的 fill 不触发 paste，得手动派发（真实粘贴才有那个事件）。 */
   await page.click("#tab-create");
   await page.waitForTimeout(400);
+  const pasteSn = async (text) => {
+    await page.fill("#orderSn", text);
+    await page.evaluate(() => {
+      document.getElementById("orderSn").dispatchEvent(new Event("paste", { bubbles: true }));
+    });
+  };
   const ERP1 = "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_999999999&ordersn=261011-648659679643144";
-  await page.fill("#erpLink", ERP1);
-  await page.waitForTimeout(800);
+  await pasteSn(ERP1);
+  await page.waitForTimeout(900);
   const hitKnown = await page.evaluate(() => ({
-    hint: (document.getElementById("erpHint") || {}).textContent || "",
-    cls: (document.getElementById("erpHint") || {}).className || "",
+    toast: (document.getElementById("toast") || {}).textContent || "",
     sn: document.getElementById("orderSn").value,
     store: document.getElementById("store").value,
+    cls: (document.getElementById("snHint") || {}).className || "",
   }));
-  check("异常单：粘已知店铺的 ERP 链接，订单号和店铺一起认出来",
+  check("异常单：粘已知店铺的 ERP 链接，订单号抠出来、店铺也一起认出来",
     hitKnown.sn === "261011-648659679643144" && hitKnown.store === "拾野" && /\bok\b/.test(hitKnown.cls),
     JSON.stringify(hitKnown));
+  check("异常单：认出来了要说一声（认出的是哪个店）",
+    /认出来了/.test(hitKnown.toast) && /拾野/.test(hitKnown.toast), hitKnown.toast);
 
   const ERP2 = "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_800000007&ordersn=261011-362765391472941";
-  await page.fill("#erpLink", ERP2);
+  await pasteSn(ERP2);
   await page.waitForTimeout(900);
   const hitNew = await page.evaluate(() => {
     const rows = [...document.querySelectorAll("#stores .store-row")];
     return {
-      hint: (document.getElementById("erpHint") || {}).textContent || "",
+      toast: (document.getElementById("toast") || {}).textContent || "",
       store: document.getElementById("store").value,
       filled: rows.map((r) => r.querySelector("input.cs").value).filter(Boolean),
       count: rows.length,
@@ -644,26 +656,35 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     hitNew.count === 8 && hitNew.filled.length === 4 && hitNew.filled.indexOf("cs_800000007") >= 0,
     JSON.stringify(hitNew));
   check("异常单：认出陌生的 ID 之后说明白了它记到了哪个店",
-    /记到了/.test(hitNew.hint) && /cs_800000007/.test(hitNew.hint), hitNew.hint);
+    /记到了/.test(hitNew.toast) && /cs_800000007/.test(hitNew.toast), hitNew.toast);
 
-  await page.fill("#erpLink", "先填个别的");
-  await page.fill("#erpLink", ERP2);
-  await page.waitForTimeout(800);
+  await pasteSn("先填个别的");
+  await pasteSn(ERP2);
+  await page.waitForTimeout(900);
   const again = await page.evaluate(() => ({
-    hint: (document.getElementById("erpHint") || {}).textContent || "",
+    toast: (document.getElementById("toast") || {}).textContent || "",
     filled: [...document.querySelectorAll("#stores .store-row input.cs")].map((i) => i.value).filter(Boolean).length,
   }));
   check("异常单：同一个客服 ID 再粘一次是「认出」，不会又加一个店",
-    /店铺「/.test(again.hint) && again.filled === 4, JSON.stringify(again));
+    /店铺「/.test(again.toast) && again.filled === 4, JSON.stringify(again));
 
-  await page.fill("#erpLink", "https://example.com/abc");
+  // 粘一条网址：既不是单号也不是 pddim 链接 —— 订单号框要说"这串定位不到"
+  await pasteSn("https://example.com/abc");
   await page.waitForTimeout(500);
   const bad = await page.evaluate(() => ({
-    hint: (document.getElementById("erpHint") || {}).textContent || "",
-    cls: (document.getElementById("erpHint") || {}).className || "",
+    hint: (document.getElementById("snHint") || {}).textContent || "",
+    cls: (document.getElementById("snHint") || {}).className || "",
   }));
-  check("异常单：粘的不是 pddim 链接时，说清正确的形状",
-    /pddim:sendmsg/.test(bad.hint) && /\bbad\b/.test(bad.cls), JSON.stringify(bad));
+  check("异常单：粘进来一条网址（不是单号也不是链接）时说清这一串定位不到",
+    /格式存疑/.test(bad.hint) && /\bbad\b/.test(bad.cls), JSON.stringify(bad));
+
+  // ★ 钉住这个决定：登记页不该再有单独的「ERP 链接」框（粘链接收进订单号框了）
+  const noErpBox = await page.evaluate(() => ({
+    hasErp: !!document.getElementById("erpLink"),
+    ph: (document.getElementById("orderSn") || {}).placeholder || "",
+  }));
+  check("异常单：登记页没有单独的「ERP 链接」框了（订单号框一处通吃）",
+    noErpBox.hasErp === false && /ERP/.test(noErpBox.ph), JSON.stringify(noErpBox));
 
   /* ---------- 订单号粘得"脏"一点也要认 ----------
      现实里单号很少是干净的：从聊天 / 表格 / ERP 复制常带全角连字符（－）、
@@ -674,7 +695,9 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     ["全角连字符", "261011－597950502412841"],
     ["短破折号", "261011–597950502412841"],
     ["空格 + 看不见的空白", " 261011\u00A0-\u200B597950502412841 "],
-    ["整条唤醒链接", "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_355831479&ordersn=261011-597950502412841"],
+    // 整条链接也要能把 ordersn 抠出来。★ 客服 ID 用**表里已有**的那个：
+    // 陌生的 ID 会被顺手记进一个空行（认店铺的副作用），后面的计数断言就对不上了。
+    ["整条唤醒链接", "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_999999999&ordersn=261011-597950502412841"],
   ];
   for (const [label, raw] of normCases) {
     await page.fill("#orderSn", raw);
@@ -689,19 +712,6 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     check(`异常单：订单号粘得脏一点也认（${label}）`,
       got.v === "261011-597950502412841" && /\bok\b/.test(got.cls), JSON.stringify({ label, ...got }));
   }
-
-  // 裸订单号粘到「ERP 链接」框：它**有用**，别只回一句"不对"
-  await page.fill("#orderSn", "");
-  await page.fill("#erpLink", "261011-597950502412841");
-  await page.waitForTimeout(400);
-  const bareSn = await page.evaluate(() => ({
-    hint: (document.getElementById("erpHint") || {}).textContent || "",
-    sn: document.getElementById("orderSn").value,
-  }));
-  check("异常单：把裸订单号粘到「ERP 链接」框，会填进订单号框并说清这框要什么",
-    bareSn.sn === "261011-597950502412841" && /订单号，不是唤醒链接/.test(bareSn.hint),
-    JSON.stringify(bareSn));
-  await page.fill("#erpLink", "");
 
   // 店铺表的「客服 ID」框里直接粘整条链接，也要当场抠出来（店铺表在设置页）
   await page.click("#tab-settings");
@@ -880,7 +890,7 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
      放在最后：这一步会多一条记录，前面的计数断言不该被它影响。 */
   await page.click("#tab-create");
   await page.waitForTimeout(400);
-  await page.fill("#erpLink", "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_999999999&ordersn=261011-109827858042143");
+  await pasteSn("pddim:sendmsg/?OpeId=open_order&mallcsid=cs_999999999&ordersn=261011-109827858042143");
   await page.waitForTimeout(800);
   const beforeAdd = await page.evaluate(() => ({
     sn: document.getElementById("orderSn").value,
@@ -890,13 +900,13 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   await page.click("#add");
   await page.waitForTimeout(800);
   const afterAdd = await page.evaluate(() => ({
-    linkCleared: document.getElementById("erpLink").value === "",
-    hintCleared: (document.getElementById("erpHint") || {}).textContent === "",
+    snCleared: document.getElementById("orderSn").value === "",
+    hintCleared: (document.getElementById("snHint") || {}).textContent === "",
     storeKept: document.getElementById("store").value,
   }));
-  check("异常单：从 ERP 链接一路登记下来，店铺留着、链接框清掉（下一条是另一条链接）",
+  check("异常单：从 ERP 链接一路登记下来，店铺留着、订单号框清掉（下一条是另一条单）",
     beforeAdd.sn === "261011-109827858042143" && beforeAdd.store === "拾野" &&
-      afterAdd.linkCleared && afterAdd.hintCleared && afterAdd.storeKept === "拾野",
+      afterAdd.snCleared && afterAdd.hintCleared && afterAdd.storeKept === "拾野",
     JSON.stringify({ beforeAdd, afterAdd }));
 
   /* ---------- 0.6.0：快递单号 / 情况选项可配置 / 重复单号检测 / 店铺·情况筛选 ----------
@@ -1063,6 +1073,34 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     JSON.stringify(byStore));
   await page.selectOption("#storeFilter", "");
   await page.waitForTimeout(350);
+
+  /* ---------- 0.6.1：登记界面理顺（去掉单独的「ERP 链接」框、字段加标签） ----------
+     用户点了两件事：登记页那个专门的「ERP 链接」框去掉；登记界面整体理顺。
+     ★ 标签为什么是硬要求：填了值之后 placeholder 就没了，8 个字段排在一起时
+     只能靠位置去猜"这格是什么" —— 那最容易填错，所以标签得一直看得见。 */
+  await page.click("#tab-create");
+  await page.waitForTimeout(400);
+  const labels = await page.evaluate(() =>
+    [...document.querySelectorAll("#create-card label.f > span")].map((s) => s.textContent.trim()));
+  check("异常单：登记页每个字段都有可见标签（店铺/订单号/快递单号/情况/等级/异常单号/登记人/发生日期/异常内容）",
+    JSON.stringify(labels) === JSON.stringify(["店铺", "订单号", "快递单号", "情况", "等级", "异常单号", "登记人", "发生日期", "异常内容"]),
+    labels.join("/"));
+
+  await page.fill("#orderSn", "261011-597950502412841");
+  const labelAfter = await page.evaluate(() => {
+    const lab = document.getElementById("orderSn").closest("label.f");
+    return lab ? lab.querySelector("span").textContent.trim() : "(没有标签)";
+  });
+  check("异常单：填了值之后字段标签还在（说明不靠 placeholder 撑着）",
+    labelAfter === "订单号", labelAfter);
+
+  const actions = await page.evaluate(() => {
+    const b = document.getElementById("add").getBoundingClientRect();
+    const h = document.getElementById("codeHint").getBoundingClientRect();
+    return { gap: Math.round(Math.abs(b.top - h.top)), hint: (document.getElementById("codeHint") || {}).textContent || "" };
+  });
+  check("异常单：「登记」按钮和它那句说明并排（不再各占一整行）",
+    actions.gap < 24, JSON.stringify(actions));
 
   await wipeLocal("abnormal-ticket");
 
