@@ -32,6 +32,7 @@
 
 import { createRequire } from "node:module";
 import fs from "node:fs";
+import { EXPECTED_SIDEBAR_TOOLS } from "./tool-registry.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -104,11 +105,16 @@ check(
 // （连带那个曾经叫「特殊单号记录」的占位工具一起）。
 const toolCount = await page.locator('aside [data-nav^="tool:"]').count();
 info("工具数", toolCount);
-// 5 = image-crop / size-chart / ai-gen / notes / abnormal-ticket。
-// 不算「模板」（scratchpad）：它是给写工具的人照抄的样板，默认停用，
-// 要的人自己去 设置 → 工具 里打开。
-// 写死数字是故意的：多出一个陌生工具时能立刻被抓到，而不是悄悄挂上用户的侧边栏。
-check("工具区正好五个工具", toolCount === 5, String(toolCount));
+// 期望值来自 tests/tool-registry.mjs 的 ENABLED_TOOL_IDS —— 不算「模板」
+// （scratchpad）：它是给写工具的人照抄的样板，默认停用，要的人自己去
+// 设置 → 工具 里打开。
+// 数字仍然是写死的（不再是自动推导）：多出一个陌生工具时要能立刻被抓到，
+// 而不是悄悄挂上用户的侧边栏。由 `npm run tool:audit` 保证它与 tools/ 目录对得上。
+check(
+  `工具区正好 ${EXPECTED_SIDEBAR_TOOLS} 个工具`,
+  toolCount === EXPECTED_SIDEBAR_TOOLS,
+  String(toolCount),
+);
 check("初始无控制台错误", errors.length === 0, errors.slice(0, 3).join(" | "));
 
 // 越界防护：工具只能发裸表名，宿主强制拼前缀 ——

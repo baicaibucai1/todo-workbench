@@ -74,6 +74,7 @@ export const SKILLS: AgentSkill[] = [
       "文件名与 id 只用小写字母、数字、连字符，id 必须以字母开头、长度 2–32（它会成为这个工具私有表的表名前缀，是安全边界）",
       "必须含 <html> 或 <body> 标签，整份不超过 " + MB + " MB（导入时会校验这两条）",
       "绝对路径引用自己附带的资源也要避免：单文件导入只会搬 index.html 与 manifest.json 两个文件",
+      "**以 `tools/scratchpad` 为正牌模板**：它是这个项目里唯一被当作样板的工具（设置页挂「参考模板」徽章、默认停用）。要改模板就改它；要新写工具就照它的结构派生 —— 宿主状态机 / 主题跟随 / 数据层门面 / 独立运行兜底那四段怎么写都在它里面，别另起一套写法",
       "界面文案用简体中文；颜色自己定一套，但必须**响应宿主的深浅色**（收到 tool:context 后把 ctx.theme 写到 <html data-theme>）",
       "**脱离工作台也要能用**：双击这份 HTML、或把它丢到任意静态服务器上，它仍得是个能干活儿的网页。body 上挂 data-bind-state（booting / bound / standalone / error），宿主专属的控件标 data-host-only / data-host-gallery **交给 CSS 藏**（别逐个 el.hidden = true —— 作者样式里的 display:inline-flex 会盖掉浏览器默认的 [hidden]{display:none}，按钮会照常露着），数据层留一个 localStorage 兜底（键带工具 id），界面上说清数据存在哪",
       "关键状态写 data-* 属性、按钮写 data-act —— 这个项目靠它做自动化验证，没有它新功能就没法被回归测试覆盖",

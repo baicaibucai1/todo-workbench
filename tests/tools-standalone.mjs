@@ -1204,6 +1204,114 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   check("异常单：状态标签挪到了第二行（给单号让出整行）",
     longRow.badge === "待处理" && longRow.badgeInTitle === true, JSON.stringify(longRow));
 
+  /* ---------- 0.8.0：流程状态（名称 + 时间的步骤轨迹） ----------
+     状态 = 最后一步的名称；一条流程都没记时仍走派生（0.7.0 的老规矩，
+     所以 add() 不自动种流程 —— 种了就永远压住派生状态）。走一遍：
+     空手记一步被拦 → 记两步徽标跟随 → 删步 → 全删光徽标回退派生。 */
+  await page.click("#tab-create");
+  await page.waitForTimeout(300);
+  await page.fill("#orderSn", "261012-800000000000001");
+  await page.fill("#title", "流程状态回归");
+  await page.click("#add");
+  await page.waitForTimeout(800);
+  await page.click("#tab-browse");
+  await page.waitForTimeout(400);
+  // 选中是记忆式的：重复检测段「跳转」过别的单子，selectedId 还停在它身上 ——
+  // 显式点中刚登记的这条再开始断言
+  const demoId = await page.evaluate(() => {
+    const row = [...document.querySelectorAll(".ticket")].find(
+      (r) => (r.querySelector(".code") || {}).textContent === "261012-800000000000001",
+    );
+    return row ? row.getAttribute("data-id") : "";
+  });
+  if (!demoId) throw new Error("示例单没登记上（列表里找不到 261012-800000000000001）");
+  await page.click(`.ticket[data-id="${demoId}"]`);
+  await page.waitForTimeout(400);
+  const flowStart = await page.evaluate(() => ({
+    code: (document.querySelector('.ticket[aria-selected="true"] .code') || {}).textContent || "",
+    badge: (document.querySelector("#detail .d-head .badge") || {}).textContent || "",
+    steps: document.querySelectorAll("#detail .flow-step").length,
+    empty: ((document.querySelector("#detail .flow-empty") || {}).textContent || "").length > 0,
+  }));
+  check("异常单：没记过流程时徽标仍走派生（待处理），流程不自动种",
+    flowStart.code === "261012-800000000000001" && flowStart.badge === "待处理" &&
+      flowStart.steps === 0 && flowStart.empty === true, JSON.stringify(flowStart));
+
+  // 名称没选就点「记录一步」→ 拦下（名称必选，防止误记一步脏轨迹）
+  await page.click('#detail button[data-act="flow-add"]');
+  await page.waitForTimeout(400);
+  const flowNoName = await page.evaluate(() => ({
+    steps: document.querySelectorAll("#detail .flow-step").length,
+    toast: (document.getElementById("toast") || {}).textContent || "",
+  }));
+  check("异常单：流程名称没选时「记录一步」被拦下",
+    flowNoName.steps === 0 && /先选一步名称/.test(flowNoName.toast), JSON.stringify(flowNoName));
+
+  // 记第一步：选「已联系快递」，时刻默认现在
+  await page.selectOption("#flowName", "已联系快递");
+  await page.click('#detail button[data-act="flow-add"]');
+  await page.waitForTimeout(500);
+  const step1 = await page.evaluate(() => ({
+    n: document.querySelectorAll("#detail .flow-step").length,
+    cur: ((document.querySelector("#detail .flow-step.cur .flow-name") || {}).textContent || "").trim(),
+    time: ((document.querySelector("#detail .flow-step.cur .flow-time") || {}).textContent || "").trim(),
+    badge: (document.querySelector("#detail .d-head .badge") || {}).textContent || "",
+    rowBadge: (document.querySelector(".ticket[aria-selected=\"true\"] .badge") || {}).textContent || "",
+  }));
+  check("异常单：记一步后流程列表出现这一步（标「当前」），头顶徽标跟着走",
+    step1.n === 1 && step1.cur === "已联系快递 · 当前" && step1.badge === "已联系快递",
+    JSON.stringify(step1));
+  check("异常单：每一步都带时间，列表行的徽标同步",
+    step1.time.length > 0 && step1.rowBadge === "已联系快递", JSON.stringify(step1));
+
+  // 再记一步：状态推进
+  await page.selectOption("#flowName", "平台申诉中");
+  await page.click('#detail button[data-act="flow-add"]');
+  await page.waitForTimeout(500);
+  const step2 = await page.evaluate(() => ({
+    n: document.querySelectorAll("#detail .flow-step").length,
+    cur: ((document.querySelector("#detail .flow-step.cur .flow-name") || {}).textContent || "").trim(),
+    badge: (document.querySelector("#detail .d-head .badge") || {}).textContent || "",
+  }));
+  check("异常单：再记一步，当前状态推进到平台申诉中",
+    step2.n === 2 && step2.cur === "平台申诉中 · 当前" && step2.badge === "平台申诉中", JSON.stringify(step2));
+
+  // 删步：先删掉第一步（轨迹剩最后一步、状态不变），再删光（徽标回退派生）
+  await page.click('#detail .flow-del[data-idx="0"]');
+  await page.waitForTimeout(500);
+  const stepDel1 = await page.evaluate(() => ({
+    n: document.querySelectorAll("#detail .flow-step").length,
+    cur: ((document.querySelector("#detail .flow-step.cur .flow-name") || {}).textContent || "").trim(),
+  }));
+  check("异常单：删掉前面的步，剩下的仍是轨迹，状态不跟着变",
+    stepDel1.n === 1 && stepDel1.cur === "平台申诉中 · 当前", JSON.stringify(stepDel1));
+  await page.click('#detail .flow-del[data-idx="0"]');
+  await page.waitForTimeout(500);
+  const stepDel2 = await page.evaluate(() => ({
+    n: document.querySelectorAll("#detail .flow-step").length,
+    empty: ((document.querySelector("#detail .flow-empty") || {}).textContent || "").length > 0,
+    badge: (document.querySelector("#detail .d-head .badge") || {}).textContent || "",
+  }));
+  check("异常单：流程全删掉后徽标回退到派生状态（待处理）",
+    stepDel2.n === 0 && stepDel2.empty === true && stepDel2.badge === "待处理", JSON.stringify(stepDel2));
+
+  /* ---------- 0.8.0：提醒块只在宿主里出现 ----------
+     设定提醒 = 向工作台订一条带来源标记的待办（task.remind）。
+     独立打开没有宿主可订 —— 整块藏掉（data-host-only），不是灰着解释。 */
+  const remindBlk = await page.evaluate(() => {
+    const sect = document.querySelector("#detail .sect[data-host-only]");
+    if (!sect) return { present: false };
+    return {
+      present: true,
+      display: getComputedStyle(sect).display,
+      hasSet: !!sect.querySelector('[data-act="remind-set"]'),
+      hint: ((sect.querySelector("#remindHint") || {}).textContent || "").slice(0, 50),
+    };
+  });
+  check("异常单：提醒块在独立打开时整个藏掉（display:none，不是灰着）",
+    remindBlk.present === true && remindBlk.display === "none" && remindBlk.hasSet === true,
+    JSON.stringify(remindBlk));
+
   await wipeLocal("abnormal-ticket");
 
   await expectCommon("abnormal-ticket", "异常单号", "http");

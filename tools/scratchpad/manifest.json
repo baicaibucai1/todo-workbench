@@ -7,7 +7,7 @@
   "tags": ["template"],
   "entry": "index.html",
   "dbVersion": 1,
-  "author": "内置工具",
+  "author": "内置",
   "schema": {
     "tables": [
       {

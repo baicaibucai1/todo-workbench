@@ -77,6 +77,24 @@ export default function App() {
     };
   }, [ready, checkReminders]);
 
+  // 拖文件进窗口的兜底：只有明确接了 onDrop 的区域（工具导入、助手拖图）能消费文件，
+  // 其它地方松手的话浏览器默认行为是**把整个页面导航到那个文件** —— 用户眼前的工作台
+  // 会瞬间被换成一张图片/一段 HTML，看上去就像程序崩了。所以全局拦掉默认行为，
+  // 已接手区域自己也会 preventDefault，互不影响。
+  // ⚠️ 只拦「有文件」的拖动：文本/链接的拖放（比如往输入框里拖字）不该被波及。
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes("Files") ?? false;
+    const guard = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    window.addEventListener("dragover", guard);
+    window.addEventListener("drop", guard);
+    return () => {
+      window.removeEventListener("dragover", guard);
+      window.removeEventListener("drop", guard);
+    };
+  }, []);
+
   /**
    * 当前是否真的显示着工具。
    *

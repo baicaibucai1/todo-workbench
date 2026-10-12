@@ -15,6 +15,7 @@
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import { enableModule } from "./_enable-module.mjs";
+import { EXPECTED_SETTINGS_ROWS } from "./tool-registry.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -422,12 +423,17 @@ await page.waitForTimeout(600);
 await page.locator('button[data-section="tools"]').click();
 await page.waitForTimeout(500);
 
-// 6 = image-crop / size-chart / ai-gen / scratchpad / notes / abnormal-ticket。
+// 期望值来自 tests/tool-registry.mjs 的 ALL_TOOL_IDS（含默认停用的「模板」）。
 // 五子棋不算：它是 tests/fixtures/gomoku/ 下的编写标准样本，不是产品里的工具。
-// 再加内置工具时这里要跟着改 —— 写死数字是为了让"多出一个陌生工具"能被立刻发现，
-// 而不是悄无声息地出现在用户的侧边栏里。
+// 数字仍然是写死的（不是自动推导）："多出一个陌生工具"要能被立刻发现，
+// 而不是悄无声息地出现在用户的设置页里。由 `npm run tool:audit` 保证它
+// 与 tools/ 目录对得上 —— 加了工具记得跑 `npm run tool:new`，它会一并改。
 const toolRows = await page.locator("[data-tool-row]").count();
-check("设置里列出了全部工具", toolRows === 6, String(toolRows));
+check(
+  `设置里列出了全部工具（${EXPECTED_SETTINGS_ROWS} 个）`,
+  toolRows === EXPECTED_SETTINGS_ROWS,
+  String(toolRows),
+);
 check("每个工具一行（图片裁剪）", (await page.locator("[data-tool-row='image-crop']").count()) === 1);
 check(
   "标了来源：内置",

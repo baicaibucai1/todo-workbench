@@ -14,6 +14,7 @@ use tauri::Manager;
 mod attachments;
 mod db_tx;
 mod onedrive;
+mod toolpkg;
 mod webdav;
 
 /// 把打包进安装包的内置工具同步到用户数据目录。
@@ -193,6 +194,11 @@ pub fn run() {
             attachments::attachment_exists,
             attachments::attachment_usage,
             attachments::open_external,
+            // 工具包下载。前端自己 fetch 会被 CORS 挡住，而工具包挂在
+            // GitHub Release 上，给不给跨域头不由我们决定（见 toolpkg.rs 顶部）。
+            toolpkg::tool_download,
+            // 安装时内联外部资源用的子资源抓取（带 Referer + 浏览器 UA，绕防盗链）
+            toolpkg::tool_fetch,
             // 坚果云同步的传输层。前端自己发不出去 ——
             // 浏览器只允许标准 HTTP 方法，WebDAV 用的 PROPFIND / MKCOL
             // 连预检都过不了（见 webdav.rs 顶部）。

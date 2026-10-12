@@ -12,6 +12,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# 与下面 [dependencies] 里那条 indexmap 同一个原因，也必须写在这里：
+# resolver v2 下构建依赖图与正常依赖图的 feature 是**分开**求并的，
+# 只补一边的话，tauri-build 那条链上的 schemars 仍然会踩到同一个坑。
+indexmap = { version = "1.9", default-features = false, features = ["std"] }
 
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
@@ -39,6 +43,23 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 ring = "0.17"
 infer = "0.19"
 percent-encoding = "2"
+
+# ⚠️ 这一行**不是我们用的**，是给 schemars 0.8.22 打的补丁，删了会编译不过。
+#
+# 链路：tauri-utils / tauri-plugin / tauri-build → schemars 0.8.22（开着
+# `preserve_order`）→ indexmap 1.9。而 schemars 声明 indexmap 时没要 `std`，
+# indexmap 1.9 自己的 `default` 也不含 `std`，于是它的 build.rs 退化成
+# "探测一下目标里有没有 std"（autocfg 的 emit_sysroot_crate）。
+#
+# 那个探测在 rustc 1.98 之后会失败（构建脚本的 stderr 里留一句
+# `warning: autocfg could not probe for \`std\``），于是 has_std 没发出，
+# indexmap 落到 `#[cfg(not(has_std))] pub struct IndexMap<K, V, S>` ——
+# 第三个泛型参数没有默认值，schemars 的 `Map<K, V> = IndexMap<K, V>` 就报错了：
+#   error[E0107]: struct takes 3 generic arguments but 2 generic arguments were supplied
+#
+# 直接在依赖树里把 `std` 打开 = 让它走 CARGO_FEATURE_STD 那条分支，
+# 一次探测都不做。等上游把 indexmap 换掉，这一行就可以删。
+indexmap = { version = "1.9", default-features = false, features = ["std"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

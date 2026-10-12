@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{NAME}}</title>
+<!--
+  内联 favicon：不写的话浏览器会去要 /favicon.ico，控制台留一条 404 红字。
+-->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='7' fill='%23378add'/%3E%3Cpath d='M9 16.5l4.5 4.5L23 11.5' stroke='%23fff' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+<style>
+  /* color-scheme 不能省：少了它，input / 滑杆 / 取色器 / 原生滚动条
+     在深色下仍是浅色一坨 */
+  html { color-scheme: light; }
+  html[data-theme="dark"] { color-scheme: dark; }
+
+  :root {
+    --bg: #ffffff; --fg: #2c2c2a; --fg2: #5f5e5b; --dim: #918f89;
+    --line: #e6e4dd; --chip: #f2f0ea; --accent: #378add; --danger: #a32d2d;
+    --ok: #2f9e63;
+  }
+  /* 边框色必须手工按用途定：浅色里边框比面板暗，深色里必须比面板亮，
+     否则那条线整条消失 */
+  html[data-theme="dark"] {
+    --bg: #1c1c1a; --fg: #e8e6e0; --fg2: #b3b0a8; --dim: #8a8780;
+    --line: #3a3934; --chip: #2a2925; --accent: #5b9de8; --danger: #e07272;
+    --ok: #4ec78a;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px; min-height: 100vh;
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+
+  /* ★ 最阴的界面坑：[hidden] 打不过作者样式。
+     display:flex 会盖掉浏览器默认的 [hidden]{display:none}（与权重无关，
+     作者样式一律压过 UA 样式）→ 要藏就靠这条属性选择器，别用 el.hidden。 */
+  body:not([data-bind-state="bound"]) [data-host-only] { display: none !important; }
+
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  input, button, select {
+    font: inherit; color: var(--fg);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 10px;
+  }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .dot {
+    font-size: 12px; color: var(--dim);
+    border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px;
+  }
+  .dot.ok { color: var(--ok); }
+  .dot.warn { color: var(--danger); }
+  ul { list-style: none; margin: 14px 0 0; padding: 0; }
+  li {
+    display: flex; gap: 10px; align-items: center;
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+    margin-bottom: 6px;
+  }
+  li .t { flex: 1; min-width: 0; word-break: break-all; }
+  li .d { font-size: 12px; color: var(--dim); }
+  .empty { color: var(--dim); font-size: 13px; margin-top: 14px; }
+</style>
+</head>
+<body data-bind-state="booting">
+
+<div class="row">
+  <strong>{{NAME}}</strong>
+  <span class="dot" id="hostState">连接中…</span>
+  <!-- 宿主专属控件：独立运行时藏起来，不是灰着 + 解释 -->
+  <button class="primary" data-host-only id="sendOut">把这条交给别的工具</button>
+</div>
+
+<div class="row" style="margin-top:14px">
+  <input id="title" placeholder="记一条…" style="flex:1;min-width:200px" />
+  <button class="primary" id="add">添加</button>
+</div>
+
+<ul id="list"></ul>
+<div class="empty" id="empty" hidden>还没有记录。</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOOL_ID = "{{ID}}";              // 独立运行时的 localStorage 前缀要带它
+  var TOOL_SOURCE = "workbench-tool";
+  var HOST_SOURCE = "workbench-host";
+  var TABLE = "records";               // 裸表名；宿主会拼成 tool_{{IDUNDER}}_records
+
+  var seq = 0;
+  var waiting = new Map();
+  var ctx = null;
+
+  /* ==================================================================
+   * 一、宿主状态机
+   * ------------------------------------------------------------------
+   *   booting    —— 开机，还不知道自己在哪
+   *   bound      —— 收到 tool:context（或 info 的回包），在工作台里
+   *   standalone —— 超时没等到，且 parent === window：独立打开
+   *   error      —— 超时没等到，但确实被嵌在某页里：桥没接上
+   *
+   * parent === window 是唯一能**同步**判定的信号，所以只在超时兜底时用它
+   * 把「独立打开」和「嵌了却没接上」分开 —— 前者藏掉宿主专属功能照常用，
+   * 后者要报错（用户明显是期望它连上的）。
+   * ================================================================== */
+  var LABEL = { booting: "连接中…", bound: "已连工作台", standalone: "独立运行", error: "未连接宿主" };
+  var state = "booting";
+
+  var settleResolve = null;
+  /** 状态落定（不再是 booting）时兑现，数据层要等它 */
+  var settle = new Promise(function (res) { settleResolve = res; });
+
+  function setState(next) {
+    state = next;
+    document.body.dataset.bindState = next;
+    var dot = document.getElementById("hostState");
+    dot.textContent = LABEL[next] || next;
+    dot.className = "dot" + (next === "bound" ? " ok" : next === "booting" ? "" : " warn");
+    if (next !== "booting" && settleResolve) { var r = settleResolve; settleResolve = null; r(); }
+  }
+
+  function bound() { return state === "bound"; }
+
+  /* ================= 与宿主通信 ================= */
+
+  function call(op, payload) {
+    if (!bound()) return Promise.reject(new Error("没有连上工作台"));
+    var id = "r" + ++seq;
+    return new Promise(function (resolve, reject) {
+      waiting.set(id, { resolve: resolve, reject: reject });
+      parent.postMessage({ source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} }, "*");
+      setTimeout(function () {
+        if (waiting.delete(id)) reject(new Error("宿主没有回应（" + op + "）"));
+      }, 10000);
+    }).then(function (res) {
+      if (!res.ok) throw new Error(String(res.error || "宿主拒绝了这次请求"));
+      return res.data;
+    });
+  }
+
+  window.addEventListener("message", function (e) {
+    var m = e.data;
+    if (!m || m.source !== HOST_SOURCE) return;
+
+    if (m.type === "tool:response") {
+      var w = waiting.get(m.id);
+      if (w) { waiting.delete(m.id); w.resolve({ ok: m.ok, data: m.data, error: m.error }); }
+      return;
+    }
+    if (m.type === "tool:context") {
+      ctx = m.data;
+      // 主题：宿主推什么用什么。独立打开时下面的 fallback 跟系统走
+      if (ctx && ctx.theme) document.documentElement.dataset.theme = ctx.theme;
+      setState("bound");
+      void load();
+      return;
+    }
+    // 被别的工具拉起时收到的数据
+    if (m.type === "tool:intent") {
+      var d = m.data || {};
+      document.getElementById("title").value = String(d.title || d.text || "");
+      return;
+    }
+    if (m.type === "tool:event") {
+      // 宿主在「设置 → 数据库」里清空了这个工具的命名空间 → 界面要重拉，
+      // 否则用户清完数据看到的还是原来那几行
+      if (m.event === "schema:reset") void load();
+    }
+  });
+
+  /* ==================================================================
+   * 二、数据层门面
+   * ------------------------------------------------------------------
+   * 连着宿主 → row.*（宿主持 manifest 里那份 schema 建表与校验）；
+   * 独立运行 → localStorage，键必须带工具 id（file:// 下 localStorage
+   * 跨页共享，不带 id 会跟别的工具撞车）。
+   *
+   * ⚠️ 门面只暴露这四个方法，是为了让"数据从哪来"只有一处答案 ——
+   * 界面代码永远不该自己去 postMessage。
+   * ================================================================== */
+
+  function localKey() { return "wbtool:" + TOOL_ID + ":t:" + TABLE; }
+
+  function localAll() {
+    try { return JSON.parse(localStorage.getItem(localKey()) || "[]"); }
+    catch (_) { return []; }
+  }
+  function localSave(rows) {
+    try { localStorage.setItem(localKey(), JSON.stringify(rows)); } catch (_) {}
+  }
+
+  var Db = {
+    /** @returns {Promise<Array<object>>} */
+    select: function () {
+      if (!bound()) return Promise.resolve(localAll());
+      return call("row.select", { table: TABLE, orderBy: "created_at", limit: 200 })
+        .then(function (r) { return r.rows || r || []; });
+    },
+    insert: function (row) {
+      if (!bound()) {
+        var rows = localAll();
+        rows.unshift(row);
+        localSave(rows);
+        return Promise.resolve(row);
+      }
+      return call("row.insert", { table: TABLE, row: row });
+    },
+    del: function (id) {
+      if (!bound()) {
+        localSave(localAll().filter(function (r) { return r.id !== id; }));
+        return Promise.resolve(true);
+      }
+      return call("row.delete", { table: TABLE, where: { id: id } });
+    },
+    count: function () {
+      if (!bound()) return Promise.resolve(localAll().length);
+      return call("row.count", { table: TABLE });
+    },
+  };
+
+  /* ================= 界面 ================= */
+
+  var listEl = document.getElementById("list");
+  var emptyEl = document.getElementById("empty");
+
+  function uid() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+
+  function render(rows) {
+    listEl.textContent = "";
+    emptyEl.hidden = rows.length > 0;
+    rows.forEach(function (r) {
+      var li = document.createElement("li");
+      var t = document.createElement("span");
+      t.className = "t";
+      t.textContent = r.title || "(无标题)";
+      var d = document.createElement("span");
+      d.className = "d";
+      d.textContent = (r.created_at || "").slice(0, 10);
+      var b = document.createElement("button");
+      b.textContent = "删除";
+      b.onclick = function () { void Db.del(r.id).then(load); };
+      li.append(t, d, b);
+      listEl.appendChild(li);
+    });
+  }
+
+  function load() {
+    return settle.then(function () { return Db.select(); }).then(render).catch(function (err) {
+      emptyEl.hidden = false;
+      emptyEl.textContent = String(err.message || err);
+    });
+  }
+
+  document.getElementById("add").onclick = function () {
+    var el = document.getElementById("title");
+    var v = el.value.trim();
+    if (!v) return;
+    var row = { id: uid(), title: v, created_at: new Date().toISOString() };
+    el.value = "";
+    void Db.insert(row).then(load).catch(function (err) {
+      emptyEl.hidden = false;
+      emptyEl.textContent = String(err.message || err);
+    });
+  };
+  document.getElementById("title").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") document.getElementById("add").click();
+  });
+
+  // 把一条内容交给别的工具（宿主中转，收发双方碰不到彼此的数据表）
+  document.getElementById("sendOut").onclick = function () {
+    void call("tools.list").then(function (peers) {
+      var target = (peers || []).filter(function (p) { return p.id !== TOOL_ID; })[0];
+      if (!target) { alert("这台机器上还没有别的工具可以接收"); return; }
+      return call("tools.open", { tool: target.id, data: { title: "来自 " + TOOL_ID } });
+    }).catch(function (err) { alert(String(err.message || err)); });
+  };
+
+  /* ==================================================================
+   * 三、收尾：主题兜底与超时判定
+   * ================================================================== */
+
+  // 独立打开时跟系统走（连着宿主时以宿主推来的为准）
+  if (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) {
+    document.documentElement.dataset.theme = "dark";
+  }
+
+  setTimeout(function () {
+    if (state !== "booting") return;
+    setState(window.parent === window ? "standalone" : "error");
+    void load();
+  }, 1200);
+
+  // 连不上宿主时也要能用：上面 setTimeout 会把状态落到 standalone，
+  // 那时 load() 走 localStorage 分支。
+})();
+</script>
+</body>
+</html>

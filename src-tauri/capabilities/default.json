@@ -13,11 +13,13 @@
     "sql:allow-close",
     "fs:default",
     "fs:allow-read-text-file",
+    "fs:allow-read-file",
     "fs:allow-read-dir",
     "fs:allow-exists",
     "fs:allow-copy-file",
     "fs:allow-mkdir",
     "fs:allow-write-text-file",
+    "fs:allow-write-file",
     "fs:allow-remove",
     {
       "identifier": "fs:scope",

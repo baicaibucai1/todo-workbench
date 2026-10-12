@@ -1,11 +1,11 @@
 import { SectionTitle, Card, FieldRow, Switch } from "./parts";
 import type { Flash } from "./parts";
-import { ImportToolDialog } from "./ImportToolDialog";
 import {
   useEffect,
   useRef,
   useState,
 } from "react";
+import type { DragEvent as ReactDragEvent } from "react";
 import {
   Trash2,
   Copy,
@@ -13,6 +13,8 @@ import {
   FileCode2,
   PackagePlus,
   AlertTriangle,
+  Globe,
+  RefreshCw,
 } from "lucide-react";
 import { useStore } from "../../store";
 import {
@@ -24,13 +26,21 @@ import {
 import {
   canInstallTools,
   HTML_MAX_BYTES,
+  ZIP_MAX_BYTES,
+  downloadToolSource,
   installFromHtml,
+  installFromZip,
+  planZipInstall,
   reinstallBundledTool,
+  toolSubresourceFetcher,
   toolsRoot,
   uninstallTool,
 } from "../../lib/toolStore";
+import { describeExternalRefs, detectServerCalls, scanExternalRefs, titleFromHtml } from "../../lib/toolHtmlScan";
+import { inlineExternalResources } from "../../lib/toolInline";
 import { resolveIcon } from "../../lib/icons";
 import type { ToolManifest } from "../../types";
+import { ImportToolDialog, type PendingImport } from "./ImportToolDialog";
 
 /**
  * 工具包的下载地址。
@@ -73,12 +83,20 @@ export function ToolsSection({
   const { tools, bundledTools, aliveToolIds, closeTool, reloadTools, openTool } = useStore();
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const zipRef = useRef<HTMLInputElement>(null);
+  /** 更新某个工具时，把"要更新谁"记下来（zip 里只有一个工具时按它装） */
+  const targetRef = useRef<string | null>(null);
+  /** 拖放计数：dragenter/dragleave 在子元素间进出会成对触发，靠深度计数才不会闪烁 */
+  const dragDepth = useRef(0);
   const [busy, setBusy] = useState<string | null>(null);
-  /** 选好文件、等着确认的导入（null = 当前没在导入） */
-  const [pending, setPending] = useState<{ fileName: string; html: string } | null>(null);
+  /** 选好来源、等着确认的导入（null = 当前没在导入） */
+  const [pending, setPending] = useState<PendingImport | null>(null);
+  /** 有工具文件正拖在整个工具区上空（显示虚线提示层） */
+  const [dragOver, setDragOver] = useState(false);
   /** 正在二次确认卸载的工具 id */
   const [askUninstall, setAskUninstall] = useState<string | null>(null);
   const [root, setRoot] = useState("");
+  const [url, setUrl] = useState("");
 
   const disabled = parseDisabledTools(settings[SETTINGS.toolsDisabled]);
   const keepState = parseToolKeepState(settings[SETTINGS.toolKeepState]);
@@ -103,6 +121,9 @@ export function ToolsSection({
   const missing = bundledTools.filter((b) => !tools.some((t) => t.id === b.id));
 
   const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+  /** 内联打包的进度与结果提示（显示在安装工具卡片里） */
+  const [packNote, setPackNote] = useState("");
 
   /**
    * 点一下启用开关 = 把当前状态取反。
@@ -147,19 +168,186 @@ export function ToolsSection({
     }
   };
 
-  const pickFile = async (f: File) => {
-    // 体积先在读之前挡一道：把几百兆的东西读成字符串再拒绝，白占内存
-    if (f.size > HTML_MAX_BYTES) {
-      say(
-        `文件 ${(f.size / 1024 / 1024).toFixed(1)} MB，超过 ${HTML_MAX_BYTES / 1024 / 1024} MB 上限`,
-        "err",
+  /**
+   * 单文件 HTML 的安装前处理：**先把外部资源抓下来内联**，让工具落地就是完整的
+   * （2026-10-12 用户明确要求"别光提示，让程序抓取外部资源"）。
+   * 抓不齐的转成警告走「仍要安装」那道闸；抓完超过单文件上限就整体放弃。
+   */
+  const packHtml = async (
+    html: string,
+    base: string,
+  ): Promise<{ html: string; warns: string[]; packed: number; serverCalls: boolean }> => {
+    const res = await inlineExternalResources(html, base, toolSubresourceFetcher(), {
+      onProgress: (done) => setPackNote(`已抓取 ${done} 个外部资源…`),
+    });
+    if (res.html.length > HTML_MAX_BYTES) {
+      throw new Error(
+        `资源内联后文件 ${(res.html.length / 1048576).toFixed(1)} MB，超过单文件上限 ${(HTML_MAX_BYTES / 1048576).toFixed(0)} MB —— 这个页面不适合做成单文件工具`,
       );
+    }
+    // 打包解决不了的部分要说明白：页面自己会向服务器发请求的话，离线时那些功能就是用不了
+    const serverCalls = detectServerCalls(res.html);
+    if (res.failed.length === 0) {
+      return { html: res.html, warns: [], packed: res.inlined.length, serverCalls };
+    }
+    const hostOf = (u: string) => {
+      try {
+        return new URL(u, base || "http://placeholder.invalid").hostname;
+      } catch {
+        return u.slice(0, 40);
+      }
+    };
+    const hosts = [...new Set(res.failed.map((f) => hostOf(f.url)))];
+    const warns = [
+      `${res.failed.length} 个外部资源没能抓下来（${hosts.slice(0, 3).join("、")}${hosts.length > 3 ? ` 等 ${hosts.length} 个站点` : ""}）：${res.failed[0].reason}。`,
+      "这些位置在离线的工具里加载不到，界面可能是坏的。",
+    ];
+    return { html: res.html, warns, packed: res.inlined.length, serverCalls };
+  };
+
+  const pickFile = async (f: File) => {
+    const isZip = /\.zip$/i.test(f.name);
+    // 体积先在读之前挡一道：把几百兆的东西读进内存再拒绝，白占一趟
+    const cap = isZip ? ZIP_MAX_BYTES : HTML_MAX_BYTES;
+    if (f.size > cap) {
+      say(`文件 ${(f.size / 1024 / 1024).toFixed(1)} MB，超过 ${cap / 1024 / 1024} MB 上限`, "err");
       return;
     }
     try {
-      setPending({ fileName: f.name, html: await f.text() });
+      if (isZip) {
+        const zip = await f.arrayBuffer();
+        const plan = await planZipInstall(zip);
+        if (!plan.tools.length) {
+          say("这个压缩包里没找到可以装的工具（需要有 manifest.json，或至少一个 HTML 入口）", "err");
+          return;
+        }
+        const target = targetRef.current;
+        setPending({
+          kind: "zip",
+          label: target ? `${f.name} → 更新「${target}」` : f.name,
+          zip,
+          tools: plan.tools,
+          skipped: plan.skipped,
+          forceId: target ?? undefined,
+        });
+        return;
+      }
+      // 单文件安装前先尝试把外部资源抓齐内联（从文件导入没有基准地址，
+      // 只有绝对地址抓得到；抓不齐的转成警告，见 packHtml）。
+      // 体检兜底还在：抓完再扫一遍，剩下的外部引用照样亮警告。
+      const text = await f.text();
+      setPackNote("分析页面…");
+      const packed = await packHtml(text, "");
+      setPackNote("");
+      const warns = packed.warns.length
+        ? packed.warns
+        : describeExternalRefs(scanExternalRefs(packed.html, true));
+      setPending({
+        kind: "html",
+        label: f.name,
+        html: packed.html,
+        warns,
+        suggestName: titleFromHtml(packed.html) || undefined,
+        packed: packed.packed || undefined,
+        serverCalls: packed.serverCalls || undefined,
+      });
     } catch (err) {
+      setPackNote("");
       say(`读不出这个文件：${errText(err)}`, "err");
+    }
+  };
+
+  /* ---------------- 拖放安装：文件直接拖到工具区上松手 ---------------- */
+
+  const draggingFiles = (e: ReactDragEvent) =>
+    Array.from(e.dataTransfer.types).includes("Files");
+
+  const onDragEnter = (e: ReactDragEvent) => {
+    if (!draggingFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setDragOver(true);
+  };
+
+  // dragover 要持续 preventDefault，浏览器才会在松手时派发 drop；但别在这里
+  // 反复 setState —— 它像 mousemove 一样连续触发，每帧重渲染会把界面拖卡
+  const onDragOver = (e: ReactDragEvent) => {
+    if (draggingFiles(e)) e.preventDefault();
+  };
+
+  const onDragLeave = () => {
+    if (dragDepth.current > 0) dragDepth.current -= 1;
+    if (dragDepth.current === 0) setDragOver(false);
+  };
+
+  const onDropFiles = (e: ReactDragEvent) => {
+    dragDepth.current = 0;
+    setDragOver(false);
+    if (!draggingFiles(e)) return;
+    e.preventDefault();
+    if (!canManage) {
+      say("浏览器演示模式装不了工具，请在桌面版里拖入", "err");
+      return;
+    }
+    const files = [...e.dataTransfer.files];
+    if (!files.length) return;
+    // 导入确认框一次只伺候一份来源（zip 内部才装得下多个工具），
+    // 多拖几个就明说只装了第一个 —— 悄悄吞掉剩下的更让人摸不着头脑
+    const first = files[0];
+    if (files.length > 1) say(`一次只装一个文件，另外 ${files.length - 1} 个忽略了`);
+    if (!/\.(html?|zip)$/i.test(first.name)) {
+      say(`「${first.name}」不是工具文件：要 .html 单文件或 .zip 工具包`, "err");
+      return;
+    }
+    void pickFile(first);
+  };
+
+  /**
+   * 网址入口：**先下载、后确认**。下载之前无从知道对面是 zip 还是 HTML、
+   * 是不是自包含 —— 这些必须在「安装」按钮按下去之前摆到台面上。
+   * 下载可能要几秒，按钮上就是"下载中…"。
+   */
+  const doInstallFromUrl = async () => {
+    const u = url.trim();
+    if (!u) return;
+    setBusy("__url");
+    try {
+      const src = await downloadToolSource(u);
+      if (src.kind === "zip") {
+        const plan = await planZipInstall(src.bytes);
+        if (!plan.tools.length) {
+          say("这个压缩包里没找到可以装的工具（需要有 manifest.json，或至少一个 HTML 入口）", "err");
+          return;
+        }
+        const target = targetRef.current;
+        setPending({
+          kind: "zip",
+          label: target ? `${u} → 更新「${target}」` : u,
+          zip: src.bytes,
+          tools: plan.tools,
+          skipped: plan.skipped,
+          forceId: target ?? undefined,
+        });
+      } else {
+        // 网址来的 HTML：先把外部资源抓齐内联，再弹确认框（见 packHtml）
+        setPackNote("分析页面…");
+        const packed = await packHtml(src.text, u);
+        setPackNote("");
+        setPending({
+          kind: "html",
+          label: u,
+          html: packed.html,
+          warns: packed.warns,
+          suggestName: titleFromHtml(packed.html) || undefined,
+          packed: packed.packed || undefined,
+          serverCalls: packed.serverCalls || undefined,
+        });
+      }
+    } catch (err) {
+      setPackNote("");
+      say(`从网址安装失败：${errText(err)}`, "err");
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -168,17 +356,41 @@ export function ToolsSection({
     name: string;
     description?: string;
     icon?: string;
+    overwrite: boolean;
   }) => {
     if (!pending) return;
     setBusy("__import");
     try {
-      const { manifest } = await installFromHtml({ html: pending.html, ...input });
+      let installed: ToolManifest[] = [];
+      let updated: ToolManifest[] = [];
+
+      if (pending.kind === "html") {
+        const r = await installFromHtml({ html: pending.html, ...input });
+        installed = [r.manifest];
+      } else {
+        const r = await installFromZip({
+          zip: pending.zip,
+          overwrite: input.overwrite || !!pending.forceId,
+          forceId: pending.forceId,
+          fallback: { id: input.id, name: input.name, icon: input.icon, description: input.description },
+        });
+        installed = r.installed;
+        updated = r.updated;
+      }
+
       setPending(null);
+      setUrl("");
+      targetRef.current = null;
       await reloadTools();
       // 装完直接打开 —— 对"我导入的东西到底行不行"最直观的回答。
       // 不打开的话用户还得自己在侧边栏里找一遍，而那一刻的迟疑最伤信任。
-      openTool(manifest.id);
-      say(`已安装「${manifest.name}」`);
+      const first = installed[0] ?? updated[0];
+      if (first) openTool(first.id);
+      const parts = [
+        installed.length ? `新装 ${installed.map((m) => m.name).join("、")}` : "",
+        updated.length ? `更新 ${updated.map((m) => m.name).join("、")}` : "",
+      ].filter(Boolean);
+      say(parts.join("；") || "没有变化");
     } catch (err) {
       say(`安装失败：${errText(err)}`, "err");
     } finally {
@@ -187,7 +399,24 @@ export function ToolsSection({
   };
 
   return (
-    <div className="max-w-[640px]">
+    <div
+      data-tools-dropzone=""
+      className="relative max-w-[640px]"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDropFiles}
+    >
+      {dragOver && (
+        <div
+          data-tools-drop-hint=""
+          className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-xl border-2 border-dashed border-primary bg-primary/[0.06]"
+        >
+          <span className="rounded-lg bg-card px-3 py-1.5 text-[13px] text-primary shadow">
+            松手就把文件装成工具（.html / .zip）
+          </span>
+        </div>
+      )}
       <SectionTitle
         title="工具"
         desc="工作台右侧的工具都是可插拔的：能启用停用、能装能卸，也能把单个 HTML 文件直接导入成一个工具。"
@@ -346,6 +575,22 @@ export function ToolsSection({
                     </button>
                   )}
                   <button
+                    onClick={() => {
+                      targetRef.current = tool.id;
+                      zipRef.current?.click();
+                    }}
+                    disabled={!canManage || busy === tool.id}
+                    data-tool-update={tool.id}
+                    title={
+                      canManage
+                        ? `用 .zip 包更新「${tool.name}」（旧包里有、新包里没有的文件会删掉；数据不动）`
+                        : "浏览器演示模式无法安装工具"
+                    }
+                    className="grid size-7 place-items-center rounded-md border border-line bg-card text-fg-dim hover:bg-hover disabled:opacity-40"
+                  >
+                    <RefreshCw size={13} />
+                  </button>
+                  <button
                     onClick={() => setAskUninstall(tool.id)}
                     disabled={!canManage || busy === tool.id}
                     data-tool-uninstall={tool.id}
@@ -406,8 +651,8 @@ export function ToolsSection({
 
         <div className="mt-3">
           <SectionTitle
-            title="导入 HTML 单文件"
-            desc="把单个 HTML 文件变成一个工具：文件里的 CSS / JS 要内联，引用外部文件的相对路径不会跟着进来。"
+            title="安装工具"
+            desc="四种来源：把文件拖到本页任意位置、单个 HTML 文件、.zip 工具包、或者一个网址。zip 里可以是一个工具，也可以是一整包（比如 Release 上那份）—— 同 id 的会被就地更新。"
           />
           <Card>
             <div className="flex flex-wrap items-center gap-2">
@@ -417,20 +662,67 @@ export function ToolsSection({
                 onClick={() => fileRef.current?.click()}
                 title={
                   canManage
-                    ? "选一个 HTML 文件装成工具"
+                    ? "选一个 HTML 文件或 .zip 工具包"
                     : "浏览器演示模式无法写入文件系统，请在桌面版里导入"
                 }
                 className="flex items-center gap-1.5 rounded-lg border border-line bg-card px-3 py-2 text-[13px] text-fg-2 hover:bg-hover disabled:opacity-40"
               >
                 <FileCode2 size={14} />
-                选择 HTML 文件…
+                选择 HTML / ZIP…
               </button>
-              {!canManage && (
-                <span className="text-[11.5px] text-fg-dim">
-                  浏览器演示模式只能试用内置工具，安装功能需要桌面版
-                </span>
-              )}
+              <button
+                data-act="import-zip"
+                disabled={!canManage}
+                onClick={() => zipRef.current?.click()}
+                title="选一个 .zip 工具包：可以只装一个工具，也可以一次更新一整包"
+                className="flex items-center gap-1.5 rounded-lg border border-line bg-card px-3 py-2 text-[13px] text-fg-2 hover:bg-hover disabled:opacity-40"
+              >
+                <PackagePlus size={14} />
+                选择 .zip 工具包…
+              </button>
             </div>
+
+            {/* 抓取/打包进行中的动静 —— 抓几十个资源要几秒钟，不能让人对着没反应的界面猜 */}
+            {packNote && (
+              <div data-pack-note="" className="mt-2 text-[11.5px] text-fg-dim">
+                {packNote}
+              </div>
+            )}
+
+            {/* 网址这一档：下载在 Rust 侧做 —— webview 里的 fetch 会被 CORS 挡住，
+                而工具包挂在 Release 上，给不给跨域头不由我们决定 */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+              <Globe size={14} className="shrink-0 text-fg-dim" />
+              <input
+                value={url}
+                data-import-url=""
+                onChange={(e) => setUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void doInstallFromUrl();
+                }}
+                placeholder="https://…/tools.zip  或  https://…/tool.html"
+                className="min-w-[220px] flex-1 rounded-lg border border-line bg-card px-3 py-1.5 font-mono text-[12.5px] text-fg-2 outline-none focus:border-primary"
+              />
+              <button
+                data-act="import-url"
+                disabled={!canManage || !url.trim() || busy === "__url"}
+                onClick={() => void doInstallFromUrl()}
+                title="从这个网址下载并安装（zip 或单个 HTML 都认）"
+                className="flex items-center gap-1.5 rounded-lg border border-line bg-card px-3 py-1.5 text-[13px] text-fg-2 hover:bg-hover disabled:opacity-40"
+              >
+                {busy === "__url" ? "下载中…" : "从网址安装"}
+              </button>
+            </div>
+            <div className="mt-2 text-[11.5px] leading-relaxed text-fg-dim">
+              单文件 HTML 里的 CSS / JS 要内联，引用外部文件的相对路径不会跟着进来；
+              zip 则按 manifest.json 定位工具（一个包里可以有多个）。
+            </div>
+
+            {!canManage && (
+              <div className="mt-2 text-[11.5px] text-fg-dim">
+                浏览器演示模式只能试用内置工具，安装功能需要桌面版
+              </div>
+            )}
 
             {root && (
               <div className="mt-3 flex items-center gap-2 border-t border-line pt-3">
@@ -468,14 +760,28 @@ export function ToolsSection({
           e.target.value = "";
         }}
       />
+      <input
+        ref={zipRef}
+        type="file"
+        accept=".zip,application/zip"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void pickFile(f);
+          e.target.value = "";
+        }}
+      />
 
       {pending && (
         <ImportToolDialog
-          key={pending.fileName}
-          fileName={pending.fileName}
+          key={pending.label}
+          pending={pending}
           taken={taken}
           busy={busy === "__import"}
-          onCancel={() => setPending(null)}
+          onCancel={() => {
+            setPending(null);
+            targetRef.current = null;
+          }}
           onInstall={(input) => void doInstall(input)}
         />
       )}
