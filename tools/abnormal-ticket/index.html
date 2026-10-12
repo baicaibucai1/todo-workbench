@@ -520,13 +520,15 @@
   var cfg = { stores: [] };
   var STORE_KEY = "stores";
   /**
-   * 已经**实测确认**的 (店铺名, 客服 ID)。
-   *
-   * 5 店这条是用户验过的：拿 `cs_355831479` 拼上另一个订单号（261011-638037532203456），
-   * 客户端确实打开了那张单 —— 所以 `mallcsid` 就是"哪个店"的意思，不是每个订单一个。
-   * 其余 7 行留空，等用户把 ERP 给的链接粘进来（不用知道 ID）。
+   * 已经**实测确认**的 (店铺名, 客服 ID)。两个都是用户给的 ERP 链接里读出来的：
+   *   · 5 店 `cs_355831479` —— 还实测过：拼上另一个订单号，客户端确实打开了那张单
+   *   · 6 店 `cs_671782974`
+   * 其余留空，等用户把 ERP 的链接粘到「设置」页（不用知道 ID）。
    */
-  var KNOWN_STORES = [{ name: "拼多多5店", mallcsid: "cs_355831479" }];
+  var KNOWN_STORES = [
+    { name: "拼多多5店", mallcsid: "cs_355831479" },
+    { name: "拼多多6店", mallcsid: "cs_671782974" },
+  ];
   function defaultStores() {
     var out = [];
     for (var i = 1; i <= 8; i++) {
@@ -735,6 +737,14 @@
     var text = String((document.getElementById("bindLink") || {}).value || "").trim();
     var hit = parseClientUrl(text);
     if (!hit || !hit.mallcsid) {
+      // 粘的是订单号而不是链接：这儿要的是（客服 ID），订单号帮不上忙 —— 说清而不是只报"错"
+      var snOnly = normSn(text);
+      if (snOnly && PDD_SN_RE.test(snOnly)) {
+        box.className = "hint snhint bad";
+        box.textContent = "这是订单号，不是唤醒链接 —— 绑店铺要的是 ERP 那条链接（只有它里面有 mallcsid）。" +
+          "要登记这条单的话，去「登记」页填订单号。";
+        return null;
+      }
       box.className = "hint snhint" + (text ? " bad" : "");
       box.textContent = text
         ? "这条链接里没认出客服 ID（mallcsid）—— 它应该形如 pddim:sendmsg/?OpeId=open_order&mallcsid=cs_…&ordersn=…"
@@ -779,7 +789,7 @@
   function showSnHint() {
     var el = document.getElementById("snHint");
     if (!el) return;
-    var info = snInfo((document.getElementById("orderSn") || {}).value);
+    var info = snInfo(normSn((document.getElementById("orderSn") || {}).value));
     el.textContent = info.text;
     el.className = "hint snhint" + (info.state === "ok" ? " ok" : info.state === "weird" ? " bad" : "");
   }
@@ -967,6 +977,24 @@
   }
 
   /**
+   * 把从各处粘来的订单号收拾干净，再拿去判形状。
+   *
+   * 现实里单号很少是干净的：从聊天 / 表格 / ERP 里复制过来常常带着
+   * 全角连字符（－）、长短破折号（—–）、不可见空白（\u00A0 / \u200B）、首尾空格，
+   * 甚至整条 pddim 链接。这些都会让 `/^\d{6}-\d+$/` 判不过，界面上只显示一句
+   * 「格式存疑」—— 而单号其实一点问题都没有，用户只会觉得工具在骗他。
+   */
+  function normSn(raw) {
+    var s = String(raw == null ? "" : raw);
+    var hit = parseClientUrl(s);            // 万一整条唤醒链接被粘进了订单号框
+    if (hit && hit.ordersn) return hit.ordersn;
+    // 各种"看着像连字符"的字符统一成 '-'（全角－、长短破折号、减号、波浪、片假名长音）
+    s = s.replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFF0D\uFE58\uFE63\u30FC\uFF5E\u301C~]/g, "-");
+    s = s.replace(/[\u00A0\u1680\u2000-\u200D\u202F\u205F\u3000\uFEFF]/g, " ");   // 各种空白 → 普通空格
+    return s.trim().replace(/\s+/g, "");
+  }
+
+  /**
    * 从一条 pddim 链接里抠出 mallcsid 与 ordersn。
    *
    * ★ 为什么需要它：**客服 ID 是 ERP 生成的，用户没法凭空知道**。
@@ -1020,6 +1048,17 @@
     var text = String(raw || "").trim();
     var hit = parseClientUrl(text);
     if (!hit) {
+      // 只粘了个订单号（很常见：手上就这一串）。它是**有用**的，别只回一句"不对" ——
+      // 填到下面的订单号框里，然后说清这个框要的是什么。
+      var snOnly = normSn(text);
+      if (snOnly && PDD_SN_RE.test(snOnly)) {
+        document.getElementById("orderSn").value = snOnly;
+        showSnHint();
+        el.className = "hint snhint bad";
+        el.textContent = "这是个订单号，不是唤醒链接 —— 已经填到下面的「订单号」框了。" +
+          "这个框要的是 ERP 给的那条完整链接（里面有 mallcsid，才认得出是哪个店）。";
+        return;
+      }
       el.className = "hint snhint" + (text ? " bad" : "");
       el.textContent = text
         ? "这不像 pddim 链接 —— 形如 pddim:sendmsg/?OpeId=open_order&mallcsid=cs_…&ordersn=…"
@@ -1273,7 +1312,7 @@
         row: {
           id: "t-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),   // ★ 主键必须自己给
           code: code,
-          order_sn: document.getElementById("orderSn").value.trim(),
+          order_sn: normSn(document.getElementById("orderSn").value),   // 存干净的，别把全角连字符带进库
           store: document.getElementById("store").value,
           title: title,
           category: document.getElementById("category").value,
@@ -1474,9 +1513,17 @@
   // 订单号边打边说它像不像拼多多单号 —— 格式不对时客户端会弹起来却定位不到，
   // 那是最难查的症状，所以在这儿提前拦住。
   document.getElementById("orderSn").addEventListener("input", showSnHint);
+  /** 把订单号框里的内容就地洗干净（全角连字符 / 看不见的空白 / 整条链接） */
+  function cleanOrderSnField() {
+    var el = document.getElementById("orderSn");
+    var v = normSn(el.value);
+    if (v !== el.value) el.value = v;     // 当场改掉，让用户**看见**清成什么样了
+    showSnHint();
+  }
   document.getElementById("orderSn").addEventListener("paste", function () {
-    setTimeout(showSnHint, 0);     // 粘贴要先等浏览器把值写进去
+    setTimeout(cleanOrderSnField, 0);     // 粘贴要先等浏览器把值写进去
   });
+  document.getElementById("orderSn").addEventListener("blur", cleanOrderSnField);
 
   document.getElementById("search").addEventListener("input", function () {
     repaint();

@@ -436,7 +436,7 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   check("异常单：第一个店铺是实测确认过的「拼多多5店」",
     stores.firstCs === "cs_355831479", stores.firstCs);
   check("异常单：还没填客服 ID 的店铺被标出来并被提示",
-    stores.missing === 7 && /没绑的那几/.test(stores.hint), `${stores.missing} 行 / ${stores.hint}`);
+    stores.missing === 6 && /没绑的那几/.test(stores.hint), `${stores.missing} 行 / ${stores.hint}`);
   check("异常单：登记页有店铺下拉，选项和店铺表一致",
     stores.options.length === 8 && stores.options[0] === "拼多多5店", JSON.stringify(stores.options));
   check("异常单：登记时选的店铺记到了单子上（没选就是第一个）",
@@ -588,6 +588,13 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   check("异常单：设置页粘的不是 pddim 链接时也说清形状",
     /mallcsid/.test(bindBad.hint) && /\bbad\b/.test(bindBad.cls), JSON.stringify(bindBad));
 
+  // 在"绑店铺"这页粘裸订单号 —— 指错地方了，要说明白而不是只报"错"
+  await page.fill("#bindLink", "261011-597950502412841");
+  await page.waitForTimeout(400);
+  const bareBind = await page.evaluate(() => (document.getElementById("bindHint") || {}).textContent || "");
+  check("异常单：设置页粘裸订单号时说清「绑店铺要的是链接，登记去另一页」",
+    /订单号，不是唤醒链接/.test(bareBind) && /登记/.test(bareBind), bareBind);
+
   /* ---------- 改店铺名 / 改客服 ID ----------
      改名要**带着已登记的单子一起走**：单子上记的是店铺名，不跟过去那些单子就会
      变成"店铺不在表里了"、静悄悄地呼不起来，而用户只是把「拼多多5店」改成了真名字。 */
@@ -634,7 +641,7 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     };
   });
   check("异常单：陌生的客服 ID 填进一个空行（不新建、也不动已经绑好的那几个）",
-    hitNew.count === 8 && hitNew.filled.length === 3 && hitNew.filled[1] === "cs_800000007",
+    hitNew.count === 8 && hitNew.filled.length === 4 && hitNew.filled.indexOf("cs_800000007") >= 0,
     JSON.stringify(hitNew));
   check("异常单：认出陌生的 ID 之后说明白了它记到了哪个店",
     /记到了/.test(hitNew.hint) && /cs_800000007/.test(hitNew.hint), hitNew.hint);
@@ -647,7 +654,7 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     filled: [...document.querySelectorAll("#stores .store-row input.cs")].map((i) => i.value).filter(Boolean).length,
   }));
   check("异常单：同一个客服 ID 再粘一次是「认出」，不会又加一个店",
-    /店铺「/.test(again.hint) && again.filled === 3, JSON.stringify(again));
+    /店铺「/.test(again.hint) && again.filled === 4, JSON.stringify(again));
 
   await page.fill("#erpLink", "https://example.com/abc");
   await page.waitForTimeout(500);
@@ -657,6 +664,44 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   }));
   check("异常单：粘的不是 pddim 链接时，说清正确的形状",
     /pddim:sendmsg/.test(bad.hint) && /\bbad\b/.test(bad.cls), JSON.stringify(bad));
+
+  /* ---------- 订单号粘得"脏"一点也要认 ----------
+     现实里单号很少是干净的：从聊天 / 表格 / ERP 复制常带全角连字符（－）、
+     长短破折号（—–）、看不见的空白（\u00A0 / \u200B）。这些会让形状判定 False，
+     界面上只显示一句"格式存疑" —— 而单号其实是对的，用户只会觉得工具在骗他。
+     另外整条链接被粘进订单号框也要能把 ordersn 抠出来。 */
+  const normCases = [
+    ["全角连字符", "261011－597950502412841"],
+    ["短破折号", "261011–597950502412841"],
+    ["空格 + 看不见的空白", " 261011\u00A0-\u200B597950502412841 "],
+    ["整条唤醒链接", "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_355831479&ordersn=261011-597950502412841"],
+  ];
+  for (const [label, raw] of normCases) {
+    await page.fill("#orderSn", raw);
+    await page.evaluate(() => {
+      document.getElementById("orderSn").dispatchEvent(new Event("paste", { bubbles: true }));
+    });
+    await page.waitForTimeout(150);
+    const got = await page.evaluate(() => ({
+      v: document.getElementById("orderSn").value,
+      cls: (document.getElementById("snHint") || {}).className || "",
+    }));
+    check(`异常单：订单号粘得脏一点也认（${label}）`,
+      got.v === "261011-597950502412841" && /\bok\b/.test(got.cls), JSON.stringify({ label, ...got }));
+  }
+
+  // 裸订单号粘到「ERP 链接」框：它**有用**，别只回一句"不对"
+  await page.fill("#orderSn", "");
+  await page.fill("#erpLink", "261011-597950502412841");
+  await page.waitForTimeout(400);
+  const bareSn = await page.evaluate(() => ({
+    hint: (document.getElementById("erpHint") || {}).textContent || "",
+    sn: document.getElementById("orderSn").value,
+  }));
+  check("异常单：把裸订单号粘到「ERP 链接」框，会填进订单号框并说清这框要什么",
+    bareSn.sn === "261011-597950502412841" && /订单号，不是唤醒链接/.test(bareSn.hint),
+    JSON.stringify(bareSn));
+  await page.fill("#erpLink", "");
 
   // 店铺表的「客服 ID」框里直接粘整条链接，也要当场抠出来（店铺表在设置页）
   await page.click("#tab-settings");
