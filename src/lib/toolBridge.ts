@@ -70,6 +70,17 @@
  * 这也是为什么声明表时**必须有且只能有一个主键列**。
  *
  * ------------------------------------------------------------------
+ * task.* —— 待办的两扇门，一读一写，边界完全相反
+ * ------------------------------------------------------------------
+ * task.get    只读它挂着的那一条（注入组件专用，连"给我 id X"都不给）；
+ * task.remind 只写一条新的（整页工具可用，落下来的待办带宿主盖章的来源标记）。
+ *
+ * 为什么写不开成通用 task.create：让外部 HTML 随意造待办，等于把"工作台里
+ * 有哪些事"的权柄交给第三方 —— 订提醒不需要那么大权限。窄口的语义是
+ * "工具替用户订一条**会响的**提醒"，myDay/important/清单都不开放，
+ * cancel 也只认自己订的那条。实现见 handler 里那段注释。
+ *
+ * ------------------------------------------------------------------
  * tools.* —— 工具之间的联动
  * ------------------------------------------------------------------
  * 工具各在一个 iframe 里，彼此看不见对方，所以联动只能由宿主中转：
@@ -100,7 +111,14 @@ import {
   readImagebedDataUrl,
   THUMB_MAX,
 } from "./imagebed";
-import { fetchTaskById } from "./repo";
+import {
+  createList,
+  createTask,
+  deleteTask,
+  fetchLists,
+  fetchTaskById,
+  notifyTasksChanged,
+} from "./repo";
 import type { ImagebedItem, ImagebedKind, ImagebedOrigin } from "../types";
 import { capabilityError, capabilityState } from "./extensions/registry";
 import type { ToolInjectKind } from "./extensions/types";
@@ -132,7 +150,12 @@ export type ToolOp =
   | "gallery.get"
   | "gallery.put"
   /** 注入组件读**它挂着的那一条**待办（只读）。见文件头「task.get」 */
-  | "task.get";
+  | "task.get"
+  /**
+   * 工具替用户订一条提醒（在待办里落一条带来源标记的待办）。
+   * 见文件头「task.remind —— 工具代订提醒」与 handler 处的说明。
+   */
+  | "task.remind";
 
 /**
  * 工具私有 KV 的键名约束。
@@ -209,6 +232,15 @@ interface ToolRequest {
      * 用户**亲手点**存图床时不要传：他要的就是"再留一份"。
      */
     dedupe?: boolean;
+    /* task.remind —— 工具代订提醒的参数 */
+    /** book（订一条提醒待办）或 cancel（取消本工具订的那条） */
+    action?: string;
+    /** book：提醒时刻（ISO 或 yyyy-MM-ddTHH:mm，本地时区） */
+    dueAt?: string;
+    /** book：调用方自己的关联 id（如异常单的行 id），原样记进待办备注 */
+    ref?: string;
+    /** cancel：要取消的那条待办 id（book 的返回值） */
+    taskId?: string;
   };
 }
 
@@ -686,6 +718,94 @@ export function createToolBridge(
           createdAt: task.createdAt,
         });
         return;
+      }
+
+      /*
+       * task.remind —— 工具替用户**订一条提醒**。
+       *
+       * 与 task.get 是一对刻意的反差：
+       *   · task.get 是"只读当前这一条"，注入组件专用；
+       *   · task.remind 是"往待办里落一条新的"，整页工具就能用 ——
+       *     工具自己管着业务数据（如异常单），到点该干什么只有它知道，
+       *     但"到点要弹卡"这件事是待办的提醒机制在管。两边各干各的，
+       *     中间就缺一座桥：工具订提醒 → 宿主落一条带 remindAt 的待办。
+       *
+       * 落下来的待办带 originTool（宿主按发请求的 iframe 盖章，工具自报不认），
+       * 界面在行上标「来自工具 X」，用户分得清"这条是我建的"还是"工具代订的"。
+       * 到点后走的是待办自己的提醒机制（右下角卡片、可完成/推迟），与手建待办
+       * 完全一致 —— 工具不需要、也不允许自己再造一套提醒队列。
+       *
+       * 边界刻意收窄：
+       *   · 只能**新建**（title/dueAt/note 由工具给，myDay/important 不开放），
+       *     不能改已有的、不能按 id 读别人的待办 —— 写入口子开得越窄越好；
+       *   · cancel 只认**本工具**订的那条（按 originTool 比对），不能替别人删；
+       *   · 重复 book 由调用方（工具）自己先 cancel 旧的 —— 宿主不猜"哪条算同一个提醒"。
+       */
+      if (op === "task.remind") {
+        const state = capabilityState(currentSettings(), toolId, "task");
+        if (state !== "on") {
+          reply(id, false, `工具提醒不可用：${capabilityError(state, "task")}`);
+          return;
+        }
+
+        if (payload?.action === "cancel") {
+          const taskId = typeof payload.taskId === "string" ? payload.taskId.trim() : "";
+          if (!taskId) return reply(id, false, "cancel 缺少 taskId（book 回给你的那条待办 id）");
+          const t = await fetchTaskById(taskId);
+          if (!t) {
+            // 那条已经不存在了（用户自己删了/完成了）。取消的目的是"别再提醒"，
+            // 目的已达成 —— 回 ok 让工具把本地状态清掉，而不是报一个吓人的错。
+            return reply(id, true, { taskId, deleted: false, gone: true });
+          }
+          if (t.originTool !== toolId) {
+            return reply(id, false, "那条待办不是本工具订的提醒，不能替别人删");
+          }
+          await deleteTask(taskId);
+          notifyTasksChanged();
+          return reply(id, true, { taskId, deleted: true });
+        }
+
+        // 默认（以及任何不是 "cancel" 的 action）都按 book 处理 —— 参数只有一组，
+        // 不必让工具再传 action: "book"。
+        const title = typeof payload?.title === "string" ? payload.title.trim() : "";
+        if (!title) return reply(id, false, "缺少 title（提醒落在待办上要显示的那句话）");
+        if (title.length > 200) {
+          return reply(id, false, `title 超过 200 字（收到 ${title.length} 个）—— 提醒是一行标题，请写短一点`);
+        }
+        const rawDue = typeof payload?.dueAt === "string" ? payload.dueAt.trim() : "";
+        const due = rawDue ? new Date(rawDue) : null;
+        if (!due || isNaN(due.getTime())) {
+          return reply(id, false, "dueAt 要是一个合法时刻（ISO 字符串，或 yyyy-MM-ddTHH:mm）");
+        }
+        const note = typeof payload?.note === "string" ? payload.note.slice(0, 1000) : "";
+        const ref = typeof payload?.ref === "string" ? payload.ref.slice(0, 64) : "";
+
+        // 落哪个清单：用第一个；一个都没有（全新库）就建「个人」——
+        // 与助手建日程同一套兜底，用户不用先去建清单才能订提醒。
+        const lists = await fetchLists();
+        const list = lists[0] ?? (await createList("个人"));
+        const remindAt = due.toISOString();
+        // ref 不单独存列（待办没有这个概念），拼进备注，将来要认账时搜得到
+        const fullNote = ref
+          ? note
+            ? `${note}\n来源引用：${ref}`
+            : `来源引用：${ref}`
+          : note;
+
+        const task = await createTask({
+          listId: list.id,
+          title,
+          note: fullNote,
+          remindAt,
+          originTool: toolId, // ★ 来源由宿主盖章；工具传什么都不看
+        });
+        notifyTasksChanged();
+        return reply(id, true, {
+          taskId: task.id,
+          listId: list.id,
+          listName: list.name,
+          remindAt,
+        });
       }
 
       if (op === "count") {

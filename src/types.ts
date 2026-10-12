@@ -85,6 +85,16 @@ export interface Task {
   remindAt: string | null;
   /** 完成时间 ISO */
   completedAt: string | null;
+  /**
+   * 来源工具的 id（宿主盖的章，工具自报不算）。
+   *
+   * 非空表示这条待办是某个工具经桥接的 task.remind 代订的提醒 ——
+   * 界面据此在行上挂一枚「来自工具 X」的徽标，让人分得清
+   * "这条待办是我建的"和"这是异常单号登记替我订的提醒"。
+   * 取消提醒时桥也按它把关：工具只能删**自己**订的那条。
+   * 空串 = 用户自己建的。
+   */
+  originTool: string;
   /** 重复规则，daily 表示每日任务 */
   repeat: Repeat;
   /**

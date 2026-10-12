@@ -37,6 +37,7 @@
 | 绑定关系 | 不绑定某条待办 | **挂在某一条待办上** |
 | 上下文 | `ctx.inject` 不存在 | `ctx.inject = { kind, taskId }` |
 | 能读当前待办吗 | 不能（`task.get` 会被拒） | 能，且**只能读挂着的那一条** |
+| 能替用户订提醒吗 | 能（`task.remind`：落一条带来源标记的待办，到点走宿主提醒卡） | 能（同左；`task.get` 读、`task.remind` 写，两边互不依赖） |
 | 高度 | 整片区域 | 分区 80–600px（默认 180）；按钮面板 320px |
 | 实例数 | 一个 | 每条待办一个 iframe 实例 |
 
@@ -441,6 +442,25 @@ parent.postMessage(
 
 这是刻意的："给我 id X 的待办"这种接口**不存在**，组件不该有能力翻别人的待办。
 返回的是**只读快照**：改待办只能走宿主的界面或助手的日程动作。
+
+### 待办提醒（`task.remind`）
+
+整页工具就能用（与 `task.get` 的注入门**互相独立**：只订提醒不需要挂在某条待办上）。
+
+| op | 参数 | 返回 |
+| --- | --- | --- |
+| `task.remind`（订） | `{ action: "book", title, dueAt, note?, ref? }` | `{ taskId, listId, listName, remindAt }` |
+| `task.remind`（撤） | `{ action: "cancel", taskId }` | `{ deleted: true }`；那条已经不在了时 `{ deleted: false, gone: true }`（也算成功——目的是"别再提醒"） |
+
+- book 会**真的落一条待办**：title ≤ 200 字（必填）、dueAt 必须是合法时刻（转 ISO）、
+  note ≤ 1000 字、ref ≤ 64 字（会以「来源引用：」拼进备注）。落第一个清单，没有就建「个人」；
+  落下的待办带 `remindAt` 和**宿主盖的章**（`originTool` = 发请求的工具，工具自报不认）。
+- 到点后走的是待办自己的提醒机制（右下角卡片，可完成 / 推迟 / 查看），**与手建待办完全一致** ——
+  工具不需要、也不允许自己再造一套提醒队列。
+- cancel **只认本工具订的那条**（宿主按发请求的 iframe 反查 tool_id，与落库的 `originTool` 比对）：
+  别的工具订的、用户自建的，都会被拒。
+- 重复 book 由调用方自己先 cancel 旧的 —— 宿主不猜"哪条算同一个提醒"。
+  所以 book 返回的 `taskId` 要存下来（一般写进自己表里的一列）。
 
 ### 键值配置（`kv.*`）
 
@@ -883,7 +903,7 @@ install_tool（先验票，无票直接回绝）
 - [ ] 单个 HTML，CSS/JS 全内联，无外部引用、无 CDN
 - [ ] id 合法（`^[a-z][a-z0-9-]{1,31}$`）、name 是中文短名、icon 在白名单里
 - [ ] 需要存数据 → `schema` 已声明，且 `dbVersion` 与声明对应
-- [ ] 用了 `gallery.*` → `capabilities` 里有 `gallery`；用了 `task.get` → 有 `task`
+- [ ] 用了 `gallery.*` → `capabilities` 里有 `gallery`；用了 `task.get` **或 `task.remind`** → 有 `task`
 - [ ] 能力不可用时有降级路径，而不是一句"失败"
 - [ ] 会写数据的地方都有失败提示，且显示的是宿主的原话
 - [ ] 深浅色都试过（把 `<html data-theme>` 手动改成 `dark` 看一眼）
@@ -906,6 +926,10 @@ install_tool（先验票，无票直接回绝）
 | `这个扩展没有申请 gallery 能力` | manifest 的 `capabilities` 里没写 | 加上 `gallery`，重装 |
 | `gallery 能力当前不可用（提供它的模块没有启用）` | 图床是选装模块，没开 | 设置 → 行为 → 选装模块 → 开图床；或让工具降级 |
 | `这个组件没有挂在任何一条待办上…` | 整页工具调了 `task.get` | 注入组件才能用；整页模式下这是预期行为 |
+| `工具提醒不可用：…` | 调了 `task.remind` 但 `task` 能力没申请或不可用 | manifest 的 `capabilities` 里加 `task`，重装 |
+| `缺少 title（提醒落在待办上要显示的那句话）` | `task.remind` book 没给 title | title 必填，≤ 200 字 |
+| `title 超过 200 字…` | book 的 title 太长 | 提醒是一行标题，写短一点；长内容放 note |
+| `那条待办不是本工具订的提醒，不能替别人删` | `task.remind` cancel 的 taskId 不是本工具订的 | 只撤自己 book 时返回并**存下来**的 taskId；重复 book 前先 cancel 旧的那条 |
 | `它挂着的那条待办已经不存在了` | 那条刚被删了 | 界面上显示出来，不要静默 |
 | `没有声明过「xxx」这张表。可用的是：…` | `schema.tables` 里没有这个裸表名 | 补声明，或改掉调用里的表名 |
 | `这个工具没有声明任何数据表（manifest 里缺 schema）` | 单文件导入进来的工具有表需求 | 用整个目录 + manifest.json 的方式装 |

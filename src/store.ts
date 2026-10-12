@@ -600,6 +600,18 @@ export const useStore = create<State>((set, get) => ({
     // 右侧栏始终展开的前提是它得有内容 —— 进来就选中第一条，
     // 而不是让用户面对一块"请选择任务"的空白
     if (!get().activeToolId) get().selectFirst();
+
+    /*
+     * 工具经桥接改动待办（目前是 task.remind：异常单号登记这类工具订提醒时
+     * 会直接落一条待办）时，桥会广播 TASKS_CHANGED。lib 层不能 import store
+     * （store → repo → store 成环），所以走 window 事件，这里接住刷新。
+     * 挂在 init 里只挂一次；get 在 zustand 的 store 对象上始终有效，
+     * 事件晚点触发也能拿到最新状态。
+     */
+    window.addEventListener(repo.TASKS_CHANGED, () => {
+      void get().refresh();
+    });
+
     set({ ready: true });
   },
 

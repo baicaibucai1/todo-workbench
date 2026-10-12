@@ -14,6 +14,7 @@ import {
   Link2,
   Plus,
   MousePointerClick,
+  Bell,
 } from "lucide-react";
 import { useStore } from "../store";
 import { addDays, today } from "../lib/repo";
@@ -617,6 +618,9 @@ function DetailBody({
 
       {/* 分区变多之后，固定高度会把备注挤没，所以中间整块可滚动 */}
       <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+        {/* 来源工具说明：这条待办是工具代订的提醒（宿主盖的章，见 toolBridge 的 task.remind）。
+            放在快捷开关上面 —— 它回答的是"这条待办是哪来的"，比开关更要紧 */}
+        {task.originTool && <ToolOriginNote toolId={task.originTool} />}
         {/* 快捷开关：与 To Do 一致，做成整行的胶囊 */}
         <div className="flex flex-col gap-1.5 px-4">
           <QuickToggle
@@ -1086,4 +1090,27 @@ function formatWhen(iso: string): string {
   return isoToLocalInput(iso).slice(0, 10) === today()
     ? `今天 ${hm}`
     : `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
+}
+
+/**
+ * 「这条待办是工具代订的提醒」说明行。
+ *
+ * 库里存的是 tool id（宿主盖章，见 toolBridge 的 task.remind），
+ * 显示时按注册表现查中文名；工具被卸载后查不到，退回显示 id ——
+ * 至少还能对上账，比编一个"未知来源"诚实。
+ */
+function ToolOriginNote({ toolId }: { toolId: string }) {
+  const tools = useStore((s) => s.tools);
+  const name = tools.find((t) => t.id === toolId)?.name ?? toolId;
+  return (
+    <div
+      data-tool-origin-detail={toolId}
+      className="mx-4 mb-1.5 flex items-start gap-2 rounded-lg border border-line bg-card px-3 py-2 text-[12.5px] leading-relaxed text-fg-dim"
+    >
+      <Bell size={14} className="mt-0.5 shrink-0" />
+      <span>
+        这条待办是工具「{name}」代订的提醒 —— 到点会弹提醒卡片；完成或删掉它，提醒就结束了。
+      </span>
+    </div>
+  );
 }

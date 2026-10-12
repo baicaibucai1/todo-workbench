@@ -248,9 +248,12 @@ const W_LISTS: TableWrite = {
 
 const W_TASKS: TableWrite = {
   table: "core_tasks",
+  // origin_tool（v23）跟着走：工具代订的提醒待办在另一台设备上也要认得出出处。
+  // 老设备发来的载荷里没有这个字段，str(undefined) 会兜成空串 —— 等于"用户自己建的"，
+  // 与它的真实来历一致，不会出错。
   columns: [
     "id", "list_id", "title", "note", "done", "important", "my_day", "due_date",
-    "remind_at", "completed_at", "sort_order", "repeat", "repeat_done_on",
+    "remind_at", "completed_at", "origin_tool", "sort_order", "repeat", "repeat_done_on",
     "deleted", "created_at", "updated_at",
   ],
   paramsOf: (r: never) => {
@@ -258,7 +261,7 @@ const W_TASKS: TableWrite = {
     return [
       x.id, str(x.listId), str(x.title), str(x.note), bit(x.done), bit(x.important),
       bit(x.myDay), x.dueDate ?? null, x.remindAt ?? null, x.completedAt ?? null,
-      x.sortOrder ?? 0, x.repeat === "daily" ? "daily" : "none", x.repeatDoneOn ?? null,
+      str(x.originTool), x.sortOrder ?? 0, x.repeat === "daily" ? "daily" : "none", x.repeatDoneOn ?? null,
       bit(x.deleted), str(x.createdAt), str(x.updatedAt),
     ];
   },

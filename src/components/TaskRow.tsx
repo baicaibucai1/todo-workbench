@@ -11,6 +11,7 @@ import {
   ListChecks,
   Clock,
   GripVertical,
+  Bell,
 } from "lucide-react";
 import type { Step, Task } from "../types";
 import { today, addDays } from "../lib/repo";
@@ -241,6 +242,10 @@ export default function TaskRow({
           {/* 所属列表名，与 To Do 一致 */}
           <ListBadge listId={task.listId} />
 
+          {/* 来源工具标记：这条待办是某个工具代订的提醒（宿主盖的章，见 toolBridge 的 task.remind）。
+              没有它，用户只会发懵"这条待办我什么时候建的" */}
+          {task.originTool && <ToolOriginBadge toolId={task.originTool} />}
+
           {showDate && task.dueDate && (
             <span
               className={`flex items-center gap-1 text-[11.5px] ${
@@ -446,6 +451,26 @@ function useTaskListLookup(): Record<string, { name: string; color: string }> {
   const out: Record<string, { name: string; color: string }> = {};
   for (const l of lists) out[l.id] = { name: l.name, color: l.color };
   return out;
+}
+
+/**
+ * 「来自工具 X」徽标。库里存的是 tool **id**（宿主盖章时落的），
+ * 显示时按注册表现查中文名 —— 工具改名不该让历史标记跟着漂；
+ * 工具被卸载后查不到名字，退回显示 id 本身（诚实比对名字好：id 至少能对上账）。
+ */
+function ToolOriginBadge({ toolId }: { toolId: string }) {
+  const tools = useStore((s) => s.tools);
+  const name = tools.find((t) => t.id === toolId)?.name ?? toolId;
+  return (
+    <span
+      data-tool-origin={toolId}
+      title={`这条待办由工具「${name}」代订的提醒生成`}
+      className="flex items-center gap-[3px] text-[11.5px] text-fg-dim"
+    >
+      <Bell size={11} />
+      {name}
+    </span>
+  );
 }
 
 const NO_STEPS: Step[] = [];

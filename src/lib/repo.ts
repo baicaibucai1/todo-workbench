@@ -52,7 +52,7 @@ export function addDays(dateStr: string, days: number): string {
 }
 
 /** SQLite 用 0/1 存布尔，这里统一做双向转换 */
-type RawTask = Omit<Task, "done" | "important" | "myDay" | "deleted"> & {
+type RawTask = Omit<Task, "done" | "important" | "myDay" | "deleted" | "originTool"> & {
   done: number;
   important: number;
   my_day: number;
@@ -67,6 +67,8 @@ type RawTask = Omit<Task, "done" | "important" | "myDay" | "deleted"> & {
   // v2 才加的列：老库里迁移前就存在的行没有这两个字段
   repeat?: string;
   repeat_done_on?: string | null;
+  // v23 才加的列：工具代订提醒的来源标记（宿主盖的章，'' = 用户自己建的）
+  origin_tool?: string;
 };
 
 type RawList = Omit<TaskList, "deleted" | "sortOrder" | "createdAt" | "updatedAt"> & {
@@ -87,6 +89,8 @@ const toTask = (r: RawTask): Task => ({
   dueDate: r.due_date,
   remindAt: r.remind_at,
   completedAt: r.completed_at,
+  // 老库迁移前 origin_tool 还不存在（SELECT * 不会有这一列），按"用户自己建的"兜底
+  originTool: r.origin_tool ?? "",
   repeat: (r.repeat as Repeat) ?? "none",
   repeatDoneOn: r.repeat_done_on ?? null,
   sortOrder: r.sort_order,
@@ -104,6 +108,21 @@ const toList = (r: RawList): TaskList => ({
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
+
+/* ------------------------ 跨层的数据变更通知 ------------------------ */
+
+/**
+ * 待办数据被 **UI 之外**的路径改动时（目前只有工具桥接的 task.remind ——
+ * 它在 lib 层直接写 core_tasks），store 没有自己的 action 可以感知。
+ * lib 层又不能反过来 import store（会成 store → repo → store 的环），
+ * 所以走 window 事件：桥在写完后发，store 的 init 里接住并刷新。
+ * 与图床的 IMAGEBED_CHANGED（lib/imagebed.ts）是同一个模式。
+ */
+export const TASKS_CHANGED = "workbench:tasks-changed";
+
+export function notifyTasksChanged(): void {
+  globalThis.dispatchEvent?.(new CustomEvent(TASKS_CHANGED));
+}
 
 /* ------------------------------ 列表 ------------------------------ */
 
@@ -271,13 +290,25 @@ export async function fetchTaskById(id: string): Promise<Task | null> {
   return r && !r.deleted ? toTask(r) : null;
 }
 
-export interface NewTaskInput {  listId: string;
+export interface NewTaskInput {
+  listId: string;
   title: string;
   note?: string;
   important?: boolean;
   myDay?: boolean;
   dueDate?: string | null;
   repeat?: Repeat;
+  /**
+   * 提醒时刻 ISO。以前界面上提醒是后补的（createTask 固定写 NULL，调用方再
+   * updateTask 一次），但工具代订提醒是一条桥请求走完的，多一次往返没有必要 ——
+   * 顺手让建单就能带上。没传时行为与从前完全一致（NULL）。
+   */
+  remindAt?: string | null;
+  /**
+   * 来源工具 id。**只由宿主桥接（task.remind）填写** —— 它从请求的 iframe
+   * 反查 tool_id，工具自报的不认。其余调用方一律不传（''）。
+   */
+  originTool?: string;
 }
 
 export async function createTask(input: NewTaskInput): Promise<Task> {
@@ -297,8 +328,9 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
     important: input.important ?? false,
     myDay: input.myDay ?? false,
     dueDate: input.dueDate ?? null,
-    remindAt: null,
+    remindAt: input.remindAt ?? null,
     completedAt: null,
+    originTool: input.originTool ?? "",
     repeat: input.repeat ?? "none",
     repeatDoneOn: null,
     sortOrder,
@@ -310,8 +342,8 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
   await db().execute(
     `INSERT INTO core_tasks
        (id, list_id, title, note, done, important, my_day, due_date, remind_at,
-        completed_at, sort_order, repeat, repeat_done_on, deleted, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 0, ?, ?, ?, NULL, NULL, ?, ?, NULL, 0, ?, ?)`,
+        completed_at, origin_tool, sort_order, repeat, repeat_done_on, deleted, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, 0, ?, ?)`,
     [
       task.id,
       task.listId,
@@ -320,6 +352,8 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
       task.important ? 1 : 0,
       task.myDay ? 1 : 0,
       task.dueDate,
+      task.remindAt,
+      task.originTool,
       task.sortOrder,
       task.repeat,
       task.createdAt,

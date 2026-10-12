@@ -190,6 +190,7 @@ export const SKILLS: AgentSkill[] = [
       "| `schema.info` | 拿到宿主为你建好的表结构（表名、列、主键） |",
       "| `row.count` / `row.select` / `row.insert` / `row.update` / `row.delete` | 读写自己的私有表。见 data-binding 技能 |",
       "| `gallery.list` / `gallery.get` / `gallery.put` | 用工作台图床（跨工具共享的素材库） |",
+      "| `task.remind` | 替用户订/撤一条**会弹提醒卡**的待办（book/cancel，落下的待办带本工具的来源标记）。需 capabilities: [\"task\"] |",
       "| `tools.list` / `tools.open` / `tools.send` | 与其它工具联动。见 tool-integration 技能 |",
       "",
       "## 五、界面规范",

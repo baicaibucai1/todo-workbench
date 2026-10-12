@@ -223,6 +223,31 @@
   .kv dd { margin: 0; overflow-wrap: anywhere; }
   .sect { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
   .sect > label { display: block; font-size: 12.5px; color: var(--fg2); margin-bottom: 6px; }
+  /* ---- 流程状态：时间线 + 记一步 ---- */
+  .flow-list { display: flex; flex-direction: column; gap: 4px; }
+  .flow-step { display: flex; align-items: center; gap: 8px; font-size: 12.5px;
+    padding: 4px 8px; border-radius: 6px; background: var(--chip); }
+  .flow-step.cur { background: var(--sel); }
+  .flow-step.cur .flow-name { color: var(--accent); font-weight: 600; }
+  .flow-name { flex: 0 0 auto; }
+  .flow-time { flex: 1 1 auto; min-width: 0; color: var(--dim); font-size: 11.5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .flow-del { flex: 0 0 auto; border: 0; background: transparent; color: var(--dim);
+    cursor: pointer; font-size: 12px; line-height: 1; padding: 3px 5px; border-radius: 4px; }
+  .flow-del:hover { color: var(--danger); background: var(--bg); }
+  .flow-empty { color: var(--dim); font-size: 12px; padding: 2px 0; }
+  .flow-add { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .flow-add select { flex: 1 1 120px; }
+  .flow-add input[type="datetime-local"] { flex: 1 1 168px; }
+  .flow-add button { flex: 0 0 auto; }
+  /* ---- 提醒：设定 / 取消 ---- */
+  .remind-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .remind-row input[type="datetime-local"] { flex: 1 1 168px; }
+  .remind-row button { flex: 0 0 auto; }
+  /* 列表行上的提醒标记：⏰ + 时刻；到点了转红 —— 扫一眼就知道哪几条在催 */
+  .remind-tag { display: inline-block; color: var(--dim); border: 1px solid var(--line);
+    border-radius: 4px; padding: 0 4px; font-size: 10.5px; line-height: 15px; }
+  .remind-tag.due { color: var(--danger); border-color: var(--danger); }
   #d-note { width: 100%; min-height: 96px; resize: vertical; font-family: inherit; }
   /* 处理区第一行：处理方式 / 结果 / 已结账 —— 状态就是从这三个派生的（见 statusOf） */
   .prorow { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 10px; }
@@ -390,6 +415,7 @@
         <label class="f"><span>情况</span><textarea id="optSituations" rows="5"></textarea></label>
         <label class="f"><span>处理方式</span><textarea id="optHandlings" rows="5"></textarea></label>
         <label class="f"><span>结果</span><textarea id="optResults" rows="5"></textarea></label>
+        <label class="f"><span>流程状态</span><textarea id="optFlows" rows="5"></textarea></label>
       </div>
       <div class="r" style="margin-top:8px">
         <button class="primary" id="saveOpts">保存选项</button>
@@ -415,17 +441,24 @@
   var TABLE = "tickets";               // 裸表名，宿主会拼成 tool_abnormal_ticket_tickets
 
   /* 业务字典。
-     · 四个下拉（快递公司 / 情况 / 处理方式 / 结果）的选项都**可配置** ——
+     · 五个下拉（快递公司 / 情况 / 处理方式 / 结果 / 流程状态）的选项都**可配置** ——
        各存一份 kv，在「设置 → 下拉选项」里一行一个地改。
        下面这些只是出厂默认；「情况」那组直接抄的用户台账（平台自动退款 /
        退件标注 / 未揽收拦截 / 途中拦截 / 运单未达 / 退件中转（空包）/ 缺少物流）。
-     · 「状态」不再单独存 —— 由 处理方式 / 结果 派生（见 statusOf），所以这里
-       只留三个状态名给筛选和统计用。 */
+     · 「流程状态」是单子的处理轨迹：每记一步落一个（名称+时间），最后一步
+       就是当前状态（见 statusOf / flowOf）。**不自动种** —— 没记流程时状态
+       仍走派生（处理方式/结果），记了第一步才由流程接管，两条机制不打架。
+     · 「状态」本身不再单独存 —— 有流程看最后一步，没流程才由
+       处理方式 / 结果 派生。三个状态名留给筛选和统计用。 */
   var DEFAULT_COURIERS = ["申通", "中通", "圆通"];
   var DEFAULT_SITUATIONS = ["平台自动退款", "退件标注", "未揽收拦截", "途中拦截", "运单未达", "退件中转（空包）", "缺少物流"];
   var DEFAULT_HANDLINGS = ["平台申诉", "越级申诉", "快递来源"];
   var DEFAULT_RESULTS = ["开仓中转"];
+  var DEFAULT_FLOWS = ["已联系快递", "平台申诉中", "已解决"];
   var STATUSES = ["待处理", "处理中", "已关闭"];
+  /** 流程走到这些名字上视为「已完结」（统计与划线的口径）。
+      流程名是配置来的，写死白名单只为归桶；名字对不上就当还在路上。 */
+  var FLOW_DONE_RE = /已解决|已关闭|已完成/;
 
   var seq = 0;
   var waiting = new Map();
@@ -613,10 +646,10 @@
    * 存哪：kv（宿主 core_tool_kv / 独立态 localStorage）。
    *   kv 是给"配置"准备的、tickets 表是给"记录"准备的 —— 店铺表是配置，单子是记录。
    * ------------------------------------------------------------------ */
-  var cfg = { stores: [], couriers: [], situations: [], handlings: [], results: [] };
+  var cfg = { stores: [], couriers: [], situations: [], handlings: [], results: [], flows: [] };
   var STORE_KEY = "stores";
   // 四组下拉选项各存一份 kv（situations 沿用旧键名，老配置直接升级上来）
-  var OPT_KEYS = { couriers: "couriers", situations: "situations", handlings: "handlings", results: "results" };
+  var OPT_KEYS = { couriers: "couriers", situations: "situations", handlings: "handlings", results: "results", flows: "flows" };
   // 每组选项：kv 键 → 出厂默认 → 页面上的编辑框 → 要刷新的下拉（处理区那两个
   // 由 renderDetail 每次重画，不用在这里刷）
   var OPT_DEFS = [
@@ -624,6 +657,9 @@
     { key: "situations", box: "optSituations", defaults: DEFAULT_SITUATIONS, label: "情况",     sels: ["category"] },
     { key: "handlings",  box: "optHandlings",  defaults: DEFAULT_HANDLINGS,  label: "处理方式", sels: [] },
     { key: "results",    box: "optResults",    defaults: DEFAULT_RESULTS,    label: "结果",     sels: [] },
+    // 流程状态：详情页「记录一步」的下拉用它。它不是"选一个值"而是"记一步轨迹"，
+    // 所以没有 sels —— 登记页那个下拉跟它无关。
+    { key: "flows",      box: "optFlows",      defaults: DEFAULT_FLOWS,      label: "流程状态", sels: [] },
   ];
   /**
    * 已经**实测确认**的 (店铺名, 客服 ID)。两个都是用户给的 ERP 链接里读出来的：
@@ -894,7 +930,7 @@
       box.value = list.join("\n");
     }
     var hint = document.getElementById("optHint");
-    if (hint) hint.textContent = "登记页和处理区的下拉都在用这四组选项，空着也行（那就只剩「（没选）」）。";
+    if (hint) hint.textContent = "登记页、处理区和流程「记录一步」的下拉都在用这几组选项，空着也行（那就只剩「（没选）」）。";
   }
 
   async function saveOpts() {
@@ -1089,17 +1125,38 @@
     }
     return null;
   }
-  /** 状态不再单独存 —— 由处理字段**派生**（对应台账的工作流：
-      登记时什么都没填 → 待处理；补了处理方式 → 处理中；补了结果 → 已关闭）。
-      好处：不用再维护一个和"处理到哪了"平行的状态位，两者永远不会对不上；
-      要"重开"一条单子，把结果清掉就行。 */
+  /** 流程记录：flow 列存 JSON 数组 [{n: 名称, t: ISO 时刻}]，按记的顺序排列。
+      坏数据一律当空 —— 老行根本没有这一列，手改坏的也别让界面崩。 */
+  function parseFlow(raw) {
+    try {
+      var arr = JSON.parse(String(raw || "[]"));
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .filter(function (s) { return s && typeof s.n === "string" && s.n.trim(); })
+        .map(function (s) { return { n: String(s.n).trim(), t: String(s.t || "") }; });
+    } catch (e) { return []; }
+  }
+  function flowOf(r) { return parseFlow(r && r.flow); }
+
+  /** 当前状态：有流程看**最后一步**的名称（流程是用户亲手记的轨迹，最诚实）；
+      没记过流程才退回派生 —— 补了结果 → 已关闭，补了处理方式 → 处理中，否则待处理。 */
   function statusOf(r) {
+    var fl = flowOf(r);
+    if (fl.length) return fl[fl.length - 1].n;
     if (String(r.result || "").trim()) return "已关闭";
     if (String(r.handling || "").trim()) return "处理中";
     return "待处理";
   }
+  /** 统计与划线的归桶：流程名是配置来的，只有这三个桶认得出 ——
+      待处理 / 处理中照旧，流程名带「已解决/已关闭/已完成」算已关闭，
+      走到别的名字上一律算「还在路上」（处理中）。 */
+  function bucketOf(r) {
+    var st = statusOf(r);
+    if (st === "待处理" || st === "处理中") return st;
+    return FLOW_DONE_RE.test(st) ? "已关闭" : "处理中";
+  }
   function badgeOf(status) {
-    var cls = status === "待处理" ? "wait" : status === "处理中" ? "doing" : "done";
+    var cls = status === "待处理" ? "wait" : FLOW_DONE_RE.test(status) ? "done" : "doing";
     return '<span class="badge ' + cls + '">' + esc(status) + "</span>";
   }
 
@@ -1133,7 +1190,17 @@
       // 第一行 = 台账的 A 列：快递单号（没填就退到订单号），旁边挂快递公司小标签。
       // 第二行 = 状态 + 店铺 + 情况 + 描述（状态标签不能回第一行 —— 0.6.2 踩过）。
       var mainSn = String(r.tracking_no || "").trim() || sn;
-      return '<div class="ticket' + (st === "已关闭" ? " s-done" : "") + '" data-ticket data-id="' + esc(r.id) + '"' +
+      // 提醒标记：设了提醒就在行上挂一个 ⏰（到点了变红）——
+      // 不用点开详情，扫列表就知道哪几条在等提醒。
+      var remindTag = "";
+      var remindAt = String(r.remind_at || "").trim();
+      if (remindAt) {
+        var fired = new Date(remindAt).getTime() <= Date.now();
+        remindTag = '<span class="remind-tag' + (fired ? " due" : "") + '" title="' +
+          (fired ? "提醒已到点 —— 工作台待办里应该已经标记" : "已设提醒：" + fullTime(remindAt)) +
+          '">⏰ ' + (fired ? "到点了" : timeText(remindAt)) + "</span>";
+      }
+      return '<div class="ticket' + (bucketOf(r) === "已关闭" ? " s-done" : "") + '" data-ticket data-id="' + esc(r.id) + '"' +
         ' role="option" aria-selected="' + (r.id === selectedId ? "true" : "false") + '">' +
         '<div class="l1">' +
           '<span class="code">' + esc(mainSn || "(无单号)") + "</span>" +
@@ -1143,6 +1210,7 @@
         "</div>" +
         '<div class="title">' +
           badgeOf(st) +
+          remindTag +
           (String(r.store || "").trim() ? '<span class="store-tag">' + esc(r.store) + "</span>" : "") +
           (String(r.category || "").trim() ? '<span class="cat-tag">' + esc(r.category) + "</span>" : "") +
           esc(r.title || "(无描述)") + "</div>" +
@@ -1152,7 +1220,7 @@
 
   function renderStats() {
     var el = document.getElementById("stats");
-    var n = function (s) { return allRows.filter(function (r) { return statusOf(r) === s; }).length; };
+    var n = function (s) { return allRows.filter(function (r) { return bucketOf(r) === s; }).length; };
     el.innerHTML = "共 <b>" + allRows.length + "</b> 条 · 待处理 <b>" + n("待处理") +
       "</b> · 处理中 <b>" + n("处理中") + "</b> · 已关闭 <b>" + n("已关闭") + "</b>";
   }
@@ -1421,6 +1489,10 @@
       "</div>" +
       '<div class="d-title">' + esc(r.title || "(无描述)") + "</div>" +
       '<dl class="kv">' + kv + "</dl>" +
+      // 流程状态：每一步都有名称和时间，最后一步就是头顶那枚徽标
+      '<div class="sect">' + flowBlock(r) + "</div>" +
+      // 提醒要落成工作台的待办 —— 独立打开没有宿主，整块藏掉（约定之二）
+      '<div class="sect" data-host-only>' + remindBlock(r) + "</div>" +
       '<div class="sect">' +
         storePicker(r) +
         '<div class="client-row">' + clientBtns(r) + "</div>" +
@@ -1445,11 +1517,186 @@
 
     // 备注要先灌进去再挂监听，否则第一次输入会被自己的赋值触发
     document.getElementById("d-note").value = r.note || "";
+    // 「记录一步」的时刻默认现在（可改——补记上午发生的事很常见）
+    var flowAt = document.getElementById("flowAt");
+    if (flowAt) flowAt.value = isoToLocalInput(new Date().toISOString());
   }
 
   function markSaved(text) {
     var el = document.getElementById("d-saved");
     if (el) el.textContent = text;
+  }
+
+  /* ================ 流程状态 与 提醒 ================ */
+
+  /** ISO → datetime-local 的值（本地时区）。反向用 localInputToIso。
+      浏览器解析 "yyyy-MM-ddTHH:mm" 时按**本地**时区算，正好是用户在框里看到的时刻。 */
+  function isoToLocalInput(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return "" + d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+      "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+  function localInputToIso(v) {
+    var d = new Date(String(v || ""));
+    return isNaN(d.getTime()) ? "" : d.toISOString();
+  }
+
+  /** 详情页的「流程状态」块：已走的步（最后一步标当前）+ 记下一步的一行 */
+  function flowBlock(r) {
+    var steps = flowOf(r);
+    var listHtml = steps.length
+      ? steps.map(function (s, i) {
+          var last = i === steps.length - 1;
+          return '<div class="flow-step' + (last ? " cur" : "") + '" data-flow-step="' + i + '">' +
+            '<span class="flow-name">' + esc(s.n) + (last ? " · 当前" : "") + "</span>" +
+            '<span class="flow-time">' + esc(fullTime(s.t)) + "</span>" +
+            '<button class="flow-del" data-act="flow-del" data-idx="' + i + '" title="删掉这一步（记错了用）">✕</button>' +
+          "</div>";
+        }).join("")
+      : '<div class="flow-empty">还没记过流程 —— 下面选一步记上，头顶的状态就跟着走。</div>';
+    return "<label>流程状态</label>" +
+      '<div class="flow-list">' + listHtml + "</div>" +
+      '<div class="flow-add">' +
+        '<select id="flowName" title="记哪一步 —— 选项在「设置 → 下拉选项 → 流程状态」里配">' +
+          optOptions(cfg.flows.length ? cfg.flows : DEFAULT_FLOWS, "") + "</select>" +
+        '<input type="datetime-local" id="flowAt" title="这一步发生的时刻，默认现在" />' +
+        '<button data-act="flow-add">记录一步</button>' +
+      "</div>";
+  }
+
+  /** 详情页的「提醒」块：设定 / 取消。订下的提醒落在工作台待办里
+      （带「来自异常单号登记」的来源标记），到点由宿主的提醒机制弹卡。 */
+  function remindBlock(r) {
+    var set = String(r.remind_at || "").trim();
+    var fired = false;
+    if (set) {
+      var t = new Date(set).getTime();
+      fired = !isNaN(t) && t <= Date.now();
+    }
+    var stateText = !set
+      ? "还没设提醒。设了之后，工作台的待办里会多一条带来源标记的单子，到点弹提醒卡。"
+      : fired
+        ? "⏰ 已到点 —— 待办里那条应该已经标记，提醒卡片也弹了。"
+        : "已设提醒：" + fullTime(set) + "。到点后待办里那条会标记，并弹出提醒卡片。";
+    return "<label>提醒（到点后在待办里标记）</label>" +
+      '<div class="remind-row">' +
+        '<input type="datetime-local" id="remindAt" value="' + esc(set ? isoToLocalInput(set) : "") + '" />' +
+        '<button data-act="remind-set">设定提醒</button>' +
+        (set ? '<button data-act="remind-clear">取消提醒</button>' : "") +
+      "</div>" +
+      '<div class="hint" id="remindHint">' + stateText + "</div>";
+  }
+
+  /** 记一步流程。时刻空着就用现在 —— 但名称必须选（或先去设置里加）。 */
+  async function addFlowStep() {
+    if (!selectedId) return;
+    var nameEl = document.getElementById("flowName");
+    var atEl = document.getElementById("flowAt");
+    var name = nameEl ? String(nameEl.value || "").trim() : "";
+    if (!name) { toast("先选一步名称（要加选项去「设置 → 下拉选项 → 流程状态」）"); return; }
+    var t = (atEl && atEl.value) ? localInputToIso(atEl.value) : new Date().toISOString();
+    if (!t) { toast("这个时刻读不懂，清空它就用现在"); return; }
+    var row = findRow(selectedId);
+    if (!row) return;
+    var steps = flowOf(row);
+    steps.push({ n: name, t: t });
+    try {
+      var now = new Date().toISOString();
+      await Db.update({ table: TABLE, id: selectedId, patch: { flow: JSON.stringify(steps), updated_at: now } });
+      await load();
+      toast("已记一步：" + name);
+    } catch (err) { toast("没存上：" + friendlyErr(err)); }
+  }
+
+  /** 删一步流程（记错时间/点错名称的后悔药）。删完最后一步，状态退回派生。 */
+  async function delFlowStep(idx) {
+    if (!selectedId) return;
+    var row = findRow(selectedId);
+    if (!row) return;
+    var steps = flowOf(row);
+    if (idx < 0 || idx >= steps.length) return;
+    steps.splice(idx, 1);
+    try {
+      var now = new Date().toISOString();
+      await Db.update({ table: TABLE, id: selectedId, patch: { flow: JSON.stringify(steps), updated_at: now } });
+      await load();
+    } catch (err) { toast("没删掉：" + friendlyErr(err)); }
+  }
+
+  /**
+   * 订提醒：把「到点要干什么」落成工作台待办里的一条真单子。
+   *
+   * 为什么是"落成待办"而不是工具自己计时弹卡：工具页面关了计时就没了，
+   * 而待办是工作台的属地 —— 到点弹卡、能完成能推迟，全是宿主现成的机制。
+   * 那条待办带宿主盖的来源标记（界面上显示「来自工具：异常单号登记」），
+   * 用户分得清它是工具代订的。同一张单子同时只有一条提醒：
+   * 重订之前先把旧的取消（remind_task 记着上一次订的那条 id）。
+   */
+  async function bookReminder() {
+    if (!selectedId) return;
+    if (!bound()) { toast("设提醒要连着工作台 —— 独立打开时没有待办可标记"); return; }
+    var row = findRow(selectedId);
+    if (!row) return;
+    var raw = document.getElementById("remindAt").value;
+    if (!raw) { toast("先选一个提醒时间"); return; }
+    var dueIso = localInputToIso(raw);
+    if (!dueIso) { toast("这个时间读不懂，重选一次"); return; }
+
+    if (String(row.remind_task || "").trim()) {
+      try { await call("task.remind", { action: "cancel", taskId: String(row.remind_task) }); }
+      catch (e) { /* 旧的删不掉也继续 —— 新的照订，旧的到点用户自己点掉 */ }
+    }
+
+    var label = String(row.tracking_no || "").trim() || row.order_sn || "(无单号)";
+    var noteLines = [];
+    if (row.order_sn) noteLines.push("订单号：" + row.order_sn);
+    if (row.store) noteLines.push("店铺：" + row.store);
+    if (row.category) noteLines.push("情况：" + row.category);
+    if (row.title) noteLines.push("描述：" + row.title);
+    try {
+      var res = await call("task.remind", {
+        title: "⏰ 异常单提醒：" + label,
+        dueAt: dueIso,
+        ref: row.id,
+        note: noteLines.join("\n"),
+      });
+      var now = new Date().toISOString();
+      await Db.update({
+        table: TABLE, id: selectedId,
+        patch: { remind_at: dueIso, remind_task: String(res.taskId || ""), updated_at: now },
+      });
+      row.remind_at = dueIso;
+      row.remind_task = String(res.taskId || "");
+      row.updated_at = now;
+      repaint();
+      renderDetail();
+      toast("已订提醒 —— 到点会在待办「" + (res.listName || "?") + "」里标记");
+    } catch (err) { toast("提醒没订上：" + friendlyErr(err)); }
+  }
+
+  /** 取消提醒：删掉那条代订的待办（宿主只允许删本工具订的），再清本地两列。 */
+  async function cancelReminder() {
+    if (!selectedId) return;
+    var row = findRow(selectedId);
+    if (!row) return;
+    var taskId = String(row.remind_task || "").trim();
+    try {
+      if (taskId && bound()) {
+        await call("task.remind", { action: "cancel", taskId: taskId });
+      }
+      var now = new Date().toISOString();
+      await Db.update({
+        table: TABLE, id: selectedId,
+        patch: { remind_at: "", remind_task: "", updated_at: now },
+      });
+      row.remind_at = "";
+      row.remind_task = "";
+      row.updated_at = now;
+      repaint();
+      renderDetail();
+      toast("已取消提醒");
+    } catch (err) { toast("取消没成：" + friendlyErr(err)); }
   }
 
   /* ---------------- 读 / 写 ---------------- */
@@ -1482,6 +1729,25 @@
       return '<option value="' + esc(n) + '">' + esc(n) + "</option>";
     }).join("");
     if (keepC && cats.indexOf(keepC) >= 0) cSel.value = keepC;
+
+    // 状态筛选：三个派生态 ∪ 配置的流程名 ∪ 单子上实际走过的流程名。
+    // 「当前状态」的真身常常是流程名（statusOf 返回最后一步），
+    // 不把它们摆进下拉，"筛已解决的"就筛不到走流程的那些单子。
+    var fSel = document.getElementById("filter");
+    var stNames = STATUSES.slice();
+    (cfg.flows.length ? cfg.flows : DEFAULT_FLOWS).forEach(function (v) {
+      if (stNames.indexOf(v) < 0) stNames.push(v);
+    });
+    allRows.forEach(function (r) {
+      var fl = flowOf(r);
+      var v = fl.length ? fl[fl.length - 1].n : "";
+      if (v && stNames.indexOf(v) < 0) stNames.push(v);
+    });
+    var keepF = fSel.value;
+    fSel.innerHTML = '<option value="*">全部状态</option>' + stNames.map(function (n) {
+      return '<option value="' + esc(n) + '">' + esc(n) + "</option>";
+    }).join("");
+    if (keepF && stNames.indexOf(keepF) >= 0) fSel.value = keepF;
   }
 
   function pickVisible() {
@@ -1560,6 +1826,12 @@
           handling: "",        // 处理方式 / 结果 / 结账是事后补的（查看页处理区），登记时先空着
           result: "",
           settled: "",
+          // 流程**不自动种**：没记流程时状态走派生（处理方式/结果），
+          // 用户在详情里记了第一步，最后一步才成为当前状态 —— 两条机制不打架。
+          // 提醒两列也先空着，那是查看页里订的。
+          flow: "",
+          remind_at: "",
+          remind_task: "",
           note: "",
           created_at: now,
           updated_at: now,
@@ -1592,7 +1864,7 @@
   function friendlyErr(err) {
     var msg = String((err && err.message) || err || "");
     if (/no column named|has no column/i.test(msg)) {
-      return "工具表还是旧结构（缺新加的列，比如 courier / handling / result）。去「设置 → 数据库 → " +
+      return "工具表还是旧结构（缺新加的列，比如 courier / handling / result / flow / remind_at）。去「设置 → 数据库 → " +
         "异常单号登记」点一次「清理数据」，下次打开会按新结构重建 —— 注意那会清掉已登记的记录。";
     }
     return msg;
@@ -1674,9 +1946,7 @@
     }).join("");
   }
   refreshOptSelects();           // 配置还没读回来之前先用出厂默认，loadCfg 回来会再刷一遍
-  document.getElementById("filter").innerHTML =
-    '<option value="*">全部状态</option>' +
-    STATUSES.map(function (s) { return '<option value="' + esc(s) + '">' + esc(s) + "</option>"; }).join("");
+  // （状态筛选下拉由 fillBrowseFilters 填：三个派生态 ∪ 流程名，见那边）
   // 发货时间默认今天 —— 大多数单子登的就是最近几天发的货
   document.getElementById("shipped").value =
     "" + new Date().getFullYear() + "-" + pad(new Date().getMonth() + 1) + "-" + pad(new Date().getDate());
@@ -1852,6 +2122,11 @@
     if (act === "del") { void remove(selectedId); }
     else if (act === "open-client") { void saveNote(); openClient(row && row.order_sn, row && row.store); }
     else if (act === "copy-link") { copyClientUrl(row && row.order_sn, row && row.store); }
+    // 流程与提醒（0.8.0）：记一步 / 删一步 / 订提醒 / 取消提醒
+    else if (act === "flow-add") { void saveNote(); void addFlowStep(); }
+    else if (act === "flow-del") { void delFlowStep(Number(btn.getAttribute("data-idx"))); }
+    else if (act === "remind-set") { void bookReminder(); }
+    else if (act === "remind-clear") { void cancelReminder(); }
   });
   document.getElementById("detail").addEventListener("input", function (e) {
     if (e.target && e.target.id === "d-note") scheduleNoteSave();
