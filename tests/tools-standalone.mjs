@@ -23,6 +23,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { THEME_TOOLS } from "./tool-registry.mjs";
 
 const require = createRequire("C:/AI_Production/QQbot/");
 const { chromium } = require("playwright");
@@ -1102,6 +1103,38 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   check("异常单：「登记」按钮和它那句说明并排（不再各占一整行）",
     actions.gap < 24, JSON.stringify(actions));
 
+  /* ---------- 列表行：长单号（22 字符带连字符）不许折成两行 ----------
+     用户反馈：一条 `261011-597950502412841` 在列表里被折成两行、行被撑高。
+     根因是单号里的连字符 —— 浏览器默认会在 `-` 之后断行，不是宽度不够那么简单。
+     修法：单号 nowrap（外加省略号兜底），并把状态标签挪到第二行给它让出整行。 */
+  await page.fill("#orderSn", "261011-597950502412841");
+  await page.fill("#code", "261011-597950502412841");     // 编号也填成这么长（用户的数据就这样）
+  await page.fill("#title", "长编号一行回归");
+  await page.click("#add");
+  await page.waitForTimeout(800);
+  await page.click("#tab-browse");
+  await page.waitForTimeout(500);
+  const longRow = await page.evaluate(() => {
+    const t = [...document.querySelectorAll(".ticket")].find((x) => {
+      const c = x.querySelector(".code");
+      return c && c.textContent.trim() === "261011-597950502412841";
+    });
+    if (!t) return { found: false };
+    const c = t.querySelector(".code");
+    const badge = t.querySelector(".badge");
+    return {
+      found: true,
+      codeH: Math.round(c.getBoundingClientRect().height),
+      l1H: Math.round(t.querySelector(".l1").getBoundingClientRect().height),
+      badge: badge ? badge.textContent : "(没有)",
+      badgeInTitle: !!(badge && badge.parentElement && badge.parentElement.className === "title"),
+    };
+  });
+  check("异常单：长编号（22 字符带连字符）在列表里占一整行，不会折成两行",
+    longRow.found === true && longRow.codeH < 26, JSON.stringify(longRow));
+  check("异常单：状态标签挪到了第二行（给单号让出整行）",
+    longRow.badge === "待处理" && longRow.badgeInTitle === true, JSON.stringify(longRow));
+
   await wipeLocal("abnormal-ticket");
 
   await expectCommon("abnormal-ticket", "异常单号", "http");
@@ -1119,14 +1152,9 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
  * ================================================================== */
 console.log("\n=== 7. 深浅色（独立打开跟系统走）===");
 
-const THEME_TOOLS = [
-  ["image-crop", "图片裁剪"],
-  ["size-chart", "尺码表"],
-  ["scratchpad", "模板"],
-  ["notes", "便签"],
-  ["ai-gen", "AI 生成"],
-  ["abnormal-ticket", "异常单号"],
-];
+// THEME_TOOLS 从 tests/tool-registry.mjs 来 —— 加内置工具时那里会由
+// `npm run tool:new` 一并补上，`npm run tool:audit` 再拿它与 tools/ 对账。
+// 写在这里时它是一份手抄清单，漏一个工具就等于那个工具的深浅色没人盯。
 
 /**
  * 按面积统计页面上不透明底色的明暗占比。

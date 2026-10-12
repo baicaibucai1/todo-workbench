@@ -174,8 +174,14 @@
   .ticket:hover { background: var(--chip); }
   .ticket[aria-selected="true"] { background: var(--sel); border-color: var(--line); border-left-color: var(--accent); }
   .ticket .l1 { display: flex; align-items: center; gap: 7px; }
-  .ticket .code { font-family: var(--mono); font-size: 12.5px; font-weight: 600; letter-spacing: .2px; }
-  .ticket .title { margin-top: 1px; font-size: 12.5px; color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* ★ 单号必须是一整行：拼多多单号里有连字符，浏览器默认会在 `-` 之后断行 ——
+     22 个字符的单号一断就成了两行，把整个列表行撑高（用户一眼就看出来了）。
+     除 nowrap 外再兜一层省略号：真遇上超长的单号，宁可截断也不要撑破布局。 */
+  .ticket .code { font-family: var(--mono); font-size: 12.5px; font-weight: 600; letter-spacing: .2px;
+    white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .ticket .title { margin-top: 2px; font-size: 12.5px; color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 第二行：状态标签 + 店铺标签 + 内容（状态原来挤在第一行，长单号就没地方了） */
+  .ticket .title .badge { margin-right: 5px; vertical-align: middle; }
   /* 列表行里的店铺小标签：8 个店的单子混在一起时，一眼能分清是哪家的 */
   .ticket .store-tag { display: inline-block; color: var(--dim); border: 1px solid var(--line); border-radius: 4px;
     padding: 0 4px; font-size: 10.5px; line-height: 15px; margin-right: 5px; }
@@ -205,7 +211,8 @@
   /* ---- 右栏：详情 + 处理 ---- */
   .detail { flex: 1; overflow-y: auto; min-height: 0; }
   .d-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-  .d-code { font-family: var(--mono); font-size: 15px; font-weight: 600; letter-spacing: .2px; }
+  /* 同样不许在连字符处断开（右栏够宽，这里只是不给它断的机会） */
+  .d-code { font-family: var(--mono); font-size: 15px; font-weight: 600; letter-spacing: .2px; white-space: nowrap; }
   .d-title { margin: 8px 0 12px; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
   .kv { display: grid; grid-template-columns: 76px 1fr; gap: 5px 10px; font-size: 12.5px; }
   .kv dt { color: var(--dim); }
@@ -1098,11 +1105,15 @@
         ' role="option" aria-selected="' + (r.id === selectedId ? "true" : "false") + '">' +
         '<div class="l1">' +
           '<span class="code">' + esc(r.code || "(未编号)") + "</span>" +
-          badgeOf(st) +
           wake +
           '<span class="when">' + timeText(r.created_at) + "</span>" +
         "</div>" +
+        // 状态标签与店铺标签、内容排一行（第二行）——
+        // ★ 原来它挤在第一行，长单号（拼多多单号 22 个字符）就没地方了：
+        //   浏览器会在单号里的连字符后断行，把行撑成两行高。
+        //   现在第一行只放"哪一单 + 什么时候登记的"，单号一定是一整行。
         '<div class="title">' +
+          badgeOf(st) +
           (String(r.store || "").trim() ? '<span class="store-tag">' + esc(r.store) + "</span>" : "") +
           esc(r.title || "(无内容)") + "</div>" +
       "</div>";
