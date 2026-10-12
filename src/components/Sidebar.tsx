@@ -22,6 +22,11 @@ import { fetchCounts } from "../lib/repo";
 import { ICONS } from "../lib/icons";
 import { DEFAULT_PROFILE, SETTINGS, SIDEBAR_WIDTH, parseSidebarWidth } from "../lib/settings";
 import { useDragWidth } from "../lib/useDragWidth";
+import {
+  parseSidebarOrder,
+  resolveSidebarOrder,
+  sidebarKind,
+} from "../lib/sidebarOrder";
 
 import UrgentPanel from "./UrgentPanel";
 import ResizeHandle from "./ResizeHandle";
@@ -71,8 +76,9 @@ export default function Sidebar() {
   } = useStore();
 
   /**
-   * 侧栏项由注册表给：哪些视图存在、它们的模块开着没有、顺序是什么，
+   * 侧栏项由注册表给：哪些视图存在、它们的模块开着没有，
    * 都不再写在这个组件里（见 lib/extensions/registry.ts 的 BUILTIN）。
+   * **顺序**则归设置管（behavior.sidebarOrder），见下面 stream 的构造。
    *
    * 关掉一个模块时**入口整个消失，数据留着** —— 例如特殊单号那批记录
    * 仍在「流程任务」列表里，开关一打开就全回来。
@@ -138,6 +144,223 @@ export default function Sidebar() {
     setDraftName("");
     setAddingList(false);
   };
+
+  /*
+   * ---------------------------- 侧栏那一竖列的顺序 ----------------------------
+   *
+   * 这里把三种来源拍成一条线：智能视图 → 工具 → 清单。
+   *
+   * live 的给法**就是默认顺序** —— 用户没排过（设置里是空数组）时，
+   * resolveSidebarOrder 算出来的结果与"各来源各排"逐行相同，也就是这个功能
+   * 上线前的样子。排过之后才按他给的来。
+   *
+   * ⚠️ **「位置」类入口（图床 / 工作区）不在这条线里**：它们固定在侧栏最底部、
+   * 挨着「设置」（见文件末尾那一块，以及 lib/sidebarOrder.ts 顶上的说明）。
+   *
+   * 补位规则、键前缀、脏数据怎么兜，全在 lib/sidebarOrder.ts。
+   */
+  const liveKeys = [
+    ...taskNav.map((i) => `nav:${i.id}`),
+    ...enabledTools.map((t) => `tool:${t.id}`),
+    ...lists.map((l) => `list:${l.id}`),
+  ];
+  const order = resolveSidebarOrder(
+    parseSidebarOrder(settings[SETTINGS.sidebarOrder]),
+    liveKeys,
+  );
+
+  /** 按一个稳定键渲染出那一行；键对应的东西已经不在了（停用/删除）就返回 null */
+  const rowFor = (key: string): React.ReactNode => {
+    const kind = sidebarKind(key);
+    if (!kind) return null;
+    const id = key.slice(key.indexOf(":") + 1);
+
+    if (kind === "nav") {
+      const item = taskNav.find((n) => n.id === id);
+      if (!item) return null;
+      const Icon = EXT_ICONS[item.icon ?? "package"];
+      return (
+        <NavRow
+          key={key}
+          navKey={item.id}
+          icon={<Icon size={16} />}
+          label={item.label}
+          active={view === item.id && !activeToolId}
+          count={badge(item.id as SmartView)}
+          accent="var(--color-accent)"
+          onClick={() => void setView(item.id as SmartView)}
+        />
+      );
+    }
+
+    if (kind === "tool") {
+      const tool = enabledTools.find((t) => t.id === id);
+      if (!tool) return null;
+      const Icon = ICONS[tool.icon ?? "package"] ?? Package;
+      return (
+        <NavRow
+          key={key}
+          navKey={`tool:${tool.id}`}
+          icon={<Icon size={16} />}
+          label={tool.name}
+          active={activeToolId === tool.id}
+          accent="var(--color-primary)"
+          onClick={() => openTool(tool.id)}
+        />
+      );
+    }
+
+    const list = lists.find((l) => l.id === id);
+    if (!list) return null;
+
+    if (editingId === list.id) {
+      return (
+        <div key={key} className="flex items-center gap-2 rounded-md px-2 py-1.5">
+          <span className="size-3.5 shrink-0 rounded-full" style={{ background: list.color }} />
+          <input
+            autoFocus
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={() => {
+              void renameList(list.id, editName);
+              setEditingId(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Escape") setEditingId(null);
+            }}
+            className="min-w-0 flex-1 rounded border border-accent bg-card px-1.5 py-0.5 text-[13px] outline-none"
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div key={key} className="group/row relative">
+        <NavRow
+          navKey={`list:${list.id}`}
+          icon={
+            <span className="block size-3.5 rounded-full" style={{ background: list.color }} />
+          }
+          label={list.name}
+          active={view === "list" && activeListId === list.id && !activeToolId}
+          count={counts.byList[list.id]}
+          accent={list.color}
+          onClick={() => void setView("list", list.id)}
+        />
+        <div className="absolute top-1/2 right-2 hidden -translate-y-1/2 items-center gap-0.5 group-hover/row:flex">
+          <button
+            title="重命名"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditingId(list.id);
+              setEditName(list.name);
+            }}
+            className="grid size-6 place-items-center rounded bg-panel text-fg-dim hover:bg-hover"
+          >
+            <Pencil size={11} />
+          </button>
+          <button
+            title="删除列表"
+            onClick={(e) => {
+              e.stopPropagation();
+              void removeList(list.id);
+            }}
+            className="grid size-6 place-items-center rounded bg-panel text-fg-dim hover:bg-danger-soft hover:text-danger"
+          >
+            <Trash2 size={11} />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  /*
+   * 「工具」小标题。它**不是**一行可排序的项 —— 工具被排到哪儿，
+   * 它就跟着第一个工具走；一个工具都没有时，它回到视图组后面（原来的位置），
+   * 后面补一句可操作的提示，而不是留一片空白让人以为功能坏了。
+   */
+  const toolsHeaderNode = (
+    <div key="__tools_header">
+      <div className="my-2 border-t border-line" />
+      <div className="mt-1 mb-1 flex items-center justify-between px-2">
+        <span className="text-[11px] font-medium tracking-wide text-fg-dim">工具</span>
+        <span className="rounded bg-chip px-1.5 py-px text-[10px] text-fg-dim">
+          {enabledTools.length}
+        </span>
+      </div>
+    </div>
+  );
+
+  const toolsEmptyNode = (
+    <button
+      key="__tools_empty"
+      onClick={() => openSettings(true)}
+      data-nav="tools-empty"
+      className="block w-full rounded-md px-2.5 py-1.5 text-left text-[12px] leading-relaxed text-fg-dim hover:bg-hover"
+    >
+      没有启用的工具，去「设置 → 工具」里装或启用
+    </button>
+  );
+
+  /** 「新建列表」是动作不是类目，不参与排序 —— 它跟在清单那一段的尾巴上 */
+  const newListNode = addingList ? (
+    <div key="__new_list" className="flex items-center gap-2 rounded-md px-2 py-1.5">
+      <LayoutList size={16} className="shrink-0 text-fg-dim" />
+      <input
+        autoFocus
+        value={draftName}
+        onChange={(e) => setDraftName(e.target.value)}
+        placeholder="列表名称"
+        onBlur={submitAdd}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            setDraftName("");
+            setAddingList(false);
+          }
+        }}
+        className="min-w-0 flex-1 rounded border border-accent bg-card px-1.5 py-0.5 text-[13px] outline-none"
+      />
+    </div>
+  ) : (
+    <button
+      key="__new_list"
+      onClick={() => setAddingList(true)}
+      className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-fg-3 hover:bg-hover"
+    >
+      <Plus size={16} className="shrink-0 text-fg-dim" />
+      <span className="text-[13px]">新建列表</span>
+    </button>
+  );
+
+  // 把上面几种节点按 order 串起来，顺带决定"工具标题"与"新建列表"插在哪
+  const stream: React.ReactNode[] = [];
+  const hasToolRows = order.some((k) => sidebarKind(k) === "tool");
+  const lastListIdx = order.reduce((a, k, i) => (sidebarKind(k) === "list" ? i : a), -1);
+  const lastNavIdx = order.reduce((a, k, i) => (sidebarKind(k) === "nav" ? i : a), -1);
+  let headerDone = false;
+  let newListDone = false;
+  order.forEach((key, i) => {
+    if (sidebarKind(key) === "tool" && !headerDone) {
+      headerDone = true;
+      stream.push(toolsHeaderNode);
+    }
+    const row = rowFor(key);
+    if (row) stream.push(row);
+    if (i === lastListIdx) {
+      newListDone = true;
+      stream.push(newListNode);
+    }
+    // 一个工具都没有：「工具」标题 + 空态提示回落到视图组后面
+    if (!hasToolRows && i === lastNavIdx) {
+      headerDone = true;
+      stream.push(toolsHeaderNode, toolsEmptyNode);
+    }
+  });
+  if (!newListDone) stream.push(newListNode);
+  // 连视图都没有（模块全关了）时上面的锚点会落空，兜个底
+  if (!headerDone) stream.unshift(toolsHeaderNode, toolsEmptyNode);
 
   return (
     <aside
@@ -209,168 +432,16 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* 智能视图 + 清单 */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {/*
-          视图项现在**问注册表要**（navItems）：哪些项存在、模块开着没有、
-          顺序是什么，都由 lib/extensions/registry.ts 里那条登记决定。
-          以前这里是 SMART_ITEMS 数组 + 一句 `specialOn &&` 过滤 ——
-          加一个模块要改两个文件、且漏改不报错，只表现为界面有一半不对。
-        */}
-        {taskNav.map((item) => {
-          const Icon = EXT_ICONS[item.icon ?? "package"];
-          return (
-            <NavRow
-              key={item.id}
-              navKey={item.id}
-              icon={<Icon size={16} />}
-              label={item.label}
-              active={view === item.id && !activeToolId}
-              count={badge(item.id as SmartView)}
-              accent="var(--color-accent)"
-              onClick={() => void setView(item.id as SmartView)}
-            />
-          );
-        })}
-
-        <div className="my-2 border-t border-line" />
-
-        {/* 工具区 —— 工作台的可扩展部分 */}
-        <div className="mt-1 mb-1 flex items-center justify-between px-2">
-          <span className="text-[11px] font-medium tracking-wide text-fg-dim">
-            工具
-          </span>
-          <span className="rounded bg-chip px-1.5 py-px text-[10px] text-fg-dim">
-            {enabledTools.length}
-          </span>
-        </div>
-
-        {enabledTools.map((tool) => {
-          const Icon = ICONS[tool.icon ?? "package"] ?? Package;
-          return (
-            <NavRow
-              key={tool.id}
-              navKey={`tool:${tool.id}`}
-              icon={<Icon size={16} />}
-              label={tool.name}
-              active={activeToolId === tool.id}
-              accent="var(--color-primary)"
-              onClick={() => openTool(tool.id)}
-            />
-          );
-        })}
-
-        {/* 工具全被停用/卸载时给一句可操作的话，而不是留一片空白 ——
-            空白会让人以为工具功能坏了，而它其实在设置里等着被启用 */}
-        {enabledTools.length === 0 && (
-          <button
-            onClick={() => openSettings(true)}
-            data-nav="tools-empty"
-            className="block w-full rounded-md px-2.5 py-1.5 text-left text-[12px] leading-relaxed text-fg-dim hover:bg-hover"
-          >
-            没有启用的工具，去「设置 → 工具」里装或启用
-          </button>
-        )}
-
-        <>
-          <div className="my-2 border-t border-line" />
-
-          {lists.map((list) => (
-              <div key={list.id} className="group/row relative">
-                {editingId === list.id ? (
-                  <div className="flex items-center gap-2 rounded-md px-2 py-1.5">
-                    <span
-                      className="size-3.5 shrink-0 rounded-full"
-                      style={{ background: list.color }}
-                    />
-                    <input
-                      autoFocus
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      onBlur={() => {
-                        void renameList(list.id, editName);
-                        setEditingId(null);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") e.currentTarget.blur();
-                        if (e.key === "Escape") setEditingId(null);
-                      }}
-                      className="min-w-0 flex-1 rounded border border-accent bg-card px-1.5 py-0.5 text-[13px] outline-none"
-                    />
-                  </div>
-                ) : (
-                  <>
-                    <NavRow
-                      navKey={`list:${list.id}`}
-                      icon={
-                        <span
-                          className="block size-3.5 rounded-full"
-                          style={{ background: list.color }}
-                        />
-                      }
-                      label={list.name}
-                      active={view === "list" && activeListId === list.id && !activeToolId}
-                      count={counts.byList[list.id]}
-                      accent={list.color}
-                      onClick={() => void setView("list", list.id)}
-                    />
-                    <div className="absolute top-1/2 right-2 hidden -translate-y-1/2 items-center gap-0.5 group-hover/row:flex">
-                      <button
-                        title="重命名"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingId(list.id);
-                          setEditName(list.name);
-                        }}
-                        className="grid size-6 place-items-center rounded bg-panel text-fg-dim hover:bg-hover"
-                      >
-                        <Pencil size={11} />
-                      </button>
-                      <button
-                        title="删除列表"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void removeList(list.id);
-                        }}
-                        className="grid size-6 place-items-center rounded bg-panel text-fg-dim hover:bg-danger-soft hover:text-danger"
-                      >
-                        <Trash2 size={11} />
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            ))}
-
-            {addingList ? (
-              <div className="flex items-center gap-2 rounded-md px-2 py-1.5">
-                <LayoutList size={16} className="shrink-0 text-fg-dim" />
-                <input
-                  autoFocus
-                  value={draftName}
-                  onChange={(e) => setDraftName(e.target.value)}
-                  placeholder="列表名称"
-                  onBlur={submitAdd}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") e.currentTarget.blur();
-                    if (e.key === "Escape") {
-                      setDraftName("");
-                      setAddingList(false);
-                    }
-                  }}
-                  className="min-w-0 flex-1 rounded border border-accent bg-card px-1.5 py-0.5 text-[13px] outline-none"
-                />
-              </div>
-            ) : (
-              <button
-                onClick={() => setAddingList(true)}
-                className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-fg-3 hover:bg-hover"
-              >
-                <Plus size={16} className="shrink-0 text-fg-dim" />
-                <span className="text-[13px]">新建列表</span>
-              </button>
-            )}
-        </>
+      {/*
+        侧栏那一竖列 —— 视图、工具、清单、位置**混在同一条线里**，
+        顺序由 stream 决定（settings.behavior.sidebarOrder，见 lib/sidebarOrder.ts）。
+        data-sidebar-order 是给自动化看的口径：它就是这一列现在的真实顺序。
+      */}
+      <div
+        className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+        data-sidebar-order={order.join(",")}
+      >
+        {stream}
       </div>
 
       {/* 底部：紧急区 —— 快到点的待办与流程任务自动出现在这里，阈值在设置里调 */}
@@ -380,6 +451,10 @@ export default function Sidebar() {
         底部：图床这一类"可以去的地方"。
         它和上面的视图组不是一回事 —— 上半栏回答"看哪些任务"，
         这里回答"这个程序里还有什么地方可去"。
+
+        ⚠️ **这一块不参与侧栏排序**（lib/sidebarOrder.ts）：它属于"位置"，
+        贴在最底部与「设置」挨着是 2026-09-22 定下的取舍，
+        tests/browser.mjs 有一条断言盯着「图床紧挨在设置上面」。
 
         AI 助手**不在这张单子里**：它是一扇浮层窗口，入口只有右下角那颗
         能拖动的球（见 AgentBall.tsx）。2026-09-23 用户要求把侧栏这一项去掉 ——

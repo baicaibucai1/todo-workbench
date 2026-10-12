@@ -62,6 +62,15 @@ export const SETTINGS = {
    * 拿待办当便签的人要备注第一。解析与重排见 lib/detailSections.ts。
    */
   detailSectionOrder: "behavior.detailSectionOrder",
+  /**
+   * 左侧栏那批「类目」的顺序（JSON 数组），键形如 `nav:myday` / `tool:ai-gen`
+   * / `list:<id>`。（图床那一类「位置」入口不在这里，固定在侧栏最底部。）
+   *
+   * 存的是**用户表过态的部分**而不是完整快照：工具与清单的 id 是运行时才有的，
+   * 存死一份完整顺序，第二天新建的清单就会"不在配置里"。空数组 = 从没排过，
+   * 走默认顺序（视图 → 工具 → 清单）。解析与补位见 lib/sidebarOrder.ts。
+   */
+  sidebarOrder: "behavior.sidebarOrder",
   reminderEnabled: "reminder.enabled",
   reminderSystem: "reminder.system",
   reminderSnooze: "reminder.snoozeMinutes",
@@ -361,6 +370,10 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.detailWidth]: String(DETAIL_WIDTH.default),
   [SETTINGS.sidebarWidth]: String(SIDEBAR_WIDTH.default),
   [SETTINGS.detailSectionOrder]: JSON.stringify(DEFAULT_DETAIL_SECTIONS),
+  // 侧栏顺序默认是**空的**，不是一份写死的完整顺序 —— 工具和清单的 id 是运行时
+  // 才有的，写死一份只会让新加的那些"不在配置里"。空数组 = 没排过 = 默认顺序，
+  // 也就是各来源各排（视图 → 工具 → 清单），与这个功能上线前完全一致。
+  [SETTINGS.sidebarOrder]: "[]",
   [SETTINGS.reminderEnabled]: "1",
   [SETTINGS.reminderSystem]: "0",
   [SETTINGS.reminderSnooze]: "10",
