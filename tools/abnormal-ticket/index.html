@@ -105,7 +105,9 @@
   .r { display: flex; gap: 8px; flex-wrap: wrap; }
   .r + .r, .r + input, input + .r { margin-top: 8px; }
   .r > .grow { flex: 1 1 220px; min-width: 0; }
-  #code, #orderSn { flex: 1 1 200px; font-family: var(--mono); font-size: 13px; }
+  #code { flex: 1 1 150px; font-family: var(--mono); font-size: 12.5px; }
+  #orderSn { font-family: var(--mono); font-size: 13px; }
+  #trackingNo { flex: 1 1 170px; font-family: var(--mono); font-size: 12.5px; }
   /* 订单号 + 它下面那条格式提示要捆在一起：提示得贴在订单号框正下方，
      不能横铺一整行 —— 那样看着像在说左边的「异常单号」。 */
   .r-sn { align-items: flex-start; }
@@ -123,8 +125,8 @@
   #bindLink + .hint { margin-top: 4px; }
   .bindlab { flex: 0 0 auto; color: var(--fg2); font-size: 12.5px; }
   #bindStore { flex: 1 1 180px; max-width: 280px; }
-  #reporter { flex: 1 1 120px; }
-  #occurred { flex: 0 0 150px; }
+  #reporter { flex: 1 1 100px; }
+  #occurred { flex: 0 0 142px; }
   #store { flex: 0 0 132px; }
   .stores { display: flex; flex-direction: column; gap: 6px; }
   .store-row { display: flex; align-items: center; gap: 6px; }
@@ -133,6 +135,7 @@
   .store-row input.cs { flex: 1 1 150px; font-family: var(--mono); }
   .store-row button { flex: 0 0 auto; padding: 4px 8px; font-size: 12px; }
   .store-row.empty-cs input.cs { border-color: var(--warn); }
+  #sitBox { width: 100%; min-height: 110px; resize: vertical; font-family: inherit; font-size: 12.5px; }
   .hint { color: var(--dim); font-size: 11.5px; margin-top: 8px; }
   .hint code, .cfg-note code { font-family: var(--mono); color: var(--fg2); }
   .cfg-note { color: var(--dim); font-size: 11.5px; margin: 0 0 8px; }
@@ -141,9 +144,10 @@
   #view-browse { gap: 12px; }
   .pane-left { flex: 0 0 306px; min-width: 0; display: flex; flex-direction: column; }
   .pane-right { flex: 1 1 auto; min-width: 0; border-left: 1px solid var(--line); padding-left: 14px; display: flex; flex-direction: column; }
-  .filters { display: flex; gap: 6px; margin-bottom: 8px; }
-  #search { flex: 1 1 auto; min-width: 0; }
-  #filter { flex: 0 0 104px; }
+  .filters { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+  #search { flex: 1 1 100%; min-width: 0; }
+  #filter { flex: 1 1 96px; min-width: 0; }
+  #storeFilter, #catFilter { flex: 1 1 96px; min-width: 0; }
   .stats { color: var(--dim); font-size: 11.5px; margin-bottom: 6px; }
   .stats b { color: var(--fg2); font-weight: 600; }
   .list { flex: 1; overflow-y: auto; min-height: 0; }
@@ -155,6 +159,9 @@
   .ticket .l1 { display: flex; align-items: center; gap: 7px; }
   .ticket .code { font-family: var(--mono); font-size: 12.5px; font-weight: 600; letter-spacing: .2px; }
   .ticket .title { margin-top: 1px; font-size: 12.5px; color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 列表行里的店铺小标签：8 个店的单子混在一起时，一眼能分清是哪家的 */
+  .ticket .store-tag { display: inline-block; color: var(--dim); border: 1px solid var(--line); border-radius: 4px;
+    padding: 0 4px; font-size: 10.5px; line-height: 15px; margin-right: 5px; }
   .ticket .when { margin-left: auto; color: var(--dim); font-size: 11px; white-space: nowrap; flex: 0 0 auto; }
   .ticket.s-done .code, .ticket.s-done .title { color: var(--dim); }
 
@@ -167,9 +174,11 @@
   .ticket:hover .wake, .ticket[aria-selected="true"] .wake { opacity: 1; }
   .ticket .wake:hover { border-color: var(--accent); color: var(--accent); background: var(--sel); }
 
-  /* 订单号格式提示：合形状的走「说明」，不合形状的走「警告」 */
+  /* 订单号格式提示：合形状的走「说明」，不合形状的走「警告」。
+     里面的链接（重复单号的「去看那条」）跟着提示的颜色走，别跳成默认蓝 */
   .snhint.ok { color: var(--ok); }
   .snhint.bad { color: var(--warn); }
+  .snhint a { color: inherit; text-decoration: underline; }
 
   .badge { font-size: 11px; border-radius: 5px; padding: 1px 6px; background: var(--chip); color: var(--fg2); white-space: nowrap; flex: 0 0 auto; }
   .badge.wait { color: var(--warn); }
@@ -236,17 +245,20 @@
            那条链接里本来就有 mallcsid 和 ordersn，抠出来就行，不用人去认 ID。 -->
       <input id="erpLink" placeholder="把 ERP 给的那条链接粘到这里（pddim:…）—— 自动认出店铺和订单号" />
       <div class="hint snhint" id="erpHint"></div>
+      <!-- 主线三样：哪个店、哪一单、哪个包裹 -->
       <div class="r r-sn">
         <select id="store" title="这条单是哪个店铺的 —— 呼起客户端时按它取对应的客服 ID"></select>
-        <input id="code" placeholder="异常单号（留空自动生成）" />
         <span class="snwrap">
           <input id="orderSn" placeholder="订单号（粘贴拼多多单号，如 261011-109827858042143）" />
           <span class="hint snhint" id="snHint"></span>
         </span>
+        <input id="trackingNo" placeholder="快递单号（有就填）" />
       </div>
+      <!-- 分类与编号这些次要信息 -->
       <div class="r">
-        <select id="category" title="异常类型"></select>
+        <select id="category" title="这条单是什么情况 —— 选项在「设置」页里加"></select>
         <select id="level" title="严重程度"></select>
+        <input id="code" placeholder="异常单号（留空自动生成）" />
         <input id="reporter" placeholder="登记人" />
         <input id="occurred" type="date" title="发生日期" />
       </div>
@@ -262,8 +274,10 @@
   <section class="view" id="view-browse" hidden>
     <div class="pane-left">
       <div class="filters">
-        <input id="search" placeholder="搜单号 / 内容 / 登记人" />
-        <select id="filter"></select>
+        <input id="search" placeholder="搜单号 / 快递单号 / 内容 / 登记人" />
+        <select id="filter" title="按处理状态过滤"></select>
+        <select id="storeFilter" title="只看某个店铺的单子"></select>
+        <select id="catFilter" title="只看某种情况的单子"></select>
       </div>
       <div class="stats" id="stats"></div>
       <div class="list" id="list"></div>
@@ -307,6 +321,21 @@
       <div class="hint" id="cfgHint"></div>
     </div>
 
+    <!-- 情况选项：登记时那个下拉里的东西。品类是会变的，别写死在代码里 ——
+         用户自己一行一个地加，保存进 kv。 -->
+    <div class="card" style="max-width:720px; margin-top:12px">
+      <h2>情况选项</h2>
+      <p class="cfg-note" style="margin-top:0">
+        登记时「情况」那个下拉里的选项，<b>一行一个</b> —— 加一行就多一个，改完点保存。
+        已经在单子上的旧值不受影响。
+      </p>
+      <textarea id="sitBox" rows="6"></textarea>
+      <div class="r" style="margin-top:8px">
+        <button class="primary" id="saveSituations">保存选项</button>
+      </div>
+      <div class="hint" id="sitHint"></div>
+    </div>
+
     <details data-host-only style="max-width:720px; margin-top:12px">
       <summary>这张表在数据库里是什么样</summary>
       <pre id="schema">…</pre>
@@ -324,9 +353,11 @@
   var HOST_SOURCE = "workbench-host";
   var TABLE = "tickets";               // 裸表名，宿主会拼成 tool_abnormal_ticket_tickets
 
-  /* 这三组是"业务字典"。demo 阶段先写死，以后要改就改这里 —— 想做成可配置
-     的话，正好可以把它们放进 kv（kv 是给配置准备的，表是给记录准备的）。 */
-  var CATEGORIES = ["来料", "制程", "成品", "客诉", "其他"];
+  /* 业务字典。
+     · 「情况」的选项已经**做成可配置**（存 kv: situations，在「设置」页里
+       一行一个地改）—— 下面这个只是出厂默认，第一次打开时的种子。
+     · 「等级」先保持写死，要改就改这里。 */
+  var DEFAULT_SITUATIONS = ["缺货", "物流异常", "错漏发", "破损", "其他"];
   var LEVELS = ["轻微", "一般", "严重"];
   var STATUSES = ["待处理", "处理中", "已关闭"];
   var CODE_PREFIX = "YC";
@@ -517,8 +548,9 @@
    * 存哪：kv（宿主 core_tool_kv / 独立态 localStorage）。
    *   kv 是给"配置"准备的、tickets 表是给"记录"准备的 —— 店铺表是配置，单子是记录。
    * ------------------------------------------------------------------ */
-  var cfg = { stores: [] };
+  var cfg = { stores: [], situations: [] };
   var STORE_KEY = "stores";
+  var SITUATION_KEY = "situations";
   /**
    * 已经**实测确认**的 (店铺名, 客服 ID)。两个都是用户给的 ERP 链接里读出来的：
    *   · 5 店 `cs_355831479` —— 还实测过：拼上另一个订单号，客户端确实打开了那张单
@@ -575,8 +607,22 @@
     return null;
   }
 
+  /** 「情况」选项的解析：坏数据一律当"没配过"，用默认那组兜底；重复项去掉 */
+  function parseSituations(raw) {
+    if (!raw) return null;
+    var arr;
+    try { arr = JSON.parse(raw); } catch (e) { return null; }
+    if (!arr || !arr.length) return null;
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+      var v = String(arr[i] == null ? "" : arr[i]).trim();
+      if (v && out.indexOf(v) < 0) out.push(v);
+    }
+    return out.length ? out : null;
+  }
+
   async function loadCfg() {
-    var raw = null, legacy = null;
+    var raw = null, legacy = null, rawSit = null;
     try {
       var res = await Cfg.get({ key: STORE_KEY });
       raw = res && res.value;
@@ -585,15 +631,21 @@
         var old = await Cfg.get({ key: "mallcsid" });
         legacy = old && old.value;
       }
+      var res2 = await Cfg.get({ key: SITUATION_KEY });
+      rawSit = res2 && res2.value;
     } catch (e) { /* 读不到就用默认表 */ }
 
     var list = parseStores(raw);
     if (!list && legacy) { list = defaultStores(); list[0].mallcsid = legacy; }
     cfg.stores = list || defaultStores();
+    cfg.situations = parseSituations(rawSit) || DEFAULT_SITUATIONS.slice();
 
     renderStores();
     fillStoreSelect();
     fillBindStore();
+    fillSituationSelect();
+    renderSituationEditor();
+    fillBrowseFilters();
     showCfgHint();
     showSnHint();     // 订单号框初始化时是空的，这条会自己清掉
   }
@@ -669,6 +721,7 @@
       renderStores();
       fillStoreSelect();
       fillBindStore();
+      fillBrowseFilters();     // 改过名的店在筛选下拉里也要跟着变
       renderList();
       renderDetail();
       toast("已保存 " + next.length + " 个店铺" + (moved ? "，并把 " + moved + " 条单子换到新名字" : ""));
@@ -711,6 +764,49 @@
       (ready < cfg.stores.length
         ? " —— 没绑的那几个用不了（黄框那几行），登记时选了它们也呼不起来。"
         : " —— 登记时选店铺，呼起时自动用对应的那个。");
+  }
+
+  /* ---------------- 情况选项（可配置，存 kv） ---------------- */
+
+  /** 登记页「情况」下拉：用配置里的选项；没配过就用出厂默认 */
+  function fillSituationSelect(keep) {
+    var el = document.getElementById("category");
+    if (!el) return;
+    var list = cfg.situations.length ? cfg.situations : DEFAULT_SITUATIONS;
+    var cur = keep != null ? keep : el.value;
+    fillSelect(el, list);
+    if (cur && list.indexOf(cur) >= 0) el.value = cur;     // 现场录单时保持已选的那项
+    fillBrowseFilters();
+  }
+
+  /** 设置页的情况编辑框：一行一个。已在单子上的旧值不受影响 */
+  function renderSituationEditor() {
+    var el = document.getElementById("sitBox");
+    if (!el) return;
+    var list = cfg.situations.length ? cfg.situations : DEFAULT_SITUATIONS;
+    el.value = list.join("\n");
+    var hint = document.getElementById("sitHint");
+    if (hint) hint.textContent = "共 " + list.length + " 个选项 —— 登记时的下拉和查看页的筛选都在用它们。";
+  }
+
+  async function saveSituations() {
+    var el = document.getElementById("sitBox");
+    var lines = String(el.value || "").split("\n");
+    var next = [];
+    for (var i = 0; i < lines.length; i++) {
+      var v = lines[i].trim();
+      if (v && next.indexOf(v) < 0) next.push(v);          // 去空行、去重复
+    }
+    if (!next.length) { toast("至少留一个选项"); return; }
+    cfg.situations = next;
+    try {
+      await Cfg.set({ key: SITUATION_KEY, value: JSON.stringify(next) });
+      renderSituationEditor();
+      fillSituationSelect();
+      repaint();          // 筛选下拉的选项变了，过滤结果跟着对一遍
+      renderDetail();
+      toast("已保存 " + next.length + " 个情况选项");
+    } catch (err) { toast("存不上：" + err.message); }
   }
 
   /* ---------------- 设置页：用一条链接把客服 ID 绑到某个店铺 ---------------- */
@@ -785,13 +881,28 @@
     } catch (err) { msg.textContent = "存不上：" + friendlyErr(err); }
   }
 
-  /** 登记页：订单号输入框下面那条实时提示（边打边说它像不像拼多多单号） */
+  /** 登记页：订单号输入框下面那条实时提示 —— 边打边说它像不像拼多多单号；
+      这个单号已经登记过时，再补一句 + 一个「去看那条」的入口（重复检测） */
   function showSnHint() {
     var el = document.getElementById("snHint");
     if (!el) return;
-    var info = snInfo(normSn((document.getElementById("orderSn") || {}).value));
-    el.textContent = info.text;
-    el.className = "hint snhint" + (info.state === "ok" ? " ok" : info.state === "weird" ? " bad" : "");
+    var raw = (document.getElementById("orderSn") || {}).value;
+    var info = snInfo(normSn(raw));
+    var dup = findDupBySn(raw);
+    var parts = [];
+    if (info.text) parts.push(esc(info.text));
+    if (dup) {
+      parts.push("已经登记过：" + esc(dup.code || "(未编号)") + "（" + esc(statusOf(dup)) + "）—— " +
+        '<a href="#" data-act="jump-dup" data-id="' + esc(dup.id) + '">去看那条</a>' +
+        (dupAck === normSn(raw) ? "；确实要再录一条，就再点一次「登记」" : ""));
+    }
+    var cls = "hint snhint" + (dup ? " bad" : info.state === "ok" ? " ok" : info.state === "weird" ? " bad" : "");
+    var next = parts.join(" · ");
+    // ★ 内容没变就别动 DOM：这个提示条挂在订单号框下面，
+    //    点提示里的链接会先让输入框失焦 → 走到这儿重绘 → <a> 被换成新的，
+    //    点击事件就落空了（真实点击实测踩过；程序化 .click() 反而看不出来）。
+    if (el.className !== cls) el.className = cls;
+    if (el.innerHTML !== next) el.innerHTML = next;
   }
 
   /* ---------------- 小工具 ---------------- */
@@ -884,9 +995,19 @@
   var allRows = [];      // 最近一次从库里拉回来的全部
   var shown = [];        // 左栏当前显示的那些（过滤后）
   var selectedId = null;
+  var dupAck = "";       // 重复单号「再点一次登记」的确认位：记着已经确认过的那个订单号
 
   function findRow(id) {
     return allRows.filter(function (r) { return r.id === id; })[0] || null;
+  }
+  /** 按订单号找已有单子（两边都先洗过再比）—— 重复登记检测用 */
+  function findDupBySn(sn) {
+    var s = normSn(sn);
+    if (!s) return null;
+    for (var i = 0; i < allRows.length; i++) {
+      if (normSn(allRows[i].order_sn) === s) return allRows[i];
+    }
+    return null;
   }
   function statusOf(r) { return r.status || STATUSES[0]; }
   function badgeOf(status) {
@@ -938,7 +1059,9 @@
           wake +
           '<span class="when">' + timeText(r.created_at) + "</span>" +
         "</div>" +
-        '<div class="title">' + esc(r.title || "(无内容)") + "</div>" +
+        '<div class="title">' +
+          (String(r.store || "").trim() ? '<span class="store-tag">' + esc(r.store) + "</span>" : "") +
+          esc(r.title || "(无内容)") + "</div>" +
       "</div>";
     }).join("");
   }
@@ -992,6 +1115,13 @@
     s = s.replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFF0D\uFE58\uFE63\u30FC\uFF5E\u301C~]/g, "-");
     s = s.replace(/[\u00A0\u1680\u2000-\u200D\u202F\u205F\u3000\uFEFF]/g, " ");   // 各种空白 → 普通空格
     return s.trim().replace(/\s+/g, "");
+  }
+
+  /** 快递单号：没有严格形状（各家快递不一样），只把看不见的空白和夹带的空格清掉 */
+  function normTracking(raw) {
+    return String(raw == null ? "" : raw)
+      .replace(/[\u00A0\u1680\u2000-\u200D\u202F\u205F\u3000\uFEFF]/g, " ")
+      .trim().replace(/\s+/g, "");
   }
 
   /**
@@ -1223,7 +1353,8 @@
     var kv = [
       ["订单号", r.order_sn],
       ["店铺", r.store],
-      ["类型", r.category],
+      ["情况", r.category],
+      ["快递单号", r.tracking_no],
       ["等级", r.level],
       ["登记人", r.reporter],
       ["发生日期", dayText(r.occurred_at)],
@@ -1264,13 +1395,47 @@
 
   /* ---------------- 读 / 写 ---------------- */
 
+  /** 左栏两个筛选下拉的选项：配置里的 ∪ 单子上实际出现过的。
+      老单子上的店 / 情况就算从配置里删了，也还能筛出来 —— 不然数据在、筛不到。 */
+  function fillBrowseFilters() {
+    var sSel = document.getElementById("storeFilter");
+    var cSel = document.getElementById("catFilter");
+    if (!sSel || !cSel) return;
+
+    var names = cfg.stores.map(function (s) { return s.name; });
+    allRows.forEach(function (r) {
+      var v = String(r.store || "").trim();
+      if (v && names.indexOf(v) < 0) names.push(v);
+    });
+    var keepS = sSel.value;
+    sSel.innerHTML = '<option value="">全部店铺</option>' + names.map(function (n) {
+      return '<option value="' + esc(n) + '">' + esc(n) + "</option>";
+    }).join("");
+    if (keepS && names.indexOf(keepS) >= 0) sSel.value = keepS;
+
+    var cats = (cfg.situations.length ? cfg.situations : DEFAULT_SITUATIONS).slice();
+    allRows.forEach(function (r) {
+      var v = String(r.category || "").trim();
+      if (v && cats.indexOf(v) < 0) cats.push(v);
+    });
+    var keepC = cSel.value;
+    cSel.innerHTML = '<option value="">全部情况</option>' + cats.map(function (n) {
+      return '<option value="' + esc(n) + '">' + esc(n) + "</option>";
+    }).join("");
+    if (keepC && cats.indexOf(keepC) >= 0) cSel.value = keepC;
+  }
+
   function pickVisible() {
     var q = document.getElementById("search").value.trim().toLowerCase();
     var f = document.getElementById("filter").value;
+    var sf = (document.getElementById("storeFilter") || {}).value || "";
+    var cf = (document.getElementById("catFilter") || {}).value || "";
     return allRows.filter(function (r) {
       if (f && f !== "*" && statusOf(r) !== f) return false;
+      if (sf && String(r.store || "") !== sf) return false;
+      if (cf && String(r.category || "") !== cf) return false;
       if (!q) return true;
-      return [r.code, r.order_sn, r.title, r.reporter, r.category, r.note].some(function (v) {
+      return [r.code, r.order_sn, r.tracking_no, r.title, r.reporter, r.category, r.note].some(function (v) {
         return String(v || "").toLowerCase().indexOf(q) >= 0;
       });
     });
@@ -1288,6 +1453,7 @@
       allRows = (res && res.rows) || [];
       // 选中的那条要是没了（被删/被清库），把选中清掉，免得右栏挂着幽灵
       if (selectedId && !findRow(selectedId)) selectedId = null;
+      fillBrowseFilters();     // 单子上出现过的店/情况可能变了，筛选项跟上
       repaint();
       renderDetail();
       refreshCodeHint();
@@ -1302,6 +1468,17 @@
     var title = document.getElementById("title").value.trim();
     if (!title) { toast("先写清异常内容"); document.getElementById("title").focus(); return; }
 
+    var sn = normSn(document.getElementById("orderSn").value);
+    // 同一个订单号录第二遍 90% 是手滑 —— 第一次点先拦下（提示条里有「去看那条」），
+    // 确实要再录一条（比如补发后新问题）就再点一次「登记」。
+    var dup = findDupBySn(sn);
+    if (dup && dupAck !== sn) {
+      dupAck = sn;
+      showSnHint();
+      toast("这个订单号已经登记过：" + (dup.code || "(未编号)") + "（" + statusOf(dup) + "）—— 确实要再录一条，就再点一次「登记」");
+      return;
+    }
+
     var code = document.getElementById("code").value.trim() || genCode(allRows);
     if (findRowByCode(code)) { toast("单号 " + code + " 已经登记过了"); return; }
 
@@ -1312,7 +1489,8 @@
         row: {
           id: "t-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),   // ★ 主键必须自己给
           code: code,
-          order_sn: normSn(document.getElementById("orderSn").value),   // 存干净的，别把全角连字符带进库
+          order_sn: sn,                                                  // 存干净的，别把全角连字符带进库
+          tracking_no: normTracking(document.getElementById("trackingNo").value),
           store: document.getElementById("store").value,
           title: title,
           category: document.getElementById("category").value,
@@ -1327,7 +1505,9 @@
       });
       document.getElementById("code").value = "";
       document.getElementById("orderSn").value = "";
+      document.getElementById("trackingNo").value = "";
       document.getElementById("title").value = "";
+      dupAck = "";
       // ERP 链接也清掉：下一条单是另一条链接。店铺**不清** —— 连着录同一个店的单是常态
       document.getElementById("erpLink").value = "";
       var eh = document.getElementById("erpHint");
@@ -1355,8 +1535,8 @@
   function friendlyErr(err) {
     var msg = String((err && err.message) || err || "");
     if (/no column named|has no column/i.test(msg)) {
-      return "工具表还是旧结构（缺 store 列）。去「设置 → 数据库 → 异常单号登记」点一次" +
-        "「清理数据」，下次打开会按新结构重建 —— 注意那会清掉已登记的记录。";
+      return "工具表还是旧结构（缺新加的列，比如 store / tracking_no）。去「设置 → 数据库 → " +
+        "异常单号登记」点一次「清理数据」，下次打开会按新结构重建 —— 注意那会清掉已登记的记录。";
     }
     return msg;
   }
@@ -1436,7 +1616,7 @@
       return '<option value="' + esc(v) + '"' + (v === selected ? " selected" : "") + ">" + esc(v) + "</option>";
     }).join("");
   }
-  fillSelect(document.getElementById("category"), CATEGORIES);
+  fillSituationSelect();        // 配置还没读回来之前先用出厂默认，loadCfg 回来会再刷一遍
   fillSelect(document.getElementById("level"), LEVELS, "一般");
   document.getElementById("filter").innerHTML =
     '<option value="*">全部状态</option>' +
@@ -1459,6 +1639,7 @@
 
   document.getElementById("add").addEventListener("click", function () { void add(); });
   document.getElementById("saveCfg").addEventListener("click", function () { void saveCfg(); });
+  document.getElementById("saveSituations").addEventListener("click", function () { void saveSituations(); });
   // 店铺表：加一行 / 删一行。删的只是编辑区里的那一行，要点「保存店铺表」才落盘 ——
   // 否则点错一下就悄悄改了配置。
   document.getElementById("addStore").addEventListener("click", function () {
@@ -1510,9 +1691,12 @@
   document.getElementById("title").addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); void add(); }
   });
-  // 订单号边打边说它像不像拼多多单号 —— 格式不对时客户端会弹起来却定位不到，
-  // 那是最难查的症状，所以在这儿提前拦住。
-  document.getElementById("orderSn").addEventListener("input", showSnHint);
+  // 订单号边打边说它像不像拼多多单号（以及重复没重复）—— 格式不对时客户端会弹起来
+  // 却定位不到，重复录会把同一件事记两遍，都在这儿提前说清。一动输入就重置重复确认位。
+  document.getElementById("orderSn").addEventListener("input", function () {
+    dupAck = "";
+    showSnHint();
+  });
   /** 把订单号框里的内容就地洗干净（全角连字符 / 看不见的空白 / 整条链接） */
   function cleanOrderSnField() {
     var el = document.getElementById("orderSn");
@@ -1524,12 +1708,47 @@
     setTimeout(cleanOrderSnField, 0);     // 粘贴要先等浏览器把值写进去
   });
   document.getElementById("orderSn").addEventListener("blur", cleanOrderSnField);
+  // 提示条里的「去看那条」：跳到查看页并选中它 —— 顺手清掉筛选，保证那条真的看得见
+  document.getElementById("snHint").addEventListener("click", function (e) {
+    var a = e.target.closest('a[data-act="jump-dup"]');
+    if (!a) return;
+    e.preventDefault();
+    jumpToTicket(a.getAttribute("data-id"));
+  });
+  function jumpToTicket(id) {
+    if (!findRow(id)) { toast("那条单子不在了（可能刚被删掉）"); return; }
+    ["search", "filter", "storeFilter", "catFilter"].forEach(function (fid) {
+      var el = document.getElementById(fid);
+      if (!el) return;
+      el.value = fid === "filter" ? "*" : "";
+    });
+    selectedId = id;
+    setTab("browse");
+    repaint();
+    renderDetail();
+    var item = document.querySelector('#list [data-ticket][data-id="' + id + '"]');
+    if (item && item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
+  }
+  // 快递单号：失焦时把夹带的空白清掉（各家快递单号形状不一，不做格式判定）
+  document.getElementById("trackingNo").addEventListener("blur", function () {
+    var el = document.getElementById("trackingNo");
+    var v = normTracking(el.value);
+    if (v !== el.value) el.value = v;
+  });
 
   document.getElementById("search").addEventListener("input", function () {
     repaint();
     renderDetail();     // 选中的那条可能被筛掉了，右栏要跟上
   });
   document.getElementById("filter").addEventListener("change", function () {
+    repaint();
+    renderDetail();
+  });
+  document.getElementById("storeFilter").addEventListener("change", function () {
+    repaint();
+    renderDetail();
+  });
+  document.getElementById("catFilter").addEventListener("change", function () {
     repaint();
     renderDetail();
   });

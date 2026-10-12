@@ -899,6 +899,171 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
       afterAdd.linkCleared && afterAdd.hintCleared && afterAdd.storeKept === "拾野",
     JSON.stringify({ beforeAdd, afterAdd }));
 
+  /* ---------- 0.6.0：快递单号 / 情况选项可配置 / 重复单号检测 / 店铺·情况筛选 ----------
+     都是用户点名要的：
+       · 登记的主线是「哪个店、哪一单、哪个包裹」——所以要快递单号；
+       · 情况（异常类型）会随业务变，得能在设置里加，不能写死在代码里；
+       · 同一个订单号录第二遍多半是手滑 —— 要当场拦一下，还能跳到那条去看；
+       · 8 个店的单子混在一个列表里，要能按店铺（和情况）筛。
+     放在最后：这段会再登记 2 条单，前面的计数断言不该被影响。 */
+
+  // ① 情况选项：出厂默认 + 设置页里的编辑框（默认值就是出厂那组）
+  const sitBoot = await page.evaluate(() => ({
+    opts: [...document.querySelectorAll("#category option")].map((o) => o.value),
+    box: (document.getElementById("sitBox") || {}).value || "",
+    hasTrack: !!document.getElementById("trackingNo"),
+  }));
+  check("异常单：情况选项有个出厂默认（缺货/物流异常/错漏发/破损/其他）",
+    JSON.stringify(sitBoot.opts) === JSON.stringify(["缺货", "物流异常", "错漏发", "破损", "其他"]),
+    sitBoot.opts.join("/"));
+  check("异常单：设置页的情况编辑框默认值 = 出厂那组（一行一个）",
+    sitBoot.box === "缺货\n物流异常\n错漏发\n破损\n其他", JSON.stringify(sitBoot.box));
+  check("异常单：登记表单有「快递单号」这一格", sitBoot.hasTrack === true, String(sitBoot.hasTrack));
+
+  // ② 改情况选项 → 保存 → 登记下拉立刻更新 → 刷新后还在
+  await page.click("#tab-settings");
+  await page.waitForTimeout(400);
+  await page.fill("#sitBox", "缺货\n发错\n客户要求\n其他");
+  await page.click("#saveSituations");
+  await page.waitForTimeout(500);
+  const sitSaved = await page.evaluate(() => ({
+    opts: [...document.querySelectorAll("#category option")].map((o) => o.value),
+    hint: (document.getElementById("sitHint") || {}).textContent || "",
+  }));
+  check("异常单：保存后登记下拉立刻换成新选项",
+    JSON.stringify(sitSaved.opts) === JSON.stringify(["缺货", "发错", "客户要求", "其他"]),
+    sitSaved.opts.join("/"));
+  check("异常单：编辑框下面报告了选项数量", /4 个选项/.test(sitSaved.hint), sitSaved.hint);
+
+  await openStandalone("abnormal-ticket", "file");
+  await page.click("#tab-settings");
+  await page.waitForTimeout(400);
+  const sitReload = await page.evaluate(() => ({
+    box: (document.getElementById("sitBox") || {}).value || "",
+    opts: [...document.querySelectorAll("#category option")].map((o) => o.value),
+  }));
+  check("异常单：情况选项刷新后还在（独立态落 localStorage）",
+    sitReload.box === "缺货\n发错\n客户要求\n其他" &&
+      JSON.stringify(sitReload.opts) === JSON.stringify(["缺货", "发错", "客户要求", "其他"]),
+    JSON.stringify(sitReload));
+
+  // ③ 快递单号：登记一条（店选六店、情况选发错、快递单号带空格要清掉）
+  await page.click("#tab-create");
+  await page.waitForTimeout(400);
+  await page.fill("#title", "0.6.0 冒烟：包裹丢了");
+  await page.fill("#orderSn", "261011-777000777000777");
+  await page.fill("#trackingNo", "SF 9988776655 ");
+  await page.evaluate(() => document.getElementById("trackingNo").blur());
+  await page.waitForTimeout(200);
+  const tracked = await page.evaluate(() => document.getElementById("trackingNo").value);
+  check("异常单：快递单号里的空格失焦时被清掉", tracked === "SF9988776655", tracked);
+  await page.selectOption("#store", "拼多多6店");
+  await page.selectOption("#category", "发错");
+  await page.click("#add");
+  await page.waitForTimeout(800);
+
+  await page.click("#tab-browse");
+  await page.waitForTimeout(500);
+  const trackedDetail = await page.evaluate(() => {
+    const dd = [...document.querySelectorAll("#detail .kv dd")].map((d) => d.textContent);
+    const tag = document.querySelector('.ticket[aria-selected="true"] .store-tag');
+    return { sn: dd[0], store: dd[1], cat: dd[2], track: dd[3], tag: tag ? tag.textContent : "(没有标签)" };
+  });
+  check("异常单：详情按 订单号→店铺→情况→快递单号 显示",
+    trackedDetail.sn === "261011-777000777000777" && trackedDetail.store === "拼多多6店" &&
+      trackedDetail.cat === "发错" && trackedDetail.track === "SF9988776655",
+    JSON.stringify(trackedDetail));
+  check("异常单：列表行里挂着店铺小标签", trackedDetail.tag === "拼多多6店", trackedDetail.tag);
+
+  // ④ 重复单号：实时提示 + 第一次点「登记」被拦 + 再点一次才录
+  await page.click("#tab-create");
+  await page.waitForTimeout(400);
+  await page.fill("#orderSn", "261011-777000777000777");
+  await page.waitForTimeout(350);
+  const dupHint = await page.evaluate(() => (document.getElementById("snHint") || {}).innerHTML || "");
+  check("异常单：同一个订单号再输一遍，当场提示已登记过（带「去看那条」）",
+    /已经登记过/.test(dupHint) && /去看那条/.test(dupHint), dupHint.slice(0, 90));
+
+  await page.fill("#title", "0.6.0 冒烟：重复的不该随手录");
+  const countBefore = await page.evaluate(() => document.querySelectorAll("#list .ticket").length);
+  await page.click("#add");
+  await page.waitForTimeout(400);
+  const blocked = await page.evaluate(() => ({
+    n: document.querySelectorAll("#list .ticket").length,
+    toast: (document.getElementById("toast") || {}).textContent || "",
+    hint: (document.getElementById("snHint") || {}).innerHTML || "",
+  }));
+  check("异常单：第一次点「登记」被拦下（没多出记录，toast 说清）",
+    blocked.n === countBefore && /已经登记过/.test(blocked.toast), JSON.stringify({ before: countBefore, ...blocked, hint: undefined }));
+  check("异常单：拦下后提示条里多一句「再点一次」", /再点一次/.test(blocked.hint), blocked.hint.slice(0, 120));
+
+  await page.click("#add");
+  await page.waitForTimeout(800);
+  const forced = await page.evaluate(() => ({
+    n: document.querySelectorAll("#list .ticket").length,
+    toast: (document.getElementById("toast") || {}).textContent || "",
+  }));
+  check("异常单：再点一次才真录进去（确实要录两条的通道留着）",
+    forced.n === countBefore + 1 && /已登记/.test(forced.toast), JSON.stringify(forced));
+
+  // ⑤ 「去看那条」：用**真实点击**回归（失焦重绘会换掉 <a>，坐标点击就落空了 —— 踩过）
+  await page.fill("#orderSn", "261011-777000777000777");
+  await page.waitForTimeout(350);
+  const jumpId = await page.evaluate(() =>
+    (document.querySelector('#snHint a[data-act="jump-dup"]') || {}).getAttribute
+      ? document.querySelector('#snHint a[data-act="jump-dup"]').getAttribute("data-id")
+      : "");
+  await page.click('#snHint a[data-act="jump-dup"]');
+  await page.waitForTimeout(600);
+  const jumped = await page.evaluate(() => ({
+    browseVisible: !document.getElementById("view-browse").hidden,
+    selCount: document.querySelectorAll('.ticket[aria-selected="true"]').length,
+    selId: (document.querySelector('.ticket[aria-selected="true"]') || {}).getAttribute
+      ? document.querySelector('.ticket[aria-selected="true"]').getAttribute("data-id") : "",
+  }));
+  check("异常单：真实点击「去看那条」能跳到查看页并选中那条",
+    jumped.browseVisible === true && jumped.selCount === 1 && jumped.selId === jumpId,
+    JSON.stringify({ jumpId, ...jumped }));
+
+  // ⑥ 筛选：店铺 / 情况（选项 = 配置 ∪ 单子上实际出现过的）
+  const filterOpts = await page.evaluate(() => ({
+    stores: [...document.querySelectorAll("#storeFilter option")].map((o) => o.value),
+    cats: [...document.querySelectorAll("#catFilter option")].map((o) => o.value),
+  }));
+  check("异常单：店铺筛选列出店铺表里的店（还有「全部店铺」）",
+    filterOpts.stores[0] === "" && filterOpts.stores.indexOf("拾野") >= 0 &&
+      filterOpts.stores.indexOf("拼多多6店") >= 0,
+    filterOpts.stores.join("/"));
+  check("异常单：情况筛选含配置里的新选项（客户要求 没人用过也在）",
+    filterOpts.cats[0] === "" && filterOpts.cats.indexOf("客户要求") >= 0 &&
+      filterOpts.cats.indexOf("发错") >= 0,
+    filterOpts.cats.join("/"));
+
+  async function filterCounts() {
+    return page.evaluate(() => ({
+      n: document.querySelectorAll("#list .ticket").length,
+      tags: [...document.querySelectorAll("#list .ticket .store-tag")].map((t) => t.textContent),
+    }));
+  }
+  await page.selectOption("#catFilter", "发错");
+  await page.waitForTimeout(350);
+  const byCat = await filterCounts();
+  check("异常单：按情况筛选只留发错那两条", byCat.n === 2, JSON.stringify(byCat));
+  await page.selectOption("#catFilter", "客户要求");
+  await page.waitForTimeout(350);
+  const byNone = await filterCounts();
+  check("异常单：筛一个没人用过的选项 → 空列表（不是全量）", byNone.n === 0, String(byNone.n));
+
+  await page.selectOption("#catFilter", "");
+  await page.selectOption("#storeFilter", "拼多多6店");
+  await page.waitForTimeout(350);
+  const byStore = await filterCounts();
+  check("异常单：按店铺筛选只留那个店的单（行内标签全是它）",
+    byStore.n === 2 && byStore.tags.length === 2 && byStore.tags.every((t) => t === "拼多多6店"),
+    JSON.stringify(byStore));
+  await page.selectOption("#storeFilter", "");
+  await page.waitForTimeout(350);
+
   await wipeLocal("abnormal-ticket");
 
   await expectCommon("abnormal-ticket", "异常单号", "http");
