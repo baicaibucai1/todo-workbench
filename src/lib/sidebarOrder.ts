@@ -70,32 +70,38 @@ export function parseSidebarOrder(raw: string | undefined): string[] {
 }
 
 /**
+ * 组的先后次序 —— **固定的界面结构，不是用户偏好**。
+ *
+ * 侧栏从上到下就是「智能视图 → 工具 → 清单」三段，段之间画一条分隔线。
+ * 用户能改的是**段内**的先后（哪个视图第一、哪个清单在前），
+ * 而不是把清单搬进工具段中间 —— 那会让三段变成一锅粥，
+ * 而「这一项属于哪一类」是它自己的属性，本来就不该由排序决定。
+ */
+export const SIDEBAR_GROUPS: readonly SidebarItemKind[] = ["nav", "tool", "list"];
+
+/**
  * 算出**这次渲染真正要用的顺序**。
  *
  * @param stored 设置里存的（可能为空 = 用户从没排过）
  * @param live   当前实际存在的键，按"默认顺序"给（视图 → 工具 → 清单）
  *
- * 两条规则：
+ * 按 SIDEBAR_GROUPS 一段一段拼，每段内两条规则：
  *   1. 存的顺序里、现在还活着的，照原样排前面（已经不在的直接跳过 ——
  *      停用的工具、删掉的清单，它的位置留着没意义）；
- *   2. 存里没提到的（新装的工具、新建的清单、新开的模块），**跟在同类最后
- *      一项后面**。全都补到末尾的话，新建一个清单会跑到「图床」下面去。
+ *   2. 存里没提到的（新装的工具、新建的清单、新开的模块），补在**本段末尾**。
+ *
+ * 于是结果天然是「视图段 → 工具段 → 清单段」，段与段不会互相穿插。
  */
 export function resolveSidebarOrder(stored: string[], live: string[]): string[] {
   const liveSet = new Set(live);
   const out: string[] = [];
-  for (const k of stored) {
-    if (liveSet.has(k) && !out.includes(k)) out.push(k);
-  }
-  for (const k of live) {
-    if (out.includes(k)) continue;
-    const kind = sidebarKind(k);
-    let at = -1;
-    for (let i = 0; i < out.length; i++) {
-      if (sidebarKind(out[i]) === kind) at = i;
+  for (const kind of SIDEBAR_GROUPS) {
+    for (const k of stored) {
+      if (sidebarKind(k) === kind && liveSet.has(k) && !out.includes(k)) out.push(k);
     }
-    if (at < 0) out.push(k);
-    else out.splice(at + 1, 0, k);
+    for (const k of live) {
+      if (sidebarKind(k) === kind && !out.includes(k)) out.push(k);
+    }
   }
   return out;
 }

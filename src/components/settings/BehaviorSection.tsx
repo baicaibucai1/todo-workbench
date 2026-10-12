@@ -29,7 +29,9 @@ import {
   placeSidebarItem,
   resolveSidebarOrder,
   sidebarKind,
+  SIDEBAR_GROUPS,
   SIDEBAR_KIND_LABEL,
+  type SidebarItemKind,
 } from "../../lib/sidebarOrder";
 import {
   notifyPermission,
@@ -45,6 +47,21 @@ import {
 } from "../../lib/detailSections";
 
 /* ------------------------------ 分区：行为偏好 ------------------------------ */
+
+/**
+ * 这一行要不要染成"落点"色。
+ *
+ * 条件是**正拖着别人、悬停在这一行、且两者同段** —— 自己悬停自己没意义，
+ * 跨段的悬停也不给提示（拖过去也落不了位，给高亮等于骗人）。
+ */
+function isSidebarTarget(
+  dragId: string | null,
+  hoverId: string | null,
+  key: string,
+  kind: SidebarItemKind,
+): boolean {
+  return !!dragId && dragId !== key && hoverId === key && sidebarKind(dragId) === kind;
+}
 
 export function BehaviorSection({
   settings,
@@ -77,9 +94,13 @@ export function BehaviorSection({
   /*
    * ---------------------------- 侧栏顺序 ----------------------------
    *
-   * 与上面那份详情面板顺序是同一套路子（稀疏覆盖 + 同类补位），只是它的项
-   * 来自四个地方，而且工具与清单的 id 是**运行时才有的**：装个工具、建个清单
+   * 与上面那份详情面板顺序是同一套路子（稀疏覆盖 + 段末补位），只是它的项
+   * 来自三个地方，而且工具与清单的 id 是**运行时才有的**：装个工具、建个清单
    * 就多一个键。所以设置里存的从来不是"完整顺序"，见 lib/sidebarOrder.ts。
+   *
+   * ★ 关键：**段与段不互通**。视图、工具、清单各自是一段，只能在段内挪。
+   *   一项"是什么"是它自己的属性，不该由排序决定 —— 把清单拖进工具段中间，
+   *   侧栏看着就只剩一锅粥。
    *
    * 这里算 order 用的是**与侧栏同一个函数**，所以设置页里看到的顺序就是左侧栏
    * 的顺序 —— 不会出现"设置里排好了、左边没动"。
@@ -101,6 +122,25 @@ export function BehaviorSection({
   const [sidebarHoverId, setSidebarHoverId] = useState<string | null>(null);
   const commitSidebarOrder = (next: string[]) =>
     void saveSettings({ [SETTINGS.sidebarOrder]: formatSidebarOrder(next) });
+
+  /*
+   * 按段切开。存的数组是**扁平**的（用户拖出来的先后），这里先由
+   * resolveSidebarOrder 归一化成"视图段 → 工具段 → 清单段"，再按 kind 分片，
+   * 于是每组内部的操作天然不会越过段的边界。
+   */
+  const sidebarGroups = SIDEBAR_GROUPS.map((kind) => ({
+    kind,
+    label: SIDEBAR_KIND_LABEL[kind],
+    keys: sidebarOrder.filter((k) => sidebarKind(k) === kind),
+  }));
+
+  /** 只动一段：把这段的新顺序塞回去，其余段原样保留 */
+  const commitGroup = (kind: SidebarItemKind, keysInGroup: string[]) =>
+    commitSidebarOrder(
+      SIDEBAR_GROUPS.flatMap((g) =>
+        g === kind ? keysInGroup : sidebarOrder.filter((k) => sidebarKind(k) === g),
+      ),
+    );
 
   /** 稳定键 → 给人看的名字。键对应的东西不在了就退回显示 id，至少不空着 */
   const sidebarLabel = (key: string): string => {
@@ -412,90 +452,105 @@ export function BehaviorSection({
       <div className="mt-5">
         <SectionTitle
           title="侧栏顺序"
-          desc="左侧那一列从上到下按这里的顺序显示。智能视图、工具、清单可以混排；「图床」一类固定在最底部，不参与。"
+          desc="左侧那一列分三段：智能视图、工具、清单。每段**内部**可以拖动排序，段与段不互通。"
         />
         <Card>
-          {/* 容器叫 -list：侧栏上那个 `data-sidebar-order` 装的是**当前顺序值**，
-              两者同名会让选择器分不清是要读顺序还是找这一块 */}
-          <div className="flex flex-col gap-1" data-sidebar-order-list="">
-            {sidebarOrder.map((key, i) => {
-              const kind = sidebarKind(key);
-              const label = sidebarLabel(key);
-              const color = sidebarColor(key);
-              const isTarget = !!sidebarDragId && sidebarDragId !== key && sidebarHoverId === key;
-              return (
-                <div
-                  key={key}
-                  data-sidebar-order-row={key}
-                  data-sidebar-order-index={i}
-                  draggable
-                  onDragStart={() => setSidebarDragId(key)}
-                  onDragEnd={() => {
-                    setSidebarDragId(null);
-                    setSidebarHoverId(null);
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setSidebarHoverId(key);
-                  }}
-                  onDragLeave={() => setSidebarHoverId((h) => (h === key ? null : h))}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    if (sidebarDragId && sidebarDragId !== key) {
-                      commitSidebarOrder(placeSidebarItem(sidebarOrder, sidebarDragId, key));
-                    }
-                    setSidebarDragId(null);
-                    setSidebarHoverId(null);
-                  }}
-                  className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors ${
-                    isTarget ? "border-primary bg-hover" : "border-line bg-card"
-                  } ${sidebarDragId === key ? "opacity-50" : ""}`}
-                >
-                  <GripVertical size={13} className="shrink-0 cursor-grab text-fg-dim" />
-                  {/* 清单带自己的颜色圆点，和侧栏里看到的一致 */}
-                  {color ? (
-                    <span
-                      className="size-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: color }}
-                    />
-                  ) : null}
-                  <span className="min-w-0 flex-1 truncate text-[13px] text-fg-2">
-                    {label}
-                  </span>
-                  <span className="shrink-0 rounded border border-line px-1.5 py-px text-[10.5px] text-fg-dim">
-                    {kind ? SIDEBAR_KIND_LABEL[kind] : "其他"}
-                  </span>
-                  <button
-                    onClick={() => commitSidebarOrder(moveSidebarItem(sidebarOrder, key, -1))}
-                    disabled={i === 0}
-                    data-act="sidebar-up"
-                    title="上移"
-                    className="grid size-6 shrink-0 place-items-center rounded text-fg-dim hover:bg-hover disabled:opacity-30"
-                  >
-                    <ChevronUp size={14} />
-                  </button>
-                  <button
-                    onClick={() => commitSidebarOrder(moveSidebarItem(sidebarOrder, key, 1))}
-                    disabled={i === sidebarOrder.length - 1}
-                    data-act="sidebar-down"
-                    title="下移"
-                    className="grid size-6 shrink-0 place-items-center rounded text-fg-dim hover:bg-hover disabled:opacity-30"
-                  >
-                    <ChevronDown size={14} />
-                  </button>
-                </div>
-              );
-            })}
-            {sidebarOrder.length === 0 && (
-              <div className="px-2.5 py-1.5 text-[12.5px] text-fg-dim">
-                当前侧栏没有可排序的项。
+          {/*
+            分三段渲染，而不是一条混排的长列表 ——
+            清单属于清单段，工具属于工具段：一项"是什么"是它自己的属性，
+            不该由排序决定。混排之后清单在视觉上就成了工具组的一部分。
+          */}
+          {sidebarGroups.map((g, gi) => (
+            <div key={g.kind} className={gi > 0 ? "mt-4 border-t border-line pt-3" : ""}>
+              <div className="mb-1 flex items-center justify-between px-2">
+                <span className="text-[11px] font-medium tracking-wide text-fg-dim">
+                  {g.label}
+                </span>
+                <span className="rounded bg-chip px-1.5 py-px text-[10px] text-fg-dim">
+                  {g.keys.length}
+                </span>
               </div>
-            )}
-          </div>
+              {/* 容器叫 -list：侧栏上那个 `data-sidebar-order` 装的是**当前顺序值**，
+                  两者同名会让选择器分不清是要读顺序还是找这一块 */}
+              <div className="flex flex-col gap-1" data-sidebar-order-list={g.kind}>
+                {g.keys.map((key, i) => (
+                  <div
+                    key={key}
+                    data-sidebar-order-row={key}
+                    data-sidebar-order-index={i}
+                    draggable
+                    onDragStart={() => setSidebarDragId(key)}
+                    onDragEnd={() => {
+                      setSidebarDragId(null);
+                      setSidebarHoverId(null);
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setSidebarHoverId(key);
+                    }}
+                    onDragLeave={() => setSidebarHoverId((h) => (h === key ? null : h))}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      // 只在同一段内落位：拖到别段的行上等于没拖
+                      if (
+                        sidebarDragId &&
+                        sidebarDragId !== key &&
+                        sidebarKind(sidebarDragId) === g.kind
+                      ) {
+                        commitGroup(g.kind, placeSidebarItem(g.keys, sidebarDragId, key));
+                      }
+                      setSidebarDragId(null);
+                      setSidebarHoverId(null);
+                    }}
+                    className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors ${
+                      isSidebarTarget(sidebarDragId, sidebarHoverId, key, g.kind)
+                        ? "border-primary bg-hover"
+                        : "border-line bg-card"
+                    } ${sidebarDragId === key ? "opacity-50" : ""}`}
+                  >
+                    <GripVertical size={13} className="shrink-0 cursor-grab text-fg-dim" />
+                    {/* 清单带自己的颜色圆点，和侧栏里看到的一致 */}
+                    {sidebarColor(key) ? (
+                      <span
+                        className="size-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: sidebarColor(key) ?? undefined }}
+                      />
+                    ) : null}
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-fg-2">
+                      {sidebarLabel(key)}
+                    </span>
+                    <button
+                      onClick={() => commitGroup(g.kind, moveSidebarItem(g.keys, key, -1))}
+                      disabled={i === 0}
+                      data-act="sidebar-up"
+                      title="上移"
+                      className="grid size-6 shrink-0 place-items-center rounded text-fg-dim hover:bg-hover disabled:opacity-30"
+                    >
+                      <ChevronUp size={14} />
+                    </button>
+                    <button
+                      onClick={() => commitGroup(g.kind, moveSidebarItem(g.keys, key, 1))}
+                      disabled={i === g.keys.length - 1}
+                      data-act="sidebar-down"
+                      title="下移"
+                      className="grid size-6 shrink-0 place-items-center rounded text-fg-dim hover:bg-hover disabled:opacity-30"
+                    >
+                      <ChevronDown size={14} />
+                    </button>
+                  </div>
+                ))}
+                {g.keys.length === 0 && (
+                  <div className="px-2.5 py-1.5 text-[12.5px] text-fg-dim">
+                    这一段暂时没有可排序的项。
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
 
           <div className="mt-3 flex items-center justify-between gap-3 border-t border-line pt-3">
             <div className="min-w-0 text-[11.5px] leading-relaxed text-fg-dim">
-              存的是你动过的部分：新装的工具、新建的清单会跟在同类最后一项后面，不会跑到最底下。
+              存的是你动过的那部分：新装的工具、新建的清单会排在本段末尾，不会跑到别段去。
             </div>
             <button
               onClick={() => void saveSettings({ [SETTINGS.sidebarOrder]: "[]" })}

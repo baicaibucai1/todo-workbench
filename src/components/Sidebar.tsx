@@ -303,6 +303,25 @@ export default function Sidebar() {
     </button>
   );
 
+  /*
+   * 清单段前的那条分隔线。
+   *
+   * ⚠️ 别省：工具段与清单段之间没有这条线，清单在视觉上就成了工具组的一截 ——
+   *   用户看到的第一反应就是"清单怎么合并到工具里了"。段内的先后可以调，
+   *   段与段的边界必须是看得见的。
+   */
+  const listsHeaderNode = (
+    <div key="__lists_header">
+      <div className="my-2 border-t border-line" />
+      <div className="mt-1 mb-1 flex items-center justify-between px-2">
+        <span className="text-[11px] font-medium tracking-wide text-fg-dim">清单</span>
+        <span className="rounded bg-chip px-1.5 py-px text-[10px] text-fg-dim">
+          {lists.length}
+        </span>
+      </div>
+    </div>
+  );
+
   /** 「新建列表」是动作不是类目，不参与排序 —— 它跟在清单那一段的尾巴上 */
   const newListNode = addingList ? (
     <div key="__new_list" className="flex items-center gap-2 rounded-md px-2 py-1.5">
@@ -334,17 +353,22 @@ export default function Sidebar() {
     </button>
   );
 
-  // 把上面几种节点按 order 串起来，顺带决定"工具标题"与"新建列表"插在哪
+  // 把上面几种节点按 order 串起来，顺带决定两段标题插在哪、新建列表跟在哪
   const stream: React.ReactNode[] = [];
-  const hasToolRows = order.some((k) => sidebarKind(k) === "tool");
   const lastListIdx = order.reduce((a, k, i) => (sidebarKind(k) === "list" ? i : a), -1);
-  const lastNavIdx = order.reduce((a, k, i) => (sidebarKind(k) === "nav" ? i : a), -1);
-  let headerDone = false;
+  let toolsHeaderDone = false;
+  let listsHeaderDone = false;
   let newListDone = false;
   order.forEach((key, i) => {
-    if (sidebarKind(key) === "tool" && !headerDone) {
-      headerDone = true;
+    const kind = sidebarKind(key);
+    // 两段的标题都锚在本段第一行前；段为空时也照样出现（位置见下面兜底）
+    if (kind === "tool" && !toolsHeaderDone) {
+      toolsHeaderDone = true;
       stream.push(toolsHeaderNode);
+    }
+    if (kind === "list" && !listsHeaderDone) {
+      listsHeaderDone = true;
+      stream.push(listsHeaderNode);
     }
     const row = rowFor(key);
     if (row) stream.push(row);
@@ -352,15 +376,11 @@ export default function Sidebar() {
       newListDone = true;
       stream.push(newListNode);
     }
-    // 一个工具都没有：「工具」标题 + 空态提示回落到视图组后面
-    if (!hasToolRows && i === lastNavIdx) {
-      headerDone = true;
-      stream.push(toolsHeaderNode, toolsEmptyNode);
-    }
   });
+  // 段为空时没有行可锚，标题按固定次序补在末尾：工具段在前、清单段在后
+  if (!toolsHeaderDone) stream.push(toolsHeaderNode, toolsEmptyNode);
+  if (!listsHeaderDone) stream.push(listsHeaderNode);
   if (!newListDone) stream.push(newListNode);
-  // 连视图都没有（模块全关了）时上面的锚点会落空，兜个底
-  if (!headerDone) stream.unshift(toolsHeaderNode, toolsEmptyNode);
 
   return (
     <aside

@@ -3,7 +3,12 @@
  *
  * 验的是「左侧那一列能不能按用户的意思排」这件事的**可见结果**：
  * 设置页里看到的顺序 == 左侧栏真实顺序、改完立刻生效、刷新后还在、
- * 能跨类目混排（把清单顶到工具前面）、恢复默认回到原样。
+ * 恢复默认回到原样。
+ *
+ * ★ 侧栏是**三段结构**：智能视图 / 工具 / 清单，段与段不互通。
+ *   能改的是段**内**的先后，不能把清单拖进工具段中间 ——
+ *   一项"是什么"是它自己的属性，不该由排序决定（混排的后果就是
+ *   清单看着像工具组的一截）。所以这里守住「段边界」。
  *
  * 两条**不能改坏**的既有约束也在这儿守着：
  *   · 「图床」紧挨在「设置」正上方（browser.mjs 也有一条，这里再看一遍，
@@ -60,13 +65,14 @@ async function openBehavior() {
   await page.locator('aside[data-sidebar-width] [data-nav="settings"]').first().click();
   await page.waitForSelector('[data-settings=""] [data-section="behavior"]', { timeout: 10000 });
   await page.locator('[data-section="behavior"]').click();
-  await page.waitForSelector('[data-settings=""] [data-sidebar-order-list=""]', { timeout: 10000 });
+  await page.waitForSelector('[data-sidebar-order-list="nav"]', { timeout: 10000 });
   await page.waitForTimeout(300);
 }
 
-const settingRows = () =>
+/** 某一组里列出的行；段名就是键前缀（nav / tool / list） */
+const settingRows = (kind) =>
   page
-    .locator('[data-sidebar-order-list=""] [data-sidebar-order-row]')
+    .locator(`[data-sidebar-order-list="${kind}"] [data-sidebar-order-row]`)
     .evaluateAll((els) => els.map((e) => e.getAttribute("data-sidebar-order-row")));
 
 console.log("\n1. 准备（新装 + 示例数据）");
@@ -94,14 +100,29 @@ check("顺序是 视图 → 工具 → 清单", t0 > 0 && l0 > t0, `tool@${t0} l
 // 「位置」类（图床 / 工作区）不参与排序：它固定在侧栏最底部
 check("默认顺序里没有 place:", !k0.some((k) => k.startsWith("place:")));
 
-console.log("\n3. 设置页里看到的顺序 == 左侧栏的顺序");
+console.log("\n3. 设置页按三段分开列，且与左侧栏逐行对得上");
 await openBehavior();
-const rows0 = await settingRows();
-check("设置页列出了可排序项", rows0.length > 0, `${rows0.length} 行`);
-check("两边逐行相同", rows0.join(",") === k0.join(","), `${rows0.join(",")}`);
+const navRows = await settingRows("nav");
+const toolRows = await settingRows("tool");
+const listRows = await settingRows("list");
+console.log(`    视图(${navRows.length}) 工具(${toolRows.length}) 清单(${listRows.length})`);
+check("三段都列出了行", navRows.length > 0 && toolRows.length > 0 && listRows.length > 0);
+check("每段只含本段类型", [
+  navRows.every((k) => k.startsWith("nav:")),
+  toolRows.every((k) => k.startsWith("tool:")),
+  listRows.every((k) => k.startsWith("list:")),
+].every(Boolean), `${navRows} | ${toolRows} | ${listRows}`);
+check(
+  "三段的拼接 == 左侧栏真实顺序",
+  [...navRows, ...toolRows, ...listRows].join(",") === k0.join(","),
+  k0.join(","),
+);
 
-console.log("\n4. 下移第一项 → 立刻生效且刷新后还在");
-await page.locator('[data-sidebar-order-row] [data-act="sidebar-down"]').first().click();
+console.log("\n4. 段内下移第一项 → 立刻生效且刷新后还在");
+await page
+  .locator('[data-sidebar-order-list="nav"] [data-sidebar-order-row] [data-act="sidebar-down"]')
+  .first()
+  .click();
 await page.waitForTimeout(700);
 const k1 = await keys();
 check("前两项互换", k1[0] === k0[1] && k1[1] === k0[0], `${k1.slice(0, 2).join(",")}`);
@@ -113,21 +134,35 @@ await page.waitForTimeout(1200);
 const k2 = await keys();
 check("刷新后顺序不变（真的落库了）", k2.join(",") === k1.join(","), k2.join(","));
 
-console.log("\n5. 跨类目混排：把清单顶到工具前面");
+console.log("\n5. 段边界：清单顶不到工具段里去");
 await openBehavior();
-const rowsB = await settingRows();
-const listKey = rowsB.find((k) => k.startsWith("list:"));
-const firstTool = rowsB.findIndex((k) => k.startsWith("tool:"));
-const steps = rowsB.indexOf(listKey) - firstTool;
-for (let i = 0; i < steps; i++) {
-  await page.locator(`[data-sidebar-order-row="${listKey}"] [data-act="sidebar-up"]`).click();
+const listKeys = await settingRows("list");
+const firstList = listKeys[0];
+const toolCount = (await settingRows("tool")).length;
+// 连点上移（次数远超需要），它最多停在清单段第一位
+for (let i = 0; i < toolCount + 4; i++) {
+  const btn = page.locator(
+    `[data-sidebar-order-row="${firstList}"] [data-act="sidebar-up"]`,
+  );
+  if (await btn.isDisabled()) break;
+  await btn.click();
   await page.waitForTimeout(320);
 }
 await page.waitForTimeout(500);
-const kMix = await keys();
-console.log(`    ${kMix.join(",")}`);
-check("清单排到了第一个工具前面", kMix[firstTool] === listKey, `位置 ${firstTool} = ${kMix[firstTool]}`);
-check("混排后项数不变", kMix.length === k0.length, `${kMix.length}`);
+const kB = await keys();
+console.log(`    ${kB.join(",")}`);
+const firstListPos = kB.indexOf(firstList);
+const lastToolPos = kB.reduce((a, k, i) => (k.startsWith("tool:") ? i : a), -1);
+check("清单段第一位仍是清单", kB[firstListPos]?.startsWith("list:"), kB[firstListPos]);
+check(
+  "没有清单跑到工具段之前",
+  lastToolPos >= 0 && firstListPos > lastToolPos,
+  `末个工具@${lastToolPos} 首个清单@${firstListPos}`,
+);
+check("上移到头后按钮禁用", await page
+  .locator(`[data-sidebar-order-row="${firstList}"] [data-act="sidebar-up"]`)
+  .isDisabled());
+check("项数不变", kB.length === k0.length, `${kB.length}`);
 
 console.log("\n6. 恢复默认");
 await openBehavior();
