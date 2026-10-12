@@ -164,14 +164,53 @@ check("上移到头后按钮禁用", await page
   .isDisabled());
 check("项数不变", kB.length === k0.length, `${kB.length}`);
 
-console.log("\n6. 恢复默认");
+console.log("\n6. 折叠：工具 / 清单段可收起，状态记住");
+await page.locator('[data-act="close-settings"]').click();
+await page.waitForTimeout(600);
+
+const toolNav = 'aside[data-sidebar-width] [data-nav^="tool:"]';
+const toolHeader = 'aside[data-sidebar-width] [data-collapse-section="tool"]';
+const expanded0 = await page.locator(toolHeader).getAttribute("aria-expanded");
+check("默认展开", expanded0 === "true", String(expanded0));
+
+await page.locator(toolHeader).click();
+await page.waitForTimeout(500);
+const collapsedCount = await page.locator(toolNav).count();
+check("折叠后工具行消失", collapsedCount === 0, `${collapsedCount} 行`);
+check(
+  "折叠后清单的「新建列表」还在（只折了工具段）",
+  (await page.getByText("新建列表", { exact: true }).count()) === 1,
+);
+check("标题还在（能点开）", (await page.locator(toolHeader).count()) === 1);
+
+await page.reload({ waitUntil: "domcontentloaded" });
+await page.waitForSelector("aside[data-sidebar-width]", { timeout: 15000 });
+await page.waitForTimeout(1200);
+check(
+  "刷新后仍折叠（真的落库了）",
+  (await page.locator(toolHeader).getAttribute("aria-expanded")) === "false",
+);
+
+console.log("\n6b. 设置页里的折叠开关与侧栏等效");
+await openBehavior();
+await page.locator('[data-switch="sidebar-collapse-tool"]').click();
+await page.waitForTimeout(500);
+await page.locator('[data-act="close-settings"]').click();
+await page.waitForTimeout(600);
+check(
+  "开关打开 → 侧栏工具段展开",
+  (await page.locator(toolHeader).getAttribute("aria-expanded")) === "true",
+);
+check("工具行回来了", (await page.locator(toolNav).count()) > 0);
+
+console.log("\n7. 恢复默认（顺序 + 折叠一起回出厂）");
 await openBehavior();
 await page.locator('[data-act="sidebar-order-reset"]').click();
 await page.waitForTimeout(700);
 const k3 = await keys();
 check("恢复后 == 最初的默认顺序", k3.join(",") === k0.join(","), k3.join(","));
 
-console.log("\n7. 既有约束没被改坏");
+console.log("\n8. 既有约束没被改坏");
 await page.locator('[data-act="close-settings"]').click();
 await page.waitForTimeout(600);
 const navs = await page
@@ -187,7 +226,7 @@ const dup = (n) => txt.split("\n").filter((l) => l.trim() === n).length;
 check("「新建列表」只出现一次", dup("新建列表") === 1, `x${dup("新建列表")}`);
 check("「工具」标题只出现一次", dup("工具") <= 1, `x${dup("工具")}`);
 
-console.log("\n8. 控制台无报错");
+console.log("\n9. 控制台无报错");
 check("没有运行时报错", errors.length === 0, errors.slice(0, 3).join(" | "));
 
 console.log(`\n结果：${passed} 通过 / ${failed} 失败`);

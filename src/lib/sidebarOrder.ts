@@ -114,6 +114,43 @@ export function formatSidebarOrder(order: string[]): string {
   return JSON.stringify(clean);
 }
 
+/* ---------------------------- 段的折叠 ---------------------------- */
+
+/**
+ * 哪些段可以折叠。只有工具与清单 —— 智能视图一共四项，折起来
+ * 省下的高度抵不上多点一次的成本，不给它折叠能力。
+ */
+export type CollapsibleSection = "tool" | "list";
+
+export function isCollapsible(kind: SidebarItemKind): kind is CollapsibleSection {
+  return kind === "tool" || kind === "list";
+}
+
+/** 解析存下来的折叠段。坏数据当"全展开"处理，别让侧栏打不开 */
+export function parseCollapsedSections(raw: string | undefined): CollapsibleSection[] {
+  try {
+    const v = JSON.parse(raw ?? "");
+    if (Array.isArray(v)) {
+      return v.filter(
+        (x): x is CollapsibleSection => x === "tool" || x === "list",
+      );
+    }
+  } catch {
+    // 解析不了就当全展开
+  }
+  return [];
+}
+
+/** 切换一段的折叠态；返回新数组（不改动原数组，方便直接落库） */
+export function toggleSection(
+  collapsed: CollapsibleSection[],
+  section: CollapsibleSection,
+): CollapsibleSection[] {
+  return collapsed.includes(section)
+    ? collapsed.filter((s) => s !== section)
+    : [...collapsed, section];
+}
+
 /** 上移（-1）/ 下移（+1）；到头了返回原数组，让调用方能直接拿结果落库 */
 export function moveSidebarItem(order: string[], key: string, delta: number): string[] {
   const from = order.indexOf(key);

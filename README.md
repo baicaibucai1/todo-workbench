@@ -732,7 +732,7 @@ main/
       toolStore.ts     工具私有表读写
       settings.ts      设置键与默认值（禁裸字符串键）
       detailSections.ts 详情面板分区顺序
-      sidebarOrder.ts  侧栏类目顺序（分三段，段内可排、段间不互通）
+      sidebarOrder.ts  侧栏三段（分序、段内可排、段间不互通、可折叠）
       rowStyle.ts      列表行表面样式（选中浮起等共用规则）
       datetime.ts      时间转换与格式化
       couriers.ts      快递公司表

@@ -71,6 +71,14 @@ export const SETTINGS = {
    * 走默认顺序（视图 → 工具 → 清单）。解析与补位见 lib/sidebarOrder.ts。
    */
   sidebarOrder: "behavior.sidebarOrder",
+  /**
+   * 侧栏里被**折叠**的段（JSON 数组，元素是 "tool" / "list"）。
+   *
+   * 只有工具与清单两段可折叠 —— 智能视图就四项，折起来反而多一次点击。
+   * 状态是**持久的**：上次收起了，这次打开还是收着；在设置页里也能改，
+   * 与点侧栏标题等效（见 lib/sidebarOrder.ts 的 parse/toggle）。
+   */
+  sidebarCollapsed: "behavior.sidebarCollapsed",
   reminderEnabled: "reminder.enabled",
   reminderSystem: "reminder.system",
   reminderSnooze: "reminder.snoozeMinutes",
@@ -374,6 +382,8 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   // 才有的，写死一份只会让新加的那些"不在配置里"。空数组 = 没排过 = 默认顺序，
   // 也就是各来源各排（视图 → 工具 → 清单），与这个功能上线前完全一致。
   [SETTINGS.sidebarOrder]: "[]",
+  // 默认全展开：折叠是收记忆，不是出新偏好 —— 没动过就该是全开的样子
+  [SETTINGS.sidebarCollapsed]: "[]",
   [SETTINGS.reminderEnabled]: "1",
   [SETTINGS.reminderSystem]: "0",
   [SETTINGS.reminderSnooze]: "10",

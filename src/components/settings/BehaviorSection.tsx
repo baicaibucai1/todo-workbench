@@ -24,13 +24,17 @@ import {
 import { useStore } from "../../store";
 import {
   formatSidebarOrder,
+  isCollapsible,
   moveSidebarItem,
+  parseCollapsedSections,
   parseSidebarOrder,
   placeSidebarItem,
   resolveSidebarOrder,
   sidebarKind,
+  toggleSection,
   SIDEBAR_GROUPS,
   SIDEBAR_KIND_LABEL,
+  type CollapsibleSection,
   type SidebarItemKind,
 } from "../../lib/sidebarOrder";
 import {
@@ -124,14 +128,31 @@ export function BehaviorSection({
     void saveSettings({ [SETTINGS.sidebarOrder]: formatSidebarOrder(next) });
 
   /*
+   * 段的折叠：与左侧栏点段标题等效（同一个设置键），这里是个"遥控器" ——
+   * 想收起工具段不必先回侧栏。智能视图不可折，开关自然也不给它。
+   */
+  const sidebarCollapsed = parseCollapsedSections(settings[SETTINGS.sidebarCollapsed]);
+  const toggleCollapsed = (section: CollapsibleSection) =>
+    void saveSettings({
+      [SETTINGS.sidebarCollapsed]: JSON.stringify(
+        toggleSection(sidebarCollapsed, section),
+      ),
+    });
+
+  /*
    * 按段切开。存的数组是**扁平**的（用户拖出来的先后），这里先由
    * resolveSidebarOrder 归一化成"视图段 → 工具段 → 清单段"，再按 kind 分片，
    * 于是每组内部的操作天然不会越过段的边界。
+   *
+   * collapsible / collapsed 就地算好：JSX 里直接用，避免在回调里
+   * 重新收窄 SidebarItemKind（"nav" 进不了折叠那扇门）。
    */
   const sidebarGroups = SIDEBAR_GROUPS.map((kind) => ({
     kind,
     label: SIDEBAR_KIND_LABEL[kind],
     keys: sidebarOrder.filter((k) => sidebarKind(k) === kind),
+    collapsible: isCollapsible(kind),
+    collapsed: isCollapsible(kind) && sidebarCollapsed.includes(kind),
   }));
 
   /** 只动一段：把这段的新顺序塞回去，其余段原样保留 */
@@ -452,26 +473,37 @@ export function BehaviorSection({
       <div className="mt-5">
         <SectionTitle
           title="侧栏顺序"
-          desc="左侧那一列分三段：智能视图、工具、清单。每段**内部**可以拖动排序，段与段不互通。"
+          desc="左侧那一列分三段。每段**内部**可拖动排序、可收起；段与段不互通。"
         />
-        <Card>
-          {/*
-            分三段渲染，而不是一条混排的长列表 ——
-            清单属于清单段，工具属于工具段：一项"是什么"是它自己的属性，
-            不该由排序决定。混排之后清单在视觉上就成了工具组的一部分。
-          */}
-          {sidebarGroups.map((g, gi) => (
-            <div key={g.kind} className={gi > 0 ? "mt-4 border-t border-line pt-3" : ""}>
-              <div className="mb-1 flex items-center justify-between px-2">
-                <span className="text-[11px] font-medium tracking-wide text-fg-dim">
-                  {g.label}
-                </span>
-                <span className="rounded bg-chip px-1.5 py-px text-[10px] text-fg-dim">
+        {/*
+          分三段、各自成卡，而不是一条混排的长列表 ——
+          清单属于清单段，工具属于工具段：一项"是什么"是它自己的属性，
+          不该由排序决定。混排之后清单在视觉上就成了工具组的一部分。
+        */}
+        {sidebarGroups.map((g) => (
+          <div key={g.kind} className="mt-3">
+            <div className="mb-1.5 flex items-center justify-between gap-3 px-1">
+              <span className="text-[11px] font-medium tracking-wide text-fg-dim">
+                {g.label}
+              </span>
+              <div className="flex shrink-0 items-center gap-2.5">
+                {g.collapsible && (
+                  <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-fg-dim">
+                    在侧栏收起
+                    <Switch
+                      on={g.collapsed}
+                      onToggle={() => toggleCollapsed(g.kind as CollapsibleSection)}
+                      testId={`sidebar-collapse-${g.kind}`}
+                    />
+                  </label>
+                )}                <span className="rounded bg-chip px-1.5 py-px text-[10px] text-fg-dim">
                   {g.keys.length}
                 </span>
               </div>
-              {/* 容器叫 -list：侧栏上那个 `data-sidebar-order` 装的是**当前顺序值**，
-                  两者同名会让选择器分不清是要读顺序还是找这一块 */}
+            </div>
+            {/* 容器叫 -list：侧栏上那个 `data-sidebar-order` 装的是**当前顺序值**，
+                两者同名会让选择器分不清是要读顺序还是找这一块 */}
+            <Card>
               <div className="flex flex-col gap-1" data-sidebar-order-list={g.kind}>
                 {g.keys.map((key, i) => (
                   <div
@@ -502,7 +534,7 @@ export function BehaviorSection({
                       setSidebarDragId(null);
                       setSidebarHoverId(null);
                     }}
-                    className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors ${
+                    className={`flex items-center gap-2 rounded-lg border px-2.5 py-1 transition-colors ${
                       isSidebarTarget(sidebarDragId, sidebarHoverId, key, g.kind)
                         ? "border-primary bg-hover"
                         : "border-line bg-card"
@@ -540,28 +572,35 @@ export function BehaviorSection({
                   </div>
                 ))}
                 {g.keys.length === 0 && (
-                  <div className="px-2.5 py-1.5 text-[12.5px] text-fg-dim">
+                  <div className="px-2.5 py-1 text-[12.5px] text-fg-dim">
                     这一段暂时没有可排序的项。
                   </div>
                 )}
               </div>
-            </div>
-          ))}
-
-          <div className="mt-3 flex items-center justify-between gap-3 border-t border-line pt-3">
-            <div className="min-w-0 text-[11.5px] leading-relaxed text-fg-dim">
-              存的是你动过的那部分：新装的工具、新建的清单会排在本段末尾，不会跑到别段去。
-            </div>
-            <button
-              onClick={() => void saveSettings({ [SETTINGS.sidebarOrder]: "[]" })}
-              data-act="sidebar-order-reset"
-              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-card px-2.5 py-1.5 text-[12.5px] text-fg-3 hover:bg-hover"
-            >
-              <RotateCcw size={12} />
-              恢复默认
-            </button>
+            </Card>
           </div>
-        </Card>
+        ))}
+
+        <div className="mt-4 flex items-center justify-between gap-3 px-1">
+          <div className="min-w-0 text-[11.5px] leading-relaxed text-fg-dim">
+            存的是你动过的那部分：新装的工具、新建的清单会排在本段末尾，不会跑到别段去。
+          </div>
+          <button
+            onClick={() =>
+              void saveSettings({
+                [SETTINGS.sidebarOrder]: "[]",
+                // 「恢复默认」管的是这一整块：顺序与折叠一起回出厂 ——
+                // 收起是后来的动作，用户要的"默认"应该是全展开的样子
+                [SETTINGS.sidebarCollapsed]: "[]",
+              })
+            }
+            data-act="sidebar-order-reset"
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-card px-2.5 py-1.5 text-[12.5px] text-fg-3 hover:bg-hover"
+          >
+            <RotateCcw size={12} />
+            恢复默认
+          </button>
+        </div>
       </div>
 
       <div className="mt-5">

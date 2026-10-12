@@ -16,6 +16,8 @@ import {
   FolderOpen,
   Trash2,
   Settings2,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { useStore } from "../store";
 import { fetchCounts } from "../lib/repo";
@@ -23,9 +25,12 @@ import { ICONS } from "../lib/icons";
 import { DEFAULT_PROFILE, SETTINGS, SIDEBAR_WIDTH, parseSidebarWidth } from "../lib/settings";
 import { useDragWidth } from "../lib/useDragWidth";
 import {
+  parseCollapsedSections,
   parseSidebarOrder,
   resolveSidebarOrder,
   sidebarKind,
+  toggleSection,
+  type CollapsibleSection,
 } from "../lib/sidebarOrder";
 
 import UrgentPanel from "./UrgentPanel";
@@ -169,6 +174,20 @@ export default function Sidebar() {
     liveKeys,
   );
 
+  /*
+   * 段的折叠：点段标题收起/展开，状态落库（behavior.sidebarCollapsed）——
+   * 上次收起了，这次打开还是收着。只有工具与清单两段可折（智能视图一共
+   * 四项，折起来省的高度抵不上多点一次的成本）。
+   */
+  const collapsedSections = parseCollapsedSections(settings[SETTINGS.sidebarCollapsed]);
+  const toggleSectionCollapsed = (section: CollapsibleSection) =>
+    void saveSettings({
+      [SETTINGS.sidebarCollapsed]: JSON.stringify(
+        toggleSection(collapsedSections, section),
+      ),
+    });
+  const isCollapsed = (kind: "tool" | "list") => collapsedSections.includes(kind);
+
   /** 按一个稳定键渲染出那一行；键对应的东西已经不在了（停用/删除）就返回 null */
   const rowFor = (key: string): React.ReactNode => {
     const kind = sidebarKind(key);
@@ -279,18 +298,34 @@ export default function Sidebar() {
    * 「工具」小标题。它**不是**一行可排序的项 —— 工具被排到哪儿，
    * 它就跟着第一个工具走；一个工具都没有时，它回到视图组后面（原来的位置），
    * 后面补一句可操作的提示，而不是留一片空白让人以为功能坏了。
+   *
+   * 标题整行可点：收起/展开本段（只有工具与清单有这能力，见 isCollapsed）。
    */
-  const toolsHeaderNode = (
-    <div key="__tools_header">
-      <div className="my-2 border-t border-line" />
-      <div className="mt-1 mb-1 flex items-center justify-between px-2">
-        <span className="text-[11px] font-medium tracking-wide text-fg-dim">工具</span>
-        <span className="rounded bg-chip px-1.5 py-px text-[10px] text-fg-dim">
-          {enabledTools.length}
-        </span>
+  const sectionHeader = (section: CollapsibleSection): React.ReactNode => {
+    const collapsed = isCollapsed(section);
+    const count = section === "tool" ? enabledTools.length : lists.length;
+    const label = section === "tool" ? "工具" : "清单";
+    return (
+      <div key={`__${section}_header`}>
+        <div className="my-2 border-t border-line" />
+        <button
+          onClick={() => toggleSectionCollapsed(section)}
+          data-collapse-section={section}
+          aria-expanded={!collapsed}
+          title={collapsed ? "展开" : "收起"}
+          className="mt-1 mb-1 flex w-full items-center justify-between gap-2 rounded px-2 py-0.5 text-left hover:bg-hover"
+        >
+          <span className="flex min-w-0 items-center gap-1 text-[11px] font-medium tracking-wide text-fg-dim">
+            {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+            {label}
+          </span>
+          <span className="shrink-0 rounded bg-chip px-1.5 py-px text-[10px] text-fg-dim">
+            {count}
+          </span>
+        </button>
       </div>
-    </div>
-  );
+    );
+  };
 
   const toolsEmptyNode = (
     <button
@@ -304,23 +339,11 @@ export default function Sidebar() {
   );
 
   /*
-   * 清单段前的那条分隔线。
+   * 清单段前的那条分隔线（在 sectionHeader 里）。
    *
-   * ⚠️ 别省：工具段与清单段之间没有这条线，清单在视觉上就成了工具组的一截 ——
-   *   用户看到的第一反应就是"清单怎么合并到工具里了"。段内的先后可以调，
-   *   段与段的边界必须是看得见的。
+   * ⚠️ 段与段的边界必须是看得见的 —— 没有这条线，清单在视觉上就成了
+   *   工具组的一截，用户看到的第一反应就是"清单怎么合并到工具里了"。
    */
-  const listsHeaderNode = (
-    <div key="__lists_header">
-      <div className="my-2 border-t border-line" />
-      <div className="mt-1 mb-1 flex items-center justify-between px-2">
-        <span className="text-[11px] font-medium tracking-wide text-fg-dim">清单</span>
-        <span className="rounded bg-chip px-1.5 py-px text-[10px] text-fg-dim">
-          {lists.length}
-        </span>
-      </div>
-    </div>
-  );
 
   /** 「新建列表」是动作不是类目，不参与排序 —— 它跟在清单那一段的尾巴上 */
   const newListNode = addingList ? (
@@ -364,11 +387,17 @@ export default function Sidebar() {
     // 两段的标题都锚在本段第一行前；段为空时也照样出现（位置见下面兜底）
     if (kind === "tool" && !toolsHeaderDone) {
       toolsHeaderDone = true;
-      stream.push(toolsHeaderNode);
+      stream.push(sectionHeader("tool"));
     }
     if (kind === "list" && !listsHeaderDone) {
       listsHeaderDone = true;
-      stream.push(listsHeaderNode);
+      stream.push(sectionHeader("list"));
+    }
+    // 折叠的段：标题在，行不渲染（「新建列表」也属于清单段，跟着藏）
+    if (kind === "tool" && isCollapsed("tool")) return;
+    if (kind === "list" && isCollapsed("list")) {
+      if (i === lastListIdx) newListDone = true;
+      return;
     }
     const row = rowFor(key);
     if (row) stream.push(row);
@@ -378,9 +407,13 @@ export default function Sidebar() {
     }
   });
   // 段为空时没有行可锚，标题按固定次序补在末尾：工具段在前、清单段在后
-  if (!toolsHeaderDone) stream.push(toolsHeaderNode, toolsEmptyNode);
-  if (!listsHeaderDone) stream.push(listsHeaderNode);
-  if (!newListDone) stream.push(newListNode);
+  if (!toolsHeaderDone) {
+    stream.push(sectionHeader("tool"));
+    if (!isCollapsed("tool")) stream.push(toolsEmptyNode);
+  }
+  if (!listsHeaderDone) stream.push(sectionHeader("list"));
+  // 折叠时「新建列表」跟着清单段一起藏
+  if (!newListDone && !isCollapsed("list")) stream.push(newListNode);
 
   return (
     <aside
