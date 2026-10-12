@@ -115,16 +115,14 @@
   #create-card > h2 + * { margin-top: 0; }        /* h2 自己带 10px，别叠成两截 */
   .f { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
   .f > span { font-size: 11px; color: var(--dim); }
-  .f > select, .f > input { width: 100%; }
+  .f > select, .f > input, .f > textarea { width: 100%; }
+  .f > textarea { font-family: inherit; font-size: 12.5px; resize: vertical; }
   .f-full { width: 100%; }
-  .f-store { flex: 0 0 128px; }
+  .f-store { flex: 0 0 118px; }
   .f-track { flex: 1 1 140px; }
-  .f-cat { flex: 0 0 92px; }
-  .f-lvl { flex: 0 0 74px; }
-  .f-code { flex: 1 1 132px; }
-  .f-rep { flex: 1 1 96px; }
-  .f-day { flex: 0 0 126px; }
-  #code { font-family: var(--mono); font-size: 12.5px; }
+  .f-courier { flex: 0 0 92px; }
+  .f-cat { flex: 1 1 150px; }
+  .f-day { flex: 0 0 138px; }
   #orderSn { font-family: var(--mono); font-size: 13px; }
   #trackingNo { font-family: var(--mono); font-size: 12.5px; }
   /* 订单号 + 它下面那条格式提示要捆在一起：提示得贴在订单号框正下方，
@@ -152,7 +150,10 @@
   .store-row input.cs { flex: 1 1 150px; font-family: var(--mono); }
   .store-row button { flex: 0 0 auto; padding: 4px 8px; font-size: 12px; }
   .store-row.empty-cs input.cs { border-color: var(--warn); }
-  #sitBox { width: 100%; min-height: 110px; resize: vertical; font-family: inherit; font-size: 12.5px; }
+  /* 设置页「下拉选项」：四个编辑框 2×2 摆（窄屏退成一列） */
+  .optgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+  .optgrid textarea { width: 100%; min-height: 84px; resize: vertical; font-family: inherit; font-size: 12.5px; }
+  @media (max-width: 560px) { .optgrid { grid-template-columns: 1fr; } }
   .hint { color: var(--dim); font-size: 11.5px; margin-top: 8px; }
   .hint code, .cfg-note code { font-family: var(--mono); color: var(--fg2); }
   .cfg-note { color: var(--dim); font-size: 11.5px; margin: 0 0 8px; }
@@ -185,6 +186,9 @@
   /* 列表行里的店铺小标签：8 个店的单子混在一起时，一眼能分清是哪家的 */
   .ticket .store-tag { display: inline-block; color: var(--dim); border: 1px solid var(--line); border-radius: 4px;
     padding: 0 4px; font-size: 10.5px; line-height: 15px; margin-right: 5px; }
+  /* 快递公司 / 情况的小标签：同一套样式 —— 对应台账里那两列的彩色标签 */
+  .ticket .courier-tag, .ticket .cat-tag { display: inline-block; color: var(--dim); border: 1px solid var(--line);
+    border-radius: 4px; padding: 0 4px; font-size: 10.5px; line-height: 15px; margin-right: 5px; }
   .ticket .when { margin-left: auto; color: var(--dim); font-size: 11px; white-space: nowrap; flex: 0 0 auto; }
   .ticket.s-done .code, .ticket.s-done .title { color: var(--dim); }
 
@@ -220,6 +224,12 @@
   .sect { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
   .sect > label { display: block; font-size: 12.5px; color: var(--fg2); margin-bottom: 6px; }
   #d-note { width: 100%; min-height: 96px; resize: vertical; font-family: inherit; }
+  /* 处理区第一行：处理方式 / 结果 / 已结账 —— 状态就是从这三个派生的（见 statusOf） */
+  .prorow { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 10px; }
+  .prorow .f { flex: 1 1 130px; }
+  .chk { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; color: var(--fg2);
+    white-space: nowrap; padding-bottom: 6px; cursor: pointer; }
+  .chk input { width: auto; }
   .client-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
   /* 右栏的店铺选择：它决定呼起时用哪个客服 ID，所以摆在呼起按钮正上方 */
   .store-line { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12.5px; color: var(--fg2); }
@@ -268,6 +278,11 @@
       <!-- 主线三样：哪个店、哪一单、哪个包裹。
            字段都带**可见的小标签** —— 填了值之后 placeholder 就没了，
            靠位置去猜"这格是什么"最容易填错，标签一直看得见。 -->
+      <!-- 字段与用户那张登记台账一一对应（0.7.0）：
+           快递单号 / 快递 / 订单发货时间 / 情况 / 登记时间(自动) / 处理方式 / 结果 /
+           附件(详细描述) / 店铺 / 订单号 / 结账。
+           处理方式、结果、结账是**事后**才有的信息，登记页不摆 —— 在「查看」页那条
+           单子的处理区里补；补到哪一步，状态就跟到哪一步（见 statusOf）。 -->
       <div class="r r-sn">
         <label class="f f-store">
           <span>店铺</span>
@@ -283,39 +298,30 @@
         </span>
         <label class="f f-track">
           <span>快递单号</span>
-          <input id="trackingNo" placeholder="有就填" />
+          <input id="trackingNo" placeholder="台账第一列的 A 单号" />
+        </label>
+        <label class="f f-courier">
+          <span>快递公司</span>
+          <select id="courier" title="申通 / 中通 / 圆通… —— 选项在「设置」页里加"></select>
         </label>
       </div>
-      <!-- 分类与编号这些次要信息 -->
       <div class="r">
+        <label class="f f-day">
+          <span>订单发货时间</span>
+          <input id="shipped" type="date" title="台账里的「订单发货时间」" />
+        </label>
         <label class="f f-cat">
           <span>情况</span>
           <select id="category" title="这条单是什么情况 —— 选项在「设置」页里加"></select>
         </label>
-        <label class="f f-lvl">
-          <span>等级</span>
-          <select id="level" title="严重程度"></select>
-        </label>
-        <label class="f f-code">
-          <span>异常单号</span>
-          <input id="code" placeholder="留空自动生成" />
-        </label>
-        <label class="f f-rep">
-          <span>登记人</span>
-          <input id="reporter" placeholder="谁登记的" />
-        </label>
-        <label class="f f-day">
-          <span>发生日期</span>
-          <input id="occurred" type="date" />
-        </label>
       </div>
       <label class="f f-full">
-        <span>异常内容</span>
-        <input id="title" placeholder="一句话说清发生了什么（必填）" />
+        <span>详细描述</span>
+        <textarea id="title" rows="2" placeholder="对应台账的「附件（详细描述）」，有就写，选填"></textarea>
       </label>
       <div class="r actions">
         <button class="primary" id="add">登记</button>
-        <span class="hint" id="codeHint"></span>
+        <span class="hint" id="formHint">订单号、快递单号至少填一个 · 处理方式 / 结果 / 结账 登记后在「查看」页补</span>
       </div>
     </div>
   </section>
@@ -324,7 +330,7 @@
   <section class="view" id="view-browse" hidden>
     <div class="pane-left">
       <div class="filters">
-        <input id="search" placeholder="搜单号 / 快递单号 / 内容 / 登记人" />
+        <input id="search" placeholder="搜单号 / 快递单号 / 描述 / 处理方式" />
         <select id="filter" title="按处理状态过滤"></select>
         <select id="storeFilter" title="只看某个店铺的单子"></select>
         <select id="catFilter" title="只看某种情况的单子"></select>
@@ -371,19 +377,24 @@
       <div class="hint" id="cfgHint"></div>
     </div>
 
-    <!-- 情况选项：登记时那个下拉里的东西。品类是会变的，别写死在代码里 ——
-         用户自己一行一个地加，保存进 kv。 -->
+    <!-- 下拉选项：快递公司 / 情况 / 处理方式 / 结果 —— 四个下拉的选项都会随业务变，
+         别写死在代码里 —— 用户自己一行一个地加，保存进 kv。 -->
     <div class="card" style="max-width:720px; margin-top:12px">
-      <h2>情况选项</h2>
+      <h2>下拉选项</h2>
       <p class="cfg-note" style="margin-top:0">
-        登记时「情况」那个下拉里的选项，<b>一行一个</b> —— 加一行就多一个，改完点保存。
+        登记页和处理区里四个下拉的选项，<b>一行一个</b> —— 加一行就多一个，改完点保存。
         已经在单子上的旧值不受影响。
       </p>
-      <textarea id="sitBox" rows="6"></textarea>
-      <div class="r" style="margin-top:8px">
-        <button class="primary" id="saveSituations">保存选项</button>
+      <div class="optgrid">
+        <label class="f"><span>快递公司</span><textarea id="optCouriers" rows="5"></textarea></label>
+        <label class="f"><span>情况</span><textarea id="optSituations" rows="5"></textarea></label>
+        <label class="f"><span>处理方式</span><textarea id="optHandlings" rows="5"></textarea></label>
+        <label class="f"><span>结果</span><textarea id="optResults" rows="5"></textarea></label>
       </div>
-      <div class="hint" id="sitHint"></div>
+      <div class="r" style="margin-top:8px">
+        <button class="primary" id="saveOpts">保存选项</button>
+        <span class="hint" id="optHint"></span>
+      </div>
     </div>
 
     <details data-host-only style="max-width:720px; margin-top:12px">
@@ -404,13 +415,17 @@
   var TABLE = "tickets";               // 裸表名，宿主会拼成 tool_abnormal_ticket_tickets
 
   /* 业务字典。
-     · 「情况」的选项已经**做成可配置**（存 kv: situations，在「设置」页里
-       一行一个地改）—— 下面这个只是出厂默认，第一次打开时的种子。
-     · 「等级」先保持写死，要改就改这里。 */
-  var DEFAULT_SITUATIONS = ["缺货", "物流异常", "错漏发", "破损", "其他"];
-  var LEVELS = ["轻微", "一般", "严重"];
+     · 四个下拉（快递公司 / 情况 / 处理方式 / 结果）的选项都**可配置** ——
+       各存一份 kv，在「设置 → 下拉选项」里一行一个地改。
+       下面这些只是出厂默认；「情况」那组直接抄的用户台账（平台自动退款 /
+       退件标注 / 未揽收拦截 / 途中拦截 / 运单未达 / 退件中转（空包）/ 缺少物流）。
+     · 「状态」不再单独存 —— 由 处理方式 / 结果 派生（见 statusOf），所以这里
+       只留三个状态名给筛选和统计用。 */
+  var DEFAULT_COURIERS = ["申通", "中通", "圆通"];
+  var DEFAULT_SITUATIONS = ["平台自动退款", "退件标注", "未揽收拦截", "途中拦截", "运单未达", "退件中转（空包）", "缺少物流"];
+  var DEFAULT_HANDLINGS = ["平台申诉", "越级申诉", "快递来源"];
+  var DEFAULT_RESULTS = ["开仓中转"];
   var STATUSES = ["待处理", "处理中", "已关闭"];
-  var CODE_PREFIX = "YC";
 
   var seq = 0;
   var waiting = new Map();
@@ -501,7 +516,7 @@
    * 二、数据门面：一套接口，两套实现
    * ------------------------------------------------------------------
    * 上面那半边是宿主（row.*），下面那半边是独立运行时的 localStorage。
-   * 调用方（load / add / advance / remove / saveNote）只认这个门面。
+   * 调用方（load / add / remove / saveNote / saveProcField）只认这个门面。
    * ================================================================== */
 
   var memFallback = Object.create(null);
@@ -598,9 +613,18 @@
    * 存哪：kv（宿主 core_tool_kv / 独立态 localStorage）。
    *   kv 是给"配置"准备的、tickets 表是给"记录"准备的 —— 店铺表是配置，单子是记录。
    * ------------------------------------------------------------------ */
-  var cfg = { stores: [], situations: [] };
+  var cfg = { stores: [], couriers: [], situations: [], handlings: [], results: [] };
   var STORE_KEY = "stores";
-  var SITUATION_KEY = "situations";
+  // 四组下拉选项各存一份 kv（situations 沿用旧键名，老配置直接升级上来）
+  var OPT_KEYS = { couriers: "couriers", situations: "situations", handlings: "handlings", results: "results" };
+  // 每组选项：kv 键 → 出厂默认 → 页面上的编辑框 → 要刷新的下拉（处理区那两个
+  // 由 renderDetail 每次重画，不用在这里刷）
+  var OPT_DEFS = [
+    { key: "couriers",   box: "optCouriers",   defaults: DEFAULT_COURIERS,   label: "快递公司", sels: ["courier"] },
+    { key: "situations", box: "optSituations", defaults: DEFAULT_SITUATIONS, label: "情况",     sels: ["category"] },
+    { key: "handlings",  box: "optHandlings",  defaults: DEFAULT_HANDLINGS,  label: "处理方式", sels: [] },
+    { key: "results",    box: "optResults",    defaults: DEFAULT_RESULTS,    label: "结果",     sels: [] },
+  ];
   /**
    * 已经**实测确认**的 (店铺名, 客服 ID)。两个都是用户给的 ERP 链接里读出来的：
    *   · 5 店 `cs_355831479` —— 还实测过：拼上另一个订单号，客户端确实打开了那张单
@@ -657,8 +681,8 @@
     return null;
   }
 
-  /** 「情况」选项的解析：坏数据一律当"没配过"，用默认那组兜底；重复项去掉 */
-  function parseSituations(raw) {
+  /** kv 里存的选项（JSON 串）解析：坏数据一律当"没配过"，用默认那组兜底；重复项去掉 */
+  function parseStoredList(raw) {
     if (!raw) return null;
     var arr;
     try { arr = JSON.parse(raw); } catch (e) { return null; }
@@ -672,7 +696,7 @@
   }
 
   async function loadCfg() {
-    var raw = null, legacy = null, rawSit = null;
+    var raw = null, legacy = null;
     try {
       var res = await Cfg.get({ key: STORE_KEY });
       raw = res && res.value;
@@ -681,20 +705,24 @@
         var old = await Cfg.get({ key: "mallcsid" });
         legacy = old && old.value;
       }
-      var res2 = await Cfg.get({ key: SITUATION_KEY });
-      rawSit = res2 && res2.value;
+      // 四组下拉选项：存过就用存的，没存过用出厂默认
+      for (var i = 0; i < OPT_DEFS.length; i++) {
+        var def = OPT_DEFS[i];
+        var got = null;
+        try { var r2 = await Cfg.get({ key: OPT_KEYS[def.key] }); got = r2 && r2.value; } catch (e2) { /* 读不到用默认 */ }
+        cfg[def.key] = parseStoredList(got) || def.defaults.slice();
+      }
     } catch (e) { /* 读不到就用默认表 */ }
 
     var list = parseStores(raw);
     if (!list && legacy) { list = defaultStores(); list[0].mallcsid = legacy; }
     cfg.stores = list || defaultStores();
-    cfg.situations = parseSituations(rawSit) || DEFAULT_SITUATIONS.slice();
 
     renderStores();
     fillStoreSelect();
     fillBindStore();
-    fillSituationSelect();
-    renderSituationEditor();
+    refreshOptSelects();
+    renderOptEditors();
     fillBrowseFilters();
     showCfgHint();
     showSnHint();     // 订单号框初始化时是空的，这条会自己清掉
@@ -816,47 +844,76 @@
         : " —— 登记时选店铺，呼起时自动用对应的那个。");
   }
 
-  /* ---------------- 情况选项（可配置，存 kv） ---------------- */
+  /* ---------------- 四组下拉选项（可配置，存 kv） ---------------- */
 
-  /** 登记页「情况」下拉：用配置里的选项；没配过就用出厂默认 */
-  function fillSituationSelect(keep) {
-    var el = document.getElementById("category");
-    if (!el) return;
-    var list = cfg.situations.length ? cfg.situations : DEFAULT_SITUATIONS;
-    var cur = keep != null ? keep : el.value;
-    fillSelect(el, list);
-    if (cur && list.indexOf(cur) >= 0) el.value = cur;     // 现场录单时保持已选的那项
+  /** "一行一个"的文本 → 去空行、去重 */
+  function parseOptionList(raw) {
+    var lines = String(raw == null ? "" : raw).split("\n");
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+      var v = lines[i].trim();
+      if (v && out.indexOf(v) < 0) out.push(v);
+    }
+    return out;
+  }
+
+  /** 一个选项下拉的 <option> 串：开头放「（没选）」—— 不选就保持空，
+      别把第一项悄悄记进单子。单子上的旧值就算从配置里删了也要能显示出来。 */
+  function optOptions(list, cur) {
+    var opts = list.slice();
+    if (cur && opts.indexOf(cur) < 0) opts.push(cur);
+    return '<option value="">（没选）</option>' + opts.map(function (v) {
+      return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + ">" + esc(v) + "</option>";
+    }).join("");
+  }
+
+  /** 刷新登记页的选项下拉（配置刚读回来 / 刚保存时调）。
+      现场录单时保持已选的那项 —— 用户先选了「中通」再改选项，不该被弹回「（没选）」。 */
+  function refreshOptSelects() {
+    for (var i = 0; i < OPT_DEFS.length; i++) {
+      var def = OPT_DEFS[i];
+      var list = cfg[def.key].length ? cfg[def.key] : def.defaults;
+      for (var j = 0; j < def.sels.length; j++) {
+        var el = document.getElementById(def.sels[j]);
+        if (!el) continue;
+        var cur = el.value;
+        el.innerHTML = optOptions(list, "");
+        if (cur && list.indexOf(cur) >= 0) el.value = cur;
+      }
+    }
     fillBrowseFilters();
   }
 
-  /** 设置页的情况编辑框：一行一个。已在单子上的旧值不受影响 */
-  function renderSituationEditor() {
-    var el = document.getElementById("sitBox");
-    if (!el) return;
-    var list = cfg.situations.length ? cfg.situations : DEFAULT_SITUATIONS;
-    el.value = list.join("\n");
-    var hint = document.getElementById("sitHint");
-    if (hint) hint.textContent = "共 " + list.length + " 个选项 —— 登记时的下拉和查看页的筛选都在用它们。";
+  /** 设置页的四个编辑框：一行一个。已在单子上的旧值不受影响 */
+  function renderOptEditors() {
+    for (var i = 0; i < OPT_DEFS.length; i++) {
+      var def = OPT_DEFS[i];
+      var box = document.getElementById(def.box);
+      if (!box) continue;
+      var list = cfg[def.key].length ? cfg[def.key] : def.defaults;
+      box.value = list.join("\n");
+    }
+    var hint = document.getElementById("optHint");
+    if (hint) hint.textContent = "登记页和处理区的下拉都在用这四组选项，空着也行（那就只剩「（没选）」）。";
   }
 
-  async function saveSituations() {
-    var el = document.getElementById("sitBox");
-    var lines = String(el.value || "").split("\n");
-    var next = [];
-    for (var i = 0; i < lines.length; i++) {
-      var v = lines[i].trim();
-      if (v && next.indexOf(v) < 0) next.push(v);          // 去空行、去重复
-    }
-    if (!next.length) { toast("至少留一个选项"); return; }
-    cfg.situations = next;
+  async function saveOpts() {
+    var said = [];
     try {
-      await Cfg.set({ key: SITUATION_KEY, value: JSON.stringify(next) });
-      renderSituationEditor();
-      fillSituationSelect();
-      repaint();          // 筛选下拉的选项变了，过滤结果跟着对一遍
-      renderDetail();
-      toast("已保存 " + next.length + " 个情况选项");
-    } catch (err) { toast("存不上：" + err.message); }
+      for (var i = 0; i < OPT_DEFS.length; i++) {
+        var def = OPT_DEFS[i];
+        var box = document.getElementById(def.box);
+        var next = parseOptionList(box ? box.value : "");
+        cfg[def.key] = next;
+        await Cfg.set({ key: OPT_KEYS[def.key], value: JSON.stringify(next) });
+        said.push(def.label + " " + next.length + " 个");
+      }
+    } catch (err) { toast("存不上：" + friendlyErr(err)); return; }
+    renderOptEditors();
+    refreshOptSelects();
+    repaint();          // 筛选下拉的选项变了，过滤结果跟着对一遍
+    renderDetail();     // 右栏处理区那两个下拉也用这些选项
+    toast("已保存选项：" + said.join(" · "));
   }
 
   /* ---------------- 设置页：用一条链接把客服 ID 绑到某个店铺 ---------------- */
@@ -963,7 +1020,6 @@
     });
   }
   function pad(n) { return n < 10 ? "0" + n : "" + n; }
-  function ymd(d) { return "" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()); }
 
   /** ISO → "10-11 17:20"（本地时区） */
   function timeText(iso) {
@@ -1012,35 +1068,9 @@
       " · schema v" + ctx.schemaVersion + " · " + (ctx.runtime === "desktop" ? "桌面版" : "浏览器");
   }
 
-  /* ---------------- 单号 ---------------- */
-
-  /**
-   * 生成单号：YC-<yyyymmdd>-<三位序号>。
-   *
-   * 序号从"当前已加载的这批数据"里算最大值 +1。⚠️ 它只在这批数据里找，
-   * 所以 limit 之外的老单号是不算数的（demo 阶段够用）。
-   * 真要做到永不撞号，得再加一张"计数表"或用 kv 存当天序号 —— 留到细化时做。
-   */
-  function genCode(rows) {
-    var prefix = CODE_PREFIX + "-" + ymd(new Date()) + "-";
-    var max = 0;
-    rows.forEach(function (r) {
-      var c = String(r.code || "");
-      if (c.indexOf(prefix) !== 0) return;
-      var n = parseInt(c.slice(prefix.length), 10);
-      if (!isNaN(n) && n > max) max = n;
-    });
-    var next = max + 1;
-    return prefix + (next < 10 ? "00" + next : next < 100 ? "0" + next : "" + next);
-  }
-
-  function refreshCodeHint() {
-    var el = document.getElementById("codeHint");
-    if (!el) return;
-    el.textContent = "单号留空会自动按 " + CODE_PREFIX + "-" + ymd(new Date()) + "-001 往下排";
-  }
-
   /* ---------------- 状态 ---------------- */
+  // （0.7.0 起没有"YC- 自动编号"了 —— 台账认的是快递单号 / 订单号，
+  //   再造一套内部编号反而是第二套要人维护的记号。）
 
   var allRows = [];      // 最近一次从库里拉回来的全部
   var shown = [];        // 左栏当前显示的那些（过滤后）
@@ -1059,19 +1089,18 @@
     }
     return null;
   }
-  function statusOf(r) { return r.status || STATUSES[0]; }
+  /** 状态不再单独存 —— 由处理字段**派生**（对应台账的工作流：
+      登记时什么都没填 → 待处理；补了处理方式 → 处理中；补了结果 → 已关闭）。
+      好处：不用再维护一个和"处理到哪了"平行的状态位，两者永远不会对不上；
+      要"重开"一条单子，把结果清掉就行。 */
+  function statusOf(r) {
+    if (String(r.result || "").trim()) return "已关闭";
+    if (String(r.handling || "").trim()) return "处理中";
+    return "待处理";
+  }
   function badgeOf(status) {
     var cls = status === "待处理" ? "wait" : status === "处理中" ? "doing" : "done";
     return '<span class="badge ' + cls + '">' + esc(status) + "</span>";
-  }
-  /** 状态机：待处理 → 处理中 → 已关闭 → 待处理（重新打开） */
-  function nextStatus(cur) {
-    if (cur === "待处理") return "处理中";
-    if (cur === "处理中") return "已关闭";
-    return "待处理";
-  }
-  function actOf(status) {
-    return status === "待处理" ? "开始处理" : status === "处理中" ? "关闭" : "重新打开";
   }
 
   /* ---------------- 渲染：左栏列表 ---------------- */
@@ -1101,21 +1130,22 @@
           ' data-store="' + esc(String(r.store || "")) + '"' +
           ' title="' + esc(wakeTip) + '">↗</button>'
         : "";
+      // 第一行 = 台账的 A 列：快递单号（没填就退到订单号），旁边挂快递公司小标签。
+      // 第二行 = 状态 + 店铺 + 情况 + 描述（状态标签不能回第一行 —— 0.6.2 踩过）。
+      var mainSn = String(r.tracking_no || "").trim() || sn;
       return '<div class="ticket' + (st === "已关闭" ? " s-done" : "") + '" data-ticket data-id="' + esc(r.id) + '"' +
         ' role="option" aria-selected="' + (r.id === selectedId ? "true" : "false") + '">' +
         '<div class="l1">' +
-          '<span class="code">' + esc(r.code || "(未编号)") + "</span>" +
+          '<span class="code">' + esc(mainSn || "(无单号)") + "</span>" +
+          (String(r.courier || "").trim() ? '<span class="courier-tag">' + esc(r.courier) + "</span>" : "") +
           wake +
           '<span class="when">' + timeText(r.created_at) + "</span>" +
         "</div>" +
-        // 状态标签与店铺标签、内容排一行（第二行）——
-        // ★ 原来它挤在第一行，长单号（拼多多单号 22 个字符）就没地方了：
-        //   浏览器会在单号里的连字符后断行，把行撑成两行高。
-        //   现在第一行只放"哪一单 + 什么时候登记的"，单号一定是一整行。
         '<div class="title">' +
           badgeOf(st) +
           (String(r.store || "").trim() ? '<span class="store-tag">' + esc(r.store) + "</span>" : "") +
-          esc(r.title || "(无内容)") + "</div>" +
+          (String(r.category || "").trim() ? '<span class="cat-tag">' + esc(r.category) + "</span>" : "") +
+          esc(r.title || "(无描述)") + "</div>" +
       "</div>";
     }).join("");
   }
@@ -1369,14 +1399,15 @@
     }
 
     var st = statusOf(r);
+    // kv 顺序对齐用户的台账：哪一单（订单号）→ 哪个店 → 哪个包裹（快递单号/公司/
+    // 发货时间）→ 什么情况；登记/更新时间是台账的「登记时间」。
     var kv = [
       ["订单号", r.order_sn],
       ["店铺", r.store],
-      ["情况", r.category],
       ["快递单号", r.tracking_no],
-      ["等级", r.level],
-      ["登记人", r.reporter],
-      ["发生日期", dayText(r.occurred_at)],
+      ["快递公司", r.courier],
+      ["订单发货时间", dayText(r.shipped_at)],
+      ["情况", r.category],
       ["登记时间", fullTime(r.created_at)],
       ["最近更新", fullTime(r.updated_at)],
     ].map(function (pair) {
@@ -1385,19 +1416,28 @@
 
     el.innerHTML =
       '<div class="d-head">' +
-        '<span class="d-code">' + esc(r.code || "(未编号)") + "</span>" +
+        '<span class="d-code">' + esc(String(r.tracking_no || "").trim() || r.order_sn || "(无单号)") + "</span>" +
         badgeOf(st) +
       "</div>" +
-      '<div class="d-title">' + esc(r.title || "(无内容)") + "</div>" +
+      '<div class="d-title">' + esc(r.title || "(无描述)") + "</div>" +
       '<dl class="kv">' + kv + "</dl>" +
       '<div class="sect">' +
         storePicker(r) +
         '<div class="client-row">' + clientBtns(r) + "</div>" +
         snDetailHint(r) +
+        // 处理区第一行 = 台账的「处理方式 / 结果 / 结账」三列。状态是它们派生的，
+        // 改任何一个，头顶的徽标和左栏列表都会跟着走（change 事件里统一落库）。
+        '<div class="prorow">' +
+          '<label class="f"><span>处理方式</span><select id="d-handling">' +
+            optOptions(cfg.handlings.length ? cfg.handlings : DEFAULT_HANDLINGS, r.handling) + "</select></label>" +
+          '<label class="f"><span>结果</span><select id="d-result">' +
+            optOptions(cfg.results.length ? cfg.results : DEFAULT_RESULTS, r.result) + "</select></label>" +
+          '<label class="chk"><input type="checkbox" id="d-settled"' +
+            (r.settled === "1" ? " checked" : "") + "> 已结账</label>" +
+        "</div>" +
         '<label for="d-note">处理情况</label>' +
         '<textarea id="d-note" placeholder="写清怎么处理的、卡在哪、谁在跟 —— 边打边存"></textarea>' +
         '<div class="d-ops">' +
-          '<button class="primary" data-act="advance">' + esc(actOf(st)) + "</button>" +
           '<button class="danger" data-act="del">删除</button>' +
           '<span class="saved" id="d-saved"></span>' +
         "</div>" +
@@ -1454,7 +1494,7 @@
       if (sf && String(r.store || "") !== sf) return false;
       if (cf && String(r.category || "") !== cf) return false;
       if (!q) return true;
-      return [r.code, r.order_sn, r.tracking_no, r.title, r.reporter, r.category, r.note].some(function (v) {
+      return [r.order_sn, r.tracking_no, r.courier, r.title, r.category, r.handling, r.result, r.note].some(function (v) {
         return String(v || "").toLowerCase().indexOf(q) >= 0;
       });
     });
@@ -1475,7 +1515,6 @@
       fillBrowseFilters();     // 单子上出现过的店/情况可能变了，筛选项跟上
       repaint();
       renderDetail();
-      refreshCodeHint();
       if (state === "standalone") showMeta();   // 读到了才知道 localStorage 通不通，副标题要跟上
     } catch (err) {
       document.getElementById("list").innerHTML =
@@ -1484,22 +1523,26 @@
   }
 
   async function add() {
-    var title = document.getElementById("title").value.trim();
-    if (!title) { toast("先写清异常内容"); document.getElementById("title").focus(); return; }
-
+    var title = document.getElementById("title").value;
     var sn = normSn(document.getElementById("orderSn").value);
+    var track = normTracking(document.getElementById("trackingNo").value);
+    // 台账上每一条都挂着「A 单号」或订单号 —— 两个都空的基本是误触，拦下来
+    if (!sn && !track) {
+      toast("订单号、快递单号至少填一个");
+      document.getElementById("orderSn").focus();
+      return;
+    }
+
     // 同一个订单号录第二遍 90% 是手滑 —— 第一次点先拦下（提示条里有「去看那条」），
     // 确实要再录一条（比如补发后新问题）就再点一次「登记」。
     var dup = findDupBySn(sn);
     if (dup && dupAck !== sn) {
       dupAck = sn;
       showSnHint();
-      toast("这个订单号已经登记过：" + (dup.code || "(未编号)") + "（" + statusOf(dup) + "）—— 确实要再录一条，就再点一次「登记」");
+      toast("这个订单号已经登记过：" + (String(dup.tracking_no || "").trim() || dup.order_sn || "(无单号)") +
+        "（" + statusOf(dup) + "）—— 确实要再录一条，就再点一次「登记」");
       return;
     }
-
-    var code = document.getElementById("code").value.trim() || genCode(allRows);
-    if (findRowByCode(code)) { toast("单号 " + code + " 已经登记过了"); return; }
 
     var now = new Date().toISOString();
     try {
@@ -1507,32 +1550,31 @@
         table: TABLE,
         row: {
           id: "t-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),   // ★ 主键必须自己给
-          code: code,
           order_sn: sn,                                                  // 存干净的，别把全角连字符带进库
-          tracking_no: normTracking(document.getElementById("trackingNo").value),
+          tracking_no: track,
+          courier: document.getElementById("courier").value,
+          shipped_at: document.getElementById("shipped").value || "",
           store: document.getElementById("store").value,
-          title: title,
+          title: title.trim(),
           category: document.getElementById("category").value,
-          level: document.getElementById("level").value,
-          status: STATUSES[0],
-          reporter: document.getElementById("reporter").value.trim(),
-          occurred_at: document.getElementById("occurred").value || "",
+          handling: "",        // 处理方式 / 结果 / 结账是事后补的（查看页处理区），登记时先空着
+          result: "",
+          settled: "",
           note: "",
           created_at: now,
           updated_at: now,
         },
       });
-      document.getElementById("code").value = "";
       document.getElementById("orderSn").value = "";
       document.getElementById("trackingNo").value = "";
       document.getElementById("title").value = "";
       dupAck = "";
-      // 店铺**不清** —— 连着录同一个店的单子是常态
+      // 店铺、快递公司、发货时间**不清** —— 连着录同一个店 / 同一批发货的单子是常态
       showSnHint();        // 清空后那条格式提示也要跟着消掉
       await load();
       // 故意**不**自动跳到「查看」：现场录单常常是一条接一条，
       // 跳走反而要手动跳回来。要确认就去查看页，它已经在最上面。
-      toast(code + " 已登记");
+      toast((String(track || "").trim() || sn) + " 已登记");
       document.getElementById("title").focus();
     } catch (err) {
       toast("登记失败：" + friendlyErr(err));
@@ -1550,25 +1592,25 @@
   function friendlyErr(err) {
     var msg = String((err && err.message) || err || "");
     if (/no column named|has no column/i.test(msg)) {
-      return "工具表还是旧结构（缺新加的列，比如 store / tracking_no）。去「设置 → 数据库 → " +
+      return "工具表还是旧结构（缺新加的列，比如 courier / handling / result）。去「设置 → 数据库 → " +
         "异常单号登记」点一次「清理数据」，下次打开会按新结构重建 —— 注意那会清掉已登记的记录。";
     }
     return msg;
   }
 
-  function findRowByCode(code) {
-    return allRows.filter(function (r) { return String(r.code || "") === code; })[0] || null;
-  }
-
-  async function advance(id) {
-    var row = findRow(id);
-    if (!row) return;
-    var next = nextStatus(statusOf(row));
+  /** 处理区的一项（处理方式 / 结果 / 已结账）落库。状态是它们派生的，
+      存完要整表重载 —— 徽标、列表、统计都跟着走。 */
+  async function saveProcField(field, value) {
+    if (!selectedId) return;
     try {
-      await Db.update({ table: TABLE, id: id, patch: { status: next, updated_at: new Date().toISOString() } });
+      await saveNote();        // 先把备注落盘，下面 load() 会重建右栏
+      var patch = { updated_at: new Date().toISOString() };
+      patch[field] = value;
+      await Db.update({ table: TABLE, id: selectedId, patch: patch });
       await load();
-      toast("已改为「" + next + "」");
-    } catch (err) { toast("改不动：" + err.message); }
+      var row = findRow(selectedId);
+      toast("已记处理 · 现在是「" + (row ? statusOf(row) : "?") + "」");
+    } catch (err) { toast("没存上：" + friendlyErr(err)); }
   }
 
   async function remove(id) {
@@ -1631,12 +1673,12 @@
       return '<option value="' + esc(v) + '"' + (v === selected ? " selected" : "") + ">" + esc(v) + "</option>";
     }).join("");
   }
-  fillSituationSelect();        // 配置还没读回来之前先用出厂默认，loadCfg 回来会再刷一遍
-  fillSelect(document.getElementById("level"), LEVELS, "一般");
+  refreshOptSelects();           // 配置还没读回来之前先用出厂默认，loadCfg 回来会再刷一遍
   document.getElementById("filter").innerHTML =
     '<option value="*">全部状态</option>' +
     STATUSES.map(function (s) { return '<option value="' + esc(s) + '">' + esc(s) + "</option>"; }).join("");
-  document.getElementById("occurred").value =
+  // 发货时间默认今天 —— 大多数单子登的就是最近几天发的货
+  document.getElementById("shipped").value =
     "" + new Date().getFullYear() + "-" + pad(new Date().getMonth() + 1) + "-" + pad(new Date().getDate());
 
   /* ---------------- 事件 ---------------- */
@@ -1654,7 +1696,7 @@
 
   document.getElementById("add").addEventListener("click", function () { void add(); });
   document.getElementById("saveCfg").addEventListener("click", function () { void saveCfg(); });
-  document.getElementById("saveSituations").addEventListener("click", function () { void saveSituations(); });
+  document.getElementById("saveOpts").addEventListener("click", function () { void saveOpts(); });
   // 店铺表：加一行 / 删一行。删的只是编辑区里的那一行，要点「保存店铺表」才落盘 ——
   // 否则点错一下就悄悄改了配置。
   document.getElementById("addStore").addEventListener("click", function () {
@@ -1699,9 +1741,7 @@
     setTimeout(function () { normalizeCsInput(inp); }, 0);   // 粘贴要先等浏览器把值写进去
   });
 
-  document.getElementById("title").addEventListener("keydown", function (e) {
-    if (e.key === "Enter") { e.preventDefault(); void add(); }
-  });
+  // 详细描述现在是多行 textarea：回车要留给换行，不再绑「回车=登记」
   // 订单号边打边说它像不像拼多多单号（以及重复没重复）—— 格式不对时客户端会弹起来
   // 却定位不到，重复录会把同一件事记两遍，都在这儿提前说清。一动输入就重置重复确认位。
   document.getElementById("orderSn").addEventListener("input", function () {
@@ -1803,23 +1843,27 @@
     renderDetail();
   });
 
-  // 右栏：处理动作
+  // 右栏：处理动作（0.7.0 起"推进状态"就是改处理方式 / 结果 —— 派生状态没有独立按钮了）
   document.getElementById("detail").addEventListener("click", function (e) {
     var btn = e.target.closest("button[data-act]");
     if (!btn || !selectedId) return;
     var act = btn.getAttribute("data-act");
     var row = findRow(selectedId);
-    if (act === "advance") { void saveNote().then(function () { return advance(selectedId); }); }
-    else if (act === "del") { void remove(selectedId); }
+    if (act === "del") { void remove(selectedId); }
     else if (act === "open-client") { void saveNote(); openClient(row && row.order_sn, row && row.store); }
     else if (act === "copy-link") { copyClientUrl(row && row.order_sn, row && row.store); }
   });
   document.getElementById("detail").addEventListener("input", function (e) {
     if (e.target && e.target.id === "d-note") scheduleNoteSave();
   });
-  // 右栏换店铺：这是"这条单属于哪个店"的唯一修正入口 —— 登记时选错了就靠它
+  // 右栏换店铺：这是"这条单属于哪个店"的唯一修正入口 —— 登记时选错了就靠它。
+  // 处理方式 / 结果 / 已结账也是一改就存 —— 它们就是"处理到哪一步"本身。
   document.getElementById("detail").addEventListener("change", function (e) {
-    if (e.target && e.target.id === "d-store") void setTicketStore(e.target.value);
+    var id = e.target && e.target.id;
+    if (id === "d-store") void setTicketStore(e.target.value);
+    else if (id === "d-handling") void saveProcField("handling", e.target.value);
+    else if (id === "d-result") void saveProcField("result", e.target.value);
+    else if (id === "d-settled") void saveProcField("settled", e.target.checked ? "1" : "");
   });
 
   /** 把选中那条的店铺改掉。呼起用的客服 ID 就跟着换 */
@@ -1853,7 +1897,6 @@
   (function boot() {
     paintHostDot();
     showMeta();
-    refreshCodeHint();
 
     // 独立打开时没有宿主推主题，跟系统走。宿主一旦连上会用 ctx.theme 覆盖掉
     try {

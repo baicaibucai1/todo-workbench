@@ -324,7 +324,8 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   }));
   check("异常单：默认停在「登记」页", boot.createVisible && boot.browseHidden, JSON.stringify(boot));
 
-  // 只填内容与订单号，单号留空 —— 该自动生成 YC-<当日>-<三位序号>
+  // 填订单号 + 描述（0.7.0 起描述选填，这里照填）。登记页字段对齐用户的台账：
+  // 快递单号 / 快递公司 / 订单发货时间 / 情况 / 描述 —— 没有 YC- 自动编号了。
   await page.fill("#title", "来料尺寸超差");
   await page.fill("#orderSn", "261011-442394294633154");
   await page.waitForTimeout(250);
@@ -346,7 +347,6 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   const stayed = await page.evaluate(() => ({
     on: !document.getElementById("view-create").hidden,
     cleared: document.getElementById("title").value === "",
-    codeHint: document.getElementById("codeHint").textContent,
   }));
   check("异常单：登记后留在登记页（现场录单是一条接一条）", stayed.on === true, String(stayed.on));
   check("异常单：登记后清空了内容输入框", stayed.cleared === true, String(stayed.cleared));
@@ -379,8 +379,9 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     meta: document.getElementById("meta").textContent,
   }));
   check("异常单：列表里能看到刚登记的那条", list.cards === 1, `cards=${list.cards}`);
-  check("异常单：单号按格式自动生成", /^YC-\d{8}-\d{3}$/.test(list.code), list.code);
-  check("异常单：新登记的默认是「待处理」", list.badge === "待处理", list.badge);
+  check("异常单：第一行显示的是单号（快递单号没填就退到订单号）",
+    list.code === "261011-442394294633154", list.code);
+  check("异常单：新登记的默认是「待处理」（处理方式/结果都没填，派生的）", list.badge === "待处理", list.badge);
   check("异常单：统计条跟着动了", /待处理\s*1/.test(list.stats), list.stats);
   check("异常单：副标题说清了数据存在浏览器里", /浏览器|localStorage/.test(list.meta), list.meta);
 
@@ -389,14 +390,19 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     code: (document.querySelector("#detail .d-code") || {}).textContent || "",
     title: (document.querySelector("#detail .d-title") || {}).textContent || "",
     hasNote: !!document.getElementById("d-note"),
-    act: (document.querySelector('#detail button[data-act="advance"]') || {}).textContent || "",
+    hasHandling: !!document.getElementById("d-handling"),
+    hasResult: !!document.getElementById("d-result"),
+    hasSettled: !!document.getElementById("d-settled"),
+    hasAdvance: !!document.querySelector('#detail button[data-act="advance"]'),
     selCount: document.querySelectorAll('.ticket[aria-selected="true"]').length,
   }));
   check("异常单：右栏默认选中第一条并显示它的详情",
     detail.code === list.code && /来料尺寸超差/.test(detail.title), JSON.stringify(detail));
   check("异常单：左栏那一行被标成选中态", detail.selCount === 1, String(detail.selCount));
   check("异常单：右栏有处理区（处理情况输入框）", detail.hasNote === true, String(detail.hasNote));
-  check("异常单：处理按钮文字跟着状态走", detail.act === "开始处理", detail.act);
+  check("异常单：处理区有 处理方式 / 结果 / 已结账（台账那三列），没有「推进状态」按钮了",
+    detail.hasHandling === true && detail.hasResult === true && detail.hasSettled === true &&
+      detail.hasAdvance === false, JSON.stringify(detail));
 
   /* ---------- 订单号 + 呼起本地客户端 ----------
    * 这块的核心是**链接拼得对不对**：少一个参数、拼接顺序错了，
@@ -759,6 +765,9 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     code: (document.querySelector(".ticket .code") || {}).textContent || "",
     note: (document.getElementById("d-note") || {}).value || "",
     hasOrderSn: (document.getElementById("detail").innerText || "").indexOf("261011-442394294633154") >= 0,
+    badge: (document.querySelector("#detail .d-head .badge") || {}).textContent || "",
+    settled: document.getElementById("d-settled") ? document.getElementById("d-settled").checked : null,
+    handling: document.getElementById("d-handling") ? document.getElementById("d-handling").value : "",
     cfg: (document.querySelector("#stores .store-row:first-child input.name") || {}).value || "",
     cs: (document.querySelector("#stores .store-row:first-child input.cs") || {}).value || "",
     storeRows: document.querySelectorAll("#stores .store-row").length,
@@ -768,34 +777,61 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     `${afterReload.cards} 张 / ${afterReload.code}`);
   check("异常单：处理情况也还在（备注真的落盘了）",
     /已通知供应商/.test(afterReload.note), afterReload.note.slice(0, 24));
+  check("异常单：还没补处理信息的行，刷新后状态就是「待处理」（派生初值稳定）",
+    afterReload.handling === "" && afterReload.badge === "待处理" && afterReload.settled === false,
+    JSON.stringify({ handling: afterReload.handling, badge: afterReload.badge, settled: afterReload.settled }));
   check("异常单：订单号刷新后也还在（是存进表里的，不是内存）",
     afterReload.hasOrderSn === true, String(afterReload.hasOrderSn));
   check("异常单：改过的店铺表刷新后还在（独立态落 localStorage）",
     afterReload.cfg === "拾野" && afterReload.cs === "cs_999999999" && afterReload.storeRows === 8,
     `${afterReload.storeRows} 行 / ${afterReload.cfg} / ${afterReload.cs}`);
 
-  /* ---------- 状态推进（在右栏处理区点） ---------- */
-  await page.click('#detail button[data-act="advance"]');
-  await page.waitForTimeout(500);
+  /* ---------- 状态由处理字段派生（0.7.0）----------
+     台账的工作流就是：登记时啥都没填 → 待处理；补了处理方式 → 处理中；
+     补了结果 → 已关闭。状态不再是一个要人另维护的按钮。 */
+  await page.selectOption("#d-handling", "平台申诉");
+  await page.waitForTimeout(900);
   const s1 = await page.evaluate(() => (document.querySelector("#detail .d-head .badge") || {}).textContent);
-  check("异常单：右栏推进到「处理中」", s1 === "处理中", String(s1));
+  check("异常单：补了处理方式 → 状态派生为「处理中」", s1 === "处理中", String(s1));
 
-  await page.click('#detail button[data-act="advance"]');
-  await page.waitForTimeout(500);
+  await page.selectOption("#d-result", "开仓中转");
+  await page.waitForTimeout(900);
   const s2 = await page.evaluate(() => {
     const item = document.querySelector(".ticket");
-    const btn = document.querySelector('#detail button[data-act="advance"]');
     return {
       badge: (document.querySelector("#detail .d-head .badge") || {}).textContent || "",
       listStruck: item ? item.className.indexOf("s-done") >= 0 : false,
-      act: (btn || {}).textContent || "",
+      settled: document.getElementById("d-settled") ? document.getElementById("d-settled").checked : null,
       noteKept: (document.getElementById("d-note") || {}).value || "",
     };
   });
-  check("异常单：再推进到「已关闭」", s2.badge === "已关闭", s2.badge);
+  check("异常单：补了结果 → 「已关闭」", s2.badge === "已关闭", s2.badge);
   check("异常单：左栏那一行也跟着变成关闭样式", s2.listStruck === true, String(s2.listStruck));
-  check("异常单：关闭后按钮变成「重新打开」", s2.act === "重新打开", s2.act);
-  check("异常单：推进状态没有把处理情况弄丢", /已通知供应商/.test(s2.noteKept), s2.noteKept.slice(0, 24));
+  check("异常单：处理情况没有在重建右栏时弄丢", /已通知供应商/.test(s2.noteKept), s2.noteKept.slice(0, 24));
+
+  // 勾上「已结账」（台账的最后一列）—— 一改就落库
+  await page.click("#d-settled");
+  await page.waitForTimeout(900);
+  const settledNow = await page.evaluate(() => (document.getElementById("d-settled") || {}).checked);
+  check("异常单：勾上「已结账」后重建的右栏还保持着勾选", settledNow === true, String(settledNow));
+
+  /* ---------- 处理进度要真的落库：整页刷新一遍再读 ---------- */
+  await openStandalone("abnormal-ticket", "file");
+  await page.click("#tab-browse");
+  await page.waitForTimeout(400);
+  const procReload = await page.evaluate(() => ({
+    badge: (document.querySelector("#detail .d-head .badge") || {}).textContent || "",
+    handling: document.getElementById("d-handling") ? document.getElementById("d-handling").value : "",
+    settled: document.getElementById("d-settled") ? document.getElementById("d-settled").checked : null,
+    struck: ((document.querySelector(".ticket") || {}).className || "").includes("s-done"),
+    noteKept: (document.getElementById("d-note") || {}).value || "",
+  }));
+  check("异常单：处理方式 / 结果 / 已结账 刷新后还在（处理进度落的是库，不是界面）",
+    procReload.handling === "平台申诉" && procReload.badge === "已关闭" &&
+      procReload.settled === true && procReload.struck === true,
+    JSON.stringify(procReload));
+  check("异常单：处理进度落库也没弄丢处理情况", /已通知供应商/.test(procReload.noteKept),
+    procReload.noteKept.slice(0, 24));
 
   /* ---------- 搜索：筛掉的是显示，不是数据 ---------- */
   await page.fill("#search", "这个关键词不存在");
@@ -819,9 +855,11 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     /从左边挑一条|还没有登记过/.test(afterDel.detailText), afterDel.detailText.slice(0, 30));
 
   /* ---------- 没填订单号 → 呼起按钮该禁用 ----------
-     不要给一个"能点、但点了什么都不发生"的按钮 —— 那比藏起来更难查。 */
+     不要给一个"能点、但点了什么都不发生"的按钮 —— 那比藏起来更难猜。
+     0.7.0 起只有快递单号也能登记（台账里就有缺订单号的行），所以走快递单号进来。 */
   await page.click("#tab-create");
-  await page.fill("#title", "没订单号的异常");
+  await page.fill("#trackingNo", "7770011122233");
+  await page.fill("#title", "没订单号、只有快递单号的异常");
   await page.click("#add");
   await page.waitForTimeout(400);
   await page.click("#tab-browse");
@@ -918,47 +956,51 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
        · 8 个店的单子混在一个列表里，要能按店铺（和情况）筛。
      放在最后：这段会再登记 2 条单，前面的计数断言不该被影响。 */
 
-  // ① 情况选项：出厂默认 + 设置页里的编辑框（默认值就是出厂那组）
+  // ① 四组下拉选项：出厂默认（情况那组抄的就是用户台账）+ 设置页的四个编辑框
+  const SIT7 = ["平台自动退款", "退件标注", "未揽收拦截", "途中拦截", "运单未达", "退件中转（空包）", "缺少物流"];
   const sitBoot = await page.evaluate(() => ({
     opts: [...document.querySelectorAll("#category option")].map((o) => o.value),
-    box: (document.getElementById("sitBox") || {}).value || "",
+    couriers: [...document.querySelectorAll("#courier option")].map((o) => o.value),
+    box: (document.getElementById("optSituations") || {}).value || "",
+    boxes: ["optCouriers", "optSituations", "optHandlings", "optResults"].filter((id) => document.getElementById(id)).length,
     hasTrack: !!document.getElementById("trackingNo"),
   }));
-  check("异常单：情况选项有个出厂默认（缺货/物流异常/错漏发/破损/其他）",
-    JSON.stringify(sitBoot.opts) === JSON.stringify(["缺货", "物流异常", "错漏发", "破损", "其他"]),
-    sitBoot.opts.join("/"));
-  check("异常单：设置页的情况编辑框默认值 = 出厂那组（一行一个）",
-    sitBoot.box === "缺货\n物流异常\n错漏发\n破损\n其他", JSON.stringify(sitBoot.box));
+  check("异常单：情况选项出厂默认 = 台账里那 7 种（开头还有个「（没选）」）",
+    JSON.stringify(sitBoot.opts) === JSON.stringify([""].concat(SIT7)), sitBoot.opts.join("/"));
+  check("异常单：快递公司下拉出厂默认 申通/中通/圆通（同样带「（没选）」）",
+    JSON.stringify(sitBoot.couriers) === JSON.stringify(["", "申通", "中通", "圆通"]), sitBoot.couriers.join("/"));
+  check("异常单：设置页有四个选项编辑框（快递公司/情况/处理方式/结果）",
+    sitBoot.boxes === 4 && sitBoot.box === SIT7.join("\n"), JSON.stringify(sitBoot));
   check("异常单：登记表单有「快递单号」这一格", sitBoot.hasTrack === true, String(sitBoot.hasTrack));
 
   // ② 改情况选项 → 保存 → 登记下拉立刻更新 → 刷新后还在
   await page.click("#tab-settings");
   await page.waitForTimeout(400);
-  await page.fill("#sitBox", "缺货\n发错\n客户要求\n其他");
-  await page.click("#saveSituations");
-  await page.waitForTimeout(500);
+  await page.fill("#optSituations", "缺货\n发错\n客户要求\n其他");
+  await page.click("#saveOpts");
+  await page.waitForTimeout(600);
   const sitSaved = await page.evaluate(() => ({
     opts: [...document.querySelectorAll("#category option")].map((o) => o.value),
-    hint: (document.getElementById("sitHint") || {}).textContent || "",
+    toast: (document.getElementById("toast") || {}).textContent || "",
   }));
-  check("异常单：保存后登记下拉立刻换成新选项",
-    JSON.stringify(sitSaved.opts) === JSON.stringify(["缺货", "发错", "客户要求", "其他"]),
+  check("异常单：保存后登记下拉立刻换成新选项（「（没选）」还在最前面）",
+    JSON.stringify(sitSaved.opts) === JSON.stringify(["", "缺货", "发错", "客户要求", "其他"]),
     sitSaved.opts.join("/"));
-  check("异常单：编辑框下面报告了选项数量", /4 个选项/.test(sitSaved.hint), sitSaved.hint);
+  check("异常单：保存完说清四组各存了几个", /情况 4 个/.test(sitSaved.toast), sitSaved.toast);
 
   await openStandalone("abnormal-ticket", "file");
   await page.click("#tab-settings");
   await page.waitForTimeout(400);
   const sitReload = await page.evaluate(() => ({
-    box: (document.getElementById("sitBox") || {}).value || "",
+    box: (document.getElementById("optSituations") || {}).value || "",
     opts: [...document.querySelectorAll("#category option")].map((o) => o.value),
   }));
   check("异常单：情况选项刷新后还在（独立态落 localStorage）",
     sitReload.box === "缺货\n发错\n客户要求\n其他" &&
-      JSON.stringify(sitReload.opts) === JSON.stringify(["缺货", "发错", "客户要求", "其他"]),
+      JSON.stringify(sitReload.opts) === JSON.stringify(["", "缺货", "发错", "客户要求", "其他"]),
     JSON.stringify(sitReload));
 
-  // ③ 快递单号：登记一条（店选六店、情况选发错、快递单号带空格要清掉）
+  // ③ 快递单号 + 快递公司 + 发货时间：登记一条（店选六店、情况选发错、快递单号带空格要清掉）
   await page.click("#tab-create");
   await page.waitForTimeout(400);
   await page.fill("#title", "0.6.0 冒烟：包裹丢了");
@@ -969,6 +1011,8 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   const tracked = await page.evaluate(() => document.getElementById("trackingNo").value);
   check("异常单：快递单号里的空格失焦时被清掉", tracked === "SF9988776655", tracked);
   await page.selectOption("#store", "拼多多6店");
+  await page.selectOption("#courier", "中通");
+  await page.fill("#shipped", "2026-10-01");
   await page.selectOption("#category", "发错");
   await page.click("#add");
   await page.waitForTimeout(800);
@@ -976,15 +1020,26 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   await page.click("#tab-browse");
   await page.waitForTimeout(500);
   const trackedDetail = await page.evaluate(() => {
+    const dts = [...document.querySelectorAll("#detail .kv dt")].map((d) => d.textContent);
     const dd = [...document.querySelectorAll("#detail .kv dd")].map((d) => d.textContent);
-    const tag = document.querySelector('.ticket[aria-selected="true"] .store-tag');
-    return { sn: dd[0], store: dd[1], cat: dd[2], track: dd[3], tag: tag ? tag.textContent : "(没有标签)" };
+    const row = document.querySelector('.ticket[aria-selected="true"]');
+    return {
+      dts, dd,
+      sn: dd[0], store: dd[1], track: dd[2], courier: dd[3], shipped: dd[4], cat: dd[5],
+      tag: row ? (row.querySelector(".store-tag") || {}).textContent || "" : "",
+      cTag: row ? (row.querySelector(".courier-tag") || {}).textContent || "" : "",
+      catTag: row ? (row.querySelector(".cat-tag") || {}).textContent || "" : "",
+    };
   });
-  check("异常单：详情按 订单号→店铺→情况→快递单号 显示",
-    trackedDetail.sn === "261011-777000777000777" && trackedDetail.store === "拼多多6店" &&
-      trackedDetail.cat === "发错" && trackedDetail.track === "SF9988776655",
+  check("异常单：详情 kv 顺序 = 订单号→店铺→快递单号→快递公司→发货时间→情况（对齐台账）",
+    trackedDetail.dts.join("/") === "订单号/店铺/快递单号/快递公司/订单发货时间/情况/登记时间/最近更新" &&
+      trackedDetail.sn === "261011-777000777000777" && trackedDetail.store === "拼多多6店" &&
+      trackedDetail.track === "SF9988776655" && trackedDetail.courier === "中通" &&
+      trackedDetail.shipped === "2026-10-01" && trackedDetail.cat === "发错",
     JSON.stringify(trackedDetail));
-  check("异常单：列表行里挂着店铺小标签", trackedDetail.tag === "拼多多6店", trackedDetail.tag);
+  check("异常单：列表行里挂着 店铺 / 快递公司 / 情况 三个小标签",
+    trackedDetail.tag === "拼多多6店" && trackedDetail.cTag === "中通" && trackedDetail.catTag === "发错",
+    JSON.stringify(trackedDetail));
 
   // ④ 重复单号：实时提示 + 第一次点「登记」被拦 + 再点一次才录
   await page.click("#tab-create");
@@ -1083,8 +1138,8 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   await page.waitForTimeout(400);
   const labels = await page.evaluate(() =>
     [...document.querySelectorAll("#create-card label.f > span")].map((s) => s.textContent.trim()));
-  check("异常单：登记页每个字段都有可见标签（店铺/订单号/快递单号/情况/等级/异常单号/登记人/发生日期/异常内容）",
-    JSON.stringify(labels) === JSON.stringify(["店铺", "订单号", "快递单号", "情况", "等级", "异常单号", "登记人", "发生日期", "异常内容"]),
+  check("异常单：登记页字段 = 台账有的那些（店铺/订单号/快递单号/快递公司/发货时间/情况/描述），旧字段不再摆出来",
+    JSON.stringify(labels) === JSON.stringify(["店铺", "订单号", "快递单号", "快递公司", "订单发货时间", "情况", "详细描述"]),
     labels.join("/"));
 
   await page.fill("#orderSn", "261011-597950502412841");
@@ -1097,18 +1152,32 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
 
   const actions = await page.evaluate(() => {
     const b = document.getElementById("add").getBoundingClientRect();
-    const h = document.getElementById("codeHint").getBoundingClientRect();
-    return { gap: Math.round(Math.abs(b.top - h.top)), hint: (document.getElementById("codeHint") || {}).textContent || "" };
+    const h = document.getElementById("formHint").getBoundingClientRect();
+    return { gap: Math.round(Math.abs(b.top - h.top)), hint: (document.getElementById("formHint") || {}).textContent || "" };
   });
-  check("异常单：「登记」按钮和它那句说明并排（不再各占一整行）",
-    actions.gap < 24, JSON.stringify(actions));
+  check("异常单：「登记」按钮和那句说明并排，说明里讲清去哪补处理信息",
+    actions.gap < 24 && /处理方式/.test(actions.hint) && /查看/.test(actions.hint), JSON.stringify(actions));
+
+  /* ---------- 0.7.0：两个单号都空要拦下 ----------
+     台账上每条至少挂着快递单号或订单号之一 —— 全空的基本是误触。 */
+  const emptyBefore = await page.evaluate(() => document.querySelectorAll("#list .ticket").length);
+  await page.fill("#orderSn", "");       // 上一步的标签断言把订单号框填过了，先清干净
+  await page.fill("#trackingNo", "");
+  await page.click("#add");
+  await page.waitForTimeout(400);
+  const emptyBlocked = await page.evaluate(() => ({
+    n: document.querySelectorAll("#list .ticket").length,
+    toast: (document.getElementById("toast") || {}).textContent || "",
+  }));
+  check("异常单：订单号、快递单号都空时「登记」被拦下",
+    emptyBlocked.n === emptyBefore && /至少填一个/.test(emptyBlocked.toast),
+    JSON.stringify(emptyBlocked));
 
   /* ---------- 列表行：长单号（22 字符带连字符）不许折成两行 ----------
      用户反馈：一条 `261011-597950502412841` 在列表里被折成两行、行被撑高。
      根因是单号里的连字符 —— 浏览器默认会在 `-` 之后断行，不是宽度不够那么简单。
      修法：单号 nowrap（外加省略号兜底），并把状态标签挪到第二行给它让出整行。 */
-  await page.fill("#orderSn", "261011-597950502412841");
-  await page.fill("#code", "261011-597950502412841");     // 编号也填成这么长（用户的数据就这样）
+  await page.fill("#orderSn", "261011-597950502412841");     // 0.7.0：code 框没了，订单号本身就是那串长号
   await page.fill("#title", "长编号一行回归");
   await page.click("#add");
   await page.waitForTimeout(800);

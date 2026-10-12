@@ -205,13 +205,13 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     // 两者都用自己的私有表，表名按 id 隔离，互不干扰。
     id: "abnormal-ticket",
     name: "异常单号登记",
-    version: "0.6.2",
+    version: "0.7.0",
     description:
-      "登记异常单号：记下订单号、快递单号、店铺、异常内容、情况（选项可在设置里加）、等级与处理状态，可一键呼起拼多多商家客户端打开那张订单。多个店铺各配一个客服 ID（在「设置」页粘一条 ERP 链接就能绑），按单子所属店铺呼起。同一订单号重复登记会当场提示，查看页可按店铺 / 情况筛选。数据存在工具自己的表里，与待办数据互不干扰",
+      "按你的异常登记台账建：快递单号、快递公司、订单发货时间、情况、店铺、订单号、详细描述、处理方式、结果、结账。可一键呼起拼多多商家客户端打开那张订单，多个店铺各配一个客服 ID（在「设置」页粘一条 ERP 链接就能绑），按单子所属店铺呼起。同一订单号重复登记会当场提示；状态由处理方式 / 结果自动派生。四个下拉的选项都能在设置里改。数据存在工具自己的表里，与待办数据互不干扰",
     // receipt（单据）已在 icons.ts 白名单里；写错会静默退回包裹图标
     icon: "receipt",
     entry: "index.html",
-    dbVersion: 4,
+    dbVersion: 5,
     author: "内置",
     schema: {
       tables: [
@@ -219,16 +219,16 @@ const BUILTIN_TOOLS: ToolManifest[] = [
           name: "tickets",
           columns: [
             { name: "id", type: "text", pk: true },
-            { name: "code", type: "text" },
             { name: "order_sn", type: "text" },
             { name: "tracking_no", type: "text" },
+            { name: "courier", type: "text" },
+            { name: "shipped_at", type: "text" },
             { name: "store", type: "text" },
             { name: "title", type: "text" },
             { name: "category", type: "text" },
-            { name: "level", type: "text" },
-            { name: "status", type: "text" },
-            { name: "reporter", type: "text" },
-            { name: "occurred_at", type: "text" },
+            { name: "handling", type: "text" },
+            { name: "result", type: "text" },
+            { name: "settled", type: "text" },
             { name: "note", type: "text" },
             { name: "created_at", type: "text" },
             { name: "updated_at", type: "text" },
