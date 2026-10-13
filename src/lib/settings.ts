@@ -219,6 +219,36 @@ export const SETTINGS = {
   /** 已连接账号（邮箱）。只用于界面显示"已连接为 xxx" */
   onedriveAccount: "onedrive.account",
 
+  /* -------------------------- 金山文档（WPS 表格） -------------------------- */
+
+  /**
+   * 金山文档开放平台的应用凭证。
+   *
+   * 与 OneDrive 那对是同一个性质：`appId` 会出现在授权页网址里，不是秘密；
+   * `appKey` 才是，但它和 syncPassword / onedriveRefreshToken 一样
+   * **明文存在本机**（理由见 syncPassword 那条注释），界面上要说清楚。
+   *
+   * 走的是金山文档的**服务端 OpenAPI**（developer.kdocs.cn），个人版可用 ——
+   * WPS 365 那套 openapi.wps.cn/v7 要商业版才有，别混。
+   */
+  kdocsAppId: "kdocs.appId",
+  kdocsAppKey: "kdocs.appKey",
+  /** 目标智能表格的 file_token（文档 ID，不是分享链接里的 link_id） */
+  kdocsFileToken: "kdocs.fileToken",
+  /** 工作表 ID，整数。新表一般是 1，拿不准就用「列出工作表」试 */
+  kdocsSheetId: "kdocs.sheetId",
+  /** 短期令牌（24 小时）。过期时由下面的 refreshToken 自动续 */
+  kdocsAccessToken: "kdocs.accessToken",
+  /** access_token 的到期时刻（毫秒时间戳，字符串存） */
+  kdocsTokenExpiry: "kdocs.tokenExpiry",
+  /** 长期令牌（90 天）。它失效才需要用户重新点一次授权 */
+  kdocsRefreshToken: "kdocs.refreshToken",
+  /** 已授权的账号昵称，只用于显示 */
+  kdocsAccount: "kdocs.account",
+  /** 上次拉取的时刻与摘要（只展示，不参与判断） */
+  kdocsLastAt: "kdocs.lastAt",
+  kdocsLastSummary: "kdocs.lastSummary",
+
   /* ---------------------------- AI 助手 ---------------------------- */
 
   /**

@@ -8,6 +8,7 @@ import {
   Save,
   Cloud,
   Bot,
+  Table2,
 } from "lucide-react";
 
 export const NAV = [
@@ -20,6 +21,9 @@ export const NAV = [
   { key: "database", label: "数据库", icon: Database },
   { key: "data", label: "数据与备份", icon: Save },
   { key: "sync", label: "同步", icon: Cloud },
+  // 紧挨着「同步」：它本质上也是把数据搬到另一个地方去，只是对面换成了一张
+  // 在线表格。放在一起，用户找"我的数据能去哪"时不用在两个分区之间猜。
+  { key: "wps", label: "WPS 表格", icon: Table2 },
   { key: "behavior", label: "行为偏好", icon: SlidersHorizontal },
   { key: "about", label: "关于与更新", icon: Info },
 ] as const;

@@ -29,6 +29,7 @@ import { BehaviorSection } from "./settings/BehaviorSection";
 import { AboutSection } from "./settings/AboutSection";
 import { ToolsSection } from "./settings/ToolsSection";
 import { SyncSection } from "./settings/SyncSection";
+import { WpsSection } from "./settings/WpsSection";
 import { AgentSection } from "./settings/AgentSection";
 
 export default function Settings() {
@@ -260,6 +261,9 @@ export default function Settings() {
               say={say}
               refresh={refresh}
             />
+          )}
+          {section === "wps" && (
+            <WpsSection settings={settings} saveSettings={saveSettings} say={say} />
           )}
           {section === "behavior" && (
             <BehaviorSection
