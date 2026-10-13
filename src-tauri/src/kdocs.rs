@@ -19,7 +19,7 @@
 //!  · 不新增任何 crate（与 toolpkg.rs 同一个规矩）：`reqwest` 那套已经在了，
 //!    这里连它都用不上。
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{webview::NewWindowResponse, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// 选表窗口的 label。写死，别从参数传 —— 传进来就等于允许操作任意窗口。
 const WINDOW_LABEL: &str = "kdocs-picker";
@@ -44,9 +44,23 @@ pub async fn kdocs_open_picker(app: AppHandle, url: String) -> Result<String, St
         url.parse().map_err(|_| format!("地址不合法：{url}"))?
     };
 
+    // ★ 点文件打不开的真正原因多半在这里：金山文档打开一个文档走的是
+    // `window.open`（或 `target="_blank"`），而我们这是一个**独立的 webview**，
+    // 没有"新标签页"这个概念 —— 缺省行为是把请求丢掉，于是点了没反应。
+    //
+    // 处理办法不是另开一个窗口（那样登录票不在新窗口里，等于没登录），
+    // 而是**让当前这个窗口跳过去**：登录态留在同一个 webview 里，
+    // 而且窗口始终在我们掌控之下 —— probe 才读得到网址。
+    let opener = app.clone();
     WebviewWindowBuilder::new(&app, WINDOW_LABEL, WebviewUrl::External(start))
         .title(WINDOW_TITLE)
         .inner_size(1180.0, 800.0)
+        .on_new_window(move |url, _features| {
+            if let Some(win) = opener.get_webview_window(WINDOW_LABEL) {
+                let _ = win.navigate(url.clone());
+            }
+            NewWindowResponse::Deny
+        })
         .build()
         .map_err(|e| format!("窗口没起来：{e}"))?;
     Ok("created".to_string())

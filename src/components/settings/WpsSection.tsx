@@ -58,6 +58,7 @@ export function WpsSection({
   const [preview, setPreview] = useState<Preview | null>(null);
   const [picked, setPicked] = useState<Probe | null>(null);
   const [pickerErr, setPickerErr] = useState("");
+  const [addr, setAddr] = useState("");
   const desktop = isTauri();
 
   const missing = missingConfigHint(cfg);
@@ -223,8 +224,28 @@ export function WpsSection({
             />
             <ActionButton icon={<X size={14} />} label="关掉窗口" onClick={() => void closePicker()} />
           </div>
+          <div className="mt-2 flex flex-wrap items-end gap-2">
+            <label className="min-w-[240px] flex-1">
+              <span className="mb-1 block text-[12px] text-fg-dim">
+                直接打开网址（在窗口里点文件没反应时用它）
+              </span>
+              <input
+                value={addr}
+                onChange={(e) => setAddr(e.target.value)}
+                placeholder="把表格链接粘进来，https://www.kdocs.cn/..."
+                className="w-full rounded-lg border border-line bg-card px-3 py-2 text-[13px] text-fg-2 outline-none focus:border-primary"
+              />
+            </label>
+            <ActionButton
+              icon={<ExternalLink size={14} />}
+              label="打开这个网址"
+              onClick={() => void openPicker(addr.trim())}
+              disabled={!addr.trim()}
+            />
+          </div>
           <p className="mt-2 text-[11.5px] leading-relaxed text-fg-dim">
             会开一个真窗口打开金山文档 —— 你在里面登录、翻到要联动的那张表，再回来点「认一下」。
+            打开文档时请点**在线打开**，别点「用客户端打开」（那是唤起本机 WPS，窗口里做不到）。
             <b>我们不读你的密码，也不碰登录票</b>
             ：只是隔着窗口问一句"现在看的是哪张表"。网页端做不到这件事（跨域就是墙），
             所以这条路只属于桌面版。
