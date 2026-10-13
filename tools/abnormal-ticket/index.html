@@ -243,6 +243,9 @@
     cursor: pointer; font-size: 12px; line-height: 1; padding: 3px 5px; border-radius: 4px; }
   .flow-del:hover { color: var(--danger); background: var(--bg); }
   .flow-empty { color: var(--dim); font-size: 12px; padding: 2px 0; }
+  /* 收尾的那一步（完结） */
+  .flow-step.fin .flow-name { color: var(--ok); }
+  .flow-closed { color: var(--ok); font-size: 12px; padding: 4px 0 2px; }
   .flow-add { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .flow-add select { flex: 1 1 120px; }
   .flow-add input[type="datetime-local"] { flex: 1 1 168px; }
@@ -467,11 +470,23 @@
   var DEFAULT_SITUATIONS = ["平台自动退款", "退件标注", "未揽收拦截", "途中拦截", "运单未达", "退件中转（空包）", "缺少物流"];
   var DEFAULT_HANDLINGS = ["平台申诉", "越级申诉", "快递来源"];
   var DEFAULT_RESULTS = ["开仓中转"];
-  var DEFAULT_FLOWS = ["已联系快递", "平台申诉中", "已解决"];
+  var DEFAULT_FLOWS = ["已联系快递", "平台申诉中"];
   var STATUSES = ["待处理", "处理中", "已关闭"];
-  /** 流程走到这些名字上视为「已完结」（统计与划线的口径）。
-      流程名是配置来的，写死白名单只为归桶；名字对不上就当还在路上。 */
-  var FLOW_DONE_RE = /已解决|已关闭|已完成/;
+  /** 流程的收尾步**固定叫「完结」** —— 它是终点不是普通一步：记上就封口，
+      之后不能再往这条单子上加步骤（要继续先删掉它）。下拉里它恒在最后一项，
+      不跟着「设置 → 下拉选项」走（那几格配的是中间步骤）。 */
+  var FLOW_DONE_NAME = "完结";
+  /** 判定「已完结」的口径。历史数据里记过的 已解决/已关闭/已完成 也算，
+      免得老单子一夜之间从已关闭掉回处理中。 */
+  var FLOW_DONE_RE = /^(?:完结|已解决|已关闭|已完成)$/;
+  function isDoneName(n) { return FLOW_DONE_RE.test(String(n || "").trim()); }
+  /** 流程名下拉：配置里的中间步骤 + 末尾恒定的「完结」。 */
+  function flowStepOptions() {
+    var mid = (cfg.flows.length ? cfg.flows : DEFAULT_FLOWS)
+      .map(function (s) { return String(s || "").trim(); })
+      .filter(function (s) { return s && !isDoneName(s); });
+    return mid.concat([FLOW_DONE_NAME]);
+  }
 
   var seq = 0;
   var waiting = new Map();
@@ -943,7 +958,7 @@
       box.value = list.join("\n");
     }
     var hint = document.getElementById("optHint");
-    if (hint) hint.textContent = "登记页、处理区和流程「记录一步」的下拉都在用这几组选项，空着也行（那就只剩「（没选）」）。";
+    if (hint) hint.textContent = "登记页、处理区和流程「记录一步」的下拉都在用这几组选项，空着也行（那就只剩「（没选）」）。其中「流程状态」配的是中间步骤 —— 收尾的「完结」是内置的，不用配、也改不掉（它恒在下拉最后一项）。";
   }
 
   async function saveOpts() {
@@ -1150,6 +1165,11 @@
     } catch (e) { return []; }
   }
   function flowOf(r) { return parseFlow(r && r.flow); }
+  /** 这条单子的流程封口了吗 —— 最后一步是「完结」就算（之后不许再加步）。 */
+  function flowDone(r) {
+    var fl = flowOf(r);
+    return fl.length > 0 && isDoneName(fl[fl.length - 1].n);
+  }
 
   /** 当前状态：有流程看**最后一步**的名称（流程是用户亲手记的轨迹，最诚实）；
       没记过流程才退回派生 —— 补了结果 → 已关闭，补了处理方式 → 处理中，否则待处理。 */
@@ -1561,24 +1581,32 @@
   /** 详情页的「流程状态」块：已走的步（最后一步标当前）+ 记下一步的一行 */
   function flowBlock(r) {
     var steps = flowOf(r);
+    var done = flowDone(r);
     var listHtml = steps.length
       ? steps.map(function (s, i) {
           var last = i === steps.length - 1;
-          return '<div class="flow-step' + (last ? " cur" : "") + '" data-flow-step="' + i + '">' +
-            '<span class="flow-name">' + esc(s.n) + (last ? " · 当前" : "") + "</span>" +
+          var isDone = isDoneName(s.n);
+          return '<div class="flow-step' + (last ? " cur" : "") + (isDone ? " fin" : "") +
+              '" data-flow-step="' + i + '">' +
+            '<span class="flow-name">' + esc(s.n) + (isDone ? " · 收尾" : last ? " · 当前" : "") + "</span>" +
             '<span class="flow-time">' + esc(fullTime(s.t)) + "</span>" +
             '<button class="flow-del" data-act="flow-del" data-idx="' + i + '" title="删掉这一步（记错了用）">✕</button>' +
           "</div>";
         }).join("")
       : '<div class="flow-empty">还没记过流程 —— 下面选一步记上，头顶的状态就跟着走。</div>';
+    // 封口后不给录入行：要继续记，先删掉「完结」那一步（这就是"最后一步必须是完结"的另一半）
+    var addHtml = done
+      ? '<div class="flow-closed">已完结 —— 这条不用再跟了。要补步骤，先删掉上面那一步。</div>'
+      : '<div class="flow-add">' +
+          '<select id="flowName" title="记哪一步 —— 中间步骤在「设置 → 下拉选项 → 流程状态」里配；' +
+            '「完结」恒在最后，选它就封口">' +
+            optOptions(flowStepOptions(), "") + "</select>" +
+          '<input type="datetime-local" id="flowAt" title="这一步发生的时刻，默认现在" />' +
+          '<button data-act="flow-add">记录一步</button>' +
+        "</div>";
     return "<label>流程状态</label>" +
       '<div class="flow-list">' + listHtml + "</div>" +
-      '<div class="flow-add">' +
-        '<select id="flowName" title="记哪一步 —— 选项在「设置 → 下拉选项 → 流程状态」里配">' +
-          optOptions(cfg.flows.length ? cfg.flows : DEFAULT_FLOWS, "") + "</select>" +
-        '<input type="datetime-local" id="flowAt" title="这一步发生的时刻，默认现在" />' +
-        '<button data-act="flow-add">记录一步</button>' +
-      "</div>";
+      addHtml;
   }
 
   /** 详情页的「提醒」块：设定 / 取消。订下的提醒落在工作台待办里
@@ -1616,6 +1644,10 @@
     var row = findRow(selectedId);
     if (!row) return;
     var steps = flowOf(row);
+    if (steps.length && isDoneName(steps[steps.length - 1].n)) {
+      toast("这条已经「完结」了 —— 完结是最后一步。要继续补，先删掉那一步");
+      return;
+    }
     steps.push({ n: name, t: t });
     try {
       var now = new Date().toISOString();
@@ -1751,7 +1783,7 @@
     // 不把它们摆进下拉，"筛已解决的"就筛不到走流程的那些单子。
     var fSel = document.getElementById("filter");
     var stNames = STATUSES.slice();
-    (cfg.flows.length ? cfg.flows : DEFAULT_FLOWS).forEach(function (v) {
+    flowStepOptions().forEach(function (v) {
       if (stNames.indexOf(v) < 0) stNames.push(v);
     });
     allRows.forEach(function (r) {

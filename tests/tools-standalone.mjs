@@ -1295,6 +1295,56 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   check("异常单：流程全删掉后徽标回退到派生状态（待处理）",
     stepDel2.n === 0 && stepDel2.empty === true && stepDel2.badge === "待处理", JSON.stringify(stepDel2));
 
+  /* ---------- 0.8.2：流程的收尾步固定是「完结」 ----------
+     它不是普通一步而是终点：下拉里恒在最后一项（不跟配置走），记上就封口 ——
+     录入行收起、不能再加步；要继续先删掉它。 */
+  await page.selectOption("#flowName", "平台申诉中");
+  await page.click('#detail button[data-act="flow-add"]');
+  await page.waitForTimeout(400);
+  const finOpts = await page.evaluate(() => {
+    const o = [...document.querySelectorAll("#flowName option")].map((x) => x.value).filter(Boolean);
+    return { last: o[o.length - 1], hasResolved: o.indexOf("已解决") >= 0 };
+  });
+  check("异常单：「完结」恒在流程下拉的最后一项，旧的「已解决」不再摆出来",
+    finOpts.last === "完结" && finOpts.hasResolved === false, JSON.stringify(finOpts));
+
+  await page.selectOption("#flowName", "完结");
+  await page.click('#detail button[data-act="flow-add"]');
+  await page.waitForTimeout(500);
+  const fin = await page.evaluate(() => {
+    const row = document.querySelector('.ticket[aria-selected="true"]');
+    return {
+      n: document.querySelectorAll("#detail .flow-step").length,
+      cur: ((document.querySelector("#detail .flow-step.cur .flow-name") || {}).textContent || "").trim(),
+      fin: document.querySelectorAll("#detail .flow-step.fin").length,
+      badge: (document.querySelector("#detail .d-head .badge") || {}).textContent || "",
+      closed: !!document.querySelector("#detail .flow-closed"),
+      noInput: !document.getElementById("flowName"),
+      struck: row ? row.className.indexOf("s-done") >= 0 : false,
+    };
+  });
+  check("异常单：记上「完结」= 收尾（标「收尾」、状态=完结、归进已关闭）",
+    fin.n === 2 && fin.cur === "完结 · 收尾" && fin.fin === 1 && fin.badge === "完结" &&
+      fin.struck === true, JSON.stringify(fin));
+  check("异常单：完结后录入行收起（不许再往封口的单子上加步）",
+    fin.closed === true && fin.noInput === true, JSON.stringify(fin));
+
+  // 删掉「完结」→ 开口，录入行回来、状态退回上一步
+  await page.click('#detail .flow-del[data-idx="1"]');
+  await page.waitForTimeout(500);
+  const reopen = await page.evaluate(() => ({
+    n: document.querySelectorAll("#detail .flow-step").length,
+    cur: ((document.querySelector("#detail .flow-step.cur .flow-name") || {}).textContent || "").trim(),
+    badge: (document.querySelector("#detail .d-head .badge") || {}).textContent || "",
+    hasInput: !!document.getElementById("flowName"),
+    closed: !!document.querySelector("#detail .flow-closed"),
+  }));
+  check("异常单：删掉「完结」后重新开口（录入行回来、状态退回平台申诉中）",
+    reopen.n === 1 && reopen.cur === "平台申诉中 · 当前" && reopen.badge === "平台申诉中" &&
+      reopen.hasInput === true && reopen.closed === false, JSON.stringify(reopen));
+  await page.click('#detail .flow-del[data-idx="0"]');
+  await page.waitForTimeout(400);
+
   /* ---------- 0.8.0：提醒块只在宿主里出现 ----------
      设定提醒 = 向工作台订一条带来源标记的待办（task.remind）。
      独立打开没有宿主可订 —— 整块藏掉（data-host-only），不是灰着解释。 */
