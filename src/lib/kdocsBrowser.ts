@@ -81,13 +81,24 @@ export async function probeOnce(): Promise<Probe> {
     `window.__kdTitle = window.__kdTitle || document.title;` +
       `document.title = ${JSON.stringify(MARK)} + location.href + '|' + window.__kdTitle;`,
   );
-  await new Promise((r) => setTimeout(r, 120));
-  const title = await readTitle();
+
+  // 回传是**异步**的：脚本改标题 → WebView2 抛 DocumentTitleChanged → Rust 存进状态，
+  // 中间隔着几帧。所以别只等一次就下结论 —— 轮着看几回（最多 ~1 秒）。
+  let title = "";
+  for (let i = 0; i < 7; i += 1) {
+    await new Promise((r) => setTimeout(r, 150));
+    title = await readTitle();
+    if (title.startsWith(MARK)) break;
+  }
+
   // 还原标题，别把用户的文档名盖掉
   await evalInPicker(`document.title = window.__kdTitle || document.title;`).catch(() => {});
 
   if (!title.startsWith(MARK)) {
-    throw new Error(`没读到窗口里的网址（标题是「${title}」）—— 页面可能还在加载`);
+    throw new Error(
+      `没读到窗口里的网址（标题是「${title}」）—— 窗口里的页面可能没加载完，` +
+        `或者它自己把标题改回去了。再点一次试试。`,
+    );
   }
   const body = title.slice(MARK.length);
   const cut = body.lastIndexOf("|");

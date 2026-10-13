@@ -224,6 +224,9 @@ pub fn run() {
             kdocs::kdocs_close_picker,
         ])
         .setup(|app| {
+            // 选表窗口要用它接收网页的 document.title（窗口标题不会跟着网页走，
+            // 见 kdocs.rs 里 PickerState 那段）。必须在开窗之前就管起来。
+            app.manage(kdocs::PickerState::default());
             if let Err(e) = sync_builtin_tools(app.handle()) {
                 // 工具同步失败不应阻止应用启动，待办功能仍然可用
                 eprintln!("[warn] 同步内置工具失败: {e}");

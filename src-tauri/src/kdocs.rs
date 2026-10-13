@@ -19,10 +19,24 @@
 //!  · 不新增任何 crate（与 toolpkg.rs 同一个规矩）：`reqwest` 那套已经在了，
 //!    这里连它都用不上。
 
+use std::sync::Mutex;
+
 use tauri::{webview::NewWindowResponse, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// 选表窗口的 label。写死，别从参数传 —— 传进来就等于允许操作任意窗口。
 const WINDOW_LABEL: &str = "kdocs-picker";
+
+/// 选表窗口**最近一次的文档标题**（网页里的 `document.title`）。
+///
+/// ★ 为什么非要绕这一道，而不是直接 `WebviewWindow::title()`：
+/// Tauri 的窗口标题**不会**跟着网页的 `document.title` 走（浏览器标签页会，Tauri 不会）。
+/// 于是"脚本把结果写进 document.title、再从窗口标题读回来"这条路是**断的** ——
+/// 实测就是这么翻的车：窗口里表格都打开了，读回来的却一直是我们建的初始标题。
+///
+/// 正解是接住 WebView2 的 `DocumentTitleChanged` 事件（wry 在 Windows 上已支持），
+/// 在这里存下来，命令再从状态里取。
+#[derive(Default)]
+pub struct PickerState(pub Mutex<String>);
 
 const WINDOW_TITLE: &str = "WPS 表格 — 登录后打开要联动的那张表";
 
@@ -52,6 +66,8 @@ pub async fn kdocs_open_picker(app: AppHandle, url: String) -> Result<String, St
     // 而是**让当前这个窗口跳过去**：登录态留在同一个 webview 里，
     // 而且窗口始终在我们掌控之下 —— probe 才读得到网址。
     let opener = app.clone();
+    // 文档标题的接收端：网页里一改 document.title 就往状态里存一份。
+    let title_sink = app.clone();
     WebviewWindowBuilder::new(&app, WINDOW_LABEL, WebviewUrl::External(start))
         .title(WINDOW_TITLE)
         .inner_size(1180.0, 800.0)
@@ -60,6 +76,13 @@ pub async fn kdocs_open_picker(app: AppHandle, url: String) -> Result<String, St
                 let _ = win.navigate(url.clone());
             }
             NewWindowResponse::Deny
+        })
+        .on_document_title_changed(move |_webview, title| {
+            if let Some(state) = title_sink.try_state::<PickerState>() {
+                if let Ok(mut slot) = state.0.lock() {
+                    *slot = title;
+                }
+            }
         })
         .build()
         .map_err(|e| format!("窗口没起来：{e}"))?;
@@ -76,13 +99,21 @@ pub async fn kdocs_eval(app: AppHandle, script: String) -> Result<(), String> {
     win.eval(&script).map_err(|e| format!("脚本没跑起来：{e}"))
 }
 
-/// 读窗口标题 —— 这是页面把结果递出来的通道。
+/// 读网页的文档标题 —— 这是页面把结果递出来的通道。
+///
+/// ⚠️ 读的是 `DocumentTitleChanged` 存下来的那一份，**不是**窗口标题。
+/// 窗口标题是我们自己设的、不会跟着网页走（理由见 `PickerState`）。
 #[tauri::command]
 pub async fn kdocs_title(app: AppHandle) -> Result<String, String> {
-    let win = app
-        .get_webview_window(WINDOW_LABEL)
-        .ok_or_else(|| "选表窗口还没打开".to_string())?;
-    win.title().map_err(|e| format!("读不到窗口标题：{e}"))
+    // 窗口没开就明说 —— 前端靠这句话判断"用户把窗口关了"
+    if app.get_webview_window(WINDOW_LABEL).is_none() {
+        return Err("选表窗口还没打开".to_string());
+    }
+    let state = app
+        .try_state::<PickerState>()
+        .ok_or_else(|| "内部状态没准备好".to_string())?;
+    let got = state.0.lock().map_err(|_| "读标题失败".to_string())?.clone();
+    Ok(got)
 }
 
 /// 关掉选表窗口。用户选完表就该把它收起来，别一直挂在任务栏上。
