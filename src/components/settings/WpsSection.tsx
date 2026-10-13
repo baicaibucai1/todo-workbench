@@ -1,8 +1,10 @@
 import { SectionTitle, Card, TextField, ActionButton } from "./parts";
 import type { Flash } from "./parts";
 import { useEffect, useState } from "react";
-import { Download, ExternalLink, KeyRound, Table2 } from "lucide-react";
+import { Download, ExternalLink, KeyRound, MonitorPlay, Table2, X } from "lucide-react";
 import { SETTINGS } from "../../lib/settings";
+import { isTauri } from "../../lib/db";
+import { closePicker, openPicker, probeOnce, type Probe } from "../../lib/kdocsBrowser";
 import {
   buildAuthUrl,
   defaultRedirectUri,
@@ -54,6 +56,9 @@ export function WpsSection({
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState<"auth" | "pull" | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [picked, setPicked] = useState<Probe | null>(null);
+  const [pickerErr, setPickerErr] = useState("");
+  const desktop = isTauri();
 
   const missing = missingConfigHint(cfg);
   const connected = !!tok.refreshToken;
@@ -164,12 +169,91 @@ export function WpsSection({
     void saveSettings({ [key]: v });
   };
 
+  /* -------------------------- 桌面端：开个窗口选表 -------------------------- */
+
+  const startPicker = async () => {
+    setPickerErr("");
+    try {
+      await openPicker();
+      say("已打开「WPS 表格」窗口 —— 在里面登录，打开要联动的那张表，再回来点「认一下」");
+    } catch (err) {
+      setPickerErr(`窗口没起来：${(err as Error).message}`);
+    }
+  };
+
+  const recognize = async () => {
+    setPickerErr("");
+    try {
+      const got = await probeOnce();
+      setPicked(got);
+      if (got.guess) {
+        await saveSettings({ [SETTINGS.kdocsFileToken]: got.guess });
+        say(`认出来了：${got.docTitle || got.guess}（已填进「文档 ID」）`);
+      } else {
+        say("看是看到了，但没从网址里认出文档 ID —— 把下面的网址发我，我再补解析");
+      }
+    } catch (err) {
+      setPickerErr(`没认出来：${(err as Error).message}`);
+    }
+  };
+
   return (
     <div className="space-y-3">
       <SectionTitle
         title="WPS 表格联动"
         desc="把异常单台账接到金山文档的智能表格上。现在只拉不写 —— 先看清楚对面有哪些列，再决定怎么对。"
       />
+
+      {desktop ? (
+        <Card>
+          <div className="mb-2 flex items-center gap-1.5 text-[12.5px] text-fg-2">
+            <MonitorPlay size={14} />
+            先选一张表（桌面端）
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <ActionButton
+              icon={<MonitorPlay size={14} />}
+              label="打开选表窗口"
+              onClick={() => void startPicker()}
+            />
+            <ActionButton
+              icon={<Table2 size={14} />}
+              label="认一下当前这张表"
+              onClick={() => void recognize()}
+            />
+            <ActionButton icon={<X size={14} />} label="关掉窗口" onClick={() => void closePicker()} />
+          </div>
+          <p className="mt-2 text-[11.5px] leading-relaxed text-fg-dim">
+            会开一个真窗口打开金山文档 —— 你在里面登录、翻到要联动的那张表，再回来点「认一下」。
+            <b>我们不读你的密码，也不碰登录票</b>
+            ：只是隔着窗口问一句"现在看的是哪张表"。网页端做不到这件事（跨域就是墙），
+            所以这条路只属于桌面版。
+          </p>
+          {picked && (
+            <div className="mt-2 space-y-0.5 rounded-lg border border-line bg-card p-2 text-[11.5px] leading-relaxed text-fg-dim">
+              <div>文档名：{picked.docTitle || "（读不到）"}</div>
+              <div>
+                网址：<span className="break-all">{picked.href}</span>
+              </div>
+              <div>从网址猜出的 ID：{picked.guess || "（没猜出来）"}</div>
+            </div>
+          )}
+          {pickerErr && <p className="mt-2 text-[11.5px] text-danger">{pickerErr}</p>}
+        </Card>
+      ) : (
+        <Card>
+          <div className="mb-1.5 flex items-center gap-1.5 text-[12.5px] text-fg-2">
+            <MonitorPlay size={14} />
+            网页端：只能用授权那条路
+          </div>
+          <p className="text-[11.5px] leading-relaxed text-fg-dim">
+            「开个窗口让你登录、自己挑表」这件事网页端做不了 ——
+            它自己就是个浏览器页面，读不到别的站点的东西。
+            桌面版（打包出来的那个）里会多出「打开选表窗口」的按钮；
+            网页端请走下面的应用 ID + 授权码那条路（要去金山开放平台建一次应用）。
+          </p>
+        </Card>
+      )}
 
       <Card>
         <div className="mb-2 flex items-center gap-1.5 text-[12.5px] text-fg-2">

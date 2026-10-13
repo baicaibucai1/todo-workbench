@@ -13,6 +13,7 @@ use tauri::Manager;
 
 mod attachments;
 mod db_tx;
+mod kdocs;
 mod onedrive;
 mod toolpkg;
 mod webdav;
@@ -215,6 +216,12 @@ pub fn run() {
             onedrive::onedrive_get,
             onedrive::onedrive_put,
             onedrive::onedrive_stat,
+            // 金山文档（WPS 在线表格）的选表窗口。桌面端专用 —— 网页端跨不过
+            // CORS，这条路天生只属于桌面版（见 kdocs.rs 顶部）。
+            kdocs::kdocs_open_picker,
+            kdocs::kdocs_eval,
+            kdocs::kdocs_title,
+            kdocs::kdocs_close_picker,
         ])
         .setup(|app| {
             if let Err(e) = sync_builtin_tools(app.handle()) {
