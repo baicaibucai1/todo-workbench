@@ -530,12 +530,12 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     const btn = document.querySelector('#detail button[data-act="open-client"]');
     return {
       url: btn ? btn.getAttribute("title") : "(禁用)",
-      kv: (document.querySelectorAll("#detail .kv dd")[1] || {}).textContent || "",
+      store: (document.getElementById("d-store") || {}).value || "",
     };
   });
-  check("异常单：右栏换店铺后链接跟着换、kv 里的店铺也改过来了",
+  check("异常单：右栏换店铺后链接跟着换、快捷行的店铺也改过来了",
     backTo1.url === "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_355831479&ordersn=261011-442394294633154" &&
-      backTo1.kv === "拼多多5店", JSON.stringify(backTo1));
+      backTo1.store === "拼多多5店", JSON.stringify(backTo1));
 
   /* ---------- 设置页：店铺与客服 ID 是独立的一页 ----------
      用户要的：别把这些挤在登记页里，单独一页，而且要能"传一条链接绑到某个店铺"。 */
@@ -740,15 +740,14 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     const btn = document.querySelector('#detail button[data-act="open-client"]');
     return {
       title: btn ? btn.getAttribute("title") : "(禁用)",
-      kv: (document.querySelectorAll("#detail .kv dd")[1] || {}).textContent || "",
       picker: (document.getElementById("d-store") || {}).value || "",
     };
   });
   check("异常单：改客服 ID 后链接跟着变",
     cfg2.title === "pddim:sendmsg/?OpeId=open_order&mallcsid=cs_999999999&ordersn=261011-442394294633154",
     cfg2.title);
-  check("异常单：改了店铺名，单子上那条也跟着改了（改名传播）",
-    cfg2.kv === "拾野" && cfg2.picker === "拾野", `kv=${cfg2.kv} picker=${cfg2.picker}`);
+  check("异常单：改了店铺名，单子上那条也跟着改了（改名传播，店铺显示在快捷行）",
+    cfg2.picker === "拾野", `picker=${cfg2.picker}`);
 
   // 处理备注边打边存
   await page.fill("#d-note", "已通知供应商，等回料复检");
@@ -1025,14 +1024,15 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     const row = document.querySelector('.ticket[aria-selected="true"]');
     return {
       dts, dd,
-      sn: dd[0], store: dd[1], track: dd[2], courier: dd[3], shipped: dd[4], cat: dd[5],
+      sn: dd[0], track: dd[1], courier: dd[2], shipped: dd[3], cat: dd[4],
+      store: (document.getElementById("d-store") || {}).value || "",
       tag: row ? (row.querySelector(".store-tag") || {}).textContent || "" : "",
       cTag: row ? (row.querySelector(".courier-tag") || {}).textContent || "" : "",
       catTag: row ? (row.querySelector(".cat-tag") || {}).textContent || "" : "",
     };
   });
-  check("异常单：详情 kv 顺序 = 订单号→店铺→快递单号→快递公司→发货时间→情况（对齐台账）",
-    trackedDetail.dts.join("/") === "订单号/店铺/快递单号/快递公司/订单发货时间/情况/登记时间/最近更新" &&
+  check("异常单：详情 kv 顺序 = 订单号→快递单号→快递公司→发货时间→情况（对齐台账；店铺在快捷行，不重复摆）",
+    trackedDetail.dts.join("/") === "订单号/快递单号/快递公司/订单发货时间/情况/登记时间/最近更新" &&
       trackedDetail.sn === "261011-777000777000777" && trackedDetail.store === "拼多多6店" &&
       trackedDetail.track === "SF9988776655" && trackedDetail.courier === "中通" &&
       trackedDetail.shipped === "2026-10-01" && trackedDetail.cat === "发错",

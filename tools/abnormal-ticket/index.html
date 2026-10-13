@@ -110,7 +110,10 @@
      ★ 标签**始终可见**：填了值之后 placeholder 就没了，靠位置去猜"这格是什么"
      最容易填错（8 个字段排在一起时尤其）。所以每个字段都有个固定的标签行，
      placeholder 只负责示例 / 补充说明。 */
-  #create-card { max-width: 640px; }
+  /* 表单放宽：第一行 4 个字段（店铺/订单号/快递单号/快递公司）在 640px 里每格只有
+     ~150px，22 字符的订单号框挤得看不全；880px 下每格 ~200px，粘长单号一眼看全，
+     右侧留白也比把字段挤窄强。 */
+  #create-card { max-width: 880px; }
   #create-card > * + * { margin-top: 11px; }
   #create-card > h2 + * { margin-top: 0; }        /* h2 自己带 10px，别叠成两截 */
   .f { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
@@ -149,7 +152,8 @@
   .store-row input { flex: 1 1 120px; font-size: 12.5px; }
   .store-row input.cs { flex: 1 1 150px; font-family: var(--mono); }
   .store-row button { flex: 0 0 auto; padding: 4px 8px; font-size: 12px; }
-  .store-row.empty-cs input.cs { border-color: var(--warn); }
+  /* 没绑客服 ID 的行不再挂黄框 —— 空行是"等着填"，不是"出错"；
+     要不要绑看 placeholder（客服 ID（cs_…））就够了 */
   /* 设置页「下拉选项」：四个编辑框 2×2 摆（窄屏退成一列） */
   .optgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
   .optgrid textarea { width: 100%; min-height: 84px; resize: vertical; font-family: inherit; font-size: 12.5px; }
@@ -218,7 +222,10 @@
   /* 同样不许在连字符处断开（右栏够宽，这里只是不给它断的机会） */
   .d-code { font-family: var(--mono); font-size: 15px; font-weight: 600; letter-spacing: .2px; white-space: nowrap; }
   .d-title { margin: 8px 0 12px; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
-  .kv { display: grid; grid-template-columns: 76px 1fr; gap: 5px 10px; font-size: 12.5px; }
+  /* kv 两列铺：台账 7 列（登记/更新各占一格）在 76px+1fr 的单列下要滚很久，
+     两列后 4 行看完。dt 固定宽、dd 弹性，两对之间用列距分开。 */
+  .kv { display: grid; grid-template-columns: 76px minmax(0,1fr) 76px minmax(0,1fr);
+    gap: 5px 12px; font-size: 12.5px; }
   .kv dt { color: var(--dim); }
   .kv dd { margin: 0; overflow-wrap: anywhere; }
   .sect { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
@@ -255,7 +262,12 @@
   .chk { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; color: var(--fg2);
     white-space: nowrap; padding-bottom: 6px; cursor: pointer; }
   .chk input { width: auto; }
-  .client-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .client-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  /* 快捷行：店铺 + 呼起/复制并成一排，摆在单号正下方 ——
+     拿到一条单子第一件事就是呼起客户端，别让它埋在页面中间 */
+  .quick { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; margin: 2px 0 4px; }
+  .quick .store-line { margin-bottom: 0; }
+  .quick .client-row { margin-bottom: 0; }
   /* 右栏的店铺选择：它决定呼起时用哪个客服 ID，所以摆在呼起按钮正上方 */
   .store-line { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12.5px; color: var(--fg2); }
   .store-line select { flex: 1 1 150px; max-width: 260px; font-size: 12.5px; }
@@ -270,6 +282,7 @@
     #view-browse { flex-direction: column; }
     .pane-left { flex: 0 0 42%; }
     .pane-right { border-left: none; border-top: 1px solid var(--line); padding-left: 0; padding-top: 10px; }
+    .kv { grid-template-columns: 76px minmax(0,1fr); }
   }
 
   #toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(8px);
@@ -1467,11 +1480,11 @@
     }
 
     var st = statusOf(r);
-    // kv 顺序对齐用户的台账：哪一单（订单号）→ 哪个店 → 哪个包裹（快递单号/公司/
-    // 发货时间）→ 什么情况；登记/更新时间是台账的「登记时间」。
+    // kv 顺序对齐用户的台账：哪一单（订单号）→ 哪个包裹（快递单号/公司/发货时间）→
+    // 什么情况 → 登记时间。**店铺不在 kv 里**：它同时是呼起的编辑入口（下面那排
+    // 快捷行里就能改），在 kv 里再写一遍就是同一个值出现两次。
     var kv = [
       ["订单号", r.order_sn],
-      ["店铺", r.store],
       ["快递单号", r.tracking_no],
       ["快递公司", r.courier],
       ["订单发货时间", dayText(r.shipped_at)],
@@ -1488,17 +1501,16 @@
         badgeOf(st) +
       "</div>" +
       '<div class="d-title">' + esc(r.title || "(无描述)") + "</div>" +
+      // 快捷行：店铺（呼起按它取客服 ID）+ 呼起/复制 + 单号说明。
+      // 拿到一条单子的动线是「看一眼 → 呼起客户端」，所以这排放最顶上，
+      // 不进 sect（不要分隔线，它是 d-title 的延伸）。
+      '<div class="quick">' + storePicker(r) + '<div class="client-row">' + clientBtns(r) + "</div>" + "</div>" +
+      snDetailHint(r) +
       '<dl class="kv">' + kv + "</dl>" +
-      // 流程状态：每一步都有名称和时间，最后一步就是头顶那枚徽标
-      '<div class="sect">' + flowBlock(r) + "</div>" +
-      // 提醒要落成工作台的待办 —— 独立打开没有宿主，整块藏掉（约定之二）
-      '<div class="sect" data-host-only>' + remindBlock(r) + "</div>" +
+      // 处理区：事后补录的主路径（补到哪状态走到哪），紧跟基本信息 ——
+      // 别让用户为补一条处理方式滚两屏
       '<div class="sect">' +
-        storePicker(r) +
-        '<div class="client-row">' + clientBtns(r) + "</div>" +
-        snDetailHint(r) +
-        // 处理区第一行 = 台账的「处理方式 / 结果 / 结账」三列。状态是它们派生的，
-        // 改任何一个，头顶的徽标和左栏列表都会跟着走（change 事件里统一落库）。
+        '<label>处理</label>' +
         '<div class="prorow">' +
           '<label class="f"><span>处理方式</span><select id="d-handling">' +
             optOptions(cfg.handlings.length ? cfg.handlings : DEFAULT_HANDLINGS, r.handling) + "</select></label>" +
@@ -1509,10 +1521,14 @@
         "</div>" +
         '<label for="d-note">处理情况</label>' +
         '<textarea id="d-note" placeholder="写清怎么处理的、卡在哪、谁在跟 —— 边打边存"></textarea>' +
-        '<div class="d-ops">' +
-          '<button class="danger" data-act="del">删除</button>' +
-          '<span class="saved" id="d-saved"></span>' +
-        "</div>" +
+      "</div>" +
+      // 流程状态：每一步都有名称和时间，最后一步就是头顶那枚徽标
+      '<div class="sect">' + flowBlock(r) + "</div>" +
+      // 提醒要落成工作台的待办 —— 独立打开没有宿主，整块藏掉（约定之二）
+      '<div class="sect" data-host-only>' + remindBlock(r) + "</div>" +
+      '<div class="d-ops">' +
+        '<button class="danger" data-act="del">删除</button>' +
+        '<span class="saved" id="d-saved"></span>' +
       "</div>";
 
     // 备注要先灌进去再挂监听，否则第一次输入会被自己的赋值触发

@@ -374,8 +374,13 @@ function parseBuiltinTools() {
   if (close < 0) return null;
   const body = src.slice(at + open.length, close);
   try {
+    // ★ body 末尾必须补一个换行：数组最后一个元素后面常跟着解释性注释（比如
+    //   「这里没有五子棋」那块），截取到 close 时 body 以 `// 注释` 结尾 ——
+    //   直接拼 `[${body}]` 的话收尾的 `]` 会被行注释吞掉，报"Unexpected end of
+    //   input"。文件是 CRLF 时行尾的 \r 恰好替我们终止了注释，所以这个坑
+    //   平时看不出来 —— 直到某次编辑把文件变成 LF（比如 sed -i）。别赌行尾。
     // eslint-disable-next-line no-eval
-    const arr = eval(`[${body}]`);
+    const arr = eval(`[${body}\n]`);
     return Array.isArray(arr) ? arr : null;
   } catch (err) {
     bad("BUILTIN_TOOLS 那段字面量求值失败", err.message);
