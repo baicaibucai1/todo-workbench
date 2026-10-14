@@ -1067,6 +1067,7 @@ npm run typecheck      # TypeScript 类型检查，应 0 错误
 npm run smoke          # 逻辑单测，无浏览器（数据库层 / 仓库层 / 设置 / 分区排序 …）
 npm run sync:test      # 同步的合并算法与写回（无浏览器；含"另一台机器"的合并场景）
 npm run agent:test     # AI 助手（动作协议 / 权限门 / 流式解析 / 网络重试 / 对话持久化；无浏览器）
+npm run kwiki:test     # WPS 在线表格联动（列契约 / 状态派生 / 拉取比对 / 写库往返；无浏览器）
 npm run icons:check    # 图标格式校验（PNG 结构 + ICO 各帧）
 npm run webview2:check # 校验 WebView2Loader.dll 与 Rust 依赖版本一致
 npm run bat:check      # .bat 规范检查（纯 ASCII + CRLF + 无 BOM）
@@ -1106,6 +1107,7 @@ npm run clean -- --yes --old      # 顺带清掉 release-assets 里的旧版本�
 | 同步单测（sync） | **232 项** | `npm run sync:test` |
 | AI 助手单测（agent） | **953 项** | `npm run agent:test` |
 | 工具编写标准单测（gomoku 夹具） | **59 项** | `npm run gomoku:test` |
+| 台账同步单测（kwiki） | **43 项** | `npm run kwiki:test` |
 | 浏览器 e2e | **24 套件 / 1428 项** | `node tests/_run-all-e2e.mjs` |
 
 e2e 用本机 Edge（与 Tauri 的 WebView2 同源），覆盖 20 个面：
