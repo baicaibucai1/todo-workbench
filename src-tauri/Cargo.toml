@@ -44,6 +44,25 @@ ring = "0.17"
 infer = "0.19"
 percent-encoding = "2"
 
+# WPS 在线表格联动（src/wps.rs）要的两样。**都不是新进依赖树的 crate** ——
+# zip 早被 tauri-plugin-updater 拉着编译过，regex 也被 tauri 工具链编译过，
+# 版本与 Cargo.lock 里那两个完全一致，加这两行不会触发整树重编：
+#   · zip 只开 `deflate-flate2`（纯 Rust 后端）。**不要开默认的 `deflate`** ——
+#     那是 deflate-zopfli + deflate-flate2-zlib-rs，两个都要 C 工具链；
+#     也不要开 `deflate-flate2-zlib`，那会把 flate2 切到 zlib-rs。
+#   · regex 用默认 feature（unicode/std），与树里那份对齐。
+zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
+regex = "1"
+# ⚠️ 这一行是**被 zip 逼出来的**，看着多余，删了编译不过：
+# zip 声明 flate2 时写的是 `default-features = false`，也就是"只要这个 crate，
+# 一个 feature 都不给"。而依赖树里另一个用 flate2 的是 png（tauri-codegen →
+# ico → png），它在**构建依赖**那一侧。resolver v2 下构建依赖与正常依赖的
+# feature 不互通，于是正常依赖这边的 flate2 一个后端都没开，直接
+# compile_error "You need to choose a zlib backend"。
+# 在这里显式打开 rust_backend（miniz_oxide + crc32fast，纯 Rust，两个都
+# 已在树里编译过）补上。别改成 zlib / zlib-rs —— 那两条要 C 工具链。
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
 # ⚠️ 这一行**不是我们用的**，是给 schemars 0.8.22 打的补丁，删了会编译不过。
 #
 # 链路：tauri-utils / tauri-plugin / tauri-build → schemars 0.8.22（开着

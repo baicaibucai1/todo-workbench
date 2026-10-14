@@ -42,7 +42,8 @@
     "build:desktop": "node scripts/build-desktop.mjs",
     "build:status": "node scripts/build-status.mjs",
     "installer:check": "node scripts/check-installer.mjs",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "kwiki:test": "esbuild tests/kwiki.mjs --bundle --platform=node --format=esm --target=node22 --outfile=tests/.kwiki.bundle.mjs --external:jsdom --log-level=warning && node tests/.kwiki.bundle.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",

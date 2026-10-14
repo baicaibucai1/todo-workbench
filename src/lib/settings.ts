@@ -219,35 +219,38 @@ export const SETTINGS = {
   /** 已连接账号（邮箱）。只用于界面显示"已连接为 xxx" */
   onedriveAccount: "onedrive.account",
 
-  /* -------------------------- 金山文档（WPS 表格） -------------------------- */
+  /* ---------------------- WPS 知识库（kwiki 在线表格） ---------------------- */
 
   /**
-   * 金山文档开放平台的应用凭证。
+   * kwiki 的访问令牌。
    *
-   * 与 OneDrive 那对是同一个性质：`appId` 会出现在授权页网址里，不是秘密；
-   * `appKey` 才是，但它和 syncPassword / onedriveRefreshToken 一样
-   * **明文存在本机**（理由见 syncPassword 那条注释），界面上要说清楚。
-   *
-   * 走的是金山文档的**服务端 OpenAPI**（developer.kdocs.cn），个人版可用 ——
-   * WPS 365 那套 openapi.wps.cn/v7 要商业版才有，别混。
+   * 与上面那套（开放平台 OpenAPI）是**两条路**：个人账号没有企业资质，
+   * OpenAPI 的文档接口开不出来（要商业版），所以台账联动改走 WPS 自己的
+   * 知识库接口（zhishi.wps.cn/kwiki）—— 设备码登录，个人号就能用。
+   * ⚠️ 与 syncPassword / onedriveRefreshToken 同一个待遇：**明文存在本机
+   * SQLite 里**（理由见 syncPassword 那条），界面上要说清楚。
    */
-  kdocsAppId: "kdocs.appId",
-  kdocsAppKey: "kdocs.appKey",
-  /** 目标智能表格的 file_token（文档 ID，不是分享链接里的 link_id） */
-  kdocsFileToken: "kdocs.fileToken",
-  /** 工作表 ID，整数。新表一般是 1，拿不准就用「列出工作表」试 */
-  kdocsSheetId: "kdocs.sheetId",
-  /** 短期令牌（24 小时）。过期时由下面的 refreshToken 自动续 */
-  kdocsAccessToken: "kdocs.accessToken",
-  /** access_token 的到期时刻（毫秒时间戳，字符串存） */
-  kdocsTokenExpiry: "kdocs.tokenExpiry",
-  /** 长期令牌（90 天）。它失效才需要用户重新点一次授权 */
-  kdocsRefreshToken: "kdocs.refreshToken",
-  /** 已授权的账号昵称，只用于显示 */
-  kdocsAccount: "kdocs.account",
-  /** 上次拉取的时刻与摘要（只展示，不参与判断） */
-  kdocsLastAt: "kdocs.lastAt",
-  kdocsLastSummary: "kdocs.lastSummary",
+  kwikiToken: "kwiki.token",
+  /** 令牌到期时刻（毫秒时间戳，字符串存）。到期后要重新扫一次码 */
+  kwikiTokenExpiry: "kwiki.tokenExpiry",
+  /** 已登录账号的标识（昵称或邮箱），只用于显示"已连接为 xxx" */
+  kwikiAccount: "kwiki.account",
+  /** 知识库（空间）的 kuid，形如 `0s_xxx` */
+  kwikiSpaceKuid: "kwiki.spaceKuid",
+  /** 该知识库背后的 drive_id，上传文件时必须带 */
+  kwikiDriveId: "kwiki.driveId",
+  /**
+   * 在线表格的标题。
+   *
+   * 推送时**按标题找表**而不是存文件的 kuid：上传是"新建"不是覆盖
+   * （同名会被服务端改成「xxx(1)」），所以每次推送都是 传新→删旧→改名，
+   * 推完节点是新的、kuid 必然变。存死 kuid 的后果是第二次推送删到
+   * 回收站里的旧文件上去 —— 这里只存标题。
+   */
+  kwikiTableTitle: "kwiki.tableTitle",
+  /** 上次推送/拉取的时刻与摘要（只展示，不参与判断） */
+  kwikiLastAt: "kwiki.lastAt",
+  kwikiLastSummary: "kwiki.lastSummary",
 
   /* ---------------------------- AI 助手 ---------------------------- */
 
@@ -446,6 +449,16 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.onedriveClientId]: "",
   [SETTINGS.onedriveRefreshToken]: "",
   [SETTINGS.onedriveAccount]: "",
+  // kwiki：默认标题就是用户那张表的名字（.workbuddy/sync-ledger.py 里同一个值）。
+  // 留空不填默认值的理由同 agentApiKey —— 没登录时这些键都没有意义。
+  [SETTINGS.kwikiToken]: "",
+  [SETTINGS.kwikiTokenExpiry]: "",
+  [SETTINGS.kwikiAccount]: "",
+  [SETTINGS.kwikiSpaceKuid]: "",
+  [SETTINGS.kwikiDriveId]: "",
+  [SETTINGS.kwikiTableTitle]: "异常台账",
+  [SETTINGS.kwikiLastAt]: "",
+  [SETTINGS.kwikiLastSummary]: "",
   // 助手默认指向 Agnes（工作台里已经接入的那家），模型选 Agent 向的那个；
   // Key 留空 → 界面停在"还没配好"的状态里，明确告诉用户缺什么
   [SETTINGS.agentProvider]: "agnes",

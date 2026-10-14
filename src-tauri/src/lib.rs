@@ -13,10 +13,10 @@ use tauri::Manager;
 
 mod attachments;
 mod db_tx;
-mod kdocs;
 mod onedrive;
 mod toolpkg;
 mod webdav;
+mod wps;
 
 /// 把打包进安装包的内置工具同步到用户数据目录。
 ///
@@ -216,17 +216,17 @@ pub fn run() {
             onedrive::onedrive_get,
             onedrive::onedrive_put,
             onedrive::onedrive_stat,
-            // 金山文档（WPS 在线表格）的选表窗口。桌面端专用 —— 网页端跨不过
-            // CORS，这条路天生只属于桌面版（见 kdocs.rs 顶部）。
-            kdocs::kdocs_open_picker,
-            kdocs::kdocs_eval,
-            kdocs::kdocs_title,
-            kdocs::kdocs_close_picker,
+            // WPS 知识库（kwiki）在线表格的整表推/拉。走设备码登录、
+            // 个人账号就能用（开放平台那套要企业资质，见 wps.rs 顶部）。
+            wps::wps_login_start,
+            wps::wps_login_poll,
+            wps::wps_account,
+            wps::wps_spaces,
+            wps::wps_files,
+            wps::wps_push,
+            wps::wps_pull,
         ])
         .setup(|app| {
-            // 选表窗口要用它接收网页的 document.title（窗口标题不会跟着网页走，
-            // 见 kdocs.rs 里 PickerState 那段）。必须在开窗之前就管起来。
-            app.manage(kdocs::PickerState::default());
             if let Err(e) = sync_builtin_tools(app.handle()) {
                 // 工具同步失败不应阻止应用启动，待办功能仍然可用
                 eprintln!("[warn] 同步内置工具失败: {e}");

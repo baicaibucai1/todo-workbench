@@ -72,23 +72,6 @@ export default defineConfig({
      * 全通，但那等于对外开了一个口子。
      */
     host: "127.0.0.1",
-    /**
-     * 金山文档（WPS 在线表格）的转发通道。
-     *
-     * 浏览器直连 developer.kdocs.cn 会被 CORS 挡下，文档也写明「换取令牌必须从
-     * 服务器调用」。开发时由 vite 代转：前端一律请求 `/kdocs-api/...`，这里
-     * 剥掉前缀打到真主机上。
-     *
-     * ⚠️ 只对 dev server 有效。桌面版（Tauri）与生产构建里没有这一层，
-     * kdocs.ts 里会明确报错而不是硬试一次 —— 静默的 CORS 失败最难查。
-     */
-    proxy: {
-      "/kdocs-api": {
-        target: "https://developer.kdocs.cn",
-        changeOrigin: true,
-        rewrite: (p: string) => p.replace(/^\/kdocs-api/, ""),
-      },
-    },
     watch: {
       ignored: ["**/src-tauri/**"],
     },

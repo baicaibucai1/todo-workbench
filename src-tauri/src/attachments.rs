@@ -330,7 +330,9 @@ fn store_bytes(
 ///   · 省略 padding（data URL 里偶尔没有）
 ///   · URL-safe 的 `-` `_`
 ///   · 空白与换行（有些接口把长 base64 折行返回）
-fn b64_decode(input: &str) -> Result<Vec<u8>, String> {
+///
+/// `pub(crate)`：wps.rs 下载在线表格时也要解 base64，同一份解码不写两遍。
+pub(crate) fn b64_decode(input: &str) -> Result<Vec<u8>, String> {
     #[inline]
     fn val(c: u8) -> Option<u8> {
         match c {
