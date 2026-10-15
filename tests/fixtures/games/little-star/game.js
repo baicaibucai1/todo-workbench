@@ -58,15 +58,15 @@
  *    2185    501  地形生成器（v0.11：固态行星表面构建）                src/42-terrain.js:1
  *    2686    385  场景                                                 src/50-scene.js:1
  *    3071    130  场景更新                                             src/50-scene.js:386
- *    3201    168  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
- *    3369     25  相机聚焦                                             src/70-camera-input.js:1
- *    3394    136  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
- *    3530     77  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
- *    3607    223  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
- *    3830    612  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
- *    4442     24  主循环                                               src/99-boot.js:1
- *    4466    398  启动                                                 src/99-boot.js:25
- *   共 22 个区块 · 18 个源文件 · 4863 行
+ *    3201    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
+ *    3395     25  相机聚焦                                             src/70-camera-input.js:1
+ *    3420    136  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
+ *    3556     77  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
+ *    3633    223  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
+ *    3856    612  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
+ *    4468     24  主循环                                               src/99-boot.js:1
+ *    4492    398  启动                                                 src/99-boot.js:25
+ *   共 22 个区块 · 18 个源文件 · 4889 行
  * @nav:end
  * ─────────────────────────────────────────────────────────────────────
  *
@@ -730,7 +730,7 @@ function typeCond(t) {
  * 同时写入 ① 右下角版本戳（#ver）② __game.version。
  * 用途：一眼判断「眼前这页是不是最新构建」——历史上出现过改了代码但浏览器
  * 没刷新、误判「功能没生效」的情况。发版时只改这一行。 */
-var VERSION = "0.11.0";
+var VERSION = "0.11.1";
 
 function $(id) { return document.getElementById(id); }
 function fmtNum(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
@@ -3329,8 +3329,31 @@ function buildLensFlare() {
       { sprite: mk(ghostT, 0xffc890, 0.17), k: -0.95, frac: 0.08, base: 0.17 },
       { sprite: mk(ghostT, 0x86c6a0, 0.13), k: -1.55, frac: 0.11, base: 0.13 }
     ],
-    last: { visible: false, star: { x: 0, y: 0 }, ghosts: [] }
+    last: { visible: false, occl: 0, star: { x: 0, y: 0 }, ghosts: [] }
   };
+}
+
+/* ★ v0.11.1 光学修正：光源被行星挡住时，镜头光斑必须熄灭。
+ * 真实相机里光斑产生于镜片内部的反射，前提是「光进得来」—— 前景行星把恒星
+ * 完全挡在背后时，主光斑与鬼影链都不该出现在行星圆盘上。此前的实现是
+ * depthTest:false + renderOrder 999 永远画在最顶层，亮斑「透过」星球，假。
+ * 实现：屏幕空间圆盘遮挡 —— 恒星投影点落进行星的投影圆盘内（且行星在恒星
+ * 更近侧）就算被挡；遮挡量 0..1 平滑过渡（行星边缘掠过时逐渐变暗，不跳变）。 */
+function starOcclusion() {
+  var occl = 0;
+  var starN = projectToNdc(_zeroV);
+  var asp = camera.aspect;
+  var tanH = Math.tan((camera.fov * Math.PI) / 360);
+  for (var i = 0; i < G.sys.planets.length; i++) {
+    var pl = G.sys.planets[i];
+    var pn = projectToNdc(pl._group.position);
+    if (pn.z > starN.z) continue;            /* 行星在恒星更远侧，挡不住光 */
+    var d = Math.hypot((starN.x - pn.x) * asp, starN.y - pn.y);
+    var dist = camera.position.distanceTo(pl._group.position);
+    var rp = pl.size / Math.max(dist * tanH, 0.001);   /* 行星投影半径（半高单位） */
+    occl = Math.max(occl, clamp((rp * 1.02 - d) / (rp * 0.30), 0, 1));
+  }
+  return occl;
 }
 
 function updateLensFlare() {
@@ -3340,9 +3363,12 @@ function updateLensFlare() {
   var behind = _lfV.z > -1.0;
   var ed = Math.max(Math.abs(ndc.x), Math.abs(ndc.y));
   var fade = clamp((1.35 - ed) / 0.5, 0, 1);
+  var occl = starOcclusion();
+  fade *= (1 - occl);
   var vis = !behind && fade > 0.01;
 
   lens.last.visible = vis;
+  lens.last.occl = +occl.toFixed(3);
   lens.last.star = { x: +ndc.x.toFixed(3), y: +ndc.y.toFixed(3) };
   lens.last.ghosts = [];
 

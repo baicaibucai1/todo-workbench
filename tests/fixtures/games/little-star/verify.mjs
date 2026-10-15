@@ -1,5 +1,5 @@
 /**
- * Little Star —— Web 端真机验证（v0.11.0：源码拆分 src/ 18 片段 + 拼装器 build.mjs）
+ * Little Star —— Web 端真机验证（v0.11.1：源码拆分 src/ 18 片段 + 拼装器 build.mjs）
  *
  * 覆盖（23 节，与下方 `/* ---- N. ... ---- *\/` 区块注释一一对应）：
  *   0. 工程自检：game.js 是否等于 src/ 片段的拼装结果（不需要浏览器）
@@ -201,7 +201,7 @@ async function frameStar(page, radius) {
       api: window.__game.version,
       badge: (document.getElementById("ver") || {}).textContent || ""
     }));
-    check("版本号为 0.11.0（调试接口）", verInfo.api === "0.11.0");
+    check("版本号为 0.11.1（调试接口）", verInfo.api === "0.11.1");
     check("右下角版本戳与调试接口同源", verInfo.badge === "v" + verInfo.api, `#ver = "${verInfo.badge}"`);
     console.log(`  ℹ 星系「${st0.system}」 · ${st0.starType}（${st0.starId}） · ${st0.planets.length} 颗行星`);
     await shot(page, "n1-system.png");
@@ -828,6 +828,32 @@ async function frameStar(page, radius) {
     const opp = lf.ghosts.every((g) => g.x * lf.star.x + g.y * lf.star.y < 0);
     check("鬼影位于光源对侧（光学正确）", opp, lf.ghosts.map((g) => `(${g.x},${g.y})`).join(" "));
     await shot(page, "n7-lens-flare.png");
+
+    /* v0.11.1 光学修正：光源被行星挡住 → 光斑必须熄灭。
+     * 摆法：相机放到「最大行星的背光外侧」，让 相机—行星—恒星 三点共线，
+     * 恒星的投影点落进行星投影圆盘正中 —— 此前光斑会隔着行星画出来（假）。 */
+    const occPlanet = await page.evaluate(() => {
+      const st = window.__game.getState();
+      const pl = st.planets.reduce((a, b) => (b.size > a.size ? b : a));
+      const p = window.__game.planetWorldPos(pl.name);
+      const L = Math.hypot(p.x, p.y, p.z) || 1;
+      window.__game.holdTarget(true);
+      window.__game.setTarget(p.x, p.y, p.z);
+      window.__game.setOrbitAngles(Math.atan2(p.x, p.z), Math.acos(Math.max(-1, Math.min(1, p.y / L))));
+      window.__game.zoomTo(30);
+      return pl.name;
+    });
+    await sleep(500);
+    const lf2 = await page.evaluate(() => window.__game.lensFlareState());
+    check(
+      "光源被行星挡住 → 光斑熄灭（v0.11.1）",
+      lf2.visible === false && lf2.occl > 0.9,
+      `挡光行星 ${occPlanet} · occl=${lf2.occl}`
+    );
+    await page.evaluate(() => {
+      window.__game.holdTarget(false);
+      window.__game.setTarget(0, 0, 0);
+    });
     await page.evaluate(() => window.__game.holdTarget(false));
 
     /* ---- 17. ★ 行星物理：四项优化的机器判据 ---- */

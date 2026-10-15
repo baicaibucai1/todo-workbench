@@ -129,8 +129,31 @@ function buildLensFlare() {
       { sprite: mk(ghostT, 0xffc890, 0.17), k: -0.95, frac: 0.08, base: 0.17 },
       { sprite: mk(ghostT, 0x86c6a0, 0.13), k: -1.55, frac: 0.11, base: 0.13 }
     ],
-    last: { visible: false, star: { x: 0, y: 0 }, ghosts: [] }
+    last: { visible: false, occl: 0, star: { x: 0, y: 0 }, ghosts: [] }
   };
+}
+
+/* ★ v0.11.1 光学修正：光源被行星挡住时，镜头光斑必须熄灭。
+ * 真实相机里光斑产生于镜片内部的反射，前提是「光进得来」—— 前景行星把恒星
+ * 完全挡在背后时，主光斑与鬼影链都不该出现在行星圆盘上。此前的实现是
+ * depthTest:false + renderOrder 999 永远画在最顶层，亮斑「透过」星球，假。
+ * 实现：屏幕空间圆盘遮挡 —— 恒星投影点落进行星的投影圆盘内（且行星在恒星
+ * 更近侧）就算被挡；遮挡量 0..1 平滑过渡（行星边缘掠过时逐渐变暗，不跳变）。 */
+function starOcclusion() {
+  var occl = 0;
+  var starN = projectToNdc(_zeroV);
+  var asp = camera.aspect;
+  var tanH = Math.tan((camera.fov * Math.PI) / 360);
+  for (var i = 0; i < G.sys.planets.length; i++) {
+    var pl = G.sys.planets[i];
+    var pn = projectToNdc(pl._group.position);
+    if (pn.z > starN.z) continue;            /* 行星在恒星更远侧，挡不住光 */
+    var d = Math.hypot((starN.x - pn.x) * asp, starN.y - pn.y);
+    var dist = camera.position.distanceTo(pl._group.position);
+    var rp = pl.size / Math.max(dist * tanH, 0.001);   /* 行星投影半径（半高单位） */
+    occl = Math.max(occl, clamp((rp * 1.02 - d) / (rp * 0.30), 0, 1));
+  }
+  return occl;
 }
 
 function updateLensFlare() {
@@ -140,9 +163,12 @@ function updateLensFlare() {
   var behind = _lfV.z > -1.0;
   var ed = Math.max(Math.abs(ndc.x), Math.abs(ndc.y));
   var fade = clamp((1.35 - ed) / 0.5, 0, 1);
+  var occl = starOcclusion();
+  fade *= (1 - occl);
   var vis = !behind && fade > 0.01;
 
   lens.last.visible = vis;
+  lens.last.occl = +occl.toFixed(3);
   lens.last.star = { x: +ndc.x.toFixed(3), y: +ndc.y.toFixed(3) };
   lens.last.ghosts = [];
 
