@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Little Star · cube-sphere demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #05070a; }
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: #e8e8e8; }
+  canvas { display: block; }
+  .hud {
+    position: absolute; background: rgba(6, 8, 12, 0.82); border: 2px solid #8a8a8a;
+    border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.7;
+    letter-spacing: .2px;
+  }
+  #stats { left: 16px; top: 16px; min-width: 232px; }
+  #pick  { left: 16px; bottom: 16px; min-width: 232px; }
+  #help  { right: 16px; top: 16px; max-width: 300px; }
+  .k { color: #9a9a9a; display: inline-block; min-width: 82px; }
+  .v { color: #fff; }
+  .dim { color: #7d7d7d; }
+  .hi { color: #ffd479; }
+  h1 { font-size: 14px; font-weight: 500; margin-bottom: 6px; color: #fff; }
+  hr { border: none; border-top: 1px solid #3a3a3a; margin: 8px 0; }
+</style>
+</head>
+<body>
+
+<div class="hud" id="stats">
+  <h1>cube-sphere demo</h1>
+  <div><span class="k">每面分段</span><span class="v" id="s-n">64</span></div>
+  <div><span class="k">格子总数</span><span class="v" id="s-cells">—</span></div>
+  <div><span class="k">三角形</span><span class="v" id="s-tris">—</span></div>
+  <div><span class="k">构建耗时</span><span class="v" id="s-ms">—</span></div>
+  <div><span class="k">帧率</span><span class="v" id="s-fps">—</span></div>
+  <hr>
+  <div class="dim">海平面 <span id="s-sea">—</span> · 起伏 <span id="s-relief">—</span></div>
+</div>
+
+<div class="hud" id="pick">
+  <h1>拾取结果</h1>
+  <div><span class="k">面 id</span><span class="v" id="p-face">—</span></div>
+  <div><span class="k">格子</span><span class="v" id="p-cell">—</span></div>
+  <div><span class="k">经纬</span><span class="v" id="p-ll">—</span></div>
+  <div><span class="k">海拔</span><span class="v" id="p-h">—</span></div>
+  <div><span class="k">地表</span><span class="v" id="p-kind">—</span></div>
+  <div class="dim" style="margin-top:6px">左侧是格子，右侧是连续采样值 —— 两者同源</div>
+</div>
+
+<div class="hud" id="help">
+  <h1>这个 demo 验证什么</h1>
+  <div>① 六面立方体投影成球：面片均匀、<span class="hi">没有极点挤压</span></div>
+  <div>② 地表是<span class="hi">真实几何起伏</span>，山脊在剪影上看得见</div>
+  <div>③ 点击球面 → 拿到<span class="hi">格子 id</span> 与<span class="hi">连续海拔</span></div>
+  <hr>
+  <div class="dim">拖动旋转 · 滚轮缩放 · <b>1/2/3</b> 切换分段 · <b>G</b> 显示格子线</div>
+</div>
+
+<script src="../../three.min.js"></script>
+<script>
+/* ============================================================
+ * cube-sphere 独立 demo（v0.11 探索件，不并入主工程）
+ *
+ * 三条设计决定：
+ *  ① 高程是「方向的函数」 h(dir) —— 与格子无关，任意经纬都能连续问到值。
+ *     格子只是这张连续场上的采样点（将来的城市就落在格子上）。
+ *  ② 法线用解析梯度求（有限差分），不用 computeVertexNormals ——
+ *     六个面各自成网格、边顶点是重复的，逐面算法线会在接缝处裂出一道亮线。
+ *     改从连续场求梯度后，边的两侧天然一致，接缝消失。
+ *  ③ 随机全部走 hash3i(种子, 坐标)，不碰任何全局随机流 —— 与主工程的
+ *     「确定性守恒」同一条规矩：同一个种子永远长出同一颗星球。
+ * ============================================================ */
+
+var SEED = 20261015;
+var SEA = 0.63;         // 海平面（0..1 高程）—— 由「陆地占比」标定，见 _smoke 的统计
+var RELIEF = 0.085;     // 起伏相对半径
+var R = 1;              // 星球半径
+
+/* ---------- 噪声：整数哈希 → 3D value noise → fbm ---------- */
+function hash3i(i, j, k, s) {
+  var h = (i * 374761393 + j * 668265263 + k * 2147483647 + s * 971) | 0;
+  h = (h ^ (h >>> 13)) * 1274126177 | 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function smooth(t) { return t * t * (3 - 2 * t); }
+function vnoise3(x, y, z, s) {
+  var xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+  var xf = smooth(x - xi), yf = smooth(y - yi), zf = smooth(z - zi);
+  var c000 = hash3i(xi, yi, zi, s),     c100 = hash3i(xi + 1, yi, zi, s);
+  var c010 = hash3i(xi, yi + 1, zi, s), c110 = hash3i(xi + 1, yi + 1, zi, s);
+  var c001 = hash3i(xi, yi, zi + 1, s), c101 = hash3i(xi + 1, yi, zi + 1, s);
+  var c011 = hash3i(xi, yi + 1, zi + 1, s), c111 = hash3i(xi + 1, yi + 1, zi + 1, s);
+  var x00 = c000 + (c100 - c000) * xf, x10 = c010 + (c110 - c010) * xf;
+  var x01 = c001 + (c101 - c001) * xf, x11 = c011 + (c111 - c011) * xf;
+  var y0 = x00 + (x10 - x00) * yf, y1 = x01 + (x11 - x01) * yf;
+  return y0 + (y1 - y0) * zf;
+}
+function fbm3(x, y, z, s, oct) {
+  var a = 0.5, f = 1, sum = 0, norm = 0;
+  for (var i = 0; i < oct; i++) {
+    sum += a * vnoise3(x * f, y * f, z * f, (s ^ (i * 0x9e3779b9)) | 0);
+    norm += a; a *= 0.5; f *= 2.07;
+  }
+  return sum / norm;
+}
+
+/* ---------- 连续高程场：h(dir) ---------- */
+/* 大陆：低频 fbm 抬升；山脊：ridged 叠加在陆地上；细节：高频抖一点。 */
+function heightAt(dx, dy, dz) {
+  var cont = fbm3(dx * 1.35 + 11.3, dy * 1.35 - 4.1, dz * 1.35 + 7.7, SEED, 4);
+  /* ★ 对比拉伸：fbm 的取值挤在 0.5 附近（4 个八度叠加后方差很小），
+   * 不拉伸的话「陆地」几乎不出现，整颗星球是一片汪洋 —— 与主工程 v0.11
+   * 「海平面必须按分位数量出来、不能拍硬阈值」是同一条教训。
+   * 拉伸后取值铺满 0..1，海平面才真正决定海陆比。 */
+  var c = clamp(0.5 + (cont - 0.5) * 2.9, 0, 1);
+  var ridge = 1 - Math.abs(fbm3(dx * 3.1 - 2.2, dy * 3.1 + 5.5, dz * 3.1 - 9.1, SEED ^ 0x51ed, 3) * 2 - 1);
+  var detail = (vnoise3(dx * 11, dy * 11, dz * 11, SEED ^ 0x2c1d) - 0.5) * 0.04;
+  var land = clamp((c - SEA) / (1 - SEA), 0, 1);      /* 0 = 海岸线，1 = 内陆最深处 */
+  return clamp(c + land * land * ridge * 0.17 + detail, 0, 1);
+}
+function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+
+/* ---------- 立方体六面：局部 (u,v) → 单位立方体上的方向 ---------- */
+var FACES = [
+  function (u, v) { return [ 1,  v, -u]; },   // +X
+  function (u, v) { return [-1,  v,  u]; },   // -X
+  function (u, v) { return [ u,  1, -v]; },   // +Y
+  function (u, v) { return [ u, -1,  v]; },   // -Y
+  function (u, v) { return [ u,  v,  1]; },   // +Z
+  function (u, v) { return [-u,  v, -1]; }    // -Z
+];
+function cubeToSphere(u, v, f) {
+  var p = FACES[f](u, v);
+  var x = p[0], y = p[1], z = p[2];
+  var x2 = x * x, y2 = y * y, z2 = z * z;
+  var sx = x * Math.sqrt(1 - y2 / 2 - z2 / 2 + (y2 * z2) / 3);
+  var sy = y * Math.sqrt(1 - z2 / 2 - x2 / 2 + (z2 * x2) / 3);
+  var sz = z * Math.sqrt(1 - x2 / 2 - y2 / 2 + (x2 * y2) / 3);
+  var L = Math.sqrt(sx * sx + sy * sy + sz * sz) || 1;
+  return [sx / L, sy / L, sz / L];
+}
+
+/* ---------- 解析法线：从连续场求切向梯度 ---------- */
+function normalAt(dx, dy, dz, isWater) {
+  if (isWater) return [dx, dy, dz];                 // 水面不参与起伏，法线朝天
+  var e = 0.0025 * RELIEF / R + 0.0015;
+  /* 两个正交切向（球面上的东向 / 北向） */
+  var t1 = norm3(-dz, 0, dx);                       // 与 dir、Y 轴正交
+  if (t1[0] === 0 && t1[2] === 0) t1 = [1, 0, 0];
+  var t2 = norm3(dy * t1[2] - dz * t1[1], dz * t1[0] - dx * t1[2], dx * t1[1] - dy * t1[0]);
+  var h0 = heightAt(dx, dy, dz);
+  var ha = heightAt(dx + t1[0] * e, dy + t1[1] * e, dz + t1[2] * e);
+  var hb = heightAt(dx + t2[0] * e, dy + t2[1] * e, dz + t2[2] * e);
+  var g1 = (ha - h0) * RELIEF * R / e, g2 = (hb - h0) * RELIEF * R / e;
+  var nx = dx - (t1[0] * g1 + t2[0] * g2);
+  var ny = dy - (t1[1] * g1 + t2[1] * g2);
+  var nz = dz - (t1[2] * g1 + t2[2] * g2);
+  return norm3(nx, ny, nz);
+}
+function norm3(x, y, z) {
+  var L = Math.sqrt(x * x + y * y + z * z) || 1;
+  return [x / L, y / L, z / L];
+}
+
+/* ---------- 调色（顶点色，与高度分带一一对应） ---------- */
+function colorAt(h, dy, isWater) {
+  var lat = Math.abs(dy);                            // 0 赤道 → 1 极点
+  var c;
+  if (isWater) {
+    var d = clamp((SEA - h) / Math.max(SEA, 0.001), 0, 1);
+    c = [0.05 + 0.10 * (1 - d), 0.13 + 0.24 * (1 - d), 0.26 + 0.30 * (1 - d)];
+  } else {
+    var t = clamp((h - SEA) / (1 - SEA), 0, 1);
+    if (t < 0.10)      c = [0.72, 0.68, 0.47];       // 海岸沙
+    else if (t < 0.34) c = [0.21, 0.46, 0.15];       // 平原
+    else if (t < 0.60) c = [0.44, 0.38, 0.22];       // 高地
+    else if (t < 0.88) c = [0.55, 0.47, 0.36];       // 裸岩
+    else               c = [0.86, 0.88, 0.92];       // 雪线
+    var k = 1 - t * 0.35;
+    c = [c[0] * k, c[1] * k, c[2] * k];
+  }
+  /* 极冠：纬度越高越白（海面冻结也一起变白） */
+  var cap = clamp((lat - 0.87) / 0.09, 0, 1);
+  if (cap > 0) {
+    c = [c[0] + (0.92 - c[0]) * cap, c[1] + (0.94 - c[1]) * cap, c[2] + (0.97 - c[2]) * cap];
+  }
+  return c;
+}
+
+/* ---------- 构建 cube-sphere ---------- */
+function buildPlanet(N) {
+  var t0 = performance.now();
+  var pos = [], col = [], nor = [], idx = [];
+  var vpf = (N + 1) * (N + 1);                       // 每面顶点数（六个面独立，边顶点重复）
+  for (var f = 0; f < 6; f++) {
+    for (var j = 0; j <= N; j++) {
+      for (var i = 0; i <= N; i++) {
+        var u = -1 + (2 * i) / N, v = -1 + (2 * j) / N;
+        var d = cubeToSphere(u, v, f);
+        var h = heightAt(d[0], d[1], d[2]);
+        var water = h < SEA;
+        var hh = water ? SEA : h;
+        var rr = R * (1 + RELIEF * hh / (1 - SEA / 2));
+        pos.push(d[0] * rr, d[1] * rr, d[2] * rr);
+        var n = normalAt(d[0], d[1], d[2], water);
+        nor.push(n[0], n[1], n[2]);
+        var c = colorAt(hh, d[1], water);
+        col.push(c[0], c[1], c[2]);
+      }
+    }
+    for (var jj = 0; jj < N; jj++) {
+      for (var ii = 0; ii < N; ii++) {
+        var a = f * vpf + jj * (N + 1) + ii;
+        idx.push(a, a + 1, a + N + 2, a, a + N + 2, a + N + 1);
+      }
+    }
+  }
+  var geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  geo.setIndex(idx);
+  return { geo: geo, cells: 6 * N * N, tris: idx.length / 3, ms: Math.round(performance.now() - t0) };
+}
+
+/* ---------- 场景 ---------- */
+var scene = new THREE.Scene();
+var camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 100);
+var renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+var sun = new THREE.DirectionalLight(0xfff4e0, 1.15);
+sun.position.set(3.2, 2.0, 2.6);
+scene.add(sun);
+var fill = new THREE.DirectionalLight(0x8fb6ff, 0.22);
+fill.position.set(-2.6, -1.2, -2.0);
+scene.add(fill);
+
+var planet = null, wire = null, N = 64;
+function rebuild(n) {
+  N = n;
+  if (planet) { scene.remove(planet); planet.geometry.dispose(); planet.material.dispose(); }
+  if (wire) { scene.remove(wire); wire.geometry.dispose(); wire.material.dispose(); wire = null; }
+  var r = buildPlanet(N);
+  planet = new THREE.Mesh(r.geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  scene.add(planet);
+  if (showWire) {
+    wire = new THREE.LineSegments(new THREE.WireframeGeometry(r.geo), new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.18 }));
+    scene.add(wire);
+  }
+  $("s-n").textContent = N;
+  $("s-cells").textContent = r.cells.toLocaleString();
+  $("s-tris").textContent = r.tris.toLocaleString();
+  $("s-ms").textContent = r.ms + " ms";
+}
+var showWire = false;
+
+/* 拾取标记：命中点上的一个小八面体 + 一条朝外的短线 */
+var marker = new THREE.Mesh(
+  new THREE.OctahedronGeometry(0.035, 0),
+  new THREE.MeshBasicMaterial({ color: 0xffd479, wireframe: true })
+);
+marker.visible = false;
+scene.add(marker);
+
+/* ---------- 相机控制（手写，免依赖 OrbitControls） ---------- */
+var orbit = { theta: 0.9, phi: 1.15, r: 3.4 };
+function applyOrbit() {
+  var sp = Math.sin(orbit.phi);
+  camera.position.set(
+    orbit.r * sp * Math.sin(orbit.theta),
+    orbit.r * Math.cos(orbit.phi),
+    orbit.r * sp * Math.cos(orbit.theta)
+  );
+  camera.lookAt(0, 0, 0);
+}
+var drag = null;
+var cv = renderer.domElement;
+cv.addEventListener("pointerdown", function (e) { drag = { x: e.clientX, y: e.clientY, moved: 0 }; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", function (e) {
+  if (!drag) return;
+  var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.moved += Math.abs(dx) + Math.abs(dy);
+  drag.x = e.clientX; drag.y = e.clientY;
+  orbit.theta -= dx * 0.006;
+  orbit.phi = clamp(orbit.phi - dy * 0.006, 0.12, Math.PI - 0.12);
+  applyOrbit();
+});
+cv.addEventListener("pointerup", function (e) {
+  var wasDrag = drag && drag.moved > 5;
+  drag = null;
+  if (!wasDrag) pick(e.clientX, e.clientY);
+});
+cv.addEventListener("wheel", function (e) {
+  e.preventDefault();
+  orbit.r = clamp(orbit.r * (e.deltaY > 0 ? 1.10 : 0.91), 1.55, 12);
+  applyOrbit();
+}, { passive: false });
+window.addEventListener("keydown", function (e) {
+  if (e.key === "1") rebuild(32);
+  if (e.key === "2") rebuild(64);
+  if (e.key === "3") rebuild(128);
+  if (e.key === "g" || e.key === "G") { showWire = !showWire; rebuild(N); }
+});
+
+/* ---------- 拾取：射线命中 → 反算格子与连续海拔 ---------- */
+var ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+function pick(cx, cy) {
+  ndc.x = (cx / window.innerWidth) * 2 - 1;
+  ndc.y = -(cy / window.innerHeight) * 2 + 1;
+  ray.setFromCamera(ndc, camera);
+  var hit = ray.intersectObject(planet, false)[0];
+  if (!hit) { marker.visible = false; return; }
+  var p = hit.point;
+  var d = norm3(p.x, p.y, p.z);
+
+  /* ① 连续场：任意方向都能问到高度（与网格分辨率无关） */
+  var hc = heightAt(d[0], d[1], d[2]);
+
+  /* ② 格子：先定面（最大分量），再把它量化到当前分辨率的格子里 */
+  var face, u, v;
+  var ax = Math.abs(d[0]), ay = Math.abs(d[1]), az = Math.abs(d[2]);
+  if (ax >= ay && ax >= az)      { face = d[0] > 0 ? 0 : 1; u = d[0] > 0 ? -d[2] : d[2];  v = d[1]; }
+  else if (ay >= ax && ay >= az) { face = d[1] > 0 ? 2 : 3; u = d[0];  v = d[1] > 0 ? -d[2] : d[2]; }
+  else                           { face = d[2] > 0 ? 4 : 5; u = d[2] > 0 ? d[0] : -d[0];  v = d[1]; }
+  var gi = clamp(Math.floor(((u + 1) / 2) * N), 0, N - 1);
+  var gj = clamp(Math.floor(((v + 1) / 2) * N), 0, N - 1);
+  var cellId = face * N * N + gj * N + gi;
+
+  var lat = (Math.asin(clamp(d[1], -1, 1)) * 180) / Math.PI;
+  var lon = (Math.atan2(d[2], d[0]) * 180) / Math.PI;
+  var water = hc < SEA;
+
+  marker.position.set(p.x, p.y, p.z);
+  marker.scale.setScalar(Math.max(0.5, orbit.r * 0.045));
+  marker.visible = true;
+
+  $("p-face").textContent = face + " (" + "＋X－X＋Y－Y＋Z－Z".substr(face * 2, 2) + ")";
+  $("p-cell").textContent = cellId + " · 面内 " + gi + "," + gj;
+  $("p-ll").textContent = lat.toFixed(1) + "° / " + lon.toFixed(1) + "°";
+  $("p-h").textContent = hc.toFixed(4) + (water ? "（水下）" : "");
+  $("p-kind").textContent = water ? "海洋" : (hc > SEA + 0.40 ? "高山" : hc > SEA + 0.16 ? "高地" : "平原/海岸");
+}
+
+function $(id) { return document.getElementById(id); }
+window.addEventListener("resize", function () {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* ---------- 主循环 ---------- */
+$("s-sea").textContent = SEA.toFixed(2);
+$("s-relief").textContent = RELIEF.toFixed(3);
+rebuild(N);
+applyOrbit();
+var frames = 0, tPrev = performance.now();
+function loop() {
+  requestAnimationFrame(loop);
+  if (planet) planet.rotation.y += 0.0012;
+  if (wire) wire.rotation.y = planet.rotation.y;
+  if (marker.visible) marker.rotation.y += 0.02;
+  renderer.render(scene, camera);
+  frames++;
+  var now = performance.now();
+  if (now - tPrev > 500) {
+    $("s-fps").textContent = Math.round((frames * 1000) / (now - tPrev));
+    frames = 0; tPrev = now;
+  }
+}
+loop();
+window.__demo = {
+  ready: true,
+  heightAt: heightAt,
+  stats: function () { return { N: N, cells: 6 * N * N, sea: SEA, relief: RELIEF }; },
+  /* 连续查询口：给经纬，返回海拔（与点击拾取同源） */
+  sample: function (latDeg, lonDeg) {
+    var la = (latDeg * Math.PI) / 180, lo = (lonDeg * Math.PI) / 180;
+    var d = [Math.cos(la) * Math.cos(lo), Math.sin(la), Math.cos(la) * Math.sin(lo)];
+    return { h: +heightAt(d[0], d[1], d[2]).toFixed(5), land: heightAt(d[0], d[1], d[2]) >= SEA };
+  }
+};
+</script>
+</body>
+</html>
