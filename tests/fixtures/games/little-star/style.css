@@ -82,10 +82,10 @@ html, body {
 .p-title #p-name { font-size: 15px; font-weight: 600; letter-spacing: 1px; color: var(--paper); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .p-title #p-sub { font-size: 11.5px; color: var(--dim); letter-spacing: 2px; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ---- 面板折叠：**整条向右侧收进去**（滑出视口右边缘），只留一枚贴边的把手 ----
+/* ---- 面板折叠：**整条向右侧收进去**（滑出视口右边缘），右边缘留一枚标签页 ----
  * 收法：面板整体 `translateX(100% + 24px)` 滑出屏幕（24px = 它自己的 right 边距），
  * **宽高都不变** —— 内容与滚动位置原样留着，拉回来就是原样。
- * ★ 为什么是横向而不是「把面板体叠起来」（v0.11.x 第一版的做法，已否）：面板在右侧，
+ * ★ 为什么要横向收而不是「把面板体叠起来」（v0.11.x 第一版的做法，已否）：面板在右侧，
  *   收起来的方向就该是右侧。竖着收会留下一条 312px 宽的横条，照样横占着画面，
  *   只是从「高」换成了「宽」——画面并没有更开阔。
  * ★ 与 .hidden 的分工（两件事，别混）：
@@ -94,13 +94,20 @@ html, body {
  *   所以折叠不进状态机、也不随选中项变化复位（IDE 式粘性）。 */
 #panel.folded { transform: translateX(calc(100% + 24px)); }
 
-/* 边缘把手：**只靠 CSS 现身**（#panel.folded:not(.hidden) ~ #p-handle）——
- * 没选中时（.hidden）把手跟着退场，不会出现「点开一个空面板」。
+/* 右侧标签坞（#p-dock）：面板收进右侧后，在右边缘留下的**标签页**（点一枚 → 展开对应面板）。
+ * ★ 现在只有一枚标签（信息面板）—— 多面板就往坞里加 .dock-tab[data-panel]，样式不用动。
+ * 显隐**只靠 CSS**：#panel.folded:not(.hidden) ~ #p-dock —— 没选中时（.hidden）整坞跟着
+ * 退场，不会出现「点开一个空面板」。所以 #p-dock 必须写在 #panel **之后**（兄弟选择器）。
  * top 与面板同一条水平线，读作「它收到那儿去了」；右边框在视口外，索性去掉不留假缝。 */
-#p-handle {
+#p-dock {
   display: none;                                      /* 常态不占位，见下面的兄弟选择器 */
   position: fixed; top: 24px; right: 0; z-index: 11;
-  flex-direction: column; align-items: center; gap: 5px;
+  flex-direction: column; align-items: flex-end; gap: 4px;
+}
+#panel.folded:not(.hidden) ~ #p-dock { display: flex; }
+
+.dock-tab {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
   padding: 9px 0 11px; width: 30px;
   color: var(--dim2); background: #0b0b0b;
   border: 2px solid var(--edge); border-right: none;
@@ -108,11 +115,10 @@ html, body {
   cursor: pointer;
   transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
 }
-#panel.folded:not(.hidden) ~ #p-handle { display: flex; }
-#p-handle:hover { color: var(--paper); border-color: var(--paper); background: #171717; }
-.ph-arrow { font-size: 14px; line-height: 1; }
-/* 「面板」两字竖排：宽度收到 1em → 一字一行（不引 writing-mode，纯靠宽度断行） */
-.ph-txt { width: 1em; text-align: center; line-height: 1.3; font: 10.5px/1.3 var(--sans); }
+.dock-tab:hover { color: var(--paper); border-color: var(--paper); background: #171717; }
+.dk-arrow { font-size: 13px; line-height: 1; }
+/* 标签名竖排：宽度收到 1em → 一字一行（不引 writing-mode，纯靠宽度断行） */
+.dk-name { width: 1em; text-align: center; font: 10.5px/1.3 var(--sans); }
 
 #p-fold {
   margin-left: auto; flex: none;

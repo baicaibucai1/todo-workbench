@@ -17,10 +17,8 @@
   #panel          右侧信息面板，默认 .hidden；data-kind = star|planet|none
                     > .p-head > .p-dot / #p-name / #p-sub / #p-fold
                                  #p-fold 收起钮：**整条面板向右滑出视口**（.folded），
-                                 内容不隐藏、只是收到屏幕外（与「未选中时整条退场」
-                                 的 .hidden 是两件事）
-  #p-handle       面板收起后贴右边缘的把手（默认不占位，由 #panel.folded 的兄弟选择器
-                   放开）；点它把面板拉回来，与 #p-fold 同一个动作
+                                 钮上带右箭头「收起 →」；内容不隐藏、只是收到屏幕外
+                                 （与「未选中时整条退场」的 .hidden 是两件事）
                     > #p-tabs    标签栏（v0.9）：**所有行星**出现 ——
                                    行星 / 资源 / 文明 三页（文明钮只在发源地出现），
                                    机器 FSM_PANEL 管状态，一次只显示一页
@@ -28,6 +26,8 @@
                     > #p-res     资源页内容（matRows 生成：蕴藏 / 可采两本账）
                     > #p-civ     文明页内容（civRows 生成：物种 / 发源地 / 摇篮评分）
                     > #p-actions 操作按钮（当前全是占位禁用）
+  #p-dock         右侧标签坞：**收起时**在右边缘留下的竖排标签页（点一枚 → 展开对应面板）。
+                   现在只有一枚 .dock-tab[data-panel=info]；多面板就往坞里加标签。
   #hud            左上角工具条
                    > #guide-btn 打开指导书
                    > .hud-hint 操作提示（纯装饰）
@@ -53,8 +53,8 @@
         <div id="p-name">—</div>
         <div id="p-sub">—</div>
       </div>
-      <!-- 收起钮：把整条面板收到屏幕右边去（再点 / 点边缘把手即拉回来）。逻辑在 80-panel.js -->
-      <button id="p-fold" title="收起面板（收进右侧）">收起</button>
+      <!-- 收起钮：把整条面板收到屏幕右边去（右箭头 = 收进去的方向）。逻辑在 80-panel.js -->
+      <button id="p-fold" title="收起面板（收进右侧）">收起 →</button>
     </div>
     <!-- 标签栏：默认隐藏；选中行星时由 applyPanelTab 显示（行星 / 资源 / 文明） -->
     <div id="p-tabs" class="hidden">
@@ -71,8 +71,12 @@
     <div id="p-actions"></div>
   </aside>
 
-  <!-- 面板收起后贴在右边缘的把手（默认不显示，靠 #panel.folded 的兄弟选择器现身） -->
-  <button id="p-handle" title="展开面板"><span class="ph-arrow">‹</span><span class="ph-txt">面板</span></button>
+  <!-- 右侧标签坞：面板收进右侧时，在这里留一枚竖排标签页（点它把面板拉出来）。
+       ★ 现在只有「信息面板」一枚 —— 将来加面板就往坞里加一枚
+         <button class="dock-tab" data-panel="xxx">，显隐与样式都不用改（见 style.css）。 -->
+  <div id="p-dock">
+    <button class="dock-tab" data-panel="info" title="展开信息面板"><span class="dk-arrow">←</span><span class="dk-name">面板</span></button>
+  </div>
 
   <!-- 左上角工具条：天体指导书入口（恒星篇 + 行星篇） -->
   <div id="hud">

@@ -187,9 +187,13 @@ function syncPanelTab() {
   applyPanelTab();
 }
 
-/* ---- 折叠（收起 / 展开）：**整条面板向右侧收进去**，只留一枚贴边的把手 ----
- * 是什么：标题条右端一个钮，把整条面板滑出视口右边缘（内容不隐藏、只是收到屏幕外，
- * 宽高与滚动位置原样留着）；收起后右边缘出现一枚把手（#p-handle），点它拉回来。
+/* ---- 折叠（收起 / 展开）：**整条面板向右侧收进去**，右边缘留一枚标签页 ----
+ * 两个入口各管一个方向（不互相兼职）：
+ *   收起  标题条右端的「收起 →」（#p-fold），箭头指着收进去的方向；只负责收。
+ *   展开  右边缘的标签坞 #p-dock 里那一枚竖排标签页（.dock-tab[data-panel=info]）；
+ *         点它把面板拉出来。坞里现在只有「信息面板」一枚，**多面板就往坞里加标签** ——
+ *         显隐与样式都不用改（CSS 见 style.css；分派看 data-panel）。
+ * 收法：整条面板滑出视口右边缘（内容不隐藏、只是收到屏幕外，宽高与滚动位置原样留着）。
  * 方向是横向的：面板在右侧，收起来的方向就该是右侧 —— 竖着收会留下一条 312px 宽的
  * 横条，照样横占画面（第一版做法，已否）。
  *
@@ -200,23 +204,28 @@ function syncPanelTab() {
  *        ② 它不随选中项变化复位 —— 用户关掉的东西不该自己弹回来。换目标时
  *           renderPanel 照常改写内容，只是还收在屏外。
  *   想让「选中新目标即自动展开」，在 renderPanel() 里加一行 setPanelFold(false) 即可。
- * ③ 把手的显隐**不归 JS 管**：#panel.folded:not(.hidden) ~ #p-handle 一条 CSS 搞定 ——
- *   于是「没选中」时把手自动跟着退场（否则会出现「点开一个空面板」）。 */
-var elPFold = null, panelFolded = false;
+ * ③ 标签坞的显隐**不归 JS 管**：#panel.folded:not(.hidden) ~ #p-dock 一条 CSS 搞定 ——
+ *   于是「没选中」时整坞自动跟着退场（否则会出现「点开一个空面板」）。 */
+var panelFolded = false;
 
 function applyPanelFold() {
-  if (!elPanel || !elPFold) return;
+  if (!elPanel) return;
   elPanel.classList.toggle("folded", panelFolded);
-  elPFold.textContent = panelFolded ? "展开" : "收起";
-  elPFold.title = panelFolded ? "展开面板" : "收起面板（收进右侧）";
 }
 function setPanelFold(on) { panelFolded = !!on; applyPanelFold(); return panelFolded; }
 function togglePanelFold() { return setPanelFold(!panelFolded); }
 function setupPanelFold() {
-  elPFold = $("p-fold");
-  var elHandle = $("p-handle");
-  if (elPFold) elPFold.addEventListener("click", togglePanelFold);
-  if (elHandle) elHandle.addEventListener("click", togglePanelFold);   /* 同一个动作的第二个入口 */
+  var elFold = $("p-fold");
+  if (elFold) elFold.addEventListener("click", togglePanelFold);
+  var dock = $("p-dock");
+  if (dock) {
+    dock.addEventListener("click", function (e) {
+      var t = e.target.closest ? e.target.closest(".dock-tab") : null;
+      if (!t) return;
+      /* 坞里现在只有信息面板一枚；多面板时按 data-panel 分派到各自的展开动作 */
+      if (t.getAttribute("data-panel") === "info") togglePanelFold();
+    });
+  }
   applyPanelFold();          /* 初刷：DOM 与 panelFolded 对齐（默认展开） */
 }
 
