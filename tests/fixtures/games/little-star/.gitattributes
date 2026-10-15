@@ -1,0 +1,13 @@
+# Little Star fixture —— 行尾锁定为 LF
+#
+# 为什么必须有这个文件：
+# 本仓库全局开了 core.autocrlf=true，新建 worktree / 别人 clone 时，git 会把
+# 检出文件的行尾全部改成 CRLF。而 verify.mjs 的 [0] 节是拿 game.js 与 src/ 的
+# 拼装结果做**逐字节**比对 —— 行尾一变，[0] 立刻红。
+#
+# 事后再跑一次 build.mjs 去重拼只能治标：那样每换一个 worktree 都要重拼一遍，
+# 而且 git diff 会满屏都是行尾改动。
+#
+# 所以这里把这个 fixture 目录整体锁成 LF：**任何 clone / worktree 检出都是 LF**，
+# 与开发时磁盘上的状态完全一致 —— [0] 恒绿，diff 也干净。
+* text=auto eol=lf
