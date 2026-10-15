@@ -16,7 +16,8 @@ v0.11 起**固态行星的表面由地形生成器构建**：先算出一张真�
 - **当前版本**：v0.11.0（地形生成器：固态行星表面 = 高程场构建 —— 3D 噪声 / 陨击坑 / 河网 / 高度分带 / 凹凸同源；全景 768px · 聚焦 2048px 两级分辨率；聚焦态隐藏选中标记 + 淡出云层；承接 v0.10 聚焦镜头、v0.9 物资系统、v0.8 文明选址与 v0.7 的 `src/` 片段拆分（现 18 片段）/ 注册表 / 状态机两个原语）
 - **依赖**：three.js r159 UMD（本地 `three.min.js`）。运行时无 npm、无打包、无框架，经典 `<script>` 加载。
 - **开发期**：源码在 `src/`，改完跑 `node scripts/build.mjs` 拼成 `game.js` —— 浏览器**只加载** `game.js` 这一个脚本（见第三节）。
-- **位置**：`tests/fixtures/games/little-star/`（纯 fixture，未注册为工具、未提交）
+- **位置**：`tests/fixtures/games/little-star/`（fixture，未注册为工具，2026-10-15 起已入库）
+- **多人协作**：要把活派给别的 agent？先读同目录 `AGENT-HANDOFF.md`（含可直接粘贴的交接提示词、worktree 命令、行尾锁定的原因、分工边界）
 - **归档**：`../little-star-v02-archive/`（改名前的星系视图版）、`../little-star-v061-archive/`（拆分前的单文件版）—— 只读参考，别在那里改
 
 ![默认全景](screenshots/n1-system.png)
@@ -82,7 +83,9 @@ cd C:/AI_Production/Tools/main/tests/fixtures/games/little-star
 | `serve.mjs` | 开发用静态服务器（4321，no-cache） | 会提示「src 比 game.js 新」，但只警告不重拼 |
 | `scripts/build.mjs` | ★ **拼装器**：`src/` → `game.js` + 生成区块导航表 | `--check` 校验同步 / `--nav` 预览导航表 / 无参＝拼装并写盘 |
 | `scripts/roll-check.mjs` | **确定性守恒守卫**：静态复算 RNG 序列（从 `src/` 读，不读产物） | 改了 `src/40-textures.js` 里的贴图函数后，要同步它的「复刻段」 |
-| `screenshots/` | `verify.mjs` 的截图产物 | 每次跑测试会**全部清空重建**。索引见第十节 |
+| `screenshots/` | `verify.mjs` 的截图产物 | 每次跑测试会**全部清空重建**。不入版本（本机走 `.git/info/exclude`）。索引见第十节 |
+| `.gitattributes` | 把本目录锁成 **LF 行尾** | ★ 别删：仓库全局 `autocrlf=true`，而 `[0]` 节是逐字节比对，一转 CRLF 就红 |
+| `AGENT-HANDOFF.md` | 给别的 agent 的交接提示词 + 隔离方案 | 派活给别人、或自己要开 worktree 时读它 |
 
 > **运行时最小集合**：`index.html` + `game.js` + `style.css` + `three.min.js`。
 > `src/` 与 `scripts/` 是开发期文件，做工具打包时可以不带（v0.2 归档也是这么留的）。

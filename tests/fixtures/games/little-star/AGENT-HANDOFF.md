@@ -13,8 +13,8 @@ agent 定位到当前项目，以及介绍大致情况，创建 worktree 以避�
 
 【坐标】
 - 活目录：C:\AI_Production\Tools\main\tests\fixtures\games\little-star\
-- 它所在的 git 仓库是 C:\AI_Production\Tools\main（分支 main，远端 baicaibucai1/todo-workbench），
-  但 little-star 本身目前是 untracked（未入库）—— 这是本项目最需要注意的一点。
+- 它所在的 git 仓库是 C:\AI_Production\Tools\main（分支 main，远端 baicaibucai1/todo-workbench）。
+  little-star 已在 commit e2f9f9b 入库，并用 .gitattributes 把该文件树锁成 LF 行尾（理由见下）。
 - ★ 唯一必读入口：该目录下的 README.md（跑法 / 文件职责 / 约定 / SOP / __game 调试 API /
   测试大纲 / 截图索引 / 踩坑 / 版本沿革都在里面）。动手前先完整读一遍。
 
@@ -23,12 +23,19 @@ agent 定位到当前项目，以及介绍大致情况，创建 worktree 以避�
 固态行星的表面由一条环境无关的高程场管线算出来（3D 噪声 → 上采样 → 陨击坑 / 河网 →
 高度分带 + hillshade → 导出颜色图与凹凸图），聚焦时从 768px 升级到 2048px。
 
-【先做隔离，再动手】不要直接在 C:\AI_Production\Tools\main\... 里改。
-因为 little-star 未入库，git worktree 拉下来的目录里不会有这些源码（见 README 同目录
-AGENT-HANDOFF.md 的第三节）。所以我给你的默认隔离方式是「物理副本」：
-  mkdir -p C:/AI_Production/_ls-work/<你的角色名>
-  cp -r C:/AI_Production/Tools/main/tests/fixtures/games/little-star/. C:/AI_Production/_ls-work/<你的角色名>/
-之后全部工作都在副本里做，改完用 diff -rq 比对差异、由主负责人合并回活目录。
+【先做隔离，再动手】别直接在 C:\AI_Production\Tools\main\... 里改，那是主负责人的活目录。
+用 git worktree 给自己开一份独立工作区（源码已入库，拉下来是齐的）：
+
+  cd C:/AI_Production/Tools/main
+  git worktree add C:/AI_Production/_wt/ls-<你的角色名> -b ls/<你的角色名> main
+
+进去先验环境是好的 —— 这两条必须一条不红，且不需要任何手工修正：
+  cd C:/AI_Production/_wt/ls-<你的角色名>/tests/fixtures/games/little-star
+  <node> scripts/build.mjs --check     # ✓ game.js 与 src/ 一致（18 个片段 · 4863 行）
+  <node> scripts/roll-check.mjs        # ✓ 0.374455 / 命中 M
+干完活在**该 worktree 里**提交（它自带 git 指向），由主负责人 merge 回 main；
+收尾 `git worktree remove C:/AI_Production/_wt/ls-<你的角色名>`。
+★ worktree 必须建在 C:\AI_Production\Tools\main **外面**（推荐 C:\AI_Production\_wt\）。
 
 【本机硬约束（踩了会卡很久）】
 - 一律用受管 node 绝对路径：C:/Users/Sogap/.workbuddy/binaries/node/versions/22.22.2-6/node.exe
@@ -57,9 +64,11 @@ AGENT-HANDOFF.md 的第三节）。所以我给你的默认隔离方式是「物
 
 【交付纪律】先交付边界清晰的小检查点，并在结尾明确列出「这次没做什么」，别一口气全做完。
 【验收标准】三条命令全过，且 verify 输出「196/196 通过」，四个确定性锚点一格未动。
+【别动别人的 WIP】仓库根的 README.md / src/lib/tools.ts / tests/fixtures/tools/index.json /
+tests/tool-registry.mjs 有别人的未提交改动（不是你改的，也不是我们的任务范围）。
 ```
 
-> ⚠️ 上面那段里有一处刻意保留的提醒：复制前请把第五条中示例性路径按实际情况再核一遍。
+> 复制前可按实际情况微调两处：`<你的角色名>`（如 terrain / ui / guide）和预览端口号。
 
 ---
 
@@ -70,8 +79,8 @@ AGENT-HANDOFF.md 的第三节）。所以我给你的默认隔离方式是「物
 | 名称 | Little Star —— three.js 单星系沙盘（恒星 15 型 + 行星 16 型 + 小行星带） |
 | 位置 | `C:\AI_Production\Tools\main\tests\fixtures\games\little-star\` |
 | 载体仓库 | `C:\AI_Production\Tools\main`（`main`，origin `baicaibucai1/todo-workbench`） |
-| git 状态 | `tests/fixtures/games/` 整体 **untracked**（未被 `.gitignore` 忽略，只是没 commit） |
-| 体积 | 47 个文件，4.8 MB（含 three.min.js 与 screenshots） |
+| git 状态 | **已入库**：commit `e2f9f9b`（28 个文件）+ `a79d61a`（`.gitattributes`）。两个 `-archive/` 兄弟目录仍未入库 |
+| 体积 | 47 个文件，4.8 MB（含 three.min.js 与 screenshots）；入库的 28 个约 1.1 MB |
 | 版本 | v0.11.0（地形生成器），`src/` 18 片段，`game.js` 4863 行 |
 | 回归 | `verify.mjs` 23 节 / **196 项**，当前全绿；截图每次跑会清空重建 |
 | 入口文档 | 同目录 `README.md`（唯一必读） |
@@ -82,52 +91,60 @@ v0.11 长出固态行星的真实地表。
 
 ---
 
-## 三、★ 隔离方案（重点：为什么默认不给他用 worktree）
+## 三、隔离方案（已就绪：直接用 worktree）
 
-**事实**：`git worktree add <路径>` 只会 checkout **已被跟踪**的文件。而 little-star 是
-untracked —— 直接建 worktree，新目录里**一个游戏源文件都没有**。所以「创建 worktree 以避免
-相互干扰」这个想法要先解决「它还没入库」这件事。
+### 已经做完的两步（2026-10-15）
 
-### 方案 A：物理副本（默认推荐，零风险）
+1. **入库**：`e2f9f9b` 提交了 28 个文件（`src/` 18 片段 + `game.js` + `three.min.js` +
+   `index.html` / `style.css` + 三个脚本 + `README.md` + 本文档）。只 `git add` 了
+   `tests/fixtures/games/little-star` 这一条路径 —— 别人的 WIP 一个没动。
+   同级的两个只读归档（`little-star-v02-archive/` / `little-star-v061-archive/`）**没入库**。
+2. **锁行尾**：`a79d61a` 加 `.gitattributes`（该目录整棵 `text=auto eol=lf`）。
+   这一步不是洁癖，是被逼的 —— 见下面那条踩坑。
 
-```bash
-ROLE=<角色名，例如 terrain / ui / guide>
-mkdir -p C:/AI_Production/_ls-work/$ROLE
-cp -r C:/AI_Production/Tools/main/tests/fixtures/games/little-star/. C:/AI_Production/_ls-work/$ROLE/
-```
+### ★ 踩过的坑：为什么必须锁 LF
 
-- 优点：不动任何 git 状态、不影响别人的 WIP、不改 `.gitignore`、所见即所得。
-- 缺点：没有版本历史，合并靠人工。
-- **合并回活目录**：`diff -rq <副本> <活目录>` 列出差异文件，逐文件 `cp` 回来，
-  然后由主负责人跑三条命令验收。**严禁整目录覆盖**（会抹掉别人同时做的改动）。
+本仓库全局 `core.autocrlf = true`。worktree / clone 一检出，文件行尾全变 CRLF；
+而 `verify [0]` 是 `game.js` 与 `src/` 拼装结果的**逐字节**比对 —— 实测第一次开 worktree
+时它直接报「不一致」。事后跑 `build.mjs` 重拼虽能压下去，但那样每换一份副本都要重拼，
+而且 `git diff` 会满屏行尾改动。锁成 LF 之后，**新 worktree 检出即可用**（已实测：
+`build.mjs --check` 直接绿，无需任何手工修正）。
 
-### 方案 B：真 worktree（想用 git 协作时）
+> 由此也得到一条通用教训：**给要做「产物 vs 源码」逐字节比对的项目建 worktree 之前，
+> 先确认仓库的 autocrlf 设置**，必要时用 `.gitattributes` 把那棵子树钉死。
 
-前置第 0 步（**需用户拍板**，因为会往 main 仓库里加东西）：
-
-```bash
-cd C:/AI_Production/Tools/main
-git status --porcelain          # 先认一遍别人的 WIP，别顺手 add
-git add tests/fixtures/games    # ★ 只加这一条路径，绝不用 -A / .
-git commit -m "fixture: little-star v0.11.0"
-```
-
-第 0 步做完后：
+### 默认方案：真 worktree
 
 ```bash
 cd C:/AI_Production/Tools/main
 git worktree add C:/AI_Production/_wt/ls-<角色名> -b ls/<角色名> main
-# 干完活：git -C C:/AI_Production/_wt/ls-<角色名> add -A && ... 在该 worktree 里提交
-# 收尾：git worktree remove C:/AI_Production/_wt/ls-<角色名>
+cd C:/AI_Production/_wt/ls-<角色名>/tests/fixtures/games/little-star
+<node> scripts/build.mjs --check      # 应当直接绿
+
+# 干完活在**该 worktree 内**提交（分支 ls/<角色名>），由主负责人 merge 回 main
+# 收尾清理：
+cd C:/AI_Production/Tools/main && git worktree remove C:/AI_Production/_wt/ls-<角色名>
 ```
 
-- ★ **worktree 必须建在 `C:\AI_Production\Tools\main` 外面**（推荐 `C:\AI_Production\_wt\`）：
-  建在里面会被常驻 vite dev server 的递归 watch 锁住目录，届时删除会 Permission denied。
-- ★ 现有 worktree 只有一个本体：`C:/AI_Production/Tools/main 8e09594 [main]`。
+- ★ **必须建在 `C:\AI_Production\Tools\main` 外面**（推荐 `C:\AI_Production\_wt\`）：
+  建在里面会被常驻 vite dev server 的递归 watch 锁住目录，删除时 Permission denied。
+- ★ 当前 worktree 列表：`git worktree list` 只有本体（`main @ a79d61a`）。验证用的临时
+  worktree 已清理；下次要验就再建一个，走完记得 remove。
 
-### 方案 C：同一个目录分工（不推荐，只在必须共用 4321 预览时用）
+### 备选：物理副本（完全不想碰 git 时）
 
-严格划分「谁改哪些文件」，碰别人的文件前先打招呼；可用作为期很短的小改动。
+```bash
+ROLE=<角色名>
+mkdir -p C:/AI_Production/_ls-work/$ROLE
+cp -r C:/AI_Production/Tools/main/tests/fixtures/games/little-star/. C:/AI_Production/_ls-work/$ROLE/
+```
+
+没有版本历史，合并靠人工：`diff -rq <副本> <活目录>` 列差异后逐文件 cp 回来，
+**严禁整目录覆盖**（会抹掉别人同时做的改动）。
+
+### 不推荐：同一个目录分工
+
+只在必须共用 4321 预览的短任务里做，严格划分「谁改哪些文件」，碰别人的文件前先打招呼。
 
 ---
 
