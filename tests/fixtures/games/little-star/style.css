@@ -1,0 +1,436 @@
+/* =====================================================================
+ * Little Star —— 样式（v0.9.0 · 黑白硬边）
+ * ---------------------------------------------------------------------
+ * 设计基调：**黑白灰 + 粗线条边框 + 统一圆角**。不要任何「玻璃感」——
+ *   零发光 · 零渐变 · 零毛玻璃 · 零投影。只保留实线、圆角、高对比。
+ *
+ *   颜色是数据：天体真实色只允许出现在两处——面板头的色块（.p-dot）与
+ *   指导书星型库的色点（.g-dot）。UI 本体只有黑白灰，不许再引入蓝色调。
+ *
+ * 三块 UI 与对应选择器前缀：
+ *   1. 画布与光标状态        #scene
+ *   2. 右侧信息面板          #panel / .p-*（v0.9 起含标签页 .p-tab / #p-res / #p-civ）
+ *   3. 左上工具条 + 指导书   #hud / #guide / .g-*
+ *
+ * ★ 指导书是「左栏导航 + 右栏单栏」两栏结构（v0.6.1 栏目化，不是一页长卷）：
+ *   .g-main > #guide-nav（固定 210px，栏目按钮 .gn-item / 篇分隔 .g-part）
+ *           + #guide-body（唯一滚动区，正文 .g-sec + 底部翻页条 .g-page）
+ *
+ * 口径（线宽三级制，别引入第四种线）：
+ *   · 外框 2px 中灰 › 结构线 2px 白 › 行分隔 1px 深灰；占位元素 1px 虚线。
+ *   · 圆角只两档：容器 --r 8px › 小件 --r-sm 4px；色点（.p-dot / .g-dot）用 50%。
+ *   · ★ 白只给「线与字」，不给「面」：纯白大色块（白底表头、实心白按钮）在纯黑上
+ *     对比度拉满、没有层次，看着扎眼——这是 10-14 改版被打回的一版，别再走回去。
+ *   · 交互反馈 = 线框 hover 时填成实心（白底黑字），不变色、不发光。
+ *   · 隐藏一律用 .hidden 类，不要用 hidden 属性（属性打不过 display:flex）。
+ * ===================================================================== */
+:root {
+  --ink: #000;        /* 底：纯黑 */
+  --paper: #fff;      /* 面：纯白（边框 / 主文字 / 反转填充） */
+  --txt: #ededed;     /* 正文 */
+  --dim: #9a9a9a;     /* 次级文字 */
+  --dim2: #6e6e6e;    /* 三级文字（标签 / 提示） */
+  --edge: #8a8a8a;    /* 外框线：中灰。★ 别用纯白——纯白描边在纯黑上会「跳」成选框 */
+  --r: 8px;           /* 圆角：容器（面板 / 书页） */
+  --r-sm: 4px;        /* 圆角：小件（按钮 / chip / 标签）——只此两档，别各写各的 */
+  --rule: #2a2a2a;    /* 按钮 / 行分隔的深灰细线 */
+  --dash: #3d3d3d;    /* 占位元素的虚线 */
+  --mono: Consolas, "Cascadia Mono", "SF Mono", ui-monospace, monospace;
+  --sans: "Segoe UI", system-ui, "Microsoft YaHei", sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%; height: 100%; overflow: hidden;
+  background: var(--ink);
+  user-select: none;
+}
+
+/* ---------- 1. 画布与光标状态 ---------- */
+#scene { position: fixed; inset: 0; display: block; cursor: grab; }
+#scene.dragging { cursor: grabbing; }   /* 拖拽旋转中 */
+#scene.over { cursor: pointer; }        /* 悬停可点天体 */
+
+/* ---------- 2. 右侧信息面板（选中恒星 / 行星时展开） ---------- */
+#panel {
+  position: fixed; top: 24px; right: 24px; width: 312px;
+  max-height: calc(100vh - 48px);   /* 数据行变多后：面板不再顶出屏幕 */
+  display: flex; flex-direction: column;
+  background: #0b0b0b;              /* 比背景略抬一档：读作「面板」而不是镂空 */
+  border: 2px solid var(--edge);    /* 粗线条边框用中灰——纯白描边在纯黑上太刺眼 */
+  border-radius: var(--r);
+  overflow: hidden;                 /* 让子元素的底色被圆角裁齐 */
+  color: var(--txt);
+  font: 13px/1.6 var(--sans);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 10;
+}
+#panel.hidden { opacity: 0; transform: translateX(14px); pointer-events: none; }
+
+/* 面板头：黑底白字，靠下面一条粗白线立住结构（不再用白底反相块） */
+.p-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 2px solid var(--paper);
+}
+.p-dot {
+  width: 13px; height: 13px; flex: none; border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.5);   /* 深底上描一圈淡边，色块不糊进背景 */
+}
+.p-title { min-width: 0; }
+.p-title #p-name { font-size: 15px; font-weight: 600; letter-spacing: 1px; color: var(--paper); }
+.p-title #p-sub { font-size: 11.5px; color: var(--dim); letter-spacing: 2px; margin-top: 1px; }
+
+#p-rows { padding: 3px 0; flex: 1 1 auto; overflow-y: auto; }
+#p-rows::-webkit-scrollbar { width: 8px; }
+#p-rows::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+.p-row {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 5px 14px; font-size: 12.5px;
+  border-bottom: 1px solid var(--rule);
+}
+.p-row:last-child { border-bottom: none; }
+.p-row .k { color: var(--dim2); letter-spacing: 1px; flex: none; }
+/* 值可能很长（例：「构成」整行占比串）→ 允许在词内折行，别撑破面板 */
+.p-row .v {
+  color: var(--txt); text-align: right; font-family: var(--mono); font-size: 12px;
+  min-width: 0; overflow-wrap: anywhere;
+}
+
+/* 面板内分区标题（物理量 / 轨道 / 自转与大气）——细字距 + 高字距，读作分组而不是行 */
+.p-sec {
+  padding: 10px 14px 3px;
+  font-size: 10px; font-weight: 600; letter-spacing: 3px; color: var(--dim);
+}
+.p-sec:first-child { padding-top: 5px; }
+
+/* 资源页的「蕴藏」辅值：可采为主、蕴藏退成灰（两本账一眼分主次） */
+.p-dim { color: var(--dim); }
+
+.p-actions-title {
+  padding: 11px 14px 7px;
+  font-size: 10.5px; letter-spacing: 4px; color: var(--dim2);
+  border-top: 2px solid var(--paper);   /* 与「数据区」之间用粗线分区 */
+}
+#p-actions { display: flex; flex-direction: column; gap: 6px; padding: 0 14px 12px; }
+.p-btn {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px; font: 12.5px/1.4 var(--sans); letter-spacing: 1px;
+  color: var(--dim2); background: transparent;
+  border: 1px dashed var(--dash);   /* 虚线 = 尚未实现，不做成假按钮 */
+  border-radius: var(--r-sm);
+  cursor: not-allowed;
+}
+.p-btn span { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0; color: #5a5a5a; }
+.p-note { font-size: 11px; color: var(--dim2); padding-top: 2px; }
+
+/* ---- 标签页（v0.9）：**所有行星**都有 —— 行星 / 资源 / 文明 三页 ----
+ * 「文明」钮只对发源地行星出现（无文明时 .hidden，不占位）；
+ * 视觉口径与左栏栏目按钮同一套：常态暗字，选中才提亮 + 白底线；
+ * 分隔线比外框暗一档（--rule），不抢 .p-head 的 2px 白线。 */
+#p-tabs { display: flex; flex: none; padding: 4px 14px 0; border-bottom: 1px solid var(--rule); }
+#p-tabs.hidden { display: none; }
+.p-tab {
+  padding: 7px 12px 8px;
+  font: 600 12px/1 var(--sans); letter-spacing: 3px;
+  color: var(--dim2); background: transparent;
+  border: none; border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.p-tab:hover { color: var(--paper); }
+.p-tab.on { color: var(--paper); border-bottom-color: var(--paper); }
+#p-tabs .p-tab.hidden { display: none; }   /* 文明钮在非发源地上的隐藏（属性打不过 flex，用类） */
+/* 资源页 / 文明页与行星数据页互斥：同为滚动区，一次只显示一个 */
+#p-civ, #p-res { padding: 3px 0; flex: 1 1 auto; overflow-y: auto; }
+#p-civ.hidden, #p-res.hidden, #p-rows.hidden { display: none; }
+#p-civ::-webkit-scrollbar, #p-res::-webkit-scrollbar { width: 8px; }
+#p-civ::-webkit-scrollbar-thumb, #p-res::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+#p-civ .p-note, #p-res .p-note { padding: 7px 14px 1px; }
+
+/* ---------- 3a. 左上角工具条 ---------- */
+#hud {
+  position: fixed; top: 24px; left: 24px; z-index: 10;
+  display: flex; align-items: center; gap: 14px;
+  font: 13px/1.6 var(--sans);
+}
+/* 全线框按钮：整页唯一的交互控件，hover 才填成实心白 */
+#guide-btn {
+  padding: 9px 18px; font: 600 12.5px/1 var(--sans); letter-spacing: 3px;
+  color: var(--paper); background: transparent;
+  border: 2px solid var(--paper); border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+#guide-btn:hover { background: var(--paper); color: var(--ink); }
+.hud-hint { font-size: 11.5px; color: var(--dim2); letter-spacing: 1px; }
+
+/* ---------- 3a′. 聚焦镜头 HUD（v0.10：顶部居中一条） ----------
+ * 视觉口径与面板 / 工具条同一套：黑底略抬一档 + 中灰 2px 外框；显隐走 opacity
+ * 过渡（与 #panel 一致，别用 display —— 过渡会失效，verify 也读不到中间态）。 */
+#focus-hud {
+  position: fixed; top: 24px; left: 50%; transform: translateX(-50%); z-index: 10;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px;
+  background: #0b0b0b;
+  border: 2px solid var(--edge);
+  border-radius: var(--r);
+  color: var(--txt);
+  font: 13px/1.6 var(--sans);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+#focus-hud.hidden { opacity: 0; transform: translateX(-50%) translateY(-10px); pointer-events: none; }
+.fh-dot { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--paper); }
+.fh-badge { font-size: 11px; font-weight: 600; letter-spacing: 4px; color: var(--paper); }
+#fh-name { font-size: 13px; font-weight: 600; letter-spacing: 1px; color: var(--txt); }
+#fh-dist { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
+#fh-exit {
+  margin-left: 4px; padding: 3px 10px;
+  font: 11.5px/1.4 var(--sans); letter-spacing: 2px;
+  color: var(--dim2); background: transparent;
+  border: 1px solid var(--rule); border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+#fh-exit:hover { color: var(--paper); border-color: var(--edge); }
+
+/* 右下角版本戳：纯观察用，不参与交互 */
+#ver {
+  position: fixed; right: 12px; bottom: 9px; z-index: 10;
+  font: 10.5px/1 var(--mono);
+  color: #4a4a4a; letter-spacing: 1px;
+  pointer-events: none; user-select: none;
+}
+
+/* ---------- 3b. 恒星指导书（全屏科普档案覆盖层） ---------- */
+#guide {
+  position: fixed; inset: 0; z-index: 30;
+  display: flex; align-items: center; justify-content: center;
+  padding: 36px 20px;
+  background: rgba(0, 0, 0, 0.82);
+}
+#guide.hidden { display: none; }
+
+.g-book {
+  /* ★ 高度固定：撑满 #guide 的内边距区（视口高 − 上下 36px），不随栏目长短伸缩。
+   *   否则切到「导言」这种短栏目时整本书会缩一下、切回长栏目又弹开，很跳。 */
+  width: min(1080px, 100%); height: 100%; max-height: 100%;
+  display: flex; flex-direction: column;
+  background: #0b0b0b;
+  border: 2px solid var(--edge);   /* 与面板同一档 */
+  border-radius: var(--r);
+  overflow: hidden;                /* 头部的分隔线被圆角裁齐 */
+  animation: gRise 0.16s ease-out;
+}
+@keyframes gRise {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+.g-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 15px 20px; flex: none;
+  border-bottom: 2px solid var(--paper);
+}
+.g-title {
+  color: var(--paper); font-size: 15px; font-weight: 600; letter-spacing: 3px;
+  font-family: var(--sans);
+}
+.g-title em {
+  font-style: normal; font-size: 10.5px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--dim2); margin-left: 12px;
+}
+#guide-close {
+  width: 30px; height: 30px; flex: none;
+  font: 15px/1 var(--sans);
+  color: var(--paper); background: transparent;
+  border: 2px solid var(--paper); border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+#guide-close:hover { background: var(--paper); color: var(--ink); }
+
+/* 书页主体：左栏导航（固定宽）+ 右栏正文（唯一滚动区）—— v0.6.1 栏目化的骨架 */
+.g-main { flex: 1 1 auto; display: flex; min-height: 0; }
+
+#guide-nav {
+  flex: none; width: 210px; overflow-y: auto;
+  padding: 10px 0 18px;
+  background: #0e0e0e;
+  border-right: 2px solid var(--rule);   /* 分隔线比外框暗一档，不抢书页边框 */
+}
+#guide-nav::-webkit-scrollbar { width: 8px; }
+#guide-nav::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+#guide-nav::-webkit-scrollbar-track { background: transparent; }
+
+/* 栏目按钮：常态只是暗字，选中/悬停才提亮 —— 与全局「线框 → 实心」同一套反馈口径 */
+.gn-item {
+  display: block; width: 100%; text-align: left;
+  padding: 7px 12px 7px 14px;
+  font: 12px/1.45 var(--sans); letter-spacing: 1px; color: var(--dim);
+  background: transparent; border: none; border-left: 3px solid transparent;
+  border-radius: 0; cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.gn-item:hover { color: var(--paper); background: #171717; border-left-color: var(--rule); }
+.gn-item.on { color: var(--paper); background: #1c1c1c; border-left-color: var(--paper); font-weight: 600; }
+
+/* 篇分隔（恒星篇 / 行星篇）：左栏里的分组标题 */
+.g-part {
+  margin: 14px 12px 4px; padding-top: 10px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 6px; color: var(--dim2);
+  border-top: 2px solid var(--paper);
+}
+
+/* 右栏正文顶部的小篇脚注：告诉读者现在读的是哪一篇 */
+.g-crumb {
+  margin: 16px 0 0;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 6px; color: var(--dim2);
+}
+.g-crumb + .g-sec { padding-top: 8px; }   /* 有脚注时标题不必再让出 20px */
+
+/* 底部翻页条：上一栏 / 第 n ÷ m 栏 / 下一栏 */
+.g-page {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: auto; padding-top: 12px;   /* auto = 顶到书页底部（短栏目也停在原地） */
+  border-top: 2px solid var(--paper);
+  flex: none;
+}
+.gp-btn {
+  max-width: 44%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 6px 11px;
+  font: 11.5px/1.4 var(--sans); letter-spacing: 1px; color: var(--dim);
+  background: transparent; border: 1px solid var(--rule); border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.gp-btn:hover { background: var(--paper); color: var(--ink); border-color: var(--paper); }
+.gp-btn[disabled] { opacity: 0.35; cursor: default; }
+.gp-btn[disabled]:hover { background: transparent; color: var(--dim); border-color: var(--rule); }
+.gp-mid { flex: none; font-family: var(--mono); font-size: 11px; letter-spacing: 1px; color: var(--dim2); }
+
+/* 导言页的目录：两篇各自的栏目入口（与左栏同源，点哪条等价） */
+.g-toc { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 6px; margin-top: 6px; }
+.gt-item {
+  text-align: left; padding: 8px 11px;
+  font: 12px/1.45 var(--sans); letter-spacing: 1px; color: var(--dim);
+  background: #101010; border: 1px solid var(--rule); border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.gt-item:hover { background: var(--paper); color: var(--ink); border-color: var(--paper); }
+
+#guide-body {
+  flex: 1 1 auto; min-width: 0;
+  overflow-y: auto; padding: 0 20px 22px;
+  font: 13px/1.7 var(--sans);
+  color: #c4c4c4;
+  /* 书页高度固定 → 短栏目底下会剩空白；把翻页条用 margin-top:auto 压到底，
+   * 这样不论栏目长短，翻页按钮都停在同一个位置。 */
+  display: flex; flex-direction: column;
+}
+#guide-body::-webkit-scrollbar { width: 10px; }
+#guide-body::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 5px; }
+#guide-body::-webkit-scrollbar-track { background: transparent; }
+
+.g-intro { padding: 16px 0 2px; color: var(--dim); }
+/* margin-bottom = 正文与翻页条之间的**最小**间距；底部的余量由 .g-page 的 margin-top:auto 吃掉 */
+.g-sec { padding-top: 20px; margin-bottom: 24px; }
+.g-sec h3 {
+  margin-bottom: 10px; padding-left: 11px;
+  font-size: 13.5px; font-weight: 600; letter-spacing: 2px; color: var(--paper);
+  border-left: 3px solid var(--paper);   /* 粗竖线 = 章节标记 */
+}
+
+/* 数据表：表头一条粗线，行间细线，全无底色 */
+.g-tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.g-tbl th {
+  text-align: left; padding: 7px 10px; white-space: nowrap;
+  font-weight: 600; letter-spacing: 1px; color: var(--paper);
+  border-bottom: 2px solid var(--paper);
+}
+.g-tbl td {
+  padding: 6px 10px; color: #b0b0b0;
+  border-bottom: 1px solid var(--rule);
+}
+.g-tbl td.em { color: var(--paper); }
+.g-tbl td:first-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.g-tbl tbody tr:hover { background: #161616; }
+
+/* 星型库：色点是唯一的彩色，其余全黑白 */
+.g-lib { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 6px; }
+.g-chip {
+  display: flex; align-items: center; gap: 8px; padding: 8px 11px;
+  font-size: 12px;
+  background: #101010; border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+}
+/* 当前星型：靠 2px 白框 + 提亮底色立住，不做整块反相（白块太抢） */
+.g-chip.cur { background: #1c1c1c; border: 2px solid var(--paper); }
+.g-chip.cur .g-cs { font-weight: 600; }
+.g-dot {
+  width: 10px; height: 10px; flex: none; border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+.g-cs { color: var(--paper); letter-spacing: 1px; }
+.g-cn { color: var(--dim); }
+.g-cv {
+  margin-left: auto; white-space: nowrap;
+  font-family: var(--mono); font-size: 11px; color: var(--dim2);
+}
+.g-cur-tag {
+  flex: none; font-size: 10px; letter-spacing: 1px;
+  padding: 1px 6px; border-radius: 3px;
+  background: var(--paper); color: var(--ink);   /* 全书唯一的实心白：10px 小标记，不构成色块 */
+}
+.g-note { padding-top: 9px; font-size: 11.5px; line-height: 1.7; color: var(--dim2); }
+
+/* 反算示范块：本星系第一颗行星的公式代入过程 */
+.g-work {
+  padding: 2px 0 4px 12px;
+  border-left: 3px solid var(--rule);
+  font-size: 12.5px; color: #b8b8b8;
+}
+.g-work p { padding: 1px 0; }
+.g-work b { color: var(--paper); font-family: var(--mono); font-size: 12px; }
+
+/* 行星库条目：条件与大气文本较长，改三行布局（第一行 = 名称 + 典型密度） */
+.g-chip.col { flex-wrap: wrap; align-items: flex-start; }
+.g-chip.col .g-cn { order: 9; flex: 1 1 100%; margin-top: 2px; font-size: 11.5px; }
+.g-chip.col .g-cn2 { order: 10; flex: 1 1 100%; font-size: 11.5px; color: var(--dim2); }
+
+/* ---------- 科普插图（内联 SVG，v0.6.1） ----------
+ * 图里的颜色只有两个来源：本页的黑白灰变量（线 / 字）+ **恒星光谱色**（数据）。
+ * ★ 字体与字号一律走 SVG 自己的属性（`<svg font-size>` 继承 + 个别覆盖）——
+ *   CSS 里的 font-size / fill 会**盖掉** SVG 的呈现属性，别在这里设 font-size。 */
+.g-fig {
+  margin: 12px 0 4px; padding: 12px 14px 10px;
+  background: #0e0e0e; border: 1px solid var(--rule); border-radius: var(--r-sm);
+}
+.g-fig svg { display: block; width: 100%; height: auto; }
+.g-fig text { fill: var(--dim); }
+.g-fig .fg-hi { fill: var(--paper); }        /* 强调文字：标题 / 节点名 / 本星系标注 */
+.g-fig .fg-lo { fill: var(--dim2); }         /* 图注脚注 */
+.g-fig .fg-grid { stroke: var(--rule); stroke-width: 0.5; }
+.g-fig .fg-frame { fill: none; stroke: var(--edge); stroke-width: 1; }
+.g-fig .fg-zone { fill: rgba(255, 255, 255, 0.05); stroke: var(--rule); stroke-width: 0.5; }
+.g-fig .fg-node { fill: #101010; stroke: var(--rule); stroke-width: 1; }
+.g-fig .fg-end { fill: #181818; stroke: var(--paper); stroke-width: 1; }   /* 残骸 / 终点：白描边 */
+.g-fig .fg-arrow { stroke: var(--dim2); stroke-width: 1.5; }
+/* ★ 必须排在 .fg-node / .fg-end 之后：同权重靠顺序取胜（不加 !important） */
+.g-fig .fg-cur { stroke: var(--paper); stroke-width: 2; }
+.g-fig figcaption {
+  margin-top: 9px; padding-top: 8px;
+  border-top: 1px solid var(--rule);
+  font-size: 11.5px; line-height: 1.65; color: var(--dim2);
+}
+.g-fig figcaption b { color: var(--paper); }
+
+/* 栏内小标题（例：九章里「温度改写挥发分的相态」）
+ * .gt-part = 导言目录里的篇名，同一套视觉但独立成类 —— 免得「栏内小标题」的计数把目录算进去 */
+.g-sub, .gt-part {
+  margin-top: 15px; padding-left: 10px;
+  font-size: 12.5px; font-weight: 600; letter-spacing: 1px; color: var(--paper);
+  border-left: 2px solid var(--rule);
+}

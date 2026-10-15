@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Little Star</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+<!--
+  Little Star —— 骨架（只有 DOM，逻辑全在 game.js）
+  ====================================================================
+  ★ v0.10：game.js 是拼装产物（源码在 src/ 17 个片段，见 README §三）。
+     本页只加载 game.js 与 style.css / three.min.js —— 加脚本仍走这里。
+  #scene          全屏 canvas（three.js 渲染目标）
+  #panel          右侧信息面板，默认 .hidden；data-kind = star|planet|none
+                    > .p-head > .p-dot / #p-name / #p-sub
+                    > #p-tabs    标签栏（v0.9）：**所有行星**出现 ——
+                                   行星 / 资源 / 文明 三页（文明钮只在发源地出现），
+                                   机器 FSM_PANEL 管状态，一次只显示一页
+                    > #p-rows    行星 / 恒星数据行（starRows / planetRows 生成）
+                    > #p-res     资源页内容（matRows 生成：蕴藏 / 可采两本账）
+                    > #p-civ     文明页内容（civRows 生成：物种 / 发源地 / 摇篮评分）
+                    > #p-actions 操作按钮（当前全是占位禁用）
+  #hud            左上角工具条
+                   > #guide-btn 打开指导书
+                   > .hud-hint 操作提示（纯装饰）
+  #focus-hud      聚焦镜头 HUD（v0.10）：默认 .hidden；双击行星进入聚焦时显示
+                   > .fh-badge「聚焦」/ #fh-name 行星名 / #fh-dist 距地表读数
+                   > #fh-exit 退出钮（Esc 等效，回落中距离跟随）
+  #ver            右下角版本戳（文本由 game.js 的 VERSION 常量写入）
+  #guide          指导书覆盖层，默认 .hidden；点遮罩 / Esc / × 关闭
+                    > .g-book > .g-head > #guide-close
+                              > .g-main > #guide-nav  左栏栏目导航（由 renderGuide() 生成）
+                                        > #guide-body 当前栏目的正文（一次只渲染一栏）
+
+  ★ 改 DOM 要同步三处：本文件、game.js 里的 $(...) 取用、style.css 的选择器。
+  ★ 新增 <script> 请放在 three.min.js 之后（顺序 = 依赖顺序）。
+-->
+  <canvas id="scene"></canvas>
+
+  <!-- 右侧信息面板：选中恒星 / 行星时展开（默认隐藏） -->
+  <aside id="panel" class="hidden" data-kind="none">
+    <div class="p-head">
+      <span class="p-dot" id="p-dot"></span>
+      <div class="p-title">
+        <div id="p-name">—</div>
+        <div id="p-sub">—</div>
+      </div>
+    </div>
+    <!-- 标签栏：默认隐藏；选中行星时由 applyPanelTab 显示（行星 / 资源 / 文明） -->
+    <div id="p-tabs" class="hidden">
+      <button class="p-tab on" data-tab="planet">行星</button>
+      <button class="p-tab" data-tab="res">资源</button>
+      <button class="p-tab" data-tab="civ">文明</button>
+    </div>
+    <div id="p-rows"></div>
+    <!-- 资源页容器（v0.9）：与 #p-rows / #p-civ 互斥显示 -->
+    <div id="p-res" class="hidden"></div>
+    <!-- 文明页容器：与 #p-rows / #p-res 互斥显示（一次只有一页） -->
+    <div id="p-civ" class="hidden"></div>
+    <div class="p-actions-title">操作</div>
+    <div id="p-actions"></div>
+  </aside>
+
+  <!-- 左上角工具条：天体指导书入口（恒星篇 + 行星篇） -->
+  <div id="hud">
+    <button id="guide-btn">天体指导书</button>
+    <span class="hud-hint">点击恒星 / 行星查看数据</span>
+  </div>
+
+  <!-- 聚焦镜头 HUD（v0.10）：顶部居中一条 —— 聚焦徽标 + 行星名 + 距地表读数 + 退出钮。
+       双击行星进入聚焦（贴近档）；Esc / 退出钮回落中距离跟随；双击空白回全景。 -->
+  <div id="focus-hud" class="hidden">
+    <span class="fh-dot"></span>
+    <span class="fh-badge">聚焦</span>
+    <span id="fh-name">—</span>
+    <span id="fh-dist">—</span>
+    <button id="fh-exit" title="退出聚焦（Esc）">退出</button>
+  </div>
+
+  <!-- 右下角版本戳：防「页面没刷新」误判（内容由 game.js 写入） -->
+  <div id="ver"></div>
+
+  <!-- 天体指导书：全屏科普档案（默认隐藏）—— 栏目化，不是一页长卷。
+       左栏导航 = 导言 + 恒星篇 6 栏（光谱序列 / 光度级 / 褐矮星 / 致密天体 / 演化归宿 / 星型库）
+                + 行星篇 6 栏（分类 / 气候带 / 内部构成 / 物理量公式 / 本星系实测 / 行星库）
+       右栏正文一次只渲染当前一栏；底部翻页条，← / → 也能翻。 -->
+  <div id="guide" class="hidden">
+    <div class="g-book">
+      <div class="g-head">
+        <span class="g-title">天体指导书<em>Stellar &amp; Planetary Codex</em></span>
+        <button id="guide-close" title="关闭（Esc）">×</button>
+      </div>
+      <div class="g-main">
+        <nav id="guide-nav"></nav>
+        <div id="guide-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="three.min.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
