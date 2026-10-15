@@ -351,6 +351,10 @@ function boot() {
           opacity: +cs.cloudMat.uniforms.uOpacity.value.toFixed(3)
         } : null,
         meshVisible: p._mesh.visible,
+        /* ★ v0.12.1：聚焦静止对账点 —— meshRotY = 自转相位（读贴图网格，退出聚焦
+         * 后仍持续演进，是自转的真值）；frozen = 聚焦冻结是否生效（50-scene 每帧写）。 */
+        meshRotY: +p._mesh.rotation.y.toFixed(6),
+        frozen: !!p._spinFrozen,
         sunDir: cs ? [
           +cs.mat.uniforms.uSunDir.value.x.toFixed(3),
           +cs.mat.uniforms.uSunDir.value.y.toFixed(3),

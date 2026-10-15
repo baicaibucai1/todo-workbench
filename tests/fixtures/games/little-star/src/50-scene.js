@@ -284,6 +284,9 @@ function buildScene(sys) {
       mat.emissiveIntensity = 1.1;
     }
     var mesh = new THREE.Mesh(new THREE.SphereGeometry(p.size, 32, 24), mat);
+    /* 潮汐锁定：初始相位对齐 -(angle + π/2)（贴图日下点在 u=0.25 → 恒朝恒星），
+     * 此后每帧按公转角速度增量推进（每帧自转注释里的「增量式」）。 */
+    if (p.tidal) mesh.rotation.y = -(p.angle + Math.PI / 2);
     grp.add(mesh);
     p._mesh = mesh;
 
@@ -458,20 +461,31 @@ function updateScene(sys, dt) {
   syncFocusSurface();
 
   sys.planets.forEach(function (p) {
-    p.angle += p.orbitSpeed * eff;
+    /* ★ v0.12.1：聚焦档 = 「观察 / 操作地表」的模式 —— 目标行星相对镜头必须
+     * **完全静止**：自转、云漂移、公转一律冻结（否则玩家刚对准的面会自己转走；
+     * 公转不停的话，晨昏线还会随『真实星向』缓慢扫过盘面、背景星空也在动，
+     * 画面并不是真的『定住』）。冻结只是**暂停累加**、不改写任何相位/角度，
+     * 因此进出聚焦都没有跳变；判定与相机模式同帧同源。 */
+    var frozen = FSM_CAMERA.is("focus") && G.focusPlanet === p;
+    p._spinFrozen = frozen;
+
+    if (!frozen) p.angle += p.orbitSpeed * eff;
     var ci = Math.cos(p.incl), si = Math.sin(p.incl);
     var x = Math.cos(p.angle) * p.orbit, z0 = Math.sin(p.angle) * p.orbit;
     p._group.position.set(x, z0 * si, z0 * ci);
 
-    /* 自转：潮汐锁定的行星不自转——它把**同一面**永远朝向恒星，
-     * 贴图的日下点画在 u=0.25，故这里的相位取 -(angle + π/2)。
-     * 未锁定的行星按自转周期转动（转得越快 spin 越大，由 rotH 算出）。 */
-    if (p.tidal) {
-      p._mesh.rotation.y = -(p.angle + Math.PI / 2);
-    } else {
-      p._mesh.rotation.y += p.spin * eff;
+    /* 自转：潮汐锁定的行星把**同一面**永远朝向恒星，贴图的日下点画在
+     * u=0.25 —— 初始相位在 mesh 创建处对齐 -(angle + π/2)，此后每帧按
+     * 「公转角速度」增量推进（增量式 = 冻结语义连续，旧的全量重算式在
+     * 冻结后恢复会整段跳相位）。未锁定的行星按自转周期转动。 */
+    if (!frozen) {
+      if (p.tidal) {
+        p._mesh.rotation.y -= p.orbitSpeed * eff;
+      } else {
+        p._mesh.rotation.y += p.spin * eff;
+      }
     }
-    if (p._cloud) p._cloud.rotation.y += p.spin * 1.35 * eff;
+    if (p._cloud && !frozen) p._cloud.rotation.y += p.spin * 1.35 * eff;
 
     /* 聚焦 = 沉浸观察地表：云与大气雾按相机模式淡出（否则半透明白雾
      * 正好糊在要看的表面上 —— v0.11 首版的「聚焦仍糊」就是它）。
@@ -486,10 +500,12 @@ function updateScene(sys, dt) {
     }
 
     /* 聚焦地表（v0.12）：跟随贴图网格的同一自转；云壳独立漂移（比地表略快
-     * 1.35 倍 —— 与贴图云同一口径），拉开「大气在动」的层次。 */
+     * 1.35 倍 —— 与贴图云同一口径），拉开「大气在动」的层次。
+     * ★ v0.12.1：聚焦时云壳同冻 —— 装饰层也要「相对静止」，云在漂，
+     * 玩家看到的「面」就还在变。 */
     if (p._cs && p._cs.group.visible) {
       p._cs.mesh.rotation.y = p._mesh.rotation.y;
-      if (p._cs.cloud) p._cs.cloud.rotation.y += p.spin * 1.35 * eff;
+      if (p._cs.cloud && !frozen) p._cs.cloud.rotation.y += p.spin * 1.35 * eff;
     }
 
     // 行星选中：科幻括号（呼吸淡入）

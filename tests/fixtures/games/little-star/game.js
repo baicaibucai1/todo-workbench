@@ -57,17 +57,17 @@
  *    1691    495  程序化贴图（全部画布绘制，零外部资源）               src/40-textures.js:1
  *    2186    501  地形生成器（v0.11：固态行星表面构建）                src/42-terrain.js:1
  *    2687    437  聚焦地表（v0.12：立方球连续地表）                    src/44-focus-surface.js:1
- *    3124    385  场景                                                 src/50-scene.js:1
- *    3509    141  场景更新                                             src/50-scene.js:386
- *    3650    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
- *    3844     25  相机聚焦                                             src/70-camera-input.js:1
- *    3869    136  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
- *    4005     80  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
- *    4085    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
- *    4352    612  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
- *    4964     24  主循环                                               src/99-boot.js:1
- *    4988    458  启动                                                 src/99-boot.js:25
- *   共 23 个区块 · 19 个源文件 · 5445 行
+ *    3124    388  场景                                                 src/50-scene.js:1
+ *    3512    154  场景更新                                             src/50-scene.js:389
+ *    3666    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
+ *    3860     25  相机聚焦                                             src/70-camera-input.js:1
+ *    3885    136  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
+ *    4021     80  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
+ *    4101    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
+ *    4368    612  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
+ *    4980     24  主循环                                               src/99-boot.js:1
+ *    5004    462  启动                                                 src/99-boot.js:25
+ *   共 23 个区块 · 19 个源文件 · 5465 行
  * @nav:end
  * ─────────────────────────────────────────────────────────────────────
  *
@@ -731,7 +731,7 @@ function typeCond(t) {
  * 同时写入 ① 右下角版本戳（#ver）② __game.version。
  * 用途：一眼判断「眼前这页是不是最新构建」——历史上出现过改了代码但浏览器
  * 没刷新、误判「功能没生效」的情况。发版时只改这一行。 */
-var VERSION = "0.12.0";
+var VERSION = "0.12.1";
 
 function $(id) { return document.getElementById(id); }
 function fmtNum(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
@@ -3407,6 +3407,9 @@ function buildScene(sys) {
       mat.emissiveIntensity = 1.1;
     }
     var mesh = new THREE.Mesh(new THREE.SphereGeometry(p.size, 32, 24), mat);
+    /* 潮汐锁定：初始相位对齐 -(angle + π/2)（贴图日下点在 u=0.25 → 恒朝恒星），
+     * 此后每帧按公转角速度增量推进（每帧自转注释里的「增量式」）。 */
+    if (p.tidal) mesh.rotation.y = -(p.angle + Math.PI / 2);
     grp.add(mesh);
     p._mesh = mesh;
 
@@ -3581,20 +3584,31 @@ function updateScene(sys, dt) {
   syncFocusSurface();
 
   sys.planets.forEach(function (p) {
-    p.angle += p.orbitSpeed * eff;
+    /* ★ v0.12.1：聚焦档 = 「观察 / 操作地表」的模式 —— 目标行星相对镜头必须
+     * **完全静止**：自转、云漂移、公转一律冻结（否则玩家刚对准的面会自己转走；
+     * 公转不停的话，晨昏线还会随『真实星向』缓慢扫过盘面、背景星空也在动，
+     * 画面并不是真的『定住』）。冻结只是**暂停累加**、不改写任何相位/角度，
+     * 因此进出聚焦都没有跳变；判定与相机模式同帧同源。 */
+    var frozen = FSM_CAMERA.is("focus") && G.focusPlanet === p;
+    p._spinFrozen = frozen;
+
+    if (!frozen) p.angle += p.orbitSpeed * eff;
     var ci = Math.cos(p.incl), si = Math.sin(p.incl);
     var x = Math.cos(p.angle) * p.orbit, z0 = Math.sin(p.angle) * p.orbit;
     p._group.position.set(x, z0 * si, z0 * ci);
 
-    /* 自转：潮汐锁定的行星不自转——它把**同一面**永远朝向恒星，
-     * 贴图的日下点画在 u=0.25，故这里的相位取 -(angle + π/2)。
-     * 未锁定的行星按自转周期转动（转得越快 spin 越大，由 rotH 算出）。 */
-    if (p.tidal) {
-      p._mesh.rotation.y = -(p.angle + Math.PI / 2);
-    } else {
-      p._mesh.rotation.y += p.spin * eff;
+    /* 自转：潮汐锁定的行星把**同一面**永远朝向恒星，贴图的日下点画在
+     * u=0.25 —— 初始相位在 mesh 创建处对齐 -(angle + π/2)，此后每帧按
+     * 「公转角速度」增量推进（增量式 = 冻结语义连续，旧的全量重算式在
+     * 冻结后恢复会整段跳相位）。未锁定的行星按自转周期转动。 */
+    if (!frozen) {
+      if (p.tidal) {
+        p._mesh.rotation.y -= p.orbitSpeed * eff;
+      } else {
+        p._mesh.rotation.y += p.spin * eff;
+      }
     }
-    if (p._cloud) p._cloud.rotation.y += p.spin * 1.35 * eff;
+    if (p._cloud && !frozen) p._cloud.rotation.y += p.spin * 1.35 * eff;
 
     /* 聚焦 = 沉浸观察地表：云与大气雾按相机模式淡出（否则半透明白雾
      * 正好糊在要看的表面上 —— v0.11 首版的「聚焦仍糊」就是它）。
@@ -3609,10 +3623,12 @@ function updateScene(sys, dt) {
     }
 
     /* 聚焦地表（v0.12）：跟随贴图网格的同一自转；云壳独立漂移（比地表略快
-     * 1.35 倍 —— 与贴图云同一口径），拉开「大气在动」的层次。 */
+     * 1.35 倍 —— 与贴图云同一口径），拉开「大气在动」的层次。
+     * ★ v0.12.1：聚焦时云壳同冻 —— 装饰层也要「相对静止」，云在漂，
+     * 玩家看到的「面」就还在变。 */
     if (p._cs && p._cs.group.visible) {
       p._cs.mesh.rotation.y = p._mesh.rotation.y;
-      if (p._cs.cloud) p._cs.cloud.rotation.y += p.spin * 1.35 * eff;
+      if (p._cs.cloud && !frozen) p._cs.cloud.rotation.y += p.spin * 1.35 * eff;
     }
 
     // 行星选中：科幻括号（呼吸淡入）
@@ -5314,6 +5330,10 @@ function boot() {
           opacity: +cs.cloudMat.uniforms.uOpacity.value.toFixed(3)
         } : null,
         meshVisible: p._mesh.visible,
+        /* ★ v0.12.1：聚焦静止对账点 —— meshRotY = 自转相位（读贴图网格，退出聚焦
+         * 后仍持续演进，是自转的真值）；frozen = 聚焦冻结是否生效（50-scene 每帧写）。 */
+        meshRotY: +p._mesh.rotation.y.toFixed(6),
+        frozen: !!p._spinFrozen,
         sunDir: cs ? [
           +cs.mat.uniforms.uSunDir.value.x.toFixed(3),
           +cs.mat.uniforms.uSunDir.value.y.toFixed(3),
