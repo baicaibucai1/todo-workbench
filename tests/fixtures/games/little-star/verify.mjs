@@ -1,5 +1,5 @@
 /**
- * Little Star —— Web 端真机验证（v0.12.1：源码拆分 src/ 19 片段 + 拼装器 build.mjs）
+ * Little Star —— Web 端真机验证（v0.12.2：源码拆分 src/ 19 片段 + 拼装器 build.mjs）
  *
  * 覆盖（24 节，与下方 `/* ---- N. ... ---- *\/` 区块注释一一对应）：
  *   0. 工程自检：game.js 是否等于 src/ 片段的拼装结果（不需要浏览器）
@@ -207,7 +207,7 @@ async function frameStar(page, radius) {
       api: window.__game.version,
       badge: (document.getElementById("ver") || {}).textContent || ""
     }));
-    check("版本号为 0.12.1（调试接口）", verInfo.api === "0.12.1");
+    check("版本号为 0.12.2（调试接口）", verInfo.api === "0.12.2");
     check("右下角版本戳与调试接口同源", verInfo.badge === "v" + verInfo.api, `#ver = "${verInfo.badge}"`);
     console.log(`  ℹ 星系「${st0.system}」 · ${st0.starType}（${st0.starId}） · ${st0.planets.length} 颗行星`);
     await shot(page, "n1-system.png");
@@ -1664,8 +1664,9 @@ async function frameStar(page, radius) {
      * （free 92 / follow size×7+6 / focus size×3.6）只写在 applyCamera 一处。
      * 本节验八件事：进得去（双击 → focus，距离对、minR 放宽、HUD 现身）、
      * 贴得近（行星占视口高一半以上）、读得动（距地表读数随缩放变）、
-     * 变得精（聚焦态滚轮一步 < 全景一步的 60%）、**静得住**（v0.12.1：
-     * 聚焦时自转 + 公转全冻结 —— 对准的面不转走、光照不扫过；退出即恢复）、退得回（Esc → follow、
+     * 变得精（聚焦态滚轮一步 < 全景一步的 60%）、**跟得住**（v0.12.2：
+     * 镜头随星球一起运动 —— 自转冻结、对准的面不转走；行星钉在画面中心
+     * 随轨道一起飞）；退出即恢复）、退得回（Esc → follow、
      * 双击空白 → free，两次退出 minR 都复原）、换得动（拉远后双击换目标）。
      * 页面此时刚 reload 过（[19] 末尾），从干净状态开始。 */
     /* focusDistance 独立复算。注意 getState() 的 size 是两位小数快照、而游戏内用全精度，
@@ -1729,22 +1730,42 @@ async function frameStar(page, radius) {
       `「${tgt20.name}」solid=${foT.cs.solid} built=${foT.cs.built} active=${foT.cs.active} hi=${foT.ter.hi}`);
     await shot(page, "n20-focus-surface.png");
 
-    /* ★ v0.12.1：聚焦时天体相对镜头「完全静止」—— 自转 + 云漂移 + **公转** 全冻结
-     * （公转不停的话晨昏线会随真实星向扫过盘面、背景星空也在动，画面不算「定住」）。
-     * 判据：等 1.6s 后自转相位与公转角度都零变化；对照是下一条「退出聚焦必须恢复
-     * 转动」—— 若行星本来就不动，那边会拆穿假阳性。 */
-    const rotF = await page.evaluate((nm) => {
-      const s = window.__game.focusSurface(nm);
-      return { a: s.meshRotY, ang: window.__game.planetAngle(nm), frozen: s.frozen };
+    /* ★ v0.12.2：聚焦时的两条运动约定 ——
+     * ① 自转冻结：对准的面不转走（frozen=true 时 rotY 零变化）；
+     * ② **镜头随星球一起运动**：星球继续公转（在轨道上走），镜头跟随 ——
+     *    行星被钉在画面中心（偏移 ≤ 15px），而 target 随星球位移了一段
+     *    （画面里在动的是背景：轨道线 / 其他行星 / 晨昏线缓移 —— 世界是活的，
+     *    不是「世界定格」）。对照是下一条「退出聚焦必须恢复自转」——
+     *    若星球本来就不动，那边会拆穿假阳性。 */
+    const mv1 = await page.evaluate((nm) => {
+      const g = window.__game;
+      const sp = g.planetScreenPos(nm), cs = g.cameraState();
+      return {
+        rotY: g.focusSurface(nm).meshRotY, frozen: g.focusSurface(nm).frozen,
+        ang: g.planetAngle(nm),
+        dx: +(sp.x - window.innerWidth / 2).toFixed(1), dy: +(sp.y - window.innerHeight / 2).toFixed(1),
+        t: { x: cs.target.x, y: cs.target.y, z: cs.target.z }
+      };
     }, tgt20.name);
     await sleep(1600);
-    const rotB = await page.evaluate((nm) => {
-      const s = window.__game.focusSurface(nm);
-      return { r: s.meshRotY, ang: window.__game.planetAngle(nm) };
+    const mv2 = await page.evaluate((nm) => {
+      const g = window.__game;
+      const sp = g.planetScreenPos(nm), cs = g.cameraState();
+      return {
+        rotY: g.focusSurface(nm).meshRotY,
+        ang: g.planetAngle(nm),
+        dx: +(sp.x - window.innerWidth / 2).toFixed(1), dy: +(sp.y - window.innerHeight / 2).toFixed(1),
+        t: { x: cs.target.x, y: cs.target.y, z: cs.target.z }
+      };
     }, tgt20.name);
-    check("★ 聚焦时天体相对镜头完全静止（自转 + 公转双冻结 —— 对准的面不转走、光照不扫过）",
-      rotF.frozen === true && Math.abs(rotB.r - rotF.a) < 1e-9 && Math.abs(rotB.ang - rotF.ang) < 1e-9,
-      `frozen=${rotF.frozen} · rotY ${rotF.a} → ${rotB.r} · angle ${rotF.ang} → ${rotB.ang}`);
+    check("★ 聚焦时自转冻结（1.6s 内相位零变化 —— 玩家对准的面不会自己转走）",
+      mv1.frozen === true && Math.abs(mv2.rotY - mv1.rotY) < 1e-9,
+      `frozen=${mv1.frozen} · rotY ${mv1.rotY} → ${mv2.rotY}`);
+    const fTravel = Math.hypot(mv2.t.x - mv1.t.x, mv2.t.y - mv1.t.y, mv2.t.z - mv1.t.z);
+    check("★ 镜头随星球一起运动（公转在推进 · 行星钉在画面中心 —— 动的是镜头和背景）",
+      Math.abs(mv2.ang - mv1.ang) > 1e-4 && fTravel > 0.5 &&
+        Math.hypot(mv1.dx, mv1.dy) < 15 && Math.hypot(mv2.dx, mv2.dy) < 15,
+      `angle ${mv1.ang} → ${mv2.ang} · target 随星球位移 ${fTravel.toFixed(2)} · 屏幕偏移 (${mv1.dx},${mv1.dy}) → (${mv2.dx},${mv2.dy})`);
 
     /* 「镜头内基本全是星球」—— 真投影量取：行星屏幕直径 / 视口高 ≥ 50% */
     const proj = await page.evaluate((nm) => {
@@ -1806,18 +1827,15 @@ async function frameStar(page, radius) {
       backSel.planet && backSel.planet.visible === true && backSel.planet.opacity > 0.2,
       `visible=${backSel.planet && backSel.planet.visible} · opacity=${backSel.planet && backSel.planet.opacity}`);
 
-    /* ★ v0.12.1 配套：退出聚焦 → 自转与公转恢复（冻结只是暂停累加、不改写相位 ——
-     * 恢复是「从冻结点续走」，不是「跳回本该在的地方」，所以进出都无跳变）。 */
-    const rotC = await page.evaluate((nm) => ({
-      r: window.__game.focusSurface(nm).meshRotY, ang: window.__game.planetAngle(nm)
-    }), tgt20.name);
+    /* ★ v0.12.2 配套：退出聚焦 → 自转恢复（冻结只是暂停累加、不改写相位 ——
+     * 恢复是「从冻结点续走」，不是「跳回本该在的地方」，所以进出都无跳变；
+     * 公转从未冻结、一直在推进，不需要「恢复」）。 */
+    const rotC = await page.evaluate((nm) => window.__game.focusSurface(nm).meshRotY, tgt20.name);
     await sleep(800);
-    const rotD = await page.evaluate((nm) => ({
-      r: window.__game.focusSurface(nm).meshRotY, ang: window.__game.planetAngle(nm)
-    }), tgt20.name);
-    check("★ 退出聚焦 → 自转与公转恢复（相位继续演进；若行星从不运动，这条会拆穿上一条）",
-      Math.abs(rotD.r - rotC.r) > 1e-4 && Math.abs(rotD.ang - rotC.ang) > 1e-4,
-      `rotY ${rotC.r} → ${rotD.r} · angle ${rotC.ang} → ${rotD.ang}`);
+    const rotD = await page.evaluate((nm) => window.__game.focusSurface(nm).meshRotY, tgt20.name);
+    check("★ 退出聚焦 → 自转恢复（相位继续演进；若星球从不自转，这条会拆穿上一条）",
+      Math.abs(rotD - rotC) > 1e-4,
+      `rotY ${rotC} → ${rotD}`);
 
     /* 双击空白 → 回全景；顺带测全景态滚轮一步，与聚焦态比精度 */
     const empty20 = await findEmptyPoint(page);

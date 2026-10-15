@@ -461,15 +461,17 @@ function updateScene(sys, dt) {
   syncFocusSurface();
 
   sys.planets.forEach(function (p) {
-    /* ★ v0.12.1：聚焦档 = 「观察 / 操作地表」的模式 —— 目标行星相对镜头必须
-     * **完全静止**：自转、云漂移、公转一律冻结（否则玩家刚对准的面会自己转走；
-     * 公转不停的话，晨昏线还会随『真实星向』缓慢扫过盘面、背景星空也在动，
-     * 画面并不是真的『定住』）。冻结只是**暂停累加**、不改写任何相位/角度，
-     * 因此进出聚焦都没有跳变；判定与相机模式同帧同源。 */
+    /* ★ v0.12.2：聚焦档 = 「观察 / 操作地表」的模式 —— 冻结的是「**相对镜头
+     * 的姿态**」：自转与云漂移停住（玩家对准的面不转走）；**公转不冻** ——
+     * 星球继续在轨道上运动，镜头跟随（target lerp）随它一起运动（背景星空
+     * 缓缓移动，世界是活的；晨昏线随之自然推移）。
+     * ★ 不是「世界定格」：上一版把公转也冻住，画面完全静止 —— 那不对。
+     * 冻结只是**暂停累加**、不改写任何相位，因此进出聚焦都没有跳变；
+     * 判定与相机模式同帧同源。 */
     var frozen = FSM_CAMERA.is("focus") && G.focusPlanet === p;
     p._spinFrozen = frozen;
 
-    if (!frozen) p.angle += p.orbitSpeed * eff;
+    p.angle += p.orbitSpeed * eff;
     var ci = Math.cos(p.incl), si = Math.sin(p.incl);
     var x = Math.cos(p.angle) * p.orbit, z0 = Math.sin(p.angle) * p.orbit;
     p._group.position.set(x, z0 * si, z0 * ci);

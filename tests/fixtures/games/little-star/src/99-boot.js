@@ -1,5 +1,7 @@
 /* ================= 主循环 ================= */
 var lastT = 0;
+var _fLead = new THREE.Vector3();   /* 相机跟随的「前馈目标点」（临时，见 loop 内注释） */
+var _fprev = new THREE.Vector3();   /* 聚焦目标上一帧位置（前馈算速度用） */
 
 function loop(tms) {
   var dt = Math.min((tms - lastT) / 1000, 0.1);
@@ -10,8 +12,27 @@ function loop(tms) {
 
   // 相机：聚焦行星时平滑跟随；半径趋近目标值（双击聚焦/拉远都是平滑过渡）
   if (G.focusPlanet && G.focusPlanet._group) {
+    var fpos = G.focusPlanet._group.position;
+    var focusMode = FSM_CAMERA.is("focus");
     /* 聚焦档跟得更紧：贴近时行星公移一点、视角变化就很大（dt*5.5 vs 中距离 3.2） */
-    orbit.target.lerp(G.focusPlanet._group.position, Math.min(1, dt * (FSM_CAMERA.is("focus") ? 5.5 : 3.2)));
+    var k = focusMode ? 5.5 : 3.2;
+    if (focusMode && orbit.target.distanceToSquared(fpos) < 2.25) {
+      /* ★ v0.12.2：收敛后启用「速度前馈」—— lerp 追匀速圆周目标的稳态滞后
+       * = v/k（实测内圈行星 0.44 units ≈ 屏幕上 ~70px 的缓慢绕圈，行星不在
+       * 画面正中）。目标点前移 v/k 后稳态误差归零：行星钉住画面中心，画面里
+       * 在动的只有背景星空 ——「镜头随星球一起运动」。
+       * v 用上一帧位移：与分母 dt*k 同源相除，dt 数学上抵消、无帧率噪声。 */
+      var dtk = Math.max(dt * k, 1e-4);
+      _fLead.set(
+        fpos.x + (fpos.x - _fprev.x) / dtk,
+        fpos.y + (fpos.y - _fprev.y) / dtk,
+        fpos.z + (fpos.z - _fprev.z) / dtk
+      );
+      orbit.target.lerp(_fLead, Math.min(1, dt * k));
+    } else {
+      orbit.target.lerp(fpos, Math.min(1, dt * k));
+    }
+    _fprev.copy(fpos);
   } else if (!G.holdTarget) {
     orbit.target.lerp(_zeroV, Math.min(1, dt * 2.2));
   }

@@ -58,16 +58,16 @@
  *    2186    501  地形生成器（v0.11：固态行星表面构建）                src/42-terrain.js:1
  *    2687    437  聚焦地表（v0.12：立方球连续地表）                    src/44-focus-surface.js:1
  *    3124    388  场景                                                 src/50-scene.js:1
- *    3512    154  场景更新                                             src/50-scene.js:389
- *    3666    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
- *    3860     25  相机聚焦                                             src/70-camera-input.js:1
- *    3885    136  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
- *    4021     80  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
- *    4101    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
- *    4368    612  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
- *    4980     24  主循环                                               src/99-boot.js:1
- *    5004    462  启动                                                 src/99-boot.js:25
- *   共 23 个区块 · 19 个源文件 · 5465 行
+ *    3512    156  场景更新                                             src/50-scene.js:389
+ *    3668    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
+ *    3862     25  相机聚焦                                             src/70-camera-input.js:1
+ *    3887    136  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
+ *    4023     80  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
+ *    4103    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
+ *    4370    612  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
+ *    4982     45  主循环                                               src/99-boot.js:1
+ *    5027    462  启动                                                 src/99-boot.js:46
+ *   共 23 个区块 · 19 个源文件 · 5488 行
  * @nav:end
  * ─────────────────────────────────────────────────────────────────────
  *
@@ -731,7 +731,7 @@ function typeCond(t) {
  * 同时写入 ① 右下角版本戳（#ver）② __game.version。
  * 用途：一眼判断「眼前这页是不是最新构建」——历史上出现过改了代码但浏览器
  * 没刷新、误判「功能没生效」的情况。发版时只改这一行。 */
-var VERSION = "0.12.1";
+var VERSION = "0.12.2";
 
 function $(id) { return document.getElementById(id); }
 function fmtNum(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
@@ -3584,15 +3584,17 @@ function updateScene(sys, dt) {
   syncFocusSurface();
 
   sys.planets.forEach(function (p) {
-    /* ★ v0.12.1：聚焦档 = 「观察 / 操作地表」的模式 —— 目标行星相对镜头必须
-     * **完全静止**：自转、云漂移、公转一律冻结（否则玩家刚对准的面会自己转走；
-     * 公转不停的话，晨昏线还会随『真实星向』缓慢扫过盘面、背景星空也在动，
-     * 画面并不是真的『定住』）。冻结只是**暂停累加**、不改写任何相位/角度，
-     * 因此进出聚焦都没有跳变；判定与相机模式同帧同源。 */
+    /* ★ v0.12.2：聚焦档 = 「观察 / 操作地表」的模式 —— 冻结的是「**相对镜头
+     * 的姿态**」：自转与云漂移停住（玩家对准的面不转走）；**公转不冻** ——
+     * 星球继续在轨道上运动，镜头跟随（target lerp）随它一起运动（背景星空
+     * 缓缓移动，世界是活的；晨昏线随之自然推移）。
+     * ★ 不是「世界定格」：上一版把公转也冻住，画面完全静止 —— 那不对。
+     * 冻结只是**暂停累加**、不改写任何相位，因此进出聚焦都没有跳变；
+     * 判定与相机模式同帧同源。 */
     var frozen = FSM_CAMERA.is("focus") && G.focusPlanet === p;
     p._spinFrozen = frozen;
 
-    if (!frozen) p.angle += p.orbitSpeed * eff;
+    p.angle += p.orbitSpeed * eff;
     var ci = Math.cos(p.incl), si = Math.sin(p.incl);
     var x = Math.cos(p.angle) * p.orbit, z0 = Math.sin(p.angle) * p.orbit;
     p._group.position.set(x, z0 * si, z0 * ci);
@@ -4979,6 +4981,8 @@ function setupGuide() {
 
 /* ================= 主循环 ================= */
 var lastT = 0;
+var _fLead = new THREE.Vector3();   /* 相机跟随的「前馈目标点」（临时，见 loop 内注释） */
+var _fprev = new THREE.Vector3();   /* 聚焦目标上一帧位置（前馈算速度用） */
 
 function loop(tms) {
   var dt = Math.min((tms - lastT) / 1000, 0.1);
@@ -4989,8 +4993,27 @@ function loop(tms) {
 
   // 相机：聚焦行星时平滑跟随；半径趋近目标值（双击聚焦/拉远都是平滑过渡）
   if (G.focusPlanet && G.focusPlanet._group) {
+    var fpos = G.focusPlanet._group.position;
+    var focusMode = FSM_CAMERA.is("focus");
     /* 聚焦档跟得更紧：贴近时行星公移一点、视角变化就很大（dt*5.5 vs 中距离 3.2） */
-    orbit.target.lerp(G.focusPlanet._group.position, Math.min(1, dt * (FSM_CAMERA.is("focus") ? 5.5 : 3.2)));
+    var k = focusMode ? 5.5 : 3.2;
+    if (focusMode && orbit.target.distanceToSquared(fpos) < 2.25) {
+      /* ★ v0.12.2：收敛后启用「速度前馈」—— lerp 追匀速圆周目标的稳态滞后
+       * = v/k（实测内圈行星 0.44 units ≈ 屏幕上 ~70px 的缓慢绕圈，行星不在
+       * 画面正中）。目标点前移 v/k 后稳态误差归零：行星钉住画面中心，画面里
+       * 在动的只有背景星空 ——「镜头随星球一起运动」。
+       * v 用上一帧位移：与分母 dt*k 同源相除，dt 数学上抵消、无帧率噪声。 */
+      var dtk = Math.max(dt * k, 1e-4);
+      _fLead.set(
+        fpos.x + (fpos.x - _fprev.x) / dtk,
+        fpos.y + (fpos.y - _fprev.y) / dtk,
+        fpos.z + (fpos.z - _fprev.z) / dtk
+      );
+      orbit.target.lerp(_fLead, Math.min(1, dt * k));
+    } else {
+      orbit.target.lerp(fpos, Math.min(1, dt * k));
+    }
+    _fprev.copy(fpos);
   } else if (!G.holdTarget) {
     orbit.target.lerp(_zeroV, Math.min(1, dt * 2.2));
   }
