@@ -358,6 +358,12 @@ function boot() {
         ] : null
       };
     },
+    /* 聚焦云壳显隐（测量用：开/关差分 = 云的真实覆盖占比；也为将来「隐藏装饰层」留口） */
+    setFocusClouds: function (on) {
+      if (!G.focusPlanet || !G.focusPlanet._cs || !G.focusPlanet._cs.cloud) return null;
+      G.focusPlanet._cs.cloud.visible = !!on;
+      return G.focusPlanet._cs.cloud.visible;
+    },
     /* 重建聚焦地表（确定性对账用）：拆掉重来一遍，签名必须与前一次相同 */
     rebuildFocusSurface: function (name) {
       var p = null, i;

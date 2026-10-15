@@ -332,11 +332,11 @@ var FOCUS_CLOUD_FS = [
   "  vec3 q = vDir * 2.85;",
   "  float n = cfbm(q) * 0.66 + cfbm2(q * 3.4 + 11.0) * 0.34;",
   "  n = clamp((n - 0.5) * 2.1 + 0.5, 0.0, 1.0);",
-  "  float a = smoothstep(uCover, uCover + 0.20, n);",
+  "  float a = smoothstep(uCover, uCover + 0.24, n);",
   "  if (a < 0.004) discard;",
   "  vec3 wn = normalize(vWN);",
   "  float dl = max(dot(wn, uSunDir), 0.0);",
-  "  vec3 col = mix(uTint * 0.26, uTint * uSunCol, pow(dl, 0.7));",
+  "  vec3 col = mix(uTint * 0.20, uTint * uSunCol, pow(dl, 0.62));",
   "  gl_FragColor = vec4(col, a * uOpacity);",
   "}"
 ].join("\n");
@@ -376,8 +376,8 @@ function ensureFocusSurface(p) {
         uSunDir: { value: new THREE.Vector3(1, 0, 0) },
         uSunCol: { value: new THREE.Vector3(1, 1, 1) },
         uTint: { value: rawColor(p.type.color).lerp(new THREE.Color(1, 1, 1), 0.82) },
-        uCover: { value: clamp(0.62 - 0.20 * clamp(p.atmo, 0, 1), 0.38, 0.62) },
-        uOpacity: { value: 0.92 }
+        uCover: { value: clamp(0.82 - 0.22 * clamp(p.atmo, 0, 1), 0.54, 0.82) },
+        uOpacity: { value: 0.72 }
       },
       vertexShader: FOCUS_CLOUD_VS,
       fragmentShader: FOCUS_CLOUD_FS,

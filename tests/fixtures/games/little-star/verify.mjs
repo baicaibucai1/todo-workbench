@@ -2031,7 +2031,7 @@ async function frameStar(page, radius) {
         : (fsA.sea === -1 && fsA.seaFrac === 0),
       `「${fsProbe.target}」水 ${fsA.water.toFixed(3)} → 期望覆盖 ${expCover.toFixed(3)} · 实测 ${fsA.seaFrac} · 海平面 ${fsA.sea}`);
     check("★ 云层与贴图口径同源（planetCloudy：大气 ≥ 0.40 的岩质行星才有云壳）",
-      fsA.cloudy === !!fsA.cloud && (!fsA.cloud || (fsA.cloud.cover > 0.30 && fsA.cloud.cover < 0.65)),
+      fsA.cloudy === !!fsA.cloud && (!fsA.cloud || (fsA.cloud.cover > 0.30 && fsA.cloud.cover < 0.85)),
       fsA.cloud ? `cover=${fsA.cloud.cover} opacity=${fsA.cloud.opacity}` : `cloudy=${fsA.cloudy} · 无云壳`);
     await shot(page, "n22-focus-surface.png");
 
@@ -2093,7 +2093,7 @@ async function frameStar(page, radius) {
       return { name: t.name, atmo: f.atmo, cloudy: f.cloudy, cloud: f.cloud };
     });
     const expCloudCover = cloudBuild
-      ? Math.min(0.62, Math.max(0.38, 0.62 - 0.20 * Math.min(1, Math.max(0, cloudBuild.atmo))))
+      ? Math.min(0.82, Math.max(0.54, 0.82 - 0.22 * Math.min(1, Math.max(0, cloudBuild.atmo))))
       : 0;
     check("★ 云层的正面用例：带大气的固态行星建面后云壳登场（覆盖随大气变）",
       !!cloudBuild && cloudBuild.cloudy === true && !!cloudBuild.cloud &&

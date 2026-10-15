@@ -66,8 +66,8 @@
  *    4085    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
  *    4352    612  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
  *    4964     24  主循环                                               src/99-boot.js:1
- *    4988    452  启动                                                 src/99-boot.js:25
- *   共 23 个区块 · 19 个源文件 · 5439 行
+ *    4988    458  启动                                                 src/99-boot.js:25
+ *   共 23 个区块 · 19 个源文件 · 5445 行
  * @nav:end
  * ─────────────────────────────────────────────────────────────────────
  *
@@ -3018,11 +3018,11 @@ var FOCUS_CLOUD_FS = [
   "  vec3 q = vDir * 2.85;",
   "  float n = cfbm(q) * 0.66 + cfbm2(q * 3.4 + 11.0) * 0.34;",
   "  n = clamp((n - 0.5) * 2.1 + 0.5, 0.0, 1.0);",
-  "  float a = smoothstep(uCover, uCover + 0.20, n);",
+  "  float a = smoothstep(uCover, uCover + 0.24, n);",
   "  if (a < 0.004) discard;",
   "  vec3 wn = normalize(vWN);",
   "  float dl = max(dot(wn, uSunDir), 0.0);",
-  "  vec3 col = mix(uTint * 0.26, uTint * uSunCol, pow(dl, 0.7));",
+  "  vec3 col = mix(uTint * 0.20, uTint * uSunCol, pow(dl, 0.62));",
   "  gl_FragColor = vec4(col, a * uOpacity);",
   "}"
 ].join("\n");
@@ -3062,8 +3062,8 @@ function ensureFocusSurface(p) {
         uSunDir: { value: new THREE.Vector3(1, 0, 0) },
         uSunCol: { value: new THREE.Vector3(1, 1, 1) },
         uTint: { value: rawColor(p.type.color).lerp(new THREE.Color(1, 1, 1), 0.82) },
-        uCover: { value: clamp(0.62 - 0.20 * clamp(p.atmo, 0, 1), 0.38, 0.62) },
-        uOpacity: { value: 0.92 }
+        uCover: { value: clamp(0.82 - 0.22 * clamp(p.atmo, 0, 1), 0.54, 0.82) },
+        uOpacity: { value: 0.72 }
       },
       vertexShader: FOCUS_CLOUD_VS,
       fragmentShader: FOCUS_CLOUD_FS,
@@ -5320,6 +5320,12 @@ function boot() {
           +cs.mat.uniforms.uSunDir.value.z.toFixed(3)
         ] : null
       };
+    },
+    /* 聚焦云壳显隐（测量用：开/关差分 = 云的真实覆盖占比；也为将来「隐藏装饰层」留口） */
+    setFocusClouds: function (on) {
+      if (!G.focusPlanet || !G.focusPlanet._cs || !G.focusPlanet._cs.cloud) return null;
+      G.focusPlanet._cs.cloud.visible = !!on;
+      return G.focusPlanet._cs.cloud.visible;
     },
     /* 重建聚焦地表（确定性对账用）：拆掉重来一遍，签名必须与前一次相同 */
     rebuildFocusSurface: function (name) {
