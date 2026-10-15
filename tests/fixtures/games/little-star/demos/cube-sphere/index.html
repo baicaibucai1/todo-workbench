@@ -352,6 +352,14 @@ var showWire = false;
  * ★ 两点都加 depthTest:false + 高 renderOrder：否则近处会被地形起伏吞掉一半。
  */
 var marker = new THREE.Group();
+/* 白点外面套一层略大的暗点当描边：否则落到雪线/亮沙上时白点会和背景糊在一起。
+ * 两个都是 depthTest:false + 高 renderOrder，避免被地形起伏吃掉一半。 */
+var markerHalo = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 16, 12),
+  new THREE.MeshBasicMaterial({ color: 0x101418, depthTest: false })
+);
+markerHalo.renderOrder = 998;
+marker.add(markerHalo);
 var markerDot = new THREE.Mesh(
   new THREE.SphereGeometry(1, 16, 12),
   new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false })
@@ -457,10 +465,11 @@ function pick(cx, cy) {
    * 若按地形高度摆，白点会沉进海里看不见）。半径公式与 buildPlanet 里那套必须一致。 */
   var rh = R * (1 + RELIEF * (water ? SEA : hc) / (1 - SEA / 2));
   marker.position.set(d[0] * rh, d[1] * rh, d[2] * rh);
-  markerDot.scale.setScalar(0.030 * scale);         /* ≈ 4.3 px 半径 */
+  markerDot.scale.setScalar(0.030 * scale);          /* ≈ 4.3 px 半径 */
+  markerHalo.scale.setScalar(0.046 * scale);         /* 暗描边，比白点大一圈 */
   var nl = normalGeo.attributes.position.array;
   var nrm = normalAt(d[0], d[1], d[2], water);         /* ★ 与着色同源的解析法线 */
-  var len = 0.14 * scale;                            /* ≈ 20 px 长的法线 */
+  var len = 0.19 * scale;                            /* ≈ 27 px 长的法线 */
   nl[0] = 0; nl[1] = 0; nl[2] = 0;
   nl[3] = nrm[0] * len; nl[4] = nrm[1] * len; nl[5] = nrm[2] * len;
   normalGeo.attributes.position.needsUpdate = true;
