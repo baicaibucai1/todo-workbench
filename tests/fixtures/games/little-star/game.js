@@ -56,18 +56,18 @@
  *    1568    123  文明（实例）· 发源地信标（v0.8 新增）                src/35-civ.js:1
  *    1691    495  程序化贴图（全部画布绘制，零外部资源）               src/40-textures.js:1
  *    2186    501  地形生成器（v0.11：固态行星表面构建）                src/42-terrain.js:1
- *    2687    437  聚焦地表（v0.12：立方球连续地表）                    src/44-focus-surface.js:1
- *    3124    388  场景                                                 src/50-scene.js:1
- *    3512    156  场景更新                                             src/50-scene.js:389
- *    3668    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
- *    3862     25  相机聚焦                                             src/70-camera-input.js:1
- *    3887    136  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
- *    4023     80  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
- *    4103    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
- *    4370    612  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
- *    4982     45  主循环                                               src/99-boot.js:1
- *    5027    462  启动                                                 src/99-boot.js:46
- *   共 23 个区块 · 19 个源文件 · 5488 行
+ *    2687    485  聚焦地表（v0.12：立方球连续地表）                    src/44-focus-surface.js:1
+ *    3172    388  场景                                                 src/50-scene.js:1
+ *    3560    156  场景更新                                             src/50-scene.js:389
+ *    3716    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
+ *    3910     25  相机聚焦                                             src/70-camera-input.js:1
+ *    3935    136  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
+ *    4071     80  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
+ *    4151    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
+ *    4418    612  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
+ *    5030     45  主循环                                               src/99-boot.js:1
+ *    5075    494  启动                                                 src/99-boot.js:46
+ *   共 23 个区块 · 19 个源文件 · 5568 行
  * @nav:end
  * ─────────────────────────────────────────────────────────────────────
  *
@@ -731,7 +731,7 @@ function typeCond(t) {
  * 同时写入 ① 右下角版本戳（#ver）② __game.version。
  * 用途：一眼判断「眼前这页是不是最新构建」——历史上出现过改了代码但浏览器
  * 没刷新、误判「功能没生效」的情况。发版时只改这一行。 */
-var VERSION = "0.12.2";
+var VERSION = "0.12.3";
 
 function $(id) { return document.getElementById(id); }
 function fmtNum(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
@@ -2971,12 +2971,83 @@ var FOCUS_FS = [
   "}"
 ].join("\n");
 
-/* ---- ⑤ 云层：装饰层（只进渲染管线，不参与拾取/几何/统计，demo 契约⑤） ---- */
+/* ---- ⑤ 云层：装饰层（只进渲染管线，不参与拾取/几何/统计，demo 契约⑤） ----
+ * ★ v0.12.3：云图案从「片元逐像素 3D 噪声」改成「一张烘焙贴图」（用户拍板：
+ * 云是装饰物，用单纯贴图即可）。动机与工艺：
+ *   ① 修锯齿 —— 逐像素噪声在云边是「采样走样」（毛刺/碎点）；贴图 + linear /
+ *      mipmap 是**预过滤**过的，边缘天然平滑；
+ *   ② 性能 —— 每像素 ~48 次哈希 → 1 次纹理采样；
+ *   ③ 云量 / 不透明度仍是材质 uniform（逐行星），贴图全行星共享、零运行时成本；
+ *      不同行星靠「初始相位（seed）」+「云量」区分图案方位。
+ * 生成用与旧着色器**同构**的 CPU 噪声（h31/vn3/cfbm —— 同频率、同混合、同拉伸），
+ * 所以云的形态与旧版一致，只是不再有逐像素走样。 */
+var CLOUD_TEX_W = 1024, CLOUD_TEX_H = 512;   /* 细节上限：近景云团不糊（生成 ~150ms，启动时空闲预热） */
+var _cloudTex = null, _cloudTexMs = 0;
+
+function _cfract(x) { return x - Math.floor(x); }
+function _ch31(x, y, z) {
+  var px = _cfract(x * 0.3183099 + 0.1) * 17;
+  var py = _cfract(y * 0.3183099 + 0.2) * 17;
+  var pz = _cfract(z * 0.3183099 + 0.3) * 17;
+  return _cfract(px * py * pz * (px + py + pz));
+}
+function _cvn3(x, y, z) {
+  var ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
+  var fx = x - ix, fy = y - iy, fz = z - iz;
+  fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy); fz = fz * fz * (3 - 2 * fz);
+  var n000 = _ch31(ix, iy, iz), n100 = _ch31(ix + 1, iy, iz);
+  var n010 = _ch31(ix, iy + 1, iz), n110 = _ch31(ix + 1, iy + 1, iz);
+  var n001 = _ch31(ix, iy, iz + 1), n101 = _ch31(ix + 1, iy, iz + 1);
+  var n011 = _ch31(ix, iy + 1, iz + 1), n111 = _ch31(ix + 1, iy + 1, iz + 1);
+  var x00 = n000 + (n100 - n000) * fx, x10 = n010 + (n110 - n010) * fx;
+  var x01 = n001 + (n101 - n001) * fx, x11 = n011 + (n111 - n011) * fx;
+  var y0 = x00 + (x10 - x00) * fy, y1 = x01 + (x11 - x01) * fy;
+  return y0 + (y1 - y0) * fz;
+}
+
+/* 生成一次（启动空闲预热；万一没赶上，首次出现云壳时同步兜底）；经度方向天然无缝：
+ * u=0 与 u=1 是同方向（球面采样保证），配合 RepeatWrapping 无接缝。 */
+function buildCloudTex() {
+  if (_cloudTex) return _cloudTex;
+  var t0 = (typeof performance !== "undefined" ? performance.now() : 0);
+  var W = CLOUD_TEX_W, H = CLOUD_TEX_H;
+  var data = new Uint8Array(W * H * 4);
+  var i = 0;
+  for (var j = 0; j < H; j++) {
+    var lat = ((j + 0.5) / H) * Math.PI;              /* 0 = 北极 → π = 南极 */
+    var sl = Math.sin(lat), cl = Math.cos(lat);
+    for (var k = 0; k < W; k++) {
+      var lon = ((k + 0.5) / W) * Math.PI * 2;
+      var dx = sl * Math.cos(lon), dy = cl, dz = sl * Math.sin(lon);
+      /* 主云团：4 八度；细碎层：2 八度（与旧着色器逐参数同构） */
+      var s = 0, nn = 0, a = 0.5, px = dx * 2.85, py = dy * 2.85, pz = dz * 2.85;
+      for (var o = 0; o < 4; o++) { s += a * _cvn3(px, py, pz); nn += a; a *= 0.5; px *= 2.13; py *= 2.13; pz *= 2.13; }
+      var m = s / nn;
+      var s2 = 0, nn2 = 0, a2 = 0.5;
+      px = dx * 2.85 * 3.4 + 11; py = dy * 2.85 * 3.4 + 11; pz = dz * 2.85 * 3.4 + 11;
+      for (var o2 = 0; o2 < 2; o2++) { s2 += a2 * _cvn3(px, py, pz); nn2 += a2; a2 *= 0.5; px *= 2.21; py *= 2.21; pz *= 2.21; }
+      var v = m * 0.66 + (s2 / nn2) * 0.34;
+      v = Math.min(1, Math.max(0, (v - 0.5) * 2.1 + 0.5));     /* 对比拉伸（烘焙） */
+      var b = (v * 255) | 0;
+      data[i++] = b; data[i++] = b; data[i++] = b; data[i++] = 255;
+    }
+  }
+  var tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+  tex.wrapS = THREE.RepeatWrapping;                       /* 经度环绕无缝 */
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;         /* mipmap 预过滤 = 抗走样 */
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  _cloudTexMs = Math.round((typeof performance !== "undefined" ? performance.now() : 0) - t0);
+  return (_cloudTex = tex);
+}
+
 var FOCUS_CLOUD_VS = [
   "varying vec3 vWN;",
-  "varying vec3 vDir;",
+  "varying vec2 vUv;",
   "void main() {",
-  "  vDir = normalize(position);",
+  "  vUv = uv;",
   "  vWN = normalize(mat3(modelMatrix) * normal);",
   "  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);",
   "}"
@@ -2985,39 +3056,13 @@ var FOCUS_CLOUD_VS = [
 var FOCUS_CLOUD_FS = [
   "uniform vec3 uSunDir; uniform vec3 uSunCol; uniform vec3 uTint;",
   "uniform float uCover; uniform float uOpacity;",
-  "varying vec3 vWN; varying vec3 vDir;",
-  "float h31(vec3 p) {",
-  "  p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));",
-  "  p *= 17.0;",
-  "  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));",
-  "}",
-  "float vn3(vec3 x) {",
-  "  vec3 i = floor(x), f = fract(x);",
-  "  f = f * f * (3.0 - 2.0 * f);",
-  "  float n000 = h31(i),                n100 = h31(i + vec3(1, 0, 0));",
-  "  float n010 = h31(i + vec3(0, 1, 0)), n110 = h31(i + vec3(1, 1, 0));",
-  "  float n001 = h31(i + vec3(0, 0, 1)), n101 = h31(i + vec3(1, 0, 1));",
-  "  float n011 = h31(i + vec3(0, 1, 1)), n111 = h31(i + vec3(1, 1, 1));",
-  "  float x00 = mix(n000, n100, f.x), x10 = mix(n010, n110, f.x);",
-  "  float x01 = mix(n001, n101, f.x), x11 = mix(n011, n111, f.x);",
-  "  return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);",
-  "}",
-  "float cfbm(vec3 p) {",
-  "  float a = 0.5, s = 0.0, n = 0.0;",
-  "  for (int i = 0; i < 4; i++) { s += a * vn3(p); n += a; a *= 0.5; p *= 2.13; }",
-  "  return s / n;",
-  "}",
-  "float cfbm2(vec3 p) {",
-  "  float a = 0.5, s = 0.0, n = 0.0;",
-  "  for (int i = 0; i < 2; i++) { s += a * vn3(p); n += a; a *= 0.5; p *= 2.21; }",
-  "  return s / n;",
-  "}",
+  "uniform sampler2D uMap;",
+  "varying vec3 vWN; varying vec2 vUv;",
   "void main() {",
-  "  /* 云图案采样在物体空间（随云壳自转，不会原地闪烁）。对比拉伸防「薄雾」、",
-  "     细碎层防「大团块盖海」—— 两条都是 demo 实测的教训。 */",
-  "  vec3 q = vDir * 2.85;",
-  "  float n = cfbm(q) * 0.66 + cfbm2(q * 3.4 + 11.0) * 0.34;",
-  "  n = clamp((n - 0.5) * 2.1 + 0.5, 0.0, 1.0);",
+  "  /* ★ v0.12.3：图案来自烘焙贴图（生成时已含对比拉伸与细碎层）。",
+  "     贴图是预过滤的（linear/mipmap）—— 云边天然平滑，不再有逐像素",
+  "     噪声的走样毛刺；云量 uCover 仍是逐行星 uniform，阈值化在此完成。 */",
+  "  float n = texture2D(uMap, vUv).r;",
   "  float a = smoothstep(uCover, uCover + 0.24, n);",
   "  if (a < 0.004) discard;",
   "  vec3 wn = normalize(vWN);",
@@ -3059,6 +3104,7 @@ function ensureFocusSurface(p) {
   if (planetCloudy(p)) {
     cloudMat = new THREE.ShaderMaterial({
       uniforms: {
+        uMap: { value: buildCloudTex() },              /* ★ v0.12.3：烘焙云贴图（全行星共享） */
         uSunDir: { value: new THREE.Vector3(1, 0, 0) },
         uSunCol: { value: new THREE.Vector3(1, 1, 1) },
         uTint: { value: rawColor(p.type.color).lerp(new THREE.Color(1, 1, 1), 0.82) },
@@ -3071,6 +3117,8 @@ function ensureFocusSurface(p) {
       depthWrite: false
     });
     cloud = new THREE.Mesh(new THREE.SphereGeometry(p.size * (1 + g.amp + 0.015), 64, 48), cloudMat);
+    /* 云图案方位按行星种子转一个相位（共享贴图、不同行星朝相机的一面不同） */
+    cloud.rotation.y = hash3i(p.seed, 3, 7, 11) * Math.PI * 2;
     group.add(cloud);
   }
   group.visible = false;
@@ -5350,7 +5398,11 @@ function boot() {
         cloud: cs && cs.cloud ? {
           visible: cs.cloud.visible,
           cover: +cs.cloudMat.uniforms.uCover.value.toFixed(3),
-          opacity: +cs.cloudMat.uniforms.uOpacity.value.toFixed(3)
+          opacity: +cs.cloudMat.uniforms.uOpacity.value.toFixed(3),
+          /* ★ v0.12.3：云图案 = 烘焙贴图（512×256 · linear/mipmap 预过滤） */
+          texW: cs.cloudMat.uniforms.uMap.value.image.width,
+          texH: cs.cloudMat.uniforms.uMap.value.image.height,
+          texMs: _cloudTexMs
         } : null,
         meshVisible: p._mesh.visible,
         /* ★ v0.12.1：聚焦静止对账点 —— meshRotY = 自转相位（读贴图网格，退出聚焦
@@ -5369,6 +5421,28 @@ function boot() {
       if (!G.focusPlanet || !G.focusPlanet._cs || !G.focusPlanet._cs.cloud) return null;
       G.focusPlanet._cs.cloud.visible = !!on;
       return G.focusPlanet._cs.cloud.visible;
+    },
+    /* 聚焦云壳相位（调试：看不同方位下的云图案 —— 对照「云多/云少的一面」） */
+    setFocusCloudPhase: function (a) {
+      if (!G.focusPlanet || !G.focusPlanet._cs || !G.focusPlanet._cs.cloud) return null;
+      G.focusPlanet._cs.cloud.rotation.y = +a || 0;
+      return G.focusPlanet._cs.cloud.rotation.y;
+    },
+    /* ★ v0.12.3：导出云贴图（base64 PNG）—— 看烘焙结果本身的形态与对比（调试 / 资产检查） */
+    cloudTexPng: function () {
+      if (!_cloudTex) return null;
+      var img = _cloudTex.image, W = img.width, H = img.height, d = img.data;
+      var cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+      var g = cv.getContext("2d");
+      var id = g.createImageData(W, H);
+      for (var i = 0; i < W * H; i++) {
+        id.data[i * 4] = d[i * 4];
+        id.data[i * 4 + 1] = d[i * 4];
+        id.data[i * 4 + 2] = d[i * 4];
+        id.data[i * 4 + 3] = 255;
+      }
+      g.putImageData(id, 0, 0);
+      return cv.toDataURL("image/png");
     },
     /* 重建聚焦地表（确定性对账用）：拆掉重来一遍，签名必须与前一次相同 */
     rebuildFocusSurface: function (name) {
@@ -5477,6 +5551,12 @@ function boot() {
     planetMaterials: planetMaterials,
     rngLive: function () { return rngDraws; }
   };
+
+  /* ★ v0.12.3：云贴图「空闲预热」—— 生成 1024×512 约 150ms，放到浏览器空闲时做，
+   * 别卡住「双击聚焦」那一瞬（懒生成仍兜底：万一没赶上就同步生成一次）。 */
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(function () { buildCloudTex(); }, { timeout: 3000 });
+  }
 }
 
 if (document.readyState === "loading") {

@@ -369,7 +369,11 @@ function boot() {
         cloud: cs && cs.cloud ? {
           visible: cs.cloud.visible,
           cover: +cs.cloudMat.uniforms.uCover.value.toFixed(3),
-          opacity: +cs.cloudMat.uniforms.uOpacity.value.toFixed(3)
+          opacity: +cs.cloudMat.uniforms.uOpacity.value.toFixed(3),
+          /* ★ v0.12.3：云图案 = 烘焙贴图（512×256 · linear/mipmap 预过滤） */
+          texW: cs.cloudMat.uniforms.uMap.value.image.width,
+          texH: cs.cloudMat.uniforms.uMap.value.image.height,
+          texMs: _cloudTexMs
         } : null,
         meshVisible: p._mesh.visible,
         /* ★ v0.12.1：聚焦静止对账点 —— meshRotY = 自转相位（读贴图网格，退出聚焦
@@ -388,6 +392,28 @@ function boot() {
       if (!G.focusPlanet || !G.focusPlanet._cs || !G.focusPlanet._cs.cloud) return null;
       G.focusPlanet._cs.cloud.visible = !!on;
       return G.focusPlanet._cs.cloud.visible;
+    },
+    /* 聚焦云壳相位（调试：看不同方位下的云图案 —— 对照「云多/云少的一面」） */
+    setFocusCloudPhase: function (a) {
+      if (!G.focusPlanet || !G.focusPlanet._cs || !G.focusPlanet._cs.cloud) return null;
+      G.focusPlanet._cs.cloud.rotation.y = +a || 0;
+      return G.focusPlanet._cs.cloud.rotation.y;
+    },
+    /* ★ v0.12.3：导出云贴图（base64 PNG）—— 看烘焙结果本身的形态与对比（调试 / 资产检查） */
+    cloudTexPng: function () {
+      if (!_cloudTex) return null;
+      var img = _cloudTex.image, W = img.width, H = img.height, d = img.data;
+      var cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+      var g = cv.getContext("2d");
+      var id = g.createImageData(W, H);
+      for (var i = 0; i < W * H; i++) {
+        id.data[i * 4] = d[i * 4];
+        id.data[i * 4 + 1] = d[i * 4];
+        id.data[i * 4 + 2] = d[i * 4];
+        id.data[i * 4 + 3] = 255;
+      }
+      g.putImageData(id, 0, 0);
+      return cv.toDataURL("image/png");
     },
     /* 重建聚焦地表（确定性对账用）：拆掉重来一遍，签名必须与前一次相同 */
     rebuildFocusSurface: function (name) {
@@ -496,6 +522,12 @@ function boot() {
     planetMaterials: planetMaterials,
     rngLive: function () { return rngDraws; }
   };
+
+  /* ★ v0.12.3：云贴图「空闲预热」—— 生成 1024×512 约 150ms，放到浏览器空闲时做，
+   * 别卡住「双击聚焦」那一瞬（懒生成仍兜底：万一没赶上就同步生成一次）。 */
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(function () { buildCloudTex(); }, { timeout: 3000 });
+  }
 }
 
 if (document.readyState === "loading") {

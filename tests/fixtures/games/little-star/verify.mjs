@@ -1,5 +1,5 @@
 /**
- * Little Star —— Web 端真机验证（v0.12.2：源码拆分 src/ 19 片段 + 拼装器 build.mjs）
+ * Little Star —— Web 端真机验证（v0.12.3：源码拆分 src/ 19 片段 + 拼装器 build.mjs）
  *
  * 覆盖（24 节，与下方 `/* ---- N. ... ---- *\/` 区块注释一一对应）：
  *   0. 工程自检：game.js 是否等于 src/ 片段的拼装结果（不需要浏览器）
@@ -207,7 +207,7 @@ async function frameStar(page, radius) {
       api: window.__game.version,
       badge: (document.getElementById("ver") || {}).textContent || ""
     }));
-    check("版本号为 0.12.2（调试接口）", verInfo.api === "0.12.2");
+    check("版本号为 0.12.3（调试接口）", verInfo.api === "0.12.3");
     check("右下角版本戳与调试接口同源", verInfo.badge === "v" + verInfo.api, `#ver = "${verInfo.badge}"`);
     console.log(`  ℹ 星系「${st0.system}」 · ${st0.starType}（${st0.starId}） · ${st0.planets.length} 颗行星`);
     await shot(page, "n1-system.png");
@@ -2149,6 +2149,15 @@ async function frameStar(page, radius) {
         Math.abs(cloudBuild.cloud.cover - expCloudCover) < 0.02,
       cloudBuild ? `「${cloudBuild.name}」大气 ${cloudBuild.atmo.toFixed(2)} → 期望 cover ${expCloudCover.toFixed(3)} · 实测 ${cloudBuild.cloud && cloudBuild.cloud.cover}`
         : "本星系无「带大气的固态行星」（世界变了？）");
+
+    /* ★ v0.12.3：云图案 = 烘焙贴图（1024×512 · linear/mipmap 预过滤）——
+     * 替代逐像素 3D 噪声：修「云边锯齿」（噪声采样走样），并省掉每像素 ~48 次哈希。 */
+    check("★ 云图案是烘焙贴图（预过滤 —— 云边不再有逐像素噪声的走样毛刺）",
+      !!cloudBuild && !!cloudBuild.cloud &&
+        cloudBuild.cloud.texW === 1024 && cloudBuild.cloud.texH === 512,
+      cloudBuild && cloudBuild.cloud
+        ? `贴图 ${cloudBuild.cloud.texW}×${cloudBuild.cloud.texH} · 生成 ${cloudBuild.cloud.texMs}ms（一次性）`
+        : "（无云壳）");
 
     await page.evaluate(() => { window.__game.unfocus(); window.__game.clearSelection(); });
     await sleep(400);
