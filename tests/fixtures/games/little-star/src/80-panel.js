@@ -104,11 +104,13 @@ function planetRows(p) {
  *   civRows / matRows  页面内容（全部现读注册表与行星字段，不缓存）
  *   applyPanelTab   把 DOM 刷成与「机器状态 + 当前选中」一致（机器的副作用）
  * 另有一条回落规则：页面不可用（切换选中 / 换恒星后发源地搬走 / 取消选中）时，
- * syncPanelTab 替用户把机器按回 planet ——「机器 = DOM」的对账因此永远成立。 */
+ * syncPanelTab 替用户把机器按回 planet ——「机器 = DOM」的对账因此永远成立。
+ * 折叠（收起 / 展开）也在这个片段：它不是状态机，是**视图偏好**，见下方注释。 */
 function setupPanelTabs() {
   elPTabs = $("p-tabs");
   elPCiv = $("p-civ");
   elPRes = $("p-res");
+  setupPanelFold();   /* 面板的两处装配（标签栏 + 收起钮）都在本片段接线 —— 能少碰启动片段就少碰 */
   if (!elPTabs) return;
   elPTabs.addEventListener("click", function (e) {
     var b = e.target.closest ? e.target.closest("[data-tab]") : null;
@@ -183,6 +185,34 @@ function syncPanelTab() {
   if (FSM_PANEL.is("civ") && !civ) FSM_PANEL.send("showPlanet");   /* 文明页不可用 → 回落行星页 */
   if (FSM_PANEL.is("res") && !p) FSM_PANEL.send("showPlanet");     /* 资源页失去行星 → 回落行星页 */
   applyPanelTab();
+}
+
+/* ---- 折叠（收起 / 展开）：面板体整块让位，只留标题条 ----
+ * 是什么：标题条右端一个钮，把数据区（标签页 / 数据行 / 资源页 / 文明页 / 操作区）
+ * 叠起来，只留「现在选的是谁」那一行。再点即展开。
+ *
+ * ★ 与「面板退场」是两件事，别混：
+ *     未选中 → .hidden，整条面板（含标题条）退场 —— 那是 FSM_SELECT 的投影；
+ *     折叠   → .folded，选中着但用户把内容叠了起来 —— 这是**视图偏好**。
+ *   所以：① 它不进 FSM_PANEL（那台机器管的是「哪一页」，不是「摊不摊开」）；
+ *        ② 它不随选中项变化复位 —— 用户关掉的东西不该自己弹回来。换目标时
+ *           renderPanel 照常改写标题条，只是内容还叠着。
+ *   想让「选中新目标即自动展开」，在 renderPanel() 里加一行 setPanelFold(false) 即可。
+ * ③ 面板**宽度不变**（只掉高度）—— 收起 / 展开时钮留在原地，不必追着点。 */
+var elPFold = null, panelFolded = false;
+
+function applyPanelFold() {
+  if (!elPanel || !elPFold) return;
+  elPanel.classList.toggle("folded", panelFolded);
+  elPFold.textContent = panelFolded ? "展开" : "收起";
+  elPFold.title = panelFolded ? "展开面板" : "收起面板（只留标题条）";
+}
+function setPanelFold(on) { panelFolded = !!on; applyPanelFold(); return panelFolded; }
+function togglePanelFold() { return setPanelFold(!panelFolded); }
+function setupPanelFold() {
+  elPFold = $("p-fold");
+  if (elPFold) elPFold.addEventListener("click", togglePanelFold);
+  applyPanelFold();          /* 初刷：DOM 与 panelFolded 对齐（默认展开） */
 }
 
 function renderPanel() {

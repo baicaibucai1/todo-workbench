@@ -1,5 +1,5 @@
 /**
- * Little Star —— Web 端真机验证（v0.11.1：源码拆分 src/ 18 片段 + 拼装器 build.mjs）
+ * Little Star —— Web 端真机验证（v0.11.0：源码拆分 src/ 18 片段 + 拼装器 build.mjs）
  *
  * 覆盖（23 节，与下方 `/* ---- N. ... ---- *\/` 区块注释一一对应）：
  *   0. 工程自检：game.js 是否等于 src/ 片段的拼装结果（不需要浏览器）
@@ -201,7 +201,7 @@ async function frameStar(page, radius) {
       api: window.__game.version,
       badge: (document.getElementById("ver") || {}).textContent || ""
     }));
-    check("版本号为 0.11.1（调试接口）", verInfo.api === "0.11.1");
+    check("版本号为 0.11.0（调试接口）", verInfo.api === "0.11.0");
     check("右下角版本戳与调试接口同源", verInfo.badge === "v" + verInfo.api, `#ver = "${verInfo.badge}"`);
     console.log(`  ℹ 星系「${st0.system}」 · ${st0.starType}（${st0.starId}） · ${st0.planets.length} 颗行星`);
     await shot(page, "n1-system.png");
@@ -283,10 +283,11 @@ async function frameStar(page, radius) {
       };
       const cs = (sel) => getComputedStyle(document.querySelector(sel));
       const panel = cs("#panel"), btn = cs("#guide-btn"), book = cs(".g-book"), hint = cs(".hud-hint");
-      const nav = cs("#guide-nav"), tab = cs("#p-tabs .p-tab");
+      const nav = cs("#guide-nav"), tab = cs("#p-tabs .p-tab"), foldC = cs("#p-fold");
       const groups = {
         面板: [panel.backgroundColor, panel.borderTopColor, panel.color],
         标签页: [tab.backgroundColor, tab.borderBottomColor, tab.color],
+        收起钮: [foldC.backgroundColor, foldC.borderTopColor, foldC.color],
         指导书按钮: [btn.backgroundColor, btn.borderTopColor, btn.color],
         书页: [book.backgroundColor, book.borderTopColor],
         栏目导航: [nav.backgroundColor, nav.borderRightColor],
@@ -304,7 +305,7 @@ async function frameStar(page, radius) {
       };
     });
     check("黑白体系：UI 本体无彩色（R=G=B）", bw.bad.length === 0,
-      bw.bad.length ? bw.bad.join(" · ") : "面板 / 按钮 / 书页 / 栏目导航 / 提示 全部无色相");
+      bw.bad.length ? bw.bad.join(" · ") : "面板 / 收起钮 / 按钮 / 书页 / 栏目导航 / 提示 全部无色相");
     check("圆角统一（容器同值、非 0）+ 粗边框 ≥ 2px", bw.radiusOk && bw.lw >= 2,
       `圆角 ${bw.radius} · 面板边框 ${bw.lw}px`);
 
@@ -330,7 +331,7 @@ async function frameStar(page, radius) {
     check("滚轮拉远", r2 > r1 + 1, `radius ${r1} → ${r2}`);
 
     /* ---- 5. 单击行星 → 信息面板 ---- */
-    console.log("\n[5] 单击行星 → 右侧信息面板");
+    console.log("\n[5] 单击行星 → 右侧信息面板（含收起 / 展开）");
     const p0 = await page.evaluate(() => {
       const st = window.__game.getState();
       const pl = st.planets[0];
@@ -371,15 +372,78 @@ async function frameStar(page, radius) {
     check("操作按钮占位且禁用", panel1.btns >= 2 && panel1.disabled, `${panel1.btns} 个`);
     await shot(page, "n2-panel-planet.png");
 
+    /* ★ 面板可收起（收起 = 面板体整块让位、只留标题条）。
+     *   与下面那条「点空白 → 面板收起」是**两件事**：那是未选中时整条面板退场（.hidden，
+     *   FSM_SELECT 的投影），这里是选中着但用户把内容叠起来（.folded，视图偏好）。
+     *   所以这里连带验：取消选中不重置折叠偏好、重新选中仍保持收起。 */
+    const readFold = () => page.evaluate(() => {
+      const el = document.getElementById("panel");
+      const b = document.getElementById("p-fold");
+      const shown = (id) => {
+        const n = document.getElementById(id);
+        return !!n && getComputedStyle(n).display !== "none";
+      };
+      const r = el.getBoundingClientRect();
+      return {
+        btn: !!b, label: b ? b.textContent : "",
+        folded: el.classList.contains("folded") && !el.classList.contains("hidden"),
+        hiddenClass: el.classList.contains("hidden"),
+        name: document.getElementById("p-name").textContent,
+        w: Math.round(r.width), h: Math.round(r.height),
+        headShown: getComputedStyle(el.querySelector(".p-head")).display !== "none",
+        body: { tabs: shown("p-tabs"), rows: shown("p-rows"), res: shown("p-res"), civ: shown("p-civ"), actions: shown("p-actions") },
+        rowCount: document.querySelectorAll("#p-rows .p-row").length
+      };
+    });
+
+    const fold0 = await readFold();
+    check("★ 标题条上有「收起」钮（默认展开态）",
+      fold0.btn && fold0.label === "收起" && !fold0.folded && fold0.body.rows,
+      `label=${fold0.label} · 面板 ${fold0.w}×${fold0.h}px`);
+
+    await page.click("#p-fold");
+    await sleep(250);
+    const fold1 = await readFold();
+    check("★ 收起 → 面板体整块让位（标签页 / 数据行 / 资源页 / 文明页 / 操作区 全隐去），标题条留着",
+      fold1.folded && !fold1.body.tabs && !fold1.body.rows && !fold1.body.res &&
+      !fold1.body.civ && !fold1.body.actions && fold1.headShown && fold1.name === p0.name,
+      `收起后标题仍是「${fold1.name}」`);
+    check("★ 收起后钮变「展开」，面板只剩一条标题的高度（宽度不变、不横向跳）",
+      fold1.label === "展开" && fold1.h < fold0.h * 0.6 && Math.abs(fold1.w - fold0.w) < 2,
+      `${fold0.h} → ${fold1.h}px · 宽 ${fold1.w}px`);
+    await shot(page, "n2b-panel-folded.png");
+
     const emptyPt = await findEmptyPoint(page);
     await page.mouse.click(emptyPt.x, emptyPt.y);
     await sleep(300);
-    const cleared = await page.evaluate(() => ({
-      sel: window.__game.getState().selectedPlanet,
-      hidden: document.getElementById("panel").classList.contains("hidden")
-    }));
+    const cleared = await page.evaluate(() => {
+      const el = document.getElementById("panel");
+      return {
+        sel: window.__game.getState().selectedPlanet,
+        hidden: el.classList.contains("hidden"),
+        folded: el.classList.contains("folded")
+      };
+    });
     check("点空白 → 取消选中", cleared.sel === null);
     check("面板收起", cleared.hidden === true);
+    check("★ 退场不重置折叠偏好（.hidden = 没选中，.folded = 内容叠着，两层各管各的）",
+      cleared.folded === true, "folded 留着 → 下次选中直接从收起态开始");
+
+    /* 行星在公转，位置要现取（p0.pos 是本节开头量的，中间隔着截图与几次点击） */
+    const again = await page.evaluate((n) => window.__game.planetScreenPos(n), p0.name);
+    await page.mouse.click(again.x, again.y);     /* 真点击：重新选中同一颗 */
+    await sleep(300);
+    const fold2 = await readFold();
+    check("★ 折叠是视图偏好：重新选中仍保持收起、标题条随选中项改写",
+      !fold2.hiddenClass && fold2.folded && fold2.name === p0.name && !fold2.body.rows,
+      `标题「${fold2.name}」· 内容仍叠着`);
+
+    await page.click("#p-fold");
+    await sleep(250);
+    const fold3 = await readFold();
+    check("★ 再点一次 → 展开复原（行星页 17 行回来了，钮回到「收起」）",
+      !fold3.folded && fold3.label === "收起" && fold3.body.rows && fold3.rowCount === KEY_NEED.length,
+      `${fold3.rowCount} 行 · 高 ${fold3.h}px`);
 
     /* ---- 6. 单击恒星 → 恒星面板 ---- */
     console.log("\n[6] 单击恒星 → 恒星面板");
@@ -828,32 +892,6 @@ async function frameStar(page, radius) {
     const opp = lf.ghosts.every((g) => g.x * lf.star.x + g.y * lf.star.y < 0);
     check("鬼影位于光源对侧（光学正确）", opp, lf.ghosts.map((g) => `(${g.x},${g.y})`).join(" "));
     await shot(page, "n7-lens-flare.png");
-
-    /* v0.11.1 光学修正：光源被行星挡住 → 光斑必须熄灭。
-     * 摆法：相机放到「最大行星的背光外侧」，让 相机—行星—恒星 三点共线，
-     * 恒星的投影点落进行星投影圆盘正中 —— 此前光斑会隔着行星画出来（假）。 */
-    const occPlanet = await page.evaluate(() => {
-      const st = window.__game.getState();
-      const pl = st.planets.reduce((a, b) => (b.size > a.size ? b : a));
-      const p = window.__game.planetWorldPos(pl.name);
-      const L = Math.hypot(p.x, p.y, p.z) || 1;
-      window.__game.holdTarget(true);
-      window.__game.setTarget(p.x, p.y, p.z);
-      window.__game.setOrbitAngles(Math.atan2(p.x, p.z), Math.acos(Math.max(-1, Math.min(1, p.y / L))));
-      window.__game.zoomTo(30);
-      return pl.name;
-    });
-    await sleep(500);
-    const lf2 = await page.evaluate(() => window.__game.lensFlareState());
-    check(
-      "光源被行星挡住 → 光斑熄灭（v0.11.1）",
-      lf2.visible === false && lf2.occl > 0.9,
-      `挡光行星 ${occPlanet} · occl=${lf2.occl}`
-    );
-    await page.evaluate(() => {
-      window.__game.holdTarget(false);
-      window.__game.setTarget(0, 0, 0);
-    });
     await page.evaluate(() => window.__game.holdTarget(false));
 
     /* ---- 17. ★ 行星物理：四项优化的机器判据 ---- */

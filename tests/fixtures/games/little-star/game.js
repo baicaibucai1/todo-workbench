@@ -58,15 +58,15 @@
  *    2185    501  地形生成器（v0.11：固态行星表面构建）                src/42-terrain.js:1
  *    2686    385  场景                                                 src/50-scene.js:1
  *    3071    130  场景更新                                             src/50-scene.js:386
- *    3201    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
- *    3395     25  相机聚焦                                             src/70-camera-input.js:1
- *    3420    136  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
- *    3556     77  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
- *    3633    223  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
- *    3856    612  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
- *    4468     24  主循环                                               src/99-boot.js:1
- *    4492    398  启动                                                 src/99-boot.js:25
- *   共 22 个区块 · 18 个源文件 · 4889 行
+ *    3201    168  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
+ *    3369     25  相机聚焦                                             src/70-camera-input.js:1
+ *    3394    136  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
+ *    3530     77  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
+ *    3607    253  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
+ *    3860    612  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
+ *    4472     24  主循环                                               src/99-boot.js:1
+ *    4496    398  启动                                                 src/99-boot.js:25
+ *   共 22 个区块 · 18 个源文件 · 4893 行
  * @nav:end
  * ─────────────────────────────────────────────────────────────────────
  *
@@ -730,7 +730,7 @@ function typeCond(t) {
  * 同时写入 ① 右下角版本戳（#ver）② __game.version。
  * 用途：一眼判断「眼前这页是不是最新构建」——历史上出现过改了代码但浏览器
  * 没刷新、误判「功能没生效」的情况。发版时只改这一行。 */
-var VERSION = "0.11.1";
+var VERSION = "0.11.0";
 
 function $(id) { return document.getElementById(id); }
 function fmtNum(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
@@ -3329,31 +3329,8 @@ function buildLensFlare() {
       { sprite: mk(ghostT, 0xffc890, 0.17), k: -0.95, frac: 0.08, base: 0.17 },
       { sprite: mk(ghostT, 0x86c6a0, 0.13), k: -1.55, frac: 0.11, base: 0.13 }
     ],
-    last: { visible: false, occl: 0, star: { x: 0, y: 0 }, ghosts: [] }
+    last: { visible: false, star: { x: 0, y: 0 }, ghosts: [] }
   };
-}
-
-/* ★ v0.11.1 光学修正：光源被行星挡住时，镜头光斑必须熄灭。
- * 真实相机里光斑产生于镜片内部的反射，前提是「光进得来」—— 前景行星把恒星
- * 完全挡在背后时，主光斑与鬼影链都不该出现在行星圆盘上。此前的实现是
- * depthTest:false + renderOrder 999 永远画在最顶层，亮斑「透过」星球，假。
- * 实现：屏幕空间圆盘遮挡 —— 恒星投影点落进行星的投影圆盘内（且行星在恒星
- * 更近侧）就算被挡；遮挡量 0..1 平滑过渡（行星边缘掠过时逐渐变暗，不跳变）。 */
-function starOcclusion() {
-  var occl = 0;
-  var starN = projectToNdc(_zeroV);
-  var asp = camera.aspect;
-  var tanH = Math.tan((camera.fov * Math.PI) / 360);
-  for (var i = 0; i < G.sys.planets.length; i++) {
-    var pl = G.sys.planets[i];
-    var pn = projectToNdc(pl._group.position);
-    if (pn.z > starN.z) continue;            /* 行星在恒星更远侧，挡不住光 */
-    var d = Math.hypot((starN.x - pn.x) * asp, starN.y - pn.y);
-    var dist = camera.position.distanceTo(pl._group.position);
-    var rp = pl.size / Math.max(dist * tanH, 0.001);   /* 行星投影半径（半高单位） */
-    occl = Math.max(occl, clamp((rp * 1.02 - d) / (rp * 0.30), 0, 1));
-  }
-  return occl;
 }
 
 function updateLensFlare() {
@@ -3363,12 +3340,9 @@ function updateLensFlare() {
   var behind = _lfV.z > -1.0;
   var ed = Math.max(Math.abs(ndc.x), Math.abs(ndc.y));
   var fade = clamp((1.35 - ed) / 0.5, 0, 1);
-  var occl = starOcclusion();
-  fade *= (1 - occl);
   var vis = !behind && fade > 0.01;
 
   lens.last.visible = vis;
-  lens.last.occl = +occl.toFixed(3);
   lens.last.star = { x: +ndc.x.toFixed(3), y: +ndc.y.toFixed(3) };
   lens.last.ghosts = [];
 
@@ -3736,11 +3710,13 @@ function planetRows(p) {
  *   civRows / matRows  页面内容（全部现读注册表与行星字段，不缓存）
  *   applyPanelTab   把 DOM 刷成与「机器状态 + 当前选中」一致（机器的副作用）
  * 另有一条回落规则：页面不可用（切换选中 / 换恒星后发源地搬走 / 取消选中）时，
- * syncPanelTab 替用户把机器按回 planet ——「机器 = DOM」的对账因此永远成立。 */
+ * syncPanelTab 替用户把机器按回 planet ——「机器 = DOM」的对账因此永远成立。
+ * 折叠（收起 / 展开）也在这个片段：它不是状态机，是**视图偏好**，见下方注释。 */
 function setupPanelTabs() {
   elPTabs = $("p-tabs");
   elPCiv = $("p-civ");
   elPRes = $("p-res");
+  setupPanelFold();   /* 面板的两处装配（标签栏 + 收起钮）都在本片段接线 —— 能少碰启动片段就少碰 */
   if (!elPTabs) return;
   elPTabs.addEventListener("click", function (e) {
     var b = e.target.closest ? e.target.closest("[data-tab]") : null;
@@ -3815,6 +3791,34 @@ function syncPanelTab() {
   if (FSM_PANEL.is("civ") && !civ) FSM_PANEL.send("showPlanet");   /* 文明页不可用 → 回落行星页 */
   if (FSM_PANEL.is("res") && !p) FSM_PANEL.send("showPlanet");     /* 资源页失去行星 → 回落行星页 */
   applyPanelTab();
+}
+
+/* ---- 折叠（收起 / 展开）：面板体整块让位，只留标题条 ----
+ * 是什么：标题条右端一个钮，把数据区（标签页 / 数据行 / 资源页 / 文明页 / 操作区）
+ * 叠起来，只留「现在选的是谁」那一行。再点即展开。
+ *
+ * ★ 与「面板退场」是两件事，别混：
+ *     未选中 → .hidden，整条面板（含标题条）退场 —— 那是 FSM_SELECT 的投影；
+ *     折叠   → .folded，选中着但用户把内容叠了起来 —— 这是**视图偏好**。
+ *   所以：① 它不进 FSM_PANEL（那台机器管的是「哪一页」，不是「摊不摊开」）；
+ *        ② 它不随选中项变化复位 —— 用户关掉的东西不该自己弹回来。换目标时
+ *           renderPanel 照常改写标题条，只是内容还叠着。
+ *   想让「选中新目标即自动展开」，在 renderPanel() 里加一行 setPanelFold(false) 即可。
+ * ③ 面板**宽度不变**（只掉高度）—— 收起 / 展开时钮留在原地，不必追着点。 */
+var elPFold = null, panelFolded = false;
+
+function applyPanelFold() {
+  if (!elPanel || !elPFold) return;
+  elPanel.classList.toggle("folded", panelFolded);
+  elPFold.textContent = panelFolded ? "展开" : "收起";
+  elPFold.title = panelFolded ? "展开面板" : "收起面板（只留标题条）";
+}
+function setPanelFold(on) { panelFolded = !!on; applyPanelFold(); return panelFolded; }
+function togglePanelFold() { return setPanelFold(!panelFolded); }
+function setupPanelFold() {
+  elPFold = $("p-fold");
+  if (elPFold) elPFold.addEventListener("click", togglePanelFold);
+  applyPanelFold();          /* 初刷：DOM 与 panelFolded 对齐（默认展开） */
 }
 
 function renderPanel() {

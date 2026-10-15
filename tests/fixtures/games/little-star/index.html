@@ -15,7 +15,9 @@
      本页只加载 game.js 与 style.css / three.min.js —— 加脚本仍走这里。
   #scene          全屏 canvas（three.js 渲染目标）
   #panel          右侧信息面板，默认 .hidden；data-kind = star|planet|none
-                    > .p-head > .p-dot / #p-name / #p-sub
+                    > .p-head > .p-dot / #p-name / #p-sub / #p-fold
+                                 #p-fold 收起钮：折叠时面板体整块让位、只留这条标题
+                                 （.folded；与「未选中时整条退场」的 .hidden 是两件事）
                     > #p-tabs    标签栏（v0.9）：**所有行星**出现 ——
                                    行星 / 资源 / 文明 三页（文明钮只在发源地出现），
                                    机器 FSM_PANEL 管状态，一次只显示一页
@@ -48,6 +50,8 @@
         <div id="p-name">—</div>
         <div id="p-sub">—</div>
       </div>
+      <!-- 收起钮：把面板体叠起来只留标题条（再点即展开）。逻辑在 80-panel.js -->
+      <button id="p-fold" title="收起面板（只留标题条）">收起</button>
     </div>
     <!-- 标签栏：默认隐藏；选中行星时由 applyPanelTab 显示（行星 / 资源 / 文明） -->
     <div id="p-tabs" class="hidden">
