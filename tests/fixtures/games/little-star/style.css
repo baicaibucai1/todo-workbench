@@ -52,14 +52,18 @@ html, body {
 #scene.dragging { cursor: grabbing; }   /* 拖拽旋转中 */
 #scene.over { cursor: pointer; }        /* 悬停可点天体 */
 
-/* ---------- 2. 右侧信息面板（选中恒星 / 行星时展开；标题条右端可收起） ---------- */
+/* ---------- 2. 右侧信息面板（选中恒星 / 行星时展开；标题条右端可收起） ----------
+ * ★ 面板**贴住窗口右缘**（right: 0 · 无右圆角 · 无右边框）：它读作「从右侧自然生出的一块」，
+ *   而不是一张浮在画面里的卡片 —— 浮卡才需要四周留白与四角圆角。上下仍各留 24px
+ *   （下边距同时给右下角的版本戳留位）。收起 = 整条向右侧滑出（见下方折叠一节）。 */
 #panel {
-  position: fixed; top: 24px; right: 24px; width: 312px;
+  position: fixed; top: 24px; right: 0; width: 312px;
   max-height: calc(100vh - 48px);   /* 数据行变多后：面板不再顶出屏幕 */
   display: flex; flex-direction: column;
   background: #0b0b0b;              /* 比背景略抬一档：读作「面板」而不是镂空 */
   border: 2px solid var(--edge);    /* 粗线条边框用中灰——纯白描边在纯黑上太刺眼 */
-  border-radius: var(--r);
+  border-right: none;               /* 右缘压在窗口边上，再描一道就是一条假缝（与右侧标签坞同一处理） */
+  border-radius: var(--r) 0 0 var(--r);   /* 圆角只给左边两角 —— 右侧是「长出去」的那一头 */
   overflow: hidden;                 /* 让子元素的底色被圆角裁齐 */
   color: var(--txt);
   font: 13px/1.6 var(--sans);
@@ -83,7 +87,7 @@ html, body {
 .p-title #p-sub { font-size: 11.5px; color: var(--dim); letter-spacing: 2px; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- 面板折叠：**整条向右侧收进去**（滑出视口右边缘），右边缘留一枚标签页 ----
- * 收法：面板整体 `translateX(100% + 24px)` 滑出屏幕（24px = 它自己的 right 边距），
+ * 收法：面板整体 `translateX(100%)` 滑出屏幕（面板右缘本就压在窗口边上，让开自身宽度即可），
  * **宽高都不变** —— 内容与滚动位置原样留着，拉回来就是原样。
  * ★ 为什么要横向收而不是「把面板体叠起来」（v0.11.x 第一版的做法，已否）：面板在右侧，
  *   收起来的方向就该是右侧。竖着收会留下一条 312px 宽的横条，照样横占着画面，
@@ -92,7 +96,7 @@ html, body {
  *     .hidden = 没选中 → 整条面板退场（opacity 0 + 不接指针），那是 FSM_SELECT 的投影；
  *     .folded = 选中着、用户把面板收到右边去了，那是**视图偏好**。
  *   所以折叠不进状态机、也不随选中项变化复位（IDE 式粘性）。 */
-#panel.folded { transform: translateX(calc(100% + 24px)); }
+#panel.folded { transform: translateX(100%); }
 
 /* 右侧标签坞（#p-dock）：面板收进右侧后，在右边缘留下的**标签页**（点一枚 → 展开对应面板）。
  * ★ 现在只有一枚标签（信息面板）—— 多面板就往坞里加 .dock-tab[data-panel]，样式不用动。

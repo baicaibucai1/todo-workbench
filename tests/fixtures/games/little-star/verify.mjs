@@ -397,7 +397,8 @@ async function frameStar(page, radius) {
         W, left: Math.round(r.left), right: Math.round(r.right),
         w: Math.round(r.width), h: Math.round(r.height),
         offRight: r.left >= W - 1,          /* 整条已收进右边缘外（收起态） */
-        inside: r.right <= W - 23,          /* 整条在视口内（展开态，右侧留 24px 边距） */
+        flushRight: r.right >= W - 1,       /* 展开态：右缘贴住窗口（右侧不留空隙） */
+        fits: r.left >= -1 && r.right <= W + 1,   /* 整条在视口里（横向） */
         dock: {
           shown: getComputedStyle(dock).display !== "none",
           tabs: document.querySelectorAll("#p-dock .dock-tab").length,
@@ -411,9 +412,25 @@ async function frameStar(page, radius) {
 
     const fold0 = await readFold();
     check("★ 标题条上是「收起 →」钮（箭头指着收进去的方向；默认展开态：整条在视口内、标签坞不占位）",
-      fold0.foldLabel === "收起→" && !fold0.folded && fold0.inside &&
+      fold0.foldLabel === "收起→" && !fold0.folded && fold0.fits && fold0.flushRight &&
       !fold0.dock.shown && fold0.rowCount === KEY_NEED.length,
-      `钮「${fold0.foldLabel}」· 面板 ${fold0.w}×${fold0.h}px · 右缘距视口 ${fold0.W - fold0.right}px`);
+      `钮「${fold0.foldLabel}」· 面板 ${fold0.w}×${fold0.h}px · 右缘贴到窗口（缝 ${fold0.W - fold0.right}px）`);
+
+    /* ★ 「从右侧自然生出的一块」而不是浮卡：右侧不留空隙、不给右圆角、不描右边框。
+     *   左侧两角仍是容器档 --r（8px）—— 只有「长出去」的那一头是方的。 */
+    const seam = await page.evaluate(() => {
+      const el = document.getElementById("panel");
+      const c = getComputedStyle(el), r = el.getBoundingClientRect();
+      return {
+        gap: Math.round(window.innerWidth - r.right), right: Math.round(r.right), W: window.innerWidth,
+        tl: c.borderTopLeftRadius, tr: c.borderTopRightRadius, br: c.borderBottomRightRadius,
+        bw: c.borderRightWidth
+      };
+    });
+    check("★ 面板贴住窗口右缘（右侧无空隙 / 无右圆角 / 无右边框）—— 读作「从右侧自然生出的一块」",
+      seam.gap === 0 && parseFloat(seam.tr) === 0 && parseFloat(seam.br) === 0 &&
+      parseFloat(seam.bw) === 0 && parseFloat(seam.tl) > 0,
+      `右缘 ${seam.right} = 视口宽 ${seam.W} · 圆角 左 ${seam.tl} / 右 ${seam.tr} · 右边框 ${seam.bw}`);
 
     await page.click("#p-fold");
     await sleep(450);        /* 滑出过渡 0.2s：量的是终态 */
@@ -459,10 +476,10 @@ async function frameStar(page, radius) {
     await page.click("#p-dock .dock-tab");   /* 走标签坞这条入口，验它在屏幕最边缘也点得到 */
     await sleep(450);
     const fold3 = await readFold();
-    check("★ 点标签坞里的标签页 → 面板滑回来（整条入屏、17 行原样、标签坞退场）",
-      fold3.inside && !fold3.folded && fold3.rowCount === KEY_NEED.length &&
+    check("★ 点标签坞里的标签页 → 面板滑回来（整条入屏、贴住右缘、17 行原样、标签坞退场）",
+      fold3.fits && fold3.flushRight && !fold3.folded && fold3.rowCount === KEY_NEED.length &&
       !fold3.dock.shown && fold3.foldLabel === "收起→",
-      `右缘 ${fold3.right} ≤ ${fold3.W - 23} · ${fold3.rowCount} 行 · 高 ${fold3.h}px`);
+      `右缘 ${fold3.right} = 视口宽 ${fold3.W} · ${fold3.rowCount} 行 · 高 ${fold3.h}px`);
 
     /* ---- 6. 单击恒星 → 恒星面板 ---- */
     console.log("\n[6] 单击恒星 → 恒星面板");

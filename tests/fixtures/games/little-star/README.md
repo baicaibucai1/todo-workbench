@@ -48,7 +48,7 @@ cd C:/AI_Production/Tools/main/tests/fixtures/games/little-star
 ```bash
 "$NODE" scripts/build.mjs                 # ① 把 src/ 18 个片段拼成 game.js（★ 改完源码必跑）
 "$NODE" scripts/roll-check.mjs            # ② 秒级：确定性守恒静态复算
-"$NODE" verify.mjs                        # ③ 约 1 分半：浏览器全量回归（196 项）
+"$NODE" verify.mjs                        # ③ 约 1 分半：浏览器全量回归（203 项）
 ```
 
 > ⚠️ **本沙箱 Node 不能 spawn 子进程（spawnSync 一律 EBUSY）**，所以没有「一键跑全部」
@@ -79,7 +79,7 @@ cd C:/AI_Production/Tools/main/tests/fixtures/games/little-star
 | `index.html` | 骨架：canvas + 右侧面板（含三页标签栏 `#p-tabs` / `#p-res` / `#p-civ` + 标题条上的「收起 →」钮 `#p-fold`）+ 右侧标签坞 `#p-dock`（收起时现身，现一枚 `.dock-tab`）+ 左上工具条 + 聚焦 HUD（`#focus-hud`）+ 右下版本戳 + 指导书覆盖层（`.g-main` 两栏） | 只有 DOM，无逻辑。挂新 UI 先在这里加节点，再在 `src/72-focus.js` / `src/80-panel.js` / `src/90-guide.js` 里 `$("id")` 取 |
 | `style.css` | 全部样式（**黑白硬边**，见第四节 5） | 配色集中在顶部 `:root` 变量；改颜色别绕过它 |
 | `three.min.js` | three.js r159 UMD，**第三方，勿改勿升级** | ★ 版本敏感：r160+ 变 ESM 单文件（`file://` 下被 CORS 拦）、r167+ 变两文件带相对 import，都不兼容当前加载方式 |
-| `verify.mjs` | 浏览器全量回归（**202 项**），自带 4322 端口静态服务器 | 新增功能请同步加断言；截图输出到 `screenshots/` |
+| `verify.mjs` | 浏览器全量回归（**203 项**），自带 4322 端口静态服务器 | 新增功能请同步加断言；截图输出到 `screenshots/` |
 | `serve.mjs` | 开发用静态服务器（4321，no-cache） | 会提示「src 比 game.js 新」，但只警告不重拼 |
 | `scripts/build.mjs` | ★ **拼装器**：`src/` → `game.js` + 生成区块导航表 | `--check` 校验同步 / `--nav` 预览导航表 / 无参＝拼装并写盘 |
 | `scripts/roll-check.mjs` | **确定性守恒守卫**：静态复算 RNG 序列（从 `src/` 读，不读产物） | 改了 `src/40-textures.js` 里的贴图函数后，要同步它的「复刻段」 |
@@ -274,7 +274,7 @@ material.map = glowTex;      // ✗ 灾难
 
 | 元素 | 口径 |
 | --- | --- |
-| 外框（面板 / 书页） | `2px solid #8a8a8a`（中灰） |
+| 外框（面板 / 书页） | `2px solid #8a8a8a`（中灰）；**面板压在窗口右边的那一条不描**（见下） |
 | 结构线（表头 / 段间） | `2px solid #fff` |
 | 行分隔 | `1px solid #2a2a2a` |
 | 占位按钮 | `1px dashed #3d3d3d` —— 虚线 = 尚未实现，不做假按钮 |
@@ -295,8 +295,15 @@ material.map = glowTex;      // ✗ 灾难
 文字颜色 R=G=B，且圆角非 0 且容器同值、边框 ≥ 2px —— 再把 UI 染回蓝色会直接测试失败。
 线宽三级制：**外框 2px 中灰 › 结构线 2px 白 › 行分隔 1px 深灰**，别引入第四种线。
 
+**右侧面板贴住窗口右缘**（`right: 0` · `border-right: none` · `border-radius: 8px 0 0 8px`）：
+它读作**从右侧自然生出的一块**，而不是浮在画面里的卡片 —— 浮卡才需要四周留白与四角圆角。
+所以右侧既不留那 24px 空隙、也不给右圆角、更不描右边框（右缘压在窗口边上，描一道就是一条假缝，
+与右侧标签坞同一个处理）。上下仍各留 24px（下边距同时给右下角的版本戳留位）。
+`[5]` 节有断言盯着这三件事（缝 = 0 · 右侧两角 0px · 右边框 0px），别再手滑把圆角加回去。
+
 **右侧面板可收起 —— 向右侧收进去**（标题条右端的 `#p-fold`「收起 →」，逻辑在 `80-panel.js` 的
-`setupPanelFold / setPanelFold`）：收起时**整条面板滑出视口右边缘**（`translateX(100% + 24px)`），
+`setupPanelFold / setPanelFold`）：收起时**整条面板滑出视口右边缘**（`translateX(100%)` ——
+面板右缘本就压在窗口边上，让开自身宽度即可），
 宽高与滚动位置原样留着，右边缘留下**一枚竖排标签页**（`#p-dock` 标签坞里的
 `.dock-tab[data-panel=info]`，点它把面板拉出来）。**方向是横向的**：面板在右侧，收起来的方向
 就该是右侧 —— 第一版做成「把面板体叠起来、只留标题条」，被用户打回（原话：「向右侧收进去，
@@ -317,7 +324,7 @@ material.map = glowTex;      // ✗ 灾难
 - ★ **标签坞的显隐不归 JS 管**：`#panel.folded:not(.hidden) ~ #p-dock` 一条 CSS 搞定（兄弟选择器，
   所以坞必须写在 `#panel` 之后）。于是「没选中」时整坞自动跟着退场 —— 不会出现「点开一个空面板」。
 
-> ★ 坞是**收起时**才现身（展开态保持原来的版式：面板自己带 24px 右边距）。若哪天想让它常驻
+> ★ 坞是**收起时**才现身（展开态保持面板自己的版式）。若哪天想让它常驻
 > （像 IDE 的活动栏那样一直贴着边、展开时面板往左让开），改 `#p-dock` 的显隐规则 + 把面板的
 > `right` 让出坞宽即可；那时记得给当前展开的那枚标签补一个「选中」态 —— 复用左栏栏目导航
 > `.gn-item.on` 那套（3px 白左边线 + 底色提亮）最省事。
@@ -836,7 +843,7 @@ atmo / m / r` 算出来（`terrainParams`）——「一块冰不该同时又是
 
 ## 九、测试与截图
 
-`verify.mjs` 共 **23 节 / 202 项**，全部通过才退出码 0：
+`verify.mjs` 共 **23 节 / 203 项**，全部通过才退出码 0：
 
 ```
 [0]  工程自检：game.js === src/ 拼装    [10] 恒星：干净球体 + 动态表面 + 柔光晕
