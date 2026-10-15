@@ -38,6 +38,7 @@ function loop(tms) {
   }
   orbit.radius += (camGoalRadius - orbit.radius) * Math.min(1, dt * 4);
   applyOrbit(camera, orbit);
+  syncSettlements();           /* ★ v0.13：选址光标跟随 + 聚落 HUD 防抖刷新（46） */
   updateFocusHud();            /* 聚焦 HUD 的距地表读数（内部按变化率节流，不每帧碰 DOM） */
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
@@ -399,6 +400,120 @@ function boot() {
       G.focusPlanet._cs.cloud.rotation.y = +a || 0;
       return G.focusPlanet._cs.cloud.rotation.y;
     },
+    /* ---- v0.13 聚落系统观测点（实验性）----
+     * settlements()：数量 / 列表 / 选址模式（verify 的对账入口）。
+     * siteCheck(name, dir)：独立复算可建判定与评分（纯函数，不落盘）。
+     * placeAt(name, dir)：直接放置（不经过鼠标 —— verify 的确定性链路）；
+     *                    UI 链路（B 键 + 点击）由验证侧单独走。 */
+    settlements: function (name) {
+      var p = null, i;
+      for (i = 0; i < G.sys.planets.length; i++) {
+        if (G.sys.planets[i].name === (name || (G.focusPlanet && G.focusPlanet.name))) { p = G.sys.planets[i]; break; }
+      }
+      if (!p) return null;
+      var list = (p._cities || []).map(function (c) {
+        return {
+          n: c.n, cell: c.cell.id, score: c.score, h: +c.h.toFixed(4), slope: +c.slope.toFixed(3),
+          dir: [+c.dir[0].toFixed(6), +c.dir[1].toFixed(6), +c.dir[2].toFixed(6)],
+          parts: c.parts, mesh: !!(c._mesh && c._mesh.parent), marker: !!c._marker
+        };
+      });
+      return {
+        name: p.name, count: list.length, list: list,
+        mode: siteModeOn(), cursorVisible: !!(_siteCursor && _siteCursor.visible)
+      };
+    },
+    siteCheck: function (name, dir) {
+      var p = null, i;
+      for (i = 0; i < G.sys.planets.length; i++) {
+        if (G.sys.planets[i].name === name) { p = G.sys.planets[i]; break; }
+      }
+      if (!p || !p._cs) return null;
+      var chk = siteCheck(p, dir);
+      return {
+        ok: chk.ok, gate: chk.gate, gates: chk.gates,
+        h: +chk.h.toFixed(5), slope: +chk.slope.toFixed(4), lat: +chk.lat.toFixed(4),
+        cell: chk.cell.id, score: chk.score, parts: chk.parts,
+        minGap: +chk.minGap.toFixed(4)
+      };
+    },
+    placeAt: function (name, dir) {
+      var p = null, i;
+      for (i = 0; i < G.sys.planets.length; i++) {
+        if (G.sys.planets[i].name === name) { p = G.sys.planets[i]; break; }
+      }
+      if (!p || !p._cs) return null;
+      var res = placeCity(p, dir);
+      return res.ok
+        ? { ok: true, n: res.city.n, count: res.count, cell: res.city.cell.id, score: res.city.score }
+        : { ok: false, gate: res.gate, gates: res.gates };
+    },
+    /* 城市「站心」（表面点）的坐标 —— local 供重建对账（与公转无关），
+     * world 供贴地投影对账（投影回屏幕应与点击点吻合） */
+    cityWorld: function (name, idx) {
+      var p = null, i;
+      for (i = 0; i < G.sys.planets.length; i++) {
+        if (G.sys.planets[i].name === name) { p = G.sys.planets[i]; break; }
+      }
+      if (!p || !p._cities || !p._cities[idx] || !p._cs) return null;
+      var sp = focusSurfacePos(p, p._cities[idx].dir);
+      var lv = new THREE.Vector3(sp.pos[0], sp.pos[1], sp.pos[2]);
+      var wv = lv.clone();
+      p._cs.mesh.localToWorld(wv);
+      return {
+        local: { x: +lv.x.toFixed(5), y: +lv.y.toFixed(5), z: +lv.z.toFixed(5) },
+        world: { x: +wv.x.toFixed(4), y: +wv.y.toFixed(4), z: +wv.z.toFixed(4) }
+      };
+    },
+    /* 表面方向 → 屏幕坐标（verify 找「可建点」后点它用） */
+    siteScreen: function (name, dir) {
+      var p = null, i;
+      for (i = 0; i < G.sys.planets.length; i++) {
+        if (G.sys.planets[i].name === name) { p = G.sys.planets[i]; break; }
+      }
+      if (!p || !p._cs) return null;
+      var sp = focusSurfacePos(p, dir);
+      var v = new THREE.Vector3(sp.pos[0], sp.pos[1], sp.pos[2]);
+      p._cs.mesh.localToWorld(v);
+      /* ★ front = 该点「真正可见」（在可见半球内 —— 视界圆以内）。
+       * 两条错判都踩过：① 「点到相机 · 中心到相机 > 0」——背面点也满足，
+       * 背面点的投影同样落在屏幕的球盘内；② 只判「同半球」还不够 ——
+       * 视界圆（acos(size/距离) ≈ 67°）到 90° 之间是**掠射带**，那里的点
+       * 被球缘挡着，射线会先命中边缘可见侧（偏差可达 30°+）。
+       * 正解：cos(view) > cos(limb)，并留一点余量避开掠射带。 */
+      var centre = new THREE.Vector3();
+      p._group.getWorldPosition(centre);
+      var camPos = camera.position;
+      var rx = v.x - centre.x, ry = v.y - centre.y, rz = v.z - centre.z;
+      var cx = camPos.x - centre.x, cy = camPos.y - centre.y, cz = camPos.z - centre.z;
+      var rL = Math.sqrt(rx * rx + ry * ry + rz * rz) || 1;
+      var cL = Math.sqrt(cx * cx + cy * cy + cz * cz) || 1;
+      var cosView = (rx * cx + ry * cy + rz * cz) / (rL * cL);
+      var cosLimb = p.size / cL;
+      var front = cosView > Math.min(0.98, cosLimb * 1.06 + 0.02);
+      var vv = v.clone().project(camera);
+      return {
+        x: (vv.x * 0.5 + 0.5) * window.innerWidth,
+        y: (-vv.y * 0.5 + 0.5) * window.innerHeight,
+        front: front
+      };
+    },
+    setSiteMode: function (on) { return setSiteMode(!!on); },
+    /* 屏幕坐标 → 地表落点方向 + 可建判定（对账「点击落点」用 —— rayToSurfaceDir 的精度） */
+    siteProbe: function (name, cx, cy) {
+      var p = null, i;
+      for (i = 0; i < G.sys.planets.length; i++) {
+        if (G.sys.planets[i].name === name) { p = G.sys.planets[i]; break; }
+      }
+      if (!p || !p._cs) return null;
+      var dir = rayToSurfaceDir(p, cx, cy);
+      if (!dir) return { dir: null };
+      var chk = siteCheck(p, dir);
+      return {
+        dir: [+dir[0].toFixed(6), +dir[1].toFixed(6), +dir[2].toFixed(6)],
+        ok: chk.ok, gate: chk.gate, h: +chk.h.toFixed(5), cell: chk.cell.id
+      };
+    },
     /* ★ v0.12.3：导出云贴图（base64 PNG）—— 看烘焙结果本身的形态与对比（调试 / 资产检查） */
     cloudTexPng: function () {
       if (!_cloudTex) return null;
@@ -426,7 +541,9 @@ function boot() {
         p._group.remove(p._cs.group);
         p._cs.group.traverse(function (o) {
           if (o.geometry) o.geometry.dispose();
-          if (o.material) o.material.dispose();
+          /* ★ v0.13：共享材质不 dispose（城市材质 / 选址光标材质是全行星单例 ——
+           * 与 v0.12「共享 ShaderMaterial 被释放 → 下次拿到已销毁 program」同坑） */
+          if (o.material && !isSharedSiteMaterial(o.material)) o.material.dispose();
         });
         p._cs = null;
       }

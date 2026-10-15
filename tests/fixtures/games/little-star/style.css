@@ -238,6 +238,13 @@ html, body {
 .fh-badge { font-size: 11px; font-weight: 600; letter-spacing: 4px; color: var(--paper); }
 #fh-name { font-size: 13px; font-weight: 600; letter-spacing: 1px; color: var(--txt); }
 #fh-dist { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
+#fh-sites { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
+#fh-mode {
+  font-size: 11.5px; color: var(--paper);
+  padding-left: 10px; border-left: 2px solid var(--rule);
+}
+/* 内联元素用 display 控显隐（整块 HUD 才走 opacity 过渡 —— 这里避免占位） */
+#fh-mode.hidden { display: none; }
 #fh-exit {
   margin-left: 4px; padding: 3px 10px;
   font: 11.5px/1.4 var(--sans); letter-spacing: 2px;

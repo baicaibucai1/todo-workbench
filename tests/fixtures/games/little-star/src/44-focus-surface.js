@@ -200,7 +200,7 @@ function buildFocusGeometry(p, pr, N) {
   geo.setAttribute("aH", new THREE.Float32BufferAttribute(hgt, 1));
   geo.setIndex(idx);
   return {
-    geo: geo, amp: amp, N: N, verts: total, tris: idx.length / 3,
+    geo: geo, amp: amp, field: field, N: N, verts: total, tris: idx.length / 3,
     seaFrac: seaA > 0 ? below / total : 0,
     sig: +sig.toFixed(3), ms: Math.round(performance.now() - t0)
   };
@@ -439,8 +439,12 @@ function ensureFocusSurface(p) {
   p._group.add(group);
   p._cs = {
     group: group, mesh: mesh, mat: mat, cloud: cloud, cloudMat: cloudMat,
-    N: g.N, verts: g.verts, tris: g.tris, ms: g.ms, seaFrac: g.seaFrac, sig: g.sig
+    N: g.N, verts: g.verts, tris: g.tris, ms: g.ms, seaFrac: g.seaFrac, sig: g.sig,
+    /* ★ v0.13：连续场 + 位移幅度 + 海平面 —— 聚落系统（46）的就地查询口 */
+    field: g.field, amp: g.amp, sea: pr.sea ? 0.5 : -1
   };
+  /* ★ v0.13：重建后城市网格自愈（城市数据是唯一真值源，几何是派生） */
+  syncCityMeshes(p);
   return p._cs;
 }
 

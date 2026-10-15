@@ -1,7 +1,7 @@
 /**
- * Little Star —— Web 端真机验证（v0.12.3：源码拆分 src/ 19 片段 + 拼装器 build.mjs）
+ * Little Star —— Web 端真机验证（v0.13.0：源码拆分 src/ 20 片段 + 拼装器 build.mjs）
  *
- * 覆盖（24 节，与下方 `/* ---- N. ... ---- *\/` 区块注释一一对应）：
+ * 覆盖（25 节，与下方 `/* ---- N. ... ---- *\/` 区块注释一一对应）：
  *   0. 工程自检：game.js 是否等于 src/ 片段的拼装结果（不需要浏览器）
  *   1. 加载 / WebGL / rAF 渲染调用
  *   2. 场景精简（v0.5）：飞船 / 卫星 / 空间站 / 防务平台 / 彗星全部下线
@@ -58,7 +58,11 @@
  *      ② 物理同源：海平面重标定 0.5 且水面覆盖 = 挥发分丰度（与贴图管线同一保证）
  *      ③ 确定性：重建签名一致 + 零 RNG（聚焦/重建不碰主随机流）
  *      ④ 气态行星不参与（没有固体表面，维持贴图）· 云层与 planetCloudy 同源
- *  23. 全程零 console error / pageerror
+ *  23. ★ 聚落系统（v0.13 新增 · 实验性）：聚焦档在星球表面放置聚落 ——
+ *      ① B 键选址模式 + 光标预览 · ② 硬闸门 = 连续场纯函数（海 / 坡度 / 极冠 / 叠城）
+ *      ③ 点击放置（UI 全链路）· ④ 站心贴地（worldToLocal · 连续场）
+ *      ⑤ 重建自愈（数据是真值源）· ⑥ 全景档点位标记
+ *  24. 全程零 console error / pageerror
  *
  * 用法：node verify.mjs   （端口 4322，与常驻预览服务器 4321 错开，可随时运行）
  *       截图输出到 screenshots/n*.png（索引见 README.md）
@@ -183,7 +187,7 @@ async function frameStar(page, radius) {
       const s = checkSync();
       check("game.js 与 src/ 一致（不一致就跑 node scripts/build.mjs）", s.ok, s.detail);
       /* ★ 数字写死：加/删片段或顶层区块时必须**有意**改这里，防止顺手改坏拼装而不自知 */
-      check("★ 19 个源片段 · 23 个顶层区块", s.fragments === 19 && s.blocks === 23,
+      check("★ 20 个源片段 · 24 个顶层区块", s.fragments === 20 && s.blocks === 24,
         `${s.fragments} 片段 · ${s.blocks} 区块 · ${s.lines} 行`);
     }
 
@@ -207,7 +211,7 @@ async function frameStar(page, radius) {
       api: window.__game.version,
       badge: (document.getElementById("ver") || {}).textContent || ""
     }));
-    check("版本号为 0.12.3（调试接口）", verInfo.api === "0.12.3");
+    check("版本号为 0.13.0（调试接口）", verInfo.api === "0.13.0");
     check("右下角版本戳与调试接口同源", verInfo.badge === "v" + verInfo.api, `#ver = "${verInfo.badge}"`);
     console.log(`  ℹ 星系「${st0.system}」 · ${st0.starType}（${st0.starId}） · ${st0.planets.length} 颗行星`);
     await shot(page, "n1-system.png");
@@ -2162,8 +2166,148 @@ async function frameStar(page, radius) {
     await page.evaluate(() => { window.__game.unfocus(); window.__game.clearSelection(); });
     await sleep(400);
 
-    /* ---- 23. 零报错 ---- */
-    console.log("\n[23] 控制台");
+    /* ---- 23. ★ 聚落系统（v0.13 · 实验性）：连续场选址 + 点击放置 ---- */
+    console.log("\n[23] ★ 聚落系统：连续场选址 + 点击放置（实验性）");
+    /* 立场：DESIGN.md §5 的实验性落地 —— 聚焦档在星球表面放置聚落。
+     * 本节验六件事（全部机器判据）：
+     *   ① B 键进入选址模式（键盘链路）+ 光标在屏
+     *   ② 硬闸门 = 连续场纯函数（海面 / 极冠被拒，合格点通过并给评分）
+     *   ③ 点击放置（UI 全链路）+ 不叠城闸门
+     *   ④ 城市贴地（站心 = 连续场表面点；投影回屏幕 ≈ 点击点 —— 契约⑦）
+     *   ⑤ 重建地表后城市自愈（数据是唯一真值源、几何是派生）
+     *   ⑥ 退出聚焦 → 点位标记仍挂全景网格（DESIGN §5.4 方案 A）
+     * 试验场选「有海行星」—— 海面闸门需要它。 */
+    const sp23 = await page.evaluate(() => {
+      const t = window.__game.terrain().filter((x) => x.solid && x.sea)[0];
+      return t ? t.name : null;
+    });
+    check("★ 选一颗有海固态行星作试验场（海面闸门需要「海」）", !!sp23, sp23 || "（世界变了？）");
+    await page.evaluate((n) => window.__game.focusPlanetByName(n), sp23);
+    await sleep(2400);
+
+    /* ① B 键 → 选址模式 */
+    await page.keyboard.press("b");
+    await page.mouse.move(640, 420);
+    await sleep(400);
+    const sm1 = await page.evaluate((n) => window.__game.settlements(n), sp23);
+    check("★ B 键进入选址模式（光标在屏 —— 可建/不可建预览就位）",
+      sm1 && sm1.mode === true && sm1.cursorVisible === true,
+      `mode=${sm1 && sm1.mode} · cursorVisible=${sm1 && sm1.cursorVisible}`);
+
+    /* ② 硬闸门：海面 / 极冠 / 可建点 */
+    const gate23 = await page.evaluate((n) => {
+      const G = window.__game;
+      const out = { sea: null, polar: null, good: null, goodDir: null };
+      for (let a = 0; a < 90 && !out.sea; a++) {
+        const lat = -1 + a * 0.023, lon = a * 2.1;
+        const d = [Math.sin(lat) * Math.cos(lon), Math.cos(lat), Math.sin(lat) * Math.sin(lon)];
+        const c = G.siteCheck(n, d);
+        if (c && c.h < 0.48) out.sea = { gate: c.gate, ok: c.ok, h: c.h };
+      }
+      /* 极冠闸门用「无海行星」测 —— 有海行星的极区可能是海（海门会先拦截，
+       * 遮蔽极冠）。薄曙 I 在 [22] 建过面（_cs 缓存仍在）。 */
+      const pol = G.siteCheck("薄曙 I", [0, 1, 0]);
+      out.polar = { gate: pol.gate, ok: pol.ok, name: "薄曙 I" };
+      for (let a = 0; a < 400 && !out.good; a++) {
+        const lat = -1.1 + (a % 22) * 0.10, lon = Math.floor(a / 22) * 0.7;
+        const d = [Math.sin(lat) * Math.cos(lon), Math.cos(lat), Math.sin(lat) * Math.sin(lon)];
+        const c = G.siteCheck(n, d);
+        if (c && c.ok) { out.good = { score: c.score, parts: c.parts.length }; out.goodDir = d; }
+      }
+      return out;
+    }, sp23);
+    check("★ 硬闸门 = 连续场纯函数（海面 / 极冠被拒；合格点通过并给评分）",
+      !!gate23.sea && gate23.sea.gate === "海面" && gate23.sea.ok === false &&
+        !!gate23.polar && gate23.polar.gate === "极冠" && gate23.polar.ok === false &&
+        !!gate23.good && gate23.good.score > 0 && gate23.good.parts === 4,
+      `海点 h=${gate23.sea && gate23.sea.h} →「${gate23.sea && gate23.sea.gate}」· 极 →「${gate23.polar && gate23.polar.gate}」· 好点 ${gate23.good && gate23.good.score} 分（${gate23.good && gate23.good.parts} 项）`);
+
+    /* ③ 点击放置（UI 全链路）：找屏内可建点 → 点击 → count+1 */
+    const ui23 = await page.evaluate((n) => {
+      const G = window.__game;
+      for (let a = 0; a < 400; a++) {
+        const lat = -1.05 + (a % 21) * 0.10, lon = Math.floor(a / 21) * 0.75 + 0.3;
+        const d = [Math.sin(lat) * Math.cos(lon), Math.cos(lat), Math.sin(lat) * Math.sin(lon)];
+        const c = G.siteCheck(n, d);
+        if (!c || !c.ok) continue;
+        const s = G.siteScreen(n, d);
+        /* front：只取真正可见的点（视界圆以内 —— 背面/掠射带的投影也在屏内，但点不着） */
+        if (!s || s.front !== true || !(s.x > 340 && s.x < 940 && s.y > 200 && s.y < 600)) continue;
+        /* ★ 往返自检：从该屏幕坐标反投影必须回到同一方向、且落点也可建 ——
+         * 这一关把「球缘掠射带」的贴边点滤掉（投影在屏内但点击会先命中边缘） */
+        const pb = G.siteProbe(n, s.x, s.y);
+        if (!pb || !pb.dir || !pb.ok) continue;
+        const dot = Math.abs(d[0] * pb.dir[0] + d[1] * pb.dir[1] + d[2] * pb.dir[2]);
+        if (Math.acos(Math.min(1, dot)) > 0.01) continue;
+        return { dir: d, x: Math.round(s.x), y: Math.round(s.y) };
+      }
+      return null;
+    }, sp23);
+    let clickOk = false, after1 = null;
+    if (ui23) {
+      const c0 = await page.evaluate((n) => window.__game.settlements(n).count, sp23);
+      await page.mouse.move(ui23.x, ui23.y);
+      await sleep(250);
+      await page.mouse.click(ui23.x, ui23.y);
+      await sleep(450);
+      after1 = await page.evaluate((n) => window.__game.settlements(n), sp23);
+      clickOk = !!after1 && after1.count === c0 + 1;
+    }
+    check("★ 点击地表放置聚落（UI 全链路：B 模式 → 光标 → 点击 → 城市落地）",
+      clickOk, ui23
+        ? `点 (${ui23.x},${ui23.y}) → 聚落 ${after1 && after1.count} 个（${after1 && after1.list.map((c) => "#" + c.n + " " + c.score + " 分").join(" · ")}）`
+        : "无屏内可建点");
+
+    const dup23 = ui23
+      ? await page.evaluate(([n, d]) => window.__game.placeAt(n, d), [sp23, ui23.dir])
+      : null;
+    check("★ 不叠城闸门：同址再放被拒（离已有聚落太近）",
+      !!dup23 && dup23.ok === false && (dup23.gate || "").indexOf("太近") >= 0,
+      dup23 ? `gate=${dup23.gate}` : "（无）");
+
+    /* ④ 城市贴地：站心投影回屏幕 ≈ 点击点（契约⑦）—— 用世界坐标独立投影 */
+    let gluePx = 999;
+    if (ui23 && clickOk) {
+      gluePx = await page.evaluate(([n, x, y]) => {
+        const G = window.__game;
+        const cw = G.cityWorld(n, G.settlements(n).count - 1);
+        const cam = G.debugRefs().camera;
+        const v = new THREE.Vector3(cw.world.x, cw.world.y, cw.world.z).project(cam);
+        const sx = (v.x * 0.5 + 0.5) * window.innerWidth, sy = (-v.y * 0.5 + 0.5) * window.innerHeight;
+        return Math.hypot(sx - x, sy - y);
+      }, [sp23, ui23.x, ui23.y]);
+    }
+    check("★ 城市贴在连续场表面上（站心投影回屏幕 ≈ 点击点 —— worldToLocal 唯一转换点）",
+      gluePx < 12, `偏差 ${gluePx.toFixed(1)}px${ui23 ? `（点击 (${ui23.x},${ui23.y})）` : ""}`);
+
+    /* ⑤ 重建自愈：数据是唯一真值源 */
+    const rb23a = await page.evaluate((n) => ({ s: window.__game.settlements(n), w: window.__game.cityWorld(n, 0) }), sp23);
+    await page.evaluate((n) => window.__game.rebuildFocusSurface(n), sp23);
+    await sleep(400);
+    const rb23b = await page.evaluate((n) => ({ s: window.__game.settlements(n), w: window.__game.cityWorld(n, 0) }), sp23);
+    const dLoc = Math.hypot(
+      rb23b.w.local.x - rb23a.w.local.x,
+      rb23b.w.local.y - rb23a.w.local.y,
+      rb23b.w.local.z - rb23a.w.local.z
+    );
+    check("★ 重建地表后城市自愈（数量不变 · 站心逐位一致 —— 数据是真值源、几何是派生）",
+      rb23b.s.count === rb23a.s.count && dLoc < 1e-4 &&
+        rb23b.s.list.every((c) => c.mesh && c.marker),
+      `count ${rb23a.s.count} → ${rb23b.s.count} · 站心偏差 ${dLoc.toFixed(6)}`);
+
+    /* ⑥ 退出聚焦 → 点位标记仍挂全景网格 */
+    await page.keyboard.press("Escape");
+    await sleep(900);
+    const fin23 = await page.evaluate((n) => window.__game.settlements(n), sp23);
+    check("★ 全景档退化为点位标记（聚焦几何随立方球退场，标记挂贴图网格）",
+      !!fin23 && fin23.mode === false && fin23.count >= 1 && fin23.list.every((c) => c.marker === true),
+      `count=${fin23 && fin23.count} · markers=${fin23 && fin23.list.map((c) => c.marker).join(",")} · mode=${fin23 && fin23.mode}`);
+
+    await page.evaluate(() => { window.__game.unfocus(); window.__game.clearSelection(); });
+    await sleep(400);
+
+    /* ---- 24. 零报错 ---- */
+    console.log("\n[24] 控制台");
     check("全程零 console error / pageerror", errors.length === 0, errors.slice(0, 3).join(" | ") || "无");
   } finally {
     await browser.close();

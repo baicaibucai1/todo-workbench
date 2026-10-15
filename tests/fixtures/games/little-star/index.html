@@ -33,6 +33,7 @@
                    > .hud-hint 操作提示（纯装饰）
   #focus-hud      聚焦镜头 HUD（v0.10）：默认 .hidden；双击行星进入聚焦时显示
                    > .fh-badge「聚焦」/ #fh-name 行星名 / #fh-dist 距地表读数
+                   > #fh-sites 聚落计数与 B 键提示 / #fh-mode 选址模式与评分（v0.13）
                    > #fh-exit 退出钮（Esc 等效，回落中距离跟随）
   #ver            右下角版本戳（文本由 game.js 的 VERSION 常量写入）
   #guide          指导书覆盖层，默认 .hidden；点遮罩 / Esc / × 关闭
@@ -91,6 +92,9 @@
     <span class="fh-badge">聚焦</span>
     <span id="fh-name">—</span>
     <span id="fh-dist">—</span>
+    <!-- v0.13 聚落系统：计数（B 键提示）+ 选址模式/结果文案 -->
+    <span id="fh-sites">聚落 —</span>
+    <span id="fh-mode" class="hidden">选址模式</span>
     <button id="fh-exit" title="退出聚焦（Esc）">退出</button>
   </div>
 

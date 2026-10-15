@@ -605,8 +605,10 @@ function setupGuide() {
       else if (e.key === "ArrowRight") guideGoto(guideSel + 1);
     } else if (FSM_CAMERA.is("focus") && e.key === "Escape") {
       exitFocus();                         /* v0.10：书合着 + 聚焦中 → Esc 退出聚焦（回落跟随档） */
+    } else if (FSM_CAMERA.is("focus") && (e.key === "b" || e.key === "B")) {
+      setSiteMode(!siteModeOn());          /* ★ v0.13：聚焦中 B 键进出「聚落选址模式」 */
     }
-    /* 其余情况键盘归场景（暂不设全局快捷键） */
+    /* 其余情况键盘归场景 */
   });
 }
 

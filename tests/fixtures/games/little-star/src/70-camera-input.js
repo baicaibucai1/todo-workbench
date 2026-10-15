@@ -80,6 +80,8 @@ function setupInput() {
       }
     } else {
       canvas.classList.toggle("over", !!pickAt(ev.clientX, ev.clientY));
+      /* ★ v0.13：选址模式 —— 光标跟随鼠标（落点 / 可建与否 / 评分预览） */
+      if (siteModeOn()) siteUpdateCursor(ev.clientX, ev.clientY, false);
     }
   });
   canvas.addEventListener("pointerup", function (ev) {
@@ -153,6 +155,8 @@ function selectStar() { return FSM_SELECT.send("selectStar"); }
 function clearSelection() { return FSM_SELECT.send("clear"); }
 
 function handleClick(cx, cy) {
+  /* ★ v0.13：选址模式开着时点击 = 承诺（放置聚落），不进「选中」语义 */
+  if (siteModeOn() && handleSiteClick(cx, cy)) return;
   var hit = pickAt(cx, cy);
   if (hit && hit.type === "planet") selectPlanet(hit.planet);
   else if (hit && hit.type === "star") selectStar();
