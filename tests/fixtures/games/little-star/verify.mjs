@@ -1,7 +1,7 @@
 /**
- * Little Star —— Web 端真机验证（v0.11.1：源码拆分 src/ 18 片段 + 拼装器 build.mjs）
+ * Little Star —— Web 端真机验证（v0.12.0：源码拆分 src/ 19 片段 + 拼装器 build.mjs）
  *
- * 覆盖（23 节，与下方 `/* ---- N. ... ---- *\/` 区块注释一一对应）：
+ * 覆盖（24 节，与下方 `/* ---- N. ... ---- *\/` 区块注释一一对应）：
  *   0. 工程自检：game.js 是否等于 src/ 片段的拼装结果（不需要浏览器）
  *   1. 加载 / WebGL / rAF 渲染调用
  *   2. 场景精简（v0.5）：飞船 / 卫星 / 空间站 / 防务平台 / 彗星全部下线
@@ -40,6 +40,7 @@
  *      ③ 守恒 Σ蕴藏 ≡ 行星质量（机器精度）· 零 RNG（实时抽数一格不动）
  *      ④ 资源页真点击 + 内容与快照同源 + 15 星型标签闭包扫描 + 重载确定性
  *  20. ★ 聚焦镜头（v0.10 新增）：相机第三态 focus ——
+ *      ★ v0.12：聚焦档表面表示换成立方球连续地表（贴图升级路径退役，见 22）
  *      ① 双击行星 → focus：距离 = 行星半径 × 3.6（clamp 1.6~9.4）+ minR 放宽 + HUD 现身
  *      ② 「镜头内基本全是星球」：行星屏幕投影直径 ≥ 视口高 50%（真投影量取）
  *      ③ 距地表读数随缩放实时更新（推导量，与 cameraState().surface 同源）
@@ -52,7 +53,12 @@
  *      ② 体检器自检：人为植入的重复 id / 缺字段**真被抓到**（守卫不是摆设）
  *      ③ 四台机器全程零非法转移；表外事件真被拦（探针，且不留痕）
  *      ④ 投影对账：机器状态 = G 里的字段 = DOM（驱动一遍交互逐帧比对）
- *  22. 全程零 console error / pageerror
+ *  22. ★ 聚焦地表（v0.12 新增）：立方球连续地表 = 聚焦档的表面表示 ——
+ *      ① 聚焦固态行星：立方球亮（6 面 × 64² 格）+ 贴图网格隐；退出原样还原
+ *      ② 物理同源：海平面重标定 0.5 且水面覆盖 = 挥发分丰度（与贴图管线同一保证）
+ *      ③ 确定性：重建签名一致 + 零 RNG（聚焦/重建不碰主随机流）
+ *      ④ 气态行星不参与（没有固体表面，维持贴图）· 云层与 planetCloudy 同源
+ *  23. 全程零 console error / pageerror
  *
  * 用法：node verify.mjs   （端口 4322，与常驻预览服务器 4321 错开，可随时运行）
  *       截图输出到 screenshots/n*.png（索引见 README.md）
@@ -177,7 +183,7 @@ async function frameStar(page, radius) {
       const s = checkSync();
       check("game.js 与 src/ 一致（不一致就跑 node scripts/build.mjs）", s.ok, s.detail);
       /* ★ 数字写死：加/删片段或顶层区块时必须**有意**改这里，防止顺手改坏拼装而不自知 */
-      check("★ 18 个源片段 · 22 个顶层区块", s.fragments === 18 && s.blocks === 22,
+      check("★ 19 个源片段 · 23 个顶层区块", s.fragments === 19 && s.blocks === 23,
         `${s.fragments} 片段 · ${s.blocks} 区块 · ${s.lines} 行`);
     }
 
@@ -201,7 +207,7 @@ async function frameStar(page, radius) {
       api: window.__game.version,
       badge: (document.getElementById("ver") || {}).textContent || ""
     }));
-    check("版本号为 0.11.1（调试接口）", verInfo.api === "0.11.1");
+    check("版本号为 0.12.0（调试接口）", verInfo.api === "0.12.0");
     check("右下角版本戳与调试接口同源", verInfo.badge === "v" + verInfo.api, `#ver = "${verInfo.badge}"`);
     console.log(`  ℹ 星系「${st0.system}」 · ${st0.starType}（${st0.starId}） · ${st0.planets.length} 颗行星`);
     await shot(page, "n1-system.png");
@@ -1705,18 +1711,22 @@ async function frameStar(page, radius) {
       `minR=${fo1.cs.minR.toFixed(3)} ≈ goal×0.25`);
     check("★ 聚焦 HUD 现身", !fo1.hudHidden);
 
-    /* 聚焦的沉浸约定（v0.11）：选中标记退场、地表升级到高清档 */
+    /* 聚焦的沉浸约定（v0.11 起）：选中标记退场；v0.12 起表面表示换轨 ——
+     * 固态行星改看立方球连续地表（44-focus-surface.js），贴图升级路径退役。 */
     const foT = await page.evaluate((nm) => ({
       sel: window.__game.selectionFx(),
-      ter: window.__game.terrain(nm)[0]
+      ter: window.__game.terrain(nm)[0],
+      cs: window.__game.focusSurface(nm)
     }), tgt20.name);
     check("★ 聚焦时选中标记退场（括号的作用是全景里指认目标，聚焦时已无意义）",
       foT.sel.planet && foT.sel.planet.visible === false && foT.sel.planet.opacity === 0,
       `行星括号 visible=${foT.sel.planet && foT.sel.planet.visible} · opacity=${foT.sel.planet && foT.sel.planet.opacity}`);
-    check("★ 聚焦即升级高清地表（2048px 贴图 + 凹凸，缓存供再次进入）",
-      foT.ter.hi === true && foT.ter.texW === 2048 && foT.ter.hasBump,
-      `${foT.ter.name} 贴图 ${foT.ter.texW}px · bumpScale=${foT.ter.bumpScale} · hi=${foT.ter.hi}`);
-    await shot(page, "n20-terrain-hi.png");
+    check("★ 聚焦档表面表示（v0.12）：固态行星走立方球连续地表（贴图不再升级到 2048px）",
+      foT.cs.solid
+        ? (foT.cs.built && foT.cs.active === true && foT.cs.meshVisible === false && foT.ter.hi === false)
+        : (!foT.cs.built && foT.cs.meshVisible === true && foT.ter.hi === false),
+      `「${tgt20.name}」solid=${foT.cs.solid} built=${foT.cs.built} active=${foT.cs.active} hi=${foT.ter.hi}`);
+    await shot(page, "n20-focus-surface.png");
 
     /* 「镜头内基本全是星球」—— 真投影量取：行星屏幕直径 / 视口高 ≥ 50% */
     const proj = await page.evaluate((nm) => {
@@ -1971,8 +1981,131 @@ async function frameStar(page, radius) {
       Object.keys(fsmAll.machines).map((k) => k + "=" + fsmAll.machines[k].state).join(" · ") + " · 非法=" + fsmAll.illegal);
     console.log("  ℹ " + (await page.evaluate(() => window.__game.fsmBrief())));
 
-    /* ---- 22. 零报错 ---- */
-    console.log("\n[22] 控制台");
+    /* ---- 22. ★ 聚焦地表（v0.12 新增）：立方球连续地表 ---- */
+    console.log("\n[22] ★ 聚焦地表：连续场 + 片元调色（聚焦档的表面表示）");
+    /* 立场：v0.12 把 demo（demos/cube-sphere）验证过的 C 路线搬进主工程 ——
+     * 聚焦档不再看贴图，而是看**连续场构建的立方球表面**；非聚焦维持贴图。
+     * 本节验六件事：进得去（聚焦固态 → 立方球亮、贴图网格隐）、结构对
+     * （6 面 × 64² 格，顶点/三角形数机器复算）、物理同源（水面覆盖 =
+     * 挥发分丰度）、确定性（重建签名一致 + 零 RNG）、退得回（Esc → 网格归位）、
+     * 气态不参与（没有固体表面）· 云层与贴图口径同源。 */
+    await page.evaluate(() => { window.__game.clearSelection(); window.__game.unfocus(); });
+    await sleep(500);
+    const fsProbe = await page.evaluate(() => {
+      const g = window.__game;
+      const W = window.innerWidth, H = window.innerHeight;
+      const onScreen = (t) => {
+        const sp = g.planetScreenPos(t.name);
+        return sp.x > 220 && sp.x < W - 400 && sp.y > 140 && sp.y < H - 140;
+      };
+      const ter = g.terrain();
+      const solid = ter.filter((t) => t.solid);
+      const target = (solid.filter((t) => t.sea && onScreen(t))[0]
+        || solid.filter((t) => onScreen(t))[0] || solid[0]);
+      return { target: target.name, gas: (ter.find((t) => !t.solid) || null) };
+    });
+    /* 目标可能在屏外/被面板压住 —— 先拉到全景再定位 */
+    await page.evaluate((n) => {
+      const sp = window.__game.planetScreenPos(n);
+      const W = window.innerWidth, H = window.innerHeight;
+      if (!(sp.x > 220 && sp.x < W - 400 && sp.y > 140 && sp.y < H - 140)) window.__game.zoomTo(140);
+    }, fsProbe.target);
+    await sleep(1300);
+    const fsPos = await page.evaluate((n) => {
+      const sp = window.__game.planetScreenPos(n);
+      return { x: Math.round(sp.x), y: Math.round(sp.y) };
+    }, fsProbe.target);
+    await page.mouse.dblclick(fsPos.x, fsPos.y);
+    await sleep(1800);
+
+    const fsA = await page.evaluate((n) => window.__game.focusSurface(n), fsProbe.target);
+    check("★ 聚焦固态行星 → 立方球连续地表登场（贴图网格退场）",
+      fsA.solid && fsA.built && fsA.active === true && fsA.meshVisible === false,
+      `「${fsProbe.target}」built=${fsA.built} active=${fsA.active} meshVisible=${fsA.meshVisible} · 构建 ${fsA.ms}ms`);
+    check("★ 网格结构：6 面 × 64² 格（顶点/三角形数机器复算）",
+      fsA.N === 64 && fsA.verts === 6 * 65 * 65 && fsA.tris === 12 * 64 * 64,
+      `N=${fsA.N} · ${fsA.verts} 顶点 · ${fsA.tris} 三角形`);
+    const expCover = Math.min(0.95, Math.max(0.05, fsA.water * 1.15));
+    check("★ 物理同源：海平面重标定 0.5 且水面覆盖 = 挥发分丰度（与贴图管线同一保证）",
+      fsA.sea === 0.5 ? Math.abs(fsA.seaFrac - expCover) < 0.06
+        : (fsA.sea === -1 && fsA.seaFrac === 0),
+      `「${fsProbe.target}」水 ${fsA.water.toFixed(3)} → 期望覆盖 ${expCover.toFixed(3)} · 实测 ${fsA.seaFrac} · 海平面 ${fsA.sea}`);
+    check("★ 云层与贴图口径同源（planetCloudy：大气 ≥ 0.40 的岩质行星才有云壳）",
+      fsA.cloudy === !!fsA.cloud && (!fsA.cloud || (fsA.cloud.cover > 0.30 && fsA.cloud.cover < 0.65)),
+      fsA.cloud ? `cover=${fsA.cloud.cover} opacity=${fsA.cloud.opacity}` : `cloudy=${fsA.cloudy} · 无云壳`);
+    await shot(page, "n22-focus-surface.png");
+
+    /* 确定性：拆除重建，签名必须一致；且整段不碰主随机流 */
+    const fsRR0 = await page.evaluate(() => window.__game.getState().rngDraws);
+    const fsB = await page.evaluate((n) => window.__game.rebuildFocusSurface(n), fsProbe.target);
+    const fsRR1 = await page.evaluate(() => window.__game.getState().rngDraws);
+    check("★ 确定性：重建两次高程签名一致（同一种子 → 同一颗星球）",
+      fsA.sig === fsB.sig && fsA.seaFrac === fsB.seaFrac && fsB.built,
+      `sig ${fsA.sig} = ${fsB.sig} · 覆盖 ${fsA.seaFrac} = ${fsB.seaFrac}`);
+    check("★ 零 RNG：聚焦地表的构建/重建不碰主随机流（rngDraws 一格不动）",
+      fsRR0 === fsRR1, `${fsRR0} → ${fsRR1}`);
+
+    /* 拉近看地表细节（聚焦档存在的意义）后拍一张 */
+    await page.mouse.move(560, 420);
+    for (let i = 0; i < 3; i++) { await page.mouse.wheel(0, -140); await sleep(140); }
+    await sleep(600);
+    await shot(page, "n22b-focus-close.png");
+
+    /* 退得回：Esc → follow，立方球退场、贴图网格归位 */
+    await page.keyboard.press("Escape");
+    await sleep(900);
+    const fsC = await page.evaluate((n) => window.__game.focusSurface(n), fsProbe.target);
+    check("★ 退出聚焦（Esc → follow）→ 连续地表退场、贴图网格归位",
+      !fsC.active && fsC.meshVisible === true,
+      `active=${fsC.active} meshVisible=${fsC.meshVisible}`);
+
+    /* 气态行星不参与（没有固体表面） */
+    await page.evaluate(() => { window.__game.unfocus(); window.__game.clearSelection(); window.__game.zoomTo(140); });
+    await sleep(1400);
+    const gasPick = await page.evaluate(() => {
+      const g = window.__game;
+      const W = window.innerWidth, H = window.innerHeight;
+      const t = g.terrain().find((x) => !x.solid);
+      if (!t) return null;
+      const sp = g.planetScreenPos(t.name);
+      return { name: t.name, x: Math.round(sp.x), y: Math.round(sp.y), ok: sp.x > 220 && sp.x < W - 400 && sp.y > 140 && sp.y < H - 140 };
+    });
+    if (gasPick && gasPick.ok) {
+      await page.mouse.dblclick(gasPick.x, gasPick.y);
+      await sleep(1600);
+      const fsG = await page.evaluate((n) => window.__game.focusSurface(n), gasPick.name);
+      check("★ 气态行星不建连续地表（没有固体表面；聚焦仍看贴图）",
+        !fsG.solid && !fsG.built && fsG.active === false && fsG.meshVisible === true,
+        `「${gasPick.name}」built=${fsG.built} meshVisible=${fsG.meshVisible}`);
+      await page.keyboard.press("Escape");
+      await sleep(500);
+    } else {
+      check("★ 气态行星不建连续地表（本星系气态行星不在屏内，跳过实聚焦）", false,
+        gasPick ? "不在安全区" : "无气态行星");
+    }
+    /* 云层的正面用例：带大气的固态行星「建面」后云壳必在（覆盖随大气变）。
+     * 走 rebuildFocusSurface 直接构建 —— 不必把它转到屏幕前聚焦。 */
+    const cloudBuild = await page.evaluate(() => {
+      const g = window.__game;
+      const t = g.terrain().filter((x) => x.solid && x.atmo >= 0.40 && x.tempSurf > 150 && x.tempSurf < 700)[0];
+      if (!t) return null;
+      const f = g.rebuildFocusSurface(t.name);
+      return { name: t.name, atmo: f.atmo, cloudy: f.cloudy, cloud: f.cloud };
+    });
+    const expCloudCover = cloudBuild
+      ? Math.min(0.62, Math.max(0.38, 0.62 - 0.20 * Math.min(1, Math.max(0, cloudBuild.atmo))))
+      : 0;
+    check("★ 云层的正面用例：带大气的固态行星建面后云壳登场（覆盖随大气变）",
+      !!cloudBuild && cloudBuild.cloudy === true && !!cloudBuild.cloud &&
+        Math.abs(cloudBuild.cloud.cover - expCloudCover) < 0.02,
+      cloudBuild ? `「${cloudBuild.name}」大气 ${cloudBuild.atmo.toFixed(2)} → 期望 cover ${expCloudCover.toFixed(3)} · 实测 ${cloudBuild.cloud && cloudBuild.cloud.cover}`
+        : "本星系无「带大气的固态行星」（世界变了？）");
+
+    await page.evaluate(() => { window.__game.unfocus(); window.__game.clearSelection(); });
+    await sleep(400);
+
+    /* ---- 23. 零报错 ---- */
+    console.log("\n[23] 控制台");
     check("全程零 console error / pageerror", errors.length === 0, errors.slice(0, 3).join(" | ") || "无");
   } finally {
     await browser.close();

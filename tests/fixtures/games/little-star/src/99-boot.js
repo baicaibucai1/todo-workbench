@@ -323,6 +323,60 @@ function boot() {
         hist: hist.map(function (c) { return +(c / f.length).toFixed(4); })
       };
     },
+    /* 聚焦地表（v0.12）：立方球连续地表的观测点 ——
+     * 结构（顶点/三角形）、物理（海平面/覆盖率/雪线）、确定性（高程签名）、
+     * 云层（与 planetCloudy 同源）、可见性（立方球亮 ⇔ 贴图网格隐）。 */
+    focusSurface: function (name) {
+      var p = null, i;
+      for (i = 0; i < G.sys.planets.length; i++) {
+        if (G.sys.planets[i].name === (name || (G.focusPlanet && G.focusPlanet.name))) { p = G.sys.planets[i]; break; }
+      }
+      if (!p) return null;
+      var cs = p._cs || null;
+      var pr = isSolidPlanet(p) ? terrainParams(p) : null;
+      return {
+        name: p.name, solid: isSolidPlanet(p),
+        cloudy: isSolidPlanet(p) && planetCloudy(p),
+        built: !!cs, active: !!(cs && cs.group.visible),
+        N: cs ? cs.N : 0,
+        verts: cs ? cs.verts : 0, tris: cs ? cs.tris : 0, ms: cs ? cs.ms : 0,
+        sea: pr && pr.sea ? 0.5 : -1, seaFrac: cs ? +cs.seaFrac.toFixed(4) : 0,
+        water: p.water, atmo: p.atmo,
+        snowH: pr ? +pr.snowH.toFixed(4) : 0, capFrac: pr ? +pr.capFrac.toFixed(4) : 0,
+        relief: pr ? +pr.relief.toFixed(4) : 0,
+        sig: cs ? cs.sig : 0,
+        cloud: cs && cs.cloud ? {
+          visible: cs.cloud.visible,
+          cover: +cs.cloudMat.uniforms.uCover.value.toFixed(3),
+          opacity: +cs.cloudMat.uniforms.uOpacity.value.toFixed(3)
+        } : null,
+        meshVisible: p._mesh.visible,
+        sunDir: cs ? [
+          +cs.mat.uniforms.uSunDir.value.x.toFixed(3),
+          +cs.mat.uniforms.uSunDir.value.y.toFixed(3),
+          +cs.mat.uniforms.uSunDir.value.z.toFixed(3)
+        ] : null
+      };
+    },
+    /* 重建聚焦地表（确定性对账用）：拆掉重来一遍，签名必须与前一次相同 */
+    rebuildFocusSurface: function (name) {
+      var p = null, i;
+      for (i = 0; i < G.sys.planets.length; i++) {
+        if (G.sys.planets[i].name === name) { p = G.sys.planets[i]; break; }
+      }
+      if (!p || !isSolidPlanet(p)) return null;
+      if (p._cs) {
+        p._group.remove(p._cs.group);
+        p._cs.group.traverse(function (o) {
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) o.material.dispose();
+        });
+        p._cs = null;
+      }
+      ensureFocusSurface(p);
+      syncFocusSurface();          /* 重建后立即恢复一致状态（可见性/太阳方向） */
+      return window.__game.focusSurface(name);
+    },
     /* 选中效果观测点：括号（呼吸淡入）/ 细环（扫描）/ 行星括号 */
     selectionFx: function () {
       var s = G.sys, pl = G.selectedPlanet;

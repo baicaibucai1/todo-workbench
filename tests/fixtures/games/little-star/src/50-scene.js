@@ -303,7 +303,7 @@ function buildScene(sys) {
     }
 
     // 云层：大气够厚、且不是气态行星（本身已是云顶）或熔岩（水汽不凝）才有
-    var cloudy = p.atmo >= 0.40 && p.bulk === "rock" && p.tempSurf < 700 && p.tempSurf > 150;
+    var cloudy = planetCloudy(p);
     if (cloudy) {
       var cloud = new THREE.Mesh(
         new THREE.SphereGeometry(p.size * 1.02, 24, 18),
@@ -453,6 +453,10 @@ function updateScene(sys, dt) {
   }
   updateLensFlare();
 
+  /* ★ v0.12：聚焦地表的每帧裁决（见 44-focus-surface.js）——谁被聚焦谁亮、
+   * 太阳方向随公转更新、首次聚焦现场构建。入口/出口都走这一条路。 */
+  syncFocusSurface();
+
   sys.planets.forEach(function (p) {
     p.angle += p.orbitSpeed * eff;
     var ci = Math.cos(p.incl), si = Math.sin(p.incl);
@@ -479,6 +483,13 @@ function updateScene(sys, dt) {
     if (p._atmo) {
       if (p._atmo.userData.base === undefined) p._atmo.userData.base = p._atmo.material.uniforms.uRim.value;
       p._atmo.material.uniforms.uRim.value = p._atmo.userData.base * (FSM_CAMERA.is("focus") ? 0.55 : 1);
+    }
+
+    /* 聚焦地表（v0.12）：跟随贴图网格的同一自转；云壳独立漂移（比地表略快
+     * 1.35 倍 —— 与贴图云同一口径），拉开「大气在动」的层次。 */
+    if (p._cs && p._cs.group.visible) {
+      p._cs.mesh.rotation.y = p._mesh.rotation.y;
+      if (p._cs.cloud) p._cs.cloud.rotation.y += p.spin * 1.35 * eff;
     }
 
     // 行星选中：科幻括号（呼吸淡入）

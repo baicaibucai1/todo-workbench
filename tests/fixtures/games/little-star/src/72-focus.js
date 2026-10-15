@@ -24,7 +24,10 @@ function focusDistance(p) { return clamp(p.size * FOCUS_K, 1.6, 9.4); }
 
 function enterFocus(p) {
   var ok = FSM_CAMERA.send("enter", p);
-  if (ok && p && p._mesh) refineSurface(p);   /* 固态行星：就地升级到高清地表 */
+  /* ★ v0.12：固态行星首次聚焦时现场构建「立方球连续地表」（44-focus-surface.js），
+   * 缓存在 p._cs —— 放在点击时刻构建而不是帧循环里，收尾动画不必等它。
+   * 贴图网格的显隐由 syncFocusSurface（每帧一处裁决）接管。 */
+  if (ok && p && isSolidPlanet(p)) ensureFocusSurface(p);
   return ok;
 }
 function exitFocus() {
