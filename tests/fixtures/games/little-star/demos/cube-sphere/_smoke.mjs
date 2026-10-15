@@ -34,6 +34,17 @@ await page.goto(`http://127.0.0.1:${PORT}/demos/cube-sphere/index.html`, { waitU
 await page.waitForFunction(() => window.__demo && window.__demo.ready, null, { timeout: 15000 });
 await page.waitForTimeout(700);
 
+/* ★ 单文件自足校验（v0.9.1）：这个 demo 以后可能被单独拷走（预览面板 / 直接发出去），
+ * 那时相对引用的 ../../three.min.js 会 404，HUD 全成「—」而控制台只有一条 404。
+ * 这里直接查「HTML 里还有没有外链脚本」和「页面有没有发出过任何失败请求」。 */
+const selfContained = await page.evaluate(() =>
+  Array.from(document.querySelectorAll("script[src]")).map((s) => s.getAttribute("src"))
+);
+if (selfContained.length) errs.push("非自足：仍有外链脚本 " + JSON.stringify(selfContained));
+const reqFail = [];
+page.on("requestfailed", (r) => reqFail.push(r.url() + " :: " + (r.failure() || {}).errorText));
+page.on("response", (r) => { if (r.status() >= 400 && !r.url().includes("favicon")) reqFail.push(r.url() + " :: HTTP " + r.status()); });
+
 const stats = await page.evaluate(() => ({
   api: window.__demo.stats(),
   tris: document.getElementById("s-tris").textContent,
@@ -96,6 +107,18 @@ await page.keyboard.press("g");
 await page.waitForTimeout(600);
 await page.screenshot({ path: path.join(ROOT, "demos", "cube-sphere", "shot-3-wire.png") });
 
-console.log(errs.length ? "❌ 错误:\n" + errs.join("\n") : "✅ 零 console error / pageerror");
+/* ★ 断言：HUD 必须真的出值（只看截图肉眼扫会漏掉「全 —」这种静默失败） */
+const hudFilled = await page.evaluate(() => {
+  const ids = ["s-cells", "s-tris", "s-ms", "s-sea", "s-relief", "p-face", "p-cell", "p-h"];
+  return ids.filter((id) => {
+    const t = document.getElementById(id).textContent.trim();
+    return t === "" || t === "—";
+  });
+});
+console.log("HUD 空值项:", hudFilled.length ? "❌ " + JSON.stringify(hudFilled) : "✅ 无");
+if (hudFilled.length) errs.push("HUD 未填值: " + JSON.stringify(hudFilled));
+if (reqFail.length) errs.push("请求失败: " + reqFail.join(" | "));
+
+console.log(errs.length ? "❌ 错误:\n" + errs.join("\n") : "✅ 零 console error / pageerror · 单文件自足 · HUD 出值");
 await browser.close();
 srv.close();
