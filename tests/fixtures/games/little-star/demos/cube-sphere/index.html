@@ -53,7 +53,10 @@
   <div>② 地表是<span class="hi">真实几何起伏</span>，山脊在剪影上看得见</div>
   <div>③ 点击球面 → 拿到<span class="hi">格子 id</span> 与<span class="hi">连续海拔</span></div>
   <hr>
-  <div class="dim">拖动旋转 · 滚轮缩放 · <b>1/2/3</b> 切换分段 · <b>G</b> 显示格子线</div>
+  <div>④ 调色在<span class="hi">片元逐像素</span>算 —— 海岸线不跟网格走锯齿</div>
+  <hr>
+  <div class="dim">拖动旋转 · 滚轮缩放 · <b>1·2·3·4</b> 分段 64/128/192/256 · <b>G</b> 格子线</div>
+  <div class="dim">点击球面 → 白点 + 该点朝外的法线</div>
 </div>
 
 <script>
@@ -181,35 +184,98 @@ function norm3(x, y, z) {
   return [x / L, y / L, z / L];
 }
 
-/* ---------- 调色（顶点色，与高度分带一一对应） ---------- */
-function colorAt(h, dy, isWater) {
-  var lat = Math.abs(dy);                            // 0 赤道 → 1 极点
-  var c;
-  if (isWater) {
-    var d = clamp((SEA - h) / Math.max(SEA, 0.001), 0, 1);
-    c = [0.05 + 0.10 * (1 - d), 0.13 + 0.24 * (1 - d), 0.26 + 0.30 * (1 - d)];
-  } else {
-    var t = clamp((h - SEA) / (1 - SEA), 0, 1);
-    if (t < 0.10)      c = [0.72, 0.68, 0.47];       // 海岸沙
-    else if (t < 0.34) c = [0.21, 0.46, 0.15];       // 平原
-    else if (t < 0.60) c = [0.44, 0.38, 0.22];       // 高地
-    else if (t < 0.88) c = [0.55, 0.47, 0.36];       // 裸岩
-    else               c = [0.86, 0.88, 0.92];       // 雪线
-    var k = 1 - t * 0.35;
-    c = [c[0] * k, c[1] * k, c[2] * k];
-  }
-  /* 极冠：纬度越高越白（海面冻结也一起变白） */
-  var cap = clamp((lat - 0.87) / 0.09, 0, 1);
-  if (cap > 0) {
-    c = [c[0] + (0.92 - c[0]) * cap, c[1] + (0.94 - c[1]) * cap, c[2] + (0.97 - c[2]) * cap];
-  }
-  return c;
-}
+/* ---------- 调色：搬到片元着色器逐像素算（★ 连续化的关键） ----------
+ * 原先是「顶点色分带」：颜色只在格点上算一次，格子内线性插值 ——
+ * 于是色带的边界被量化到格子尺度，近看就是块状 + 锯齿。
+ * 现在顶点只带「连续高度 aH」这一个标量，插值的是高度而不是颜色，
+ * 真正的分色在 fragment 里逐像素做，并用 smoothstep 软过渡 ——
+ * 色带边界不再依附网格，分辨率升降只影响几何精度，不影响色带的平滑度。
+ */
+var PLANET_VS = [
+  "attribute float aH;",
+  "varying float vH;",
+  "varying vec3 vWN;",       /* 世界空间法线：星球会自转，光照得在物体空间之外算 */
+  "varying vec3 vWDir;",     /* 世界空间径向：用来量「坡度」（法线偏离径向的程度） */
+  "varying vec3 vDir;",      /* 物体空间方向：纬度（极冠）只跟它有关 */
+  "void main() {",
+  "  vH = aH;",
+  "  vDir = normalize(position);",
+  "  vWN = normalize(mat3(modelMatrix) * normal);",
+  "  vWDir = normalize(mat3(modelMatrix) * position);",
+  "  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);",
+  "}"
+].join("\n");
+
+var PLANET_FS = [
+  "uniform vec3 uSunDir; uniform vec3 uSunCol;",
+  "uniform vec3 uFillDir; uniform vec3 uFillCol;",
+  "uniform vec3 uAmb; uniform float uSea;",
+  "varying float vH;",
+  "varying vec3 vWN; varying vec3 vWDir; varying vec3 vDir;",
+  "",
+  "vec3 landCol(float h) {",
+  "  float t = clamp((h - uSea) / max(1.0 - uSea, 0.001), 0.0, 1.0);",
+  "  vec3 c = vec3(0.72, 0.68, 0.47);",                       /* 海岸沙 */
+  "  c = mix(c, vec3(0.21, 0.46, 0.15), smoothstep(0.03, 0.11, t));",  /* 平原 */
+  "  c = mix(c, vec3(0.44, 0.38, 0.22), smoothstep(0.26, 0.35, t));",  /* 高地 */
+  "  c = mix(c, vec3(0.55, 0.47, 0.36), smoothstep(0.53, 0.62, t));",  /* 裸岩 */
+  "  c = mix(c, vec3(0.86, 0.88, 0.92), smoothstep(0.80, 0.89, t));",  /* 雪线 */
+  "  return c * (1.0 - t * 0.35);",                             /* 高处压暗一点 */
+  "}",
+  "vec3 seaCol(float h) {",
+  "  float d = clamp((uSea - h) / max(uSea, 0.001), 0.0, 1.0);",   /* 越深越暗 */
+  "  return vec3(0.05 + 0.10 * (1.0 - d), 0.13 + 0.24 * (1.0 - d), 0.26 + 0.30 * (1.0 - d));",
+  "}",
+  "void main() {",
+  "  /* ★★ 海岸线：用「连续高度 vH 的等值线 h = uSea」定边界，配 fwidth 做 1 像素抗锯齿。",
+  "     曾经用水陆标记 vW（顶点 0/1）做过渡 —— 它只有两个取值，0.5 等值线是穿格子中点的",
+  "     折线，等于把海岸线量化到格子尺度：那就是用户看到的锯齿（我自己引入的）。",
+  "     换成 vH 之后，边界落在真实的 h=uSea 等值线上，宽度恒为约 1 像素，",
+  "     缩放/分辨率都不会让它变粗糙。*/",
+  "  /* 下限必须极小：fwidth 的作用就是「让过渡带在屏幕上恒为常量宽度」。",
+  "     一旦给它一个可见的下限，平坦浅滩上（每像素高度变化本来就小）就会被",
+  "     拉出一条很宽的水陆渐变环 —— 海岸线不锯齿了，但整条岸变糊。*/",
+  "  float aa = max(fwidth(vH), 1e-5);",
+  "  float shore = smoothstep(uSea - aa, uSea + aa, vH);",
+  "  vec3 base = mix(seaCol(vH), landCol(vH), shore);",
+  "",
+  "  /* 坡度暗化：法线偏离径向越多 → 越陡 → 压暗。逐像素连续，取代原顶点色里的 hillshade。*/",
+  "  vec3 wn = normalize(vWN);",
+  "  float slope = 1.0 - max(dot(wn, normalize(vWDir)), 0.0);",
+  "  base *= 1.0 - clamp(slope * 1.6, 0.0, 0.30);",
+  "",
+  "  /* 极冠：纬度越高越白（vDir 是物体空间方向，自转不影响它 → 极冠跟着星球转） */",
+  "  float cap = smoothstep(0.86, 0.97, abs(vDir.y));",
+  "  base = mix(base, vec3(0.92, 0.94, 0.97), cap);",
+  "",
+  "  float d1 = max(dot(wn, uSunDir), 0.0);",
+  "  float d2 = max(dot(wn, uFillDir), 0.0);",
+  "  vec3 col = base * (uAmb + uSunCol * d1 + uFillCol * d2);",
+  "  gl_FragColor = vec4(col, 1.0);",
+  "  #include <colorspace_fragment>",
+  "}"
+].join("\n");
+
+var planetMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uSunDir: { value: norm3(3.2, 2.0, 2.6) },
+    uSunCol: { value: new THREE.Color(1.0, 0.957, 0.878) },
+    uFillDir: { value: norm3(-2.6, -1.2, -2.0) },
+    uFillCol: { value: new THREE.Color(0.145, 0.180, 0.255) },
+    uAmb: { value: new THREE.Color(0.45, 0.45, 0.45) },
+    uSea: { value: SEA }
+  },
+  vertexShader: PLANET_VS,
+  fragmentShader: PLANET_FS,
+  /* fwidth 属于标准导数扩展：WebGL2（three r159 的默认路径）原生有，
+   * 万一落到 WebGL1 需要显式开这个开关，否则海岸线抗锯齿会整段编译失败。 */
+  extensions: { derivatives: true }
+});
 
 /* ---------- 构建 cube-sphere ---------- */
 function buildPlanet(N) {
   var t0 = performance.now();
-  var pos = [], col = [], nor = [], idx = [];
+  var pos = [], hgt = [], nor = [], idx = [];
   var vpf = (N + 1) * (N + 1);                       // 每面顶点数（六个面独立，边顶点重复）
   for (var f = 0; f < 6; f++) {
     for (var j = 0; j <= N; j++) {
@@ -223,8 +289,9 @@ function buildPlanet(N) {
         pos.push(d[0] * rr, d[1] * rr, d[2] * rr);
         var n = normalAt(d[0], d[1], d[2], water);
         nor.push(n[0], n[1], n[2]);
-        var c = colorAt(hh, d[1], water);
-        col.push(c[0], c[1], c[2]);
+        /* ★ 顶点不再带颜色，只带「连续高度」这一个标量交给着色器插值 ——
+         * 水陆之分由片元按 h 与海平面的关系自行判定，不再需要 0/1 标记。 */
+        hgt.push(h);
       }
     }
     for (var jj = 0; jj < N; jj++) {
@@ -237,7 +304,7 @@ function buildPlanet(N) {
   var geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
-  geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  geo.setAttribute("aH", new THREE.Float32BufferAttribute(hgt, 1));
   geo.setIndex(idx);
   return { geo: geo, cells: 6 * N * N, tris: idx.length / 3, ms: Math.round(performance.now() - t0) };
 }
@@ -250,22 +317,23 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.45));
-var sun = new THREE.DirectionalLight(0xfff4e0, 1.15);
-sun.position.set(3.2, 2.0, 2.6);
-scene.add(sun);
-var fill = new THREE.DirectionalLight(0x8fb6ff, 0.22);
-fill.position.set(-2.6, -1.2, -2.0);
-scene.add(fill);
+/* ★ 不建 THREE.Light 了：星球用自定义 ShaderMaterial，光照参数走 uniforms
+ * （uSunDir/uSunCol/uFillDir/uFillCol/uAmb）。留着内置灯对 ShaderMaterial 无效，
+ * 只会让人误以为「改灯就能改亮度」。 */
 
-var planet = null, wire = null, N = 64;
+var planet = null, wire = null, N = 128;
 function rebuild(n) {
   N = n;
-  if (planet) { scene.remove(planet); planet.geometry.dispose(); planet.material.dispose(); }
+  /* ★ 只 dispose 几何，别 dispose 材质 —— planetMat 是多个分辨率共享的，
+   * 释放掉会让后续 rebuild 拿到一个已销毁的 program（黑球）。 */
+  if (planet) { planet.remove(marker); scene.remove(planet); planet.geometry.dispose(); }
   if (wire) { scene.remove(wire); wire.geometry.dispose(); wire.material.dispose(); wire = null; }
   var r = buildPlanet(N);
-  planet = new THREE.Mesh(r.geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  /* ★ 材质用共享的 ShaderMaterial：调色与光照都在片元里逐像素算。
+   * 分辨率变化只重排几何，不重建材质（uniforms 不需要跟着变）。 */
+  planet = new THREE.Mesh(r.geo, planetMat);
   scene.add(planet);
+  planet.add(marker);                       /* 标记挂在星球下 → 自动跟着自转 */
   if (showWire) {
     wire = new THREE.LineSegments(new THREE.WireframeGeometry(r.geo), new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.18 }));
     scene.add(wire);
@@ -277,13 +345,30 @@ function rebuild(n) {
 }
 var showWire = false;
 
-/* 拾取标记：命中点上的一个小八面体 + 一条朝外的短线 */
-var marker = new THREE.Mesh(
-  new THREE.OctahedronGeometry(0.035, 0),
-  new THREE.MeshBasicMaterial({ color: 0xffd479, wireframe: true })
+/* ---------- 拾取标记：一个白点 + 一条沿法线朝外的线 ----------
+ * 之前是线框八面体（会看成「三角形」），按用户要求换成白点 + 法线指示。
+ * 白点用 MeshBasicMaterial（不吃光照，任何明暗下都是纯白，好认）；
+ * 法线是一条两顶点的线段，从命中点沿解析法线向外延伸，长度随距离缩放。
+ * ★ 两点都加 depthTest:false + 高 renderOrder：否则近处会被地形起伏吞掉一半。
+ */
+var marker = new THREE.Group();
+var markerDot = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 16, 12),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false })
 );
+markerDot.renderOrder = 999;
+marker.add(markerDot);
+
+var normalGeo = new THREE.BufferGeometry();
+normalGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(6), 3));
+var normalLine = new THREE.Line(
+  normalGeo,
+  new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.95 })
+);
+normalLine.renderOrder = 999;
+marker.add(normalLine);
+
 marker.visible = false;
-scene.add(marker);
 
 /* ---------- 相机控制（手写，免依赖 OrbitControls） ---------- */
 var orbit = { theta: 0.9, phi: 1.15, r: 3.4 };
@@ -319,9 +404,12 @@ cv.addEventListener("wheel", function (e) {
   applyOrbit();
 }, { passive: false });
 window.addEventListener("keydown", function (e) {
-  if (e.key === "1") rebuild(32);
-  if (e.key === "2") rebuild(64);
-  if (e.key === "3") rebuild(128);
+  /* ★ 默认档从 64 提到 128：顶点色调色改成片元后，色带不再吃网格，
+   * 但几何剪影（海岸线台阶、山脊轮廓）仍然跟着分段走 —— 128 档近景够干净。 */
+  if (e.key === "1") rebuild(64);
+  if (e.key === "2") rebuild(128);
+  if (e.key === "3") rebuild(192);
+  if (e.key === "4") rebuild(256);
   if (e.key === "g" || e.key === "G") { showWire = !showWire; rebuild(N); }
 });
 
@@ -333,8 +421,15 @@ function pick(cx, cy) {
   ray.setFromCamera(ndc, camera);
   var hit = ray.intersectObject(planet, false)[0];
   if (!hit) { marker.visible = false; return; }
-  var p = hit.point;
-  var d = norm3(p.x, p.y, p.z);
+
+  /* ★★ 命中点是「世界坐标」，而 marker 挂在 planet 之下（局部空间），
+   * 星球又在自转 —— 直接拿世界坐标摆局部位置，标记会被多转一个 rotation.y，
+   * 于是「点的地方和鼠标对不上」（用户实锤）。必须先转到局部系再摆。
+   * 顺带把 HUD 的经纬/面/格子也统一到局部系，这样它与 __demo.sample(lat,lon)
+   * 问出来的是同一个坐标系 —— 否则自转之后两边对不上。 */
+  planet.updateMatrixWorld();
+  var lp = planet.worldToLocal(hit.point.clone());
+  var d = norm3(lp.x, lp.y, lp.z);
 
   /* ① 连续场：任意方向都能问到高度（与网格分辨率无关） */
   var hc = heightAt(d[0], d[1], d[2]);
@@ -353,8 +448,23 @@ function pick(cx, cy) {
   var lon = (Math.atan2(d[2], d[0]) * 180) / Math.PI;
   var water = hc < SEA;
 
-  marker.position.set(p.x, p.y, p.z);
-  marker.scale.setScalar(Math.max(0.5, orbit.r * 0.045));
+  /* 标记：白点贴到命中点，法线从点向外画一段（长度随相机距离，远看也认得出） */
+  /* ★ 尺寸要「随距离缩放，但保底 0.5」：一开始我用 r*0.045 直接当系数，
+   * 默认视距下算出 0.0015 世界单位 ≈ 0.4 像素 —— 白点直接亚像素消失了。
+   * 系数必须按「屏幕像素」反推：默认视距下 1 世界单位 ≈ 284 px。 */
+  var scale = clamp(orbit.r * 0.045, 0.5, 2.2);
+  /* 摆到「看得见的那层表面」：陆地取地形高度，海洋取海平面（水下地形是被压平的，
+   * 若按地形高度摆，白点会沉进海里看不见）。半径公式与 buildPlanet 里那套必须一致。 */
+  var rh = R * (1 + RELIEF * (water ? SEA : hc) / (1 - SEA / 2));
+  marker.position.set(d[0] * rh, d[1] * rh, d[2] * rh);
+  markerDot.scale.setScalar(0.030 * scale);         /* ≈ 4.3 px 半径 */
+  var nl = normalGeo.attributes.position.array;
+  var nrm = normalAt(d[0], d[1], d[2], water);         /* ★ 与着色同源的解析法线 */
+  var len = 0.14 * scale;                            /* ≈ 20 px 长的法线 */
+  nl[0] = 0; nl[1] = 0; nl[2] = 0;
+  nl[3] = nrm[0] * len; nl[4] = nrm[1] * len; nl[5] = nrm[2] * len;
+  normalGeo.attributes.position.needsUpdate = true;
+  normalGeo.computeBoundingSphere();
   marker.visible = true;
 
   $("p-face").textContent = face + " (" + "＋X－X＋Y－Y＋Z－Z".substr(face * 2, 2) + ")";
@@ -377,11 +487,12 @@ $("s-relief").textContent = RELIEF.toFixed(3);
 rebuild(N);
 applyOrbit();
 var frames = 0, tPrev = performance.now();
+var spinning = true;                 /* 调试口：比对截图前先停自转，否则比的是两帧不同姿态 */
 function loop() {
   requestAnimationFrame(loop);
-  if (planet) planet.rotation.y += 0.0012;
+  if (planet && spinning) planet.rotation.y += 0.0012;
   if (wire) wire.rotation.y = planet.rotation.y;
-  if (marker.visible) marker.rotation.y += 0.02;
+  /* 标记是 planet 的子对象，自转自动跟随；这里不再单独转它（原来是装饰性自旋）。 */
   renderer.render(scene, camera);
   frames++;
   var now = performance.now();
@@ -393,6 +504,28 @@ function loop() {
 loop();
 window.__demo = {
   ready: true,
+  setSpin: function (v) { spinning = !!v; return spinning; },
+  rotationY: function () { return planet ? planet.rotation.y : 0; },
+  /* 调试口：把选中标记投回屏幕坐标 —— 用来断言「标记就在鼠标点的位置」。
+   * 这是回归里唯一能抓住「世界坐标摆进局部空间」这类坐标系错误的判据。 */
+  markerScreen: function () {
+    if (!marker.visible) return null;
+    var w = new THREE.Vector3();
+    marker.getWorldPosition(w);
+    var q = w.clone().project(camera);
+    return {
+      world: [+w.x.toFixed(4), +w.y.toFixed(4), +w.z.toFixed(4)],
+      sx: (q.x * 0.5 + 0.5) * window.innerWidth,
+      sy: (-q.y * 0.5 + 0.5) * window.innerHeight
+    };
+  },
+  setOrbit: function (o) {                 /* 调试口：钉死姿态，便于逐分辨率比对 */
+    if (typeof o.theta === "number") orbit.theta = o.theta;
+    if (typeof o.phi === "number") orbit.phi = o.phi;
+    if (typeof o.r === "number") orbit.r = o.r;
+    applyOrbit();
+    return { theta: orbit.theta, phi: orbit.phi, r: orbit.r };
+  },
   heightAt: heightAt,
   stats: function () { return { N: N, cells: 6 * N * N, sea: SEA, relief: RELIEF }; },
   /* 连续查询口：给经纬，返回海拔（与点击拾取同源） */
