@@ -28,7 +28,7 @@
 
 <div class="hud" id="stats">
   <h1>cube-sphere demo</h1>
-  <div><span class="k">每面分段</span><span class="v" id="s-n">64</span></div>
+  <div><span class="k">每面分段</span><span class="v" id="s-n">48</span></div>
   <div><span class="k">格子总数</span><span class="v" id="s-cells">—</span></div>
   <div><span class="k">三角形</span><span class="v" id="s-tris">—</span></div>
   <div><span class="k">构建耗时</span><span class="v" id="s-ms">—</span></div>
@@ -55,7 +55,7 @@
   <hr>
   <div>④ 调色在<span class="hi">片元逐像素</span>算 —— 海岸线不跟网格走锯齿</div>
   <hr>
-  <div class="dim">拖动旋转 · 滚轮缩放 · <b>1·2·3·4</b> 分段 64/128/192/256 · <b>G</b> 格子线</div>
+  <div class="dim">拖动旋转 · 滚轮缩放 · <b>1·2·3·4</b> 分段 24/48/96/192 · <b>G</b> 格子线</div>
   <div class="dim">点击球面 → 白点 + 该点朝外的法线</div>
 </div>
 
@@ -321,7 +321,7 @@ document.body.appendChild(renderer.domElement);
  * （uSunDir/uSunCol/uFillDir/uFillCol/uAmb）。留着内置灯对 ShaderMaterial 无效，
  * 只会让人误以为「改灯就能改亮度」。 */
 
-var planet = null, wire = null, N = 128;
+var planet = null, wire = null, N = 48;
 function rebuild(n) {
   N = n;
   /* ★ 只 dispose 几何，别 dispose 材质 —— planetMat 是多个分辨率共享的，
@@ -412,12 +412,15 @@ cv.addEventListener("wheel", function (e) {
   applyOrbit();
 }, { passive: false });
 window.addEventListener("keydown", function (e) {
-  /* ★ 默认档从 64 提到 128：顶点色调色改成片元后，色带不再吃网格，
-   * 但几何剪影（海岸线台阶、山脊轮廓）仍然跟着分段走 —— 128 档近景够干净。 */
-  if (e.key === "1") rebuild(64);
-  if (e.key === "2") rebuild(128);
-  if (e.key === "3") rebuild(192);
-  if (e.key === "4") rebuild(256);
+  /* ★ 默认档压到 48（13,824 格 / 27,648 三角形 / 构建 15ms）。
+   * 调色搬进片元之后，格子密度与画面质量已经解耦 —— N 只管几何剪影，
+   * 而实测海岸线形状与 N=192 的差在 N=48 时已 < 1px。没必要拿 128 甚至 256
+   * 去换一个看不见的差别（构建耗时差 16~18 倍）。阶梯改成 24/48/96/192，
+   * 想看最高精度按 4。 */
+  if (e.key === "1") rebuild(24);
+  if (e.key === "2") rebuild(48);
+  if (e.key === "3") rebuild(96);
+  if (e.key === "4") rebuild(192);
   if (e.key === "g" || e.key === "G") { showWire = !showWire; rebuild(N); }
 });
 
@@ -515,6 +518,7 @@ window.__demo = {
   ready: true,
   setSpin: function (v) { spinning = !!v; return spinning; },
   rotationY: function () { return planet ? planet.rotation.y : 0; },
+  setN: function (n) { n = clamp(n | 0, 8, 512); rebuild(n); return { N: N, cells: 6 * N * N, tris: 6 * 2 * N * N }; },
   /* 调试口：把选中标记投回屏幕坐标 —— 用来断言「标记就在鼠标点的位置」。
    * 这是回归里唯一能抓住「世界坐标摆进局部空间」这类坐标系错误的判据。 */
   markerScreen: function () {
