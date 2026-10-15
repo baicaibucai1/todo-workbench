@@ -16,8 +16,11 @@
   #scene          全屏 canvas（three.js 渲染目标）
   #panel          右侧信息面板，默认 .hidden；data-kind = star|planet|none
                     > .p-head > .p-dot / #p-name / #p-sub / #p-fold
-                                 #p-fold 收起钮：折叠时面板体整块让位、只留这条标题
-                                 （.folded；与「未选中时整条退场」的 .hidden 是两件事）
+                                 #p-fold 收起钮：**整条面板向右滑出视口**（.folded），
+                                 内容不隐藏、只是收到屏幕外（与「未选中时整条退场」
+                                 的 .hidden 是两件事）
+  #p-handle       面板收起后贴右边缘的把手（默认不占位，由 #panel.folded 的兄弟选择器
+                   放开）；点它把面板拉回来，与 #p-fold 同一个动作
                     > #p-tabs    标签栏（v0.9）：**所有行星**出现 ——
                                    行星 / 资源 / 文明 三页（文明钮只在发源地出现），
                                    机器 FSM_PANEL 管状态，一次只显示一页
@@ -50,8 +53,8 @@
         <div id="p-name">—</div>
         <div id="p-sub">—</div>
       </div>
-      <!-- 收起钮：把面板体叠起来只留标题条（再点即展开）。逻辑在 80-panel.js -->
-      <button id="p-fold" title="收起面板（只留标题条）">收起</button>
+      <!-- 收起钮：把整条面板收到屏幕右边去（再点 / 点边缘把手即拉回来）。逻辑在 80-panel.js -->
+      <button id="p-fold" title="收起面板（收进右侧）">收起</button>
     </div>
     <!-- 标签栏：默认隐藏；选中行星时由 applyPanelTab 显示（行星 / 资源 / 文明） -->
     <div id="p-tabs" class="hidden">
@@ -67,6 +70,9 @@
     <div class="p-actions-title">操作</div>
     <div id="p-actions"></div>
   </aside>
+
+  <!-- 面板收起后贴在右边缘的把手（默认不显示，靠 #panel.folded 的兄弟选择器现身） -->
+  <button id="p-handle" title="展开面板"><span class="ph-arrow">‹</span><span class="ph-txt">面板</span></button>
 
   <!-- 左上角工具条：天体指导书入口（恒星篇 + 行星篇） -->
   <div id="hud">

@@ -62,11 +62,11 @@
  *    3369     25  相机聚焦                                             src/70-camera-input.js:1
  *    3394    136  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
  *    3530     77  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
- *    3607    253  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
- *    3860    612  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
- *    4472     24  主循环                                               src/99-boot.js:1
- *    4496    398  启动                                                 src/99-boot.js:25
- *   共 22 个区块 · 18 个源文件 · 4893 行
+ *    3607    258  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
+ *    3865    612  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
+ *    4477     24  主循环                                               src/99-boot.js:1
+ *    4501    398  启动                                                 src/99-boot.js:25
+ *   共 22 个区块 · 18 个源文件 · 4898 行
  * @nav:end
  * ─────────────────────────────────────────────────────────────────────
  *
@@ -3793,31 +3793,36 @@ function syncPanelTab() {
   applyPanelTab();
 }
 
-/* ---- 折叠（收起 / 展开）：面板体整块让位，只留标题条 ----
- * 是什么：标题条右端一个钮，把数据区（标签页 / 数据行 / 资源页 / 文明页 / 操作区）
- * 叠起来，只留「现在选的是谁」那一行。再点即展开。
+/* ---- 折叠（收起 / 展开）：**整条面板向右侧收进去**，只留一枚贴边的把手 ----
+ * 是什么：标题条右端一个钮，把整条面板滑出视口右边缘（内容不隐藏、只是收到屏幕外，
+ * 宽高与滚动位置原样留着）；收起后右边缘出现一枚把手（#p-handle），点它拉回来。
+ * 方向是横向的：面板在右侧，收起来的方向就该是右侧 —— 竖着收会留下一条 312px 宽的
+ * 横条，照样横占画面（第一版做法，已否）。
  *
  * ★ 与「面板退场」是两件事，别混：
- *     未选中 → .hidden，整条面板（含标题条）退场 —— 那是 FSM_SELECT 的投影；
- *     折叠   → .folded，选中着但用户把内容叠了起来 —— 这是**视图偏好**。
- *   所以：① 它不进 FSM_PANEL（那台机器管的是「哪一页」，不是「摊不摊开」）；
+ *     未选中 → .hidden，整条面板退场（opacity 0 + 不接指针）—— 那是 FSM_SELECT 的投影；
+ *     折叠   → .folded，选中着但用户把面板收到右边去了 —— 这是**视图偏好**。
+ *   所以：① 它不进 FSM_PANEL（那台机器管的是「哪一页」，不是「在不在屏内」）；
  *        ② 它不随选中项变化复位 —— 用户关掉的东西不该自己弹回来。换目标时
- *           renderPanel 照常改写标题条，只是内容还叠着。
+ *           renderPanel 照常改写内容，只是还收在屏外。
  *   想让「选中新目标即自动展开」，在 renderPanel() 里加一行 setPanelFold(false) 即可。
- * ③ 面板**宽度不变**（只掉高度）—— 收起 / 展开时钮留在原地，不必追着点。 */
+ * ③ 把手的显隐**不归 JS 管**：#panel.folded:not(.hidden) ~ #p-handle 一条 CSS 搞定 ——
+ *   于是「没选中」时把手自动跟着退场（否则会出现「点开一个空面板」）。 */
 var elPFold = null, panelFolded = false;
 
 function applyPanelFold() {
   if (!elPanel || !elPFold) return;
   elPanel.classList.toggle("folded", panelFolded);
   elPFold.textContent = panelFolded ? "展开" : "收起";
-  elPFold.title = panelFolded ? "展开面板" : "收起面板（只留标题条）";
+  elPFold.title = panelFolded ? "展开面板" : "收起面板（收进右侧）";
 }
 function setPanelFold(on) { panelFolded = !!on; applyPanelFold(); return panelFolded; }
 function togglePanelFold() { return setPanelFold(!panelFolded); }
 function setupPanelFold() {
   elPFold = $("p-fold");
+  var elHandle = $("p-handle");
   if (elPFold) elPFold.addEventListener("click", togglePanelFold);
+  if (elHandle) elHandle.addEventListener("click", togglePanelFold);   /* 同一个动作的第二个入口 */
   applyPanelFold();          /* 初刷：DOM 与 panelFolded 对齐（默认展开） */
 }
 

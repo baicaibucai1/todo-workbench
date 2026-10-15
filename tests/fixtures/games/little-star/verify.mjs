@@ -283,11 +283,12 @@ async function frameStar(page, radius) {
       };
       const cs = (sel) => getComputedStyle(document.querySelector(sel));
       const panel = cs("#panel"), btn = cs("#guide-btn"), book = cs(".g-book"), hint = cs(".hud-hint");
-      const nav = cs("#guide-nav"), tab = cs("#p-tabs .p-tab"), foldC = cs("#p-fold");
+      const nav = cs("#guide-nav"), tab = cs("#p-tabs .p-tab"), foldC = cs("#p-fold"), hC = cs("#p-handle");
       const groups = {
         面板: [panel.backgroundColor, panel.borderTopColor, panel.color],
         标签页: [tab.backgroundColor, tab.borderBottomColor, tab.color],
         收起钮: [foldC.backgroundColor, foldC.borderTopColor, foldC.color],
+        边缘把手: [hC.backgroundColor, hC.borderTopColor, hC.color],
         指导书按钮: [btn.backgroundColor, btn.borderTopColor, btn.color],
         书页: [book.backgroundColor, book.borderTopColor],
         栏目导航: [nav.backgroundColor, nav.borderRightColor],
@@ -305,7 +306,7 @@ async function frameStar(page, radius) {
       };
     });
     check("黑白体系：UI 本体无彩色（R=G=B）", bw.bad.length === 0,
-      bw.bad.length ? bw.bad.join(" · ") : "面板 / 收起钮 / 按钮 / 书页 / 栏目导航 / 提示 全部无色相");
+      bw.bad.length ? bw.bad.join(" · ") : "面板 / 收起钮 / 边缘把手 / 按钮 / 书页 / 栏目导航 / 提示 全部无色相");
     check("圆角统一（容器同值、非 0）+ 粗边框 ≥ 2px", bw.radiusOk && bw.lw >= 2,
       `圆角 ${bw.radius} · 面板边框 ${bw.lw}px`);
 
@@ -372,45 +373,51 @@ async function frameStar(page, radius) {
     check("操作按钮占位且禁用", panel1.btns >= 2 && panel1.disabled, `${panel1.btns} 个`);
     await shot(page, "n2-panel-planet.png");
 
-    /* ★ 面板可收起（收起 = 面板体整块让位、只留标题条）。
+    /* ★ 面板可收起（收起 = **整条面板向右侧收进去**，滑出视口右边缘，只留贴边把手）。
+     *   判据是几何：收起后面板的左缘必须跑到视口宽之外（不是「把内容藏起来」——
+     *   宽高与行数都不许变，只是收到屏幕外），把手必须贴住右边缘。
      *   与下面那条「点空白 → 面板收起」是**两件事**：那是未选中时整条面板退场（.hidden，
-     *   FSM_SELECT 的投影），这里是选中着但用户把内容叠起来（.folded，视图偏好）。
-     *   所以这里连带验：取消选中不重置折叠偏好、重新选中仍保持收起。 */
+     *   FSM_SELECT 的投影），这里是选中着但用户把面板收到右边去了（.folded，视图偏好）。
+     *   所以这里连带验：取消选中不重置折叠偏好（把手跟着退场）、重新选中仍收在屏外。 */
     const readFold = () => page.evaluate(() => {
       const el = document.getElementById("panel");
       const b = document.getElementById("p-fold");
-      const shown = (id) => {
-        const n = document.getElementById(id);
-        return !!n && getComputedStyle(n).display !== "none";
-      };
-      const r = el.getBoundingClientRect();
+      const h = document.getElementById("p-handle");
+      const r = el.getBoundingClientRect(), hr = h.getBoundingClientRect();
+      const W = window.innerWidth;
       return {
         btn: !!b, label: b ? b.textContent : "",
-        folded: el.classList.contains("folded") && !el.classList.contains("hidden"),
+        folded: el.classList.contains("folded"),
         hiddenClass: el.classList.contains("hidden"),
         name: document.getElementById("p-name").textContent,
+        rowCount: document.querySelectorAll("#p-rows .p-row").length,
+        W, left: Math.round(r.left), right: Math.round(r.right),
         w: Math.round(r.width), h: Math.round(r.height),
-        headShown: getComputedStyle(el.querySelector(".p-head")).display !== "none",
-        body: { tabs: shown("p-tabs"), rows: shown("p-rows"), res: shown("p-res"), civ: shown("p-civ"), actions: shown("p-actions") },
-        rowCount: document.querySelectorAll("#p-rows .p-row").length
+        offRight: r.left >= W - 1,          /* 整条已收进右边缘外（收起态） */
+        inside: r.right <= W - 23,          /* 整条在视口内（展开态，右侧留 24px 边距） */
+        handle: {
+          shown: getComputedStyle(h).display !== "none",
+          left: Math.round(hr.left), right: Math.round(hr.right), h: Math.round(hr.height)
+        }
       };
     });
 
     const fold0 = await readFold();
-    check("★ 标题条上有「收起」钮（默认展开态）",
-      fold0.btn && fold0.label === "收起" && !fold0.folded && fold0.body.rows,
-      `label=${fold0.label} · 面板 ${fold0.w}×${fold0.h}px`);
+    check("★ 标题条上有「收起」钮（默认展开态：整条面板在视口内、把手不占位）",
+      fold0.btn && fold0.label === "收起" && !fold0.folded && fold0.inside &&
+      !fold0.handle.shown && fold0.rowCount === KEY_NEED.length,
+      `label=${fold0.label} · 面板 ${fold0.w}×${fold0.h}px · 右缘距视口 ${fold0.W - fold0.right}px`);
 
     await page.click("#p-fold");
-    await sleep(250);
+    await sleep(450);        /* 滑出过渡 0.2s：量的是终态 */
     const fold1 = await readFold();
-    check("★ 收起 → 面板体整块让位（标签页 / 数据行 / 资源页 / 文明页 / 操作区 全隐去），标题条留着",
-      fold1.folded && !fold1.body.tabs && !fold1.body.rows && !fold1.body.res &&
-      !fold1.body.civ && !fold1.body.actions && fold1.headShown && fold1.name === p0.name,
-      `收起后标题仍是「${fold1.name}」`);
-    check("★ 收起后钮变「展开」，面板只剩一条标题的高度（宽度不变、不横向跳）",
-      fold1.label === "展开" && fold1.h < fold0.h * 0.6 && Math.abs(fold1.w - fold0.w) < 2,
-      `${fold0.h} → ${fold1.h}px · 宽 ${fold1.w}px`);
+    check("★ 收起 = 整条向右侧收进去（滑出视口右边缘），不是把内容叠起来",
+      fold1.folded && fold1.offRight && fold1.rowCount === KEY_NEED.length,
+      `左缘 ${fold1.left} ≥ 视口宽 ${fold1.W} · 面板 ${fold1.w}×${fold1.h}px 宽高原样`);
+    check("★ 收起后右边缘留一枚贴边把手，标题条上的钮变「展开」",
+      fold1.handle.shown && fold1.handle.right >= fold1.W - 1 &&
+      fold1.handle.left < fold1.W && fold1.handle.h > 30 && fold1.label === "展开",
+      `把手 x ${fold1.handle.left}..${fold1.handle.right}（视口宽 ${fold1.W}）· 高 ${fold1.handle.h}px`);
     await shot(page, "n2b-panel-folded.png");
 
     const emptyPt = await findEmptyPoint(page);
@@ -418,32 +425,37 @@ async function frameStar(page, radius) {
     await sleep(300);
     const cleared = await page.evaluate(() => {
       const el = document.getElementById("panel");
+      const h = document.getElementById("p-handle");
       return {
         sel: window.__game.getState().selectedPlanet,
         hidden: el.classList.contains("hidden"),
-        folded: el.classList.contains("folded")
+        folded: el.classList.contains("folded"),
+        handleShown: getComputedStyle(h).display !== "none"
       };
     });
     check("点空白 → 取消选中", cleared.sel === null);
     check("面板收起", cleared.hidden === true);
-    check("★ 退场不重置折叠偏好（.hidden = 没选中，.folded = 内容叠着，两层各管各的）",
-      cleared.folded === true, "folded 留着 → 下次选中直接从收起态开始");
+    check("★ 退场不重置折叠偏好（.hidden = 没选中，.folded = 收到右边，两层各管各的）",
+      cleared.folded === true && cleared.handleShown === false,
+      "folded 留着 → 下次选中直接从收起态开始；把手跟着退场（点不出空面板）");
 
     /* 行星在公转，位置要现取（p0.pos 是本节开头量的，中间隔着截图与几次点击） */
     const again = await page.evaluate((n) => window.__game.planetScreenPos(n), p0.name);
     await page.mouse.click(again.x, again.y);     /* 真点击：重新选中同一颗 */
     await sleep(300);
     const fold2 = await readFold();
-    check("★ 折叠是视图偏好：重新选中仍保持收起、标题条随选中项改写",
-      !fold2.hiddenClass && fold2.folded && fold2.name === p0.name && !fold2.body.rows,
-      `标题「${fold2.name}」· 内容仍叠着`);
+    check("★ 折叠是视图偏好：重新选中仍收在屏外、把手回来、内容照常改写",
+      !fold2.hiddenClass && fold2.folded && fold2.offRight && fold2.handle.shown &&
+      fold2.name === p0.name && fold2.rowCount === KEY_NEED.length,
+      `标题「${fold2.name}」· 面板仍在屏外 · 17 行原样`);
 
-    await page.click("#p-fold");
-    await sleep(250);
+    await page.click("#p-handle");    /* 走把手这条入口，验它在屏幕最边缘也点得到 */
+    await sleep(450);
     const fold3 = await readFold();
-    check("★ 再点一次 → 展开复原（行星页 17 行回来了，钮回到「收起」）",
-      !fold3.folded && fold3.label === "收起" && fold3.body.rows && fold3.rowCount === KEY_NEED.length,
-      `${fold3.rowCount} 行 · 高 ${fold3.h}px`);
+    check("★ 点边缘把手 → 面板滑回来（整条入屏、17 行原样、把手退场、钮回「收起」）",
+      fold3.inside && !fold3.folded && fold3.rowCount === KEY_NEED.length &&
+      !fold3.handle.shown && fold3.label === "收起",
+      `右缘 ${fold3.right} ≤ ${fold3.W - 23} · ${fold3.rowCount} 行 · 高 ${fold3.h}px`);
 
     /* ---- 6. 单击恒星 → 恒星面板 ---- */
     console.log("\n[6] 单击恒星 → 恒星面板");
