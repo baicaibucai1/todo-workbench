@@ -43,6 +43,7 @@
   <div><span class="k">格子</span><span class="v" id="p-cell">—</span></div>
   <div><span class="k">经纬</span><span class="v" id="p-ll">—</span></div>
   <div><span class="k">海拔</span><span class="v" id="p-h">—</span></div>
+  <div><span class="k">水深</span><span class="v" id="p-depth">—</span></div>
   <div><span class="k">地表</span><span class="v" id="p-kind">—</span></div>
   <div class="dim" style="margin-top:6px">左侧是格子，右侧是连续采样值 —— 两者同源</div>
 </div>
@@ -54,8 +55,10 @@
   <div>③ 点击球面 → 拿到<span class="hi">格子 id</span> 与<span class="hi">连续海拔</span></div>
   <hr>
   <div>④ 调色在<span class="hi">片元逐像素</span>算 —— 海岸线不跟网格走锯齿</div>
+  <div>⑤ <span class="hi">海洋深度</span>等深着色：浅海青绿 → 深海墨蓝</div>
+  <div>⑥ <span class="hi">云层</span>是纯装饰层 —— 不参与拾取与几何</div>
   <hr>
-  <div class="dim">拖动旋转 · 滚轮缩放 · <b>1·2·3·4</b> 分段 24/48/96/192 · <b>G</b> 格子线</div>
+  <div class="dim">拖动旋转 · 滚轮缩放 · <b>1·2·3·4</b> 分段 24/48/96/192 · <b>G</b> 格子线 · <b>C</b> 云层</div>
   <div class="dim">点击球面 → 白点 + 该点朝外的法线</div>
 </div>
 
@@ -83,14 +86,26 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 /* ============================================================
  * cube-sphere 独立 demo（v0.11 探索件，不并入主工程）
  *
- * 三条设计决定：
- *  ① 高程是「方向的函数」 h(dir) —— 与格子无关，任意经纬都能连续问到值。
- *     格子只是这张连续场上的采样点（将来的城市就落在格子上）。
- *  ② 法线用解析梯度求（有限差分），不用 computeVertexNormals ——
- *     六个面各自成网格、边顶点是重复的，逐面算法线会在接缝处裂出一道亮线。
- *     改从连续场求梯度后，边的两侧天然一致，接缝消失。
- *  ③ 随机全部走 hash3i(种子, 坐标)，不碰任何全局随机流 —— 与主工程的
- *     「确定性守恒」同一条规矩：同一个种子永远长出同一颗星球。
+ * ★★ 架构契约（C 路线）—— 后续并入主工程、加城市机制，一切以这几条为准：
+ *
+ *  ① 连续场是唯一真值源：heightAt(dir) 是星球表面的唯一定义。
+ *    几何、法线、调色、拾取、将来的城市选址，全部从它派生；
+ *    格子上不存在第二份「平行真相」（格子只是它的采样点）。
+ *  ② 网格只管剪影：N 只影响几何轮廓（默认 48），颜色 / 边界 / 明暗
+ *    全在片元逐像素算 —— 分辨率升降不改变观感（实测见 _smoke）。
+ *  ③ 一切边界用连续量的等值线 + fwidth 抗锯齿（屏幕恒宽约 1px）。
+ *    禁止用离散量（0/1 标记、格子 id）的插值做过渡 —— 那会把边界
+ *    量化到格子尺度，就是锯齿本身。
+ *  ④ 法线从连续场求梯度（有限差分），不用 computeVertexNormals ——
+ *    六面网格边顶点重复，逐面算法线会在接缝处裂出一道亮线。
+ *  ⑤ 装饰层与物理分离：云层只进渲染管线，不参与拾取 / 几何 / 统计
+ *    （ray.intersectObject 只认星球本体）。将来的大气辉光同理。
+ *  ⑥ 随机全部走 hash3i(种子, 坐标)，不碰任何全局随机流 —— 与主工程
+ *    「确定性守恒」同一条规矩：同一种子永远长出同一颗星球。
+ *  ⑦ 坐标系纪律：命中点在世界系、marker 挂在星球局部系，转换点只有
+ *    worldToLocal() 一处；新增任何「贴地物」都必须走同一个转换。
+ *
+ *  完整契约、判据清单、调试口与并入欠账见 README §五·8。
  * ============================================================ */
 
 var SEED = 20261015;
@@ -222,9 +237,17 @@ var PLANET_FS = [
   "  c = mix(c, vec3(0.86, 0.88, 0.92), smoothstep(0.80, 0.89, t));",  /* 雪线 */
   "  return c * (1.0 - t * 0.35);",                             /* 高处压暗一点 */
   "}",
+  "/* 海洋深度（等深着色）：浅海青绿（大陆架）→ 深海墨蓝。",
+  "   深度取连续场的「原始高度」—— 顶点位置虽然被钳到海平面（海面必须是平的），",
+  "   但 aH 传下来的是未钳的 h，所以这里拿得到真实水深，逐像素连续。 */",
   "vec3 seaCol(float h) {",
-  "  float d = clamp((uSea - h) / max(uSea, 0.001), 0.0, 1.0);",   /* 越深越暗 */
-  "  return vec3(0.05 + 0.10 * (1.0 - d), 0.13 + 0.24 * (1.0 - d), 0.26 + 0.30 * (1.0 - d));",
+  "  float d = clamp((uSea - h) / max(uSea, 0.001), 0.0, 1.0);   /* 0 岸线 → 1 最深 */",
+  "  float t = pow(d, 0.62);      /* 浅段拉开：大陆架占的可见面积大，多给它动态范围 */",
+  "  vec3 c = vec3(0.30, 0.60, 0.62);",                                 /* 极浅 · 青绿 */
+  "  c = mix(c, vec3(0.12, 0.36, 0.56), smoothstep(0.05, 0.24, t));",   /* 浅海 */
+  "  c = mix(c, vec3(0.05, 0.18, 0.42), smoothstep(0.30, 0.60, t));",   /* 中海 */
+  "  c = mix(c, vec3(0.02, 0.06, 0.22), smoothstep(0.72, 0.96, t));",   /* 深海 · 墨蓝 */
+  "  return c;",
   "}",
   "void main() {",
   "  /* ★★ 海岸线：用「连续高度 vH 的等值线 h = uSea」定边界，配 fwidth 做 1 像素抗锯齿。",
@@ -256,9 +279,12 @@ var PLANET_FS = [
   "}"
 ].join("\n");
 
+/* 太阳方向（世界空间）：星球与云层共用同一个 —— 否则云和地表的光照对不上 */
+var SUN_DIR = norm3(3.2, 2.0, 2.6);
+
 var planetMat = new THREE.ShaderMaterial({
   uniforms: {
-    uSunDir: { value: norm3(3.2, 2.0, 2.6) },
+    uSunDir: { value: SUN_DIR },
     uSunCol: { value: new THREE.Color(1.0, 0.957, 0.878) },
     uFillDir: { value: norm3(-2.6, -1.2, -2.0) },
     uFillCol: { value: new THREE.Color(0.145, 0.180, 0.255) },
@@ -270,6 +296,86 @@ var planetMat = new THREE.ShaderMaterial({
   /* fwidth 属于标准导数扩展：WebGL2（three r159 的默认路径）原生有，
    * 万一落到 WebGL1 需要显式开这个开关，否则海岸线抗锯齿会整段编译失败。 */
   extensions: { derivatives: true }
+});
+
+/* ---------- 云层（纯装饰层） ----------
+ * ★ 契约⑤：云只进渲染管线 —— 不参与拾取、几何、统计；隐藏它与物理无关。
+ * 用一个比地表略大的球壳 + 片元里逐像素的 3D 噪声透明度：
+ *  - 噪声采样在「物体空间」（vDir），网格自转时图案跟着转，不会原地闪烁；
+ *  - 受光按世界空间法线与 SUN_DIR 算：白天侧亮白，夜侧暗灰蓝（保留微环境光）；
+ *  - 与星球各自独立自转（云略快），拉开「大气在动」的层次。
+ */
+var CLOUD_VS = [
+  "varying vec3 vWN;",       /* 世界空间法线（球面即径向）：受光用 */
+  "varying vec3 vDir;",      /* 物体空间方向：噪声采样（随网格自转） */
+  "void main() {",
+  "  vDir = normalize(position);",
+  "  vWN = normalize(mat3(modelMatrix) * normal);",
+  "  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);",
+  "}"
+].join("\n");
+
+var CLOUD_FS = [
+  "uniform vec3 uSunDir;",
+  "uniform float uCover;",     /* 覆盖率阈值：越大云越少 */
+  "uniform float uOpacity;",   /* 整体不透明度 */
+  "varying vec3 vWN; varying vec3 vDir;",
+  "",
+  "float h31(vec3 p) {",
+  "  p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));",
+  "  p *= 17.0;",
+  "  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));",
+  "}",
+  "float vn3(vec3 x) {",
+  "  vec3 i = floor(x), f = fract(x);",
+  "  f = f * f * (3.0 - 2.0 * f);",
+  "  float n000 = h31(i),               n100 = h31(i + vec3(1, 0, 0));",
+  "  float n010 = h31(i + vec3(0, 1, 0)), n110 = h31(i + vec3(1, 1, 0));",
+  "  float n001 = h31(i + vec3(0, 0, 1)), n101 = h31(i + vec3(1, 0, 1));",
+  "  float n011 = h31(i + vec3(0, 1, 1)), n111 = h31(i + vec3(1, 1, 1));",
+  "  float x00 = mix(n000, n100, f.x), x10 = mix(n010, n110, f.x);",
+  "  float x01 = mix(n001, n101, f.x), x11 = mix(n011, n111, f.x);",
+  "  return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);",
+  "}",
+  "float cfbm(vec3 p) {",
+  "  float a = 0.5, s = 0.0, n = 0.0;",
+  "  for (int i = 0; i < 4; i++) { s += a * vn3(p); n += a; a *= 0.5; p *= 2.13; }",
+  "  return s / n;",
+  "}",
+  "float cfbm2(vec3 p) {",     /* 细碎层：只叠 2 个八度，刻意便宜 */
+  "  float a = 0.5, s = 0.0, n = 0.0;",
+  "  for (int i = 0; i < 2; i++) { s += a * vn3(p); n += a; a *= 0.5; p *= 2.21; }",
+  "  return s / n;",
+  "}",
+  "void main() {",
+  "  vec3 q = vDir * 2.85;",
+  "  /* 主云团（4 八度）+ 细碎层（2 八度）：全 5+5 八度太贵（每像素 80 次哈希会掉帧），",
+  "     4+2 只有 48 次；细碎层是「云团 vs 大雾」的关键 —— 没有它，低八度噪声",
+  "     会连成整片大团块，把海面盖住。 */",
+  "  float n = cfbm(q) * 0.66 + cfbm2(q * 3.4 + 11.0) * 0.34;",
+  "  /* ★ 对比拉伸：多八度 fbm 的值挤在 0.5 附近（方差小），直接拿去做阈值",
+  "     整球都是「薄雾」而不是「云团」。拉伸后云核才够白、边缘才够清楚。 */",
+  "  n = clamp((n - 0.5) * 2.1 + 0.5, 0.0, 1.0);",
+  "  float a = smoothstep(uCover, uCover + 0.20, n);",
+  "  if (a < 0.004) discard;                                     /* 大片晴区直接丢弃 */",
+  "  vec3 wn = normalize(vWN);",
+  "  float dl = max(dot(wn, uSunDir), 0.0);",
+  "  vec3 col = mix(vec3(0.30, 0.34, 0.44), vec3(1.00, 0.99, 0.96), pow(dl, 0.7));",
+  "  gl_FragColor = vec4(col, a * uOpacity);",
+  "  #include <colorspace_fragment>",
+  "}"
+].join("\n");
+
+var cloudMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uSunDir: { value: SUN_DIR },
+    uCover: { value: 0.60 },
+    uOpacity: { value: 0.92 }
+  },
+  vertexShader: CLOUD_VS,
+  fragmentShader: CLOUD_FS,
+  transparent: true,
+  depthWrite: false
 });
 
 /* ---------- 构建 cube-sphere ---------- */
@@ -321,6 +427,14 @@ document.body.appendChild(renderer.domElement);
  * （uSunDir/uSunCol/uFillDir/uFillCol/uAmb）。留着内置灯对 ShaderMaterial 无效，
  * 只会让人误以为「改灯就能改亮度」。 */
 
+/* 云层半径：高出所有山峰（地形最高 h=1 → 地表半径 ×1.124）。
+ * ★ 装饰层，不参与拾取 —— 拾取始终 intersectObject(planet)。 */
+var CLOUD_R = R * (1 + RELIEF * 1.24);
+var clouds = new THREE.Mesh(new THREE.SphereGeometry(CLOUD_R, 96, 64), cloudMat);
+scene.add(clouds);
+var cloudsOn = true;
+function syncCloudVis() { clouds.visible = cloudsOn && !showWire; }
+
 var planet = null, wire = null, N = 48;
 function rebuild(n) {
   N = n;
@@ -342,6 +456,7 @@ function rebuild(n) {
   $("s-cells").textContent = r.cells.toLocaleString();
   $("s-tris").textContent = r.tris.toLocaleString();
   $("s-ms").textContent = r.ms + " ms";
+  syncCloudVis();       /* 线框模式（G）下云层退场，否则挡住格子线 */
 }
 var showWire = false;
 
@@ -422,6 +537,7 @@ window.addEventListener("keydown", function (e) {
   if (e.key === "3") rebuild(96);
   if (e.key === "4") rebuild(192);
   if (e.key === "g" || e.key === "G") { showWire = !showWire; rebuild(N); }
+  if (e.key === "c" || e.key === "C") { cloudsOn = !cloudsOn; syncCloudVis(); }
 });
 
 /* ---------- 拾取：射线命中 → 反算格子与连续海拔 ---------- */
@@ -483,6 +599,10 @@ function pick(cx, cy) {
   $("p-cell").textContent = cellId + " · 面内 " + gi + "," + gj;
   $("p-ll").textContent = lat.toFixed(1) + "° / " + lon.toFixed(1) + "°";
   $("p-h").textContent = hc.toFixed(4) + (water ? "（水下）" : "");
+  /* 水深：与等深着色同一份深度（连续场原始高度），满深 = 海平面高度差 SEA */
+  $("p-depth").textContent = water
+    ? (SEA - hc).toFixed(4) + " · 满深 " + Math.round(((SEA - hc) / SEA) * 100) + "%"
+    : "—（陆地）";
   $("p-kind").textContent = water ? "海洋" : (hc > SEA + 0.40 ? "高山" : hc > SEA + 0.16 ? "高地" : "平原/海岸");
 }
 
@@ -503,6 +623,9 @@ var spinning = true;                 /* 调试口：比对截图前先停自转�
 function loop() {
   requestAnimationFrame(loop);
   if (planet && spinning) planet.rotation.y += 0.0012;
+  /* 云层独立自转（比地表略快）：装饰层的运动与星球解耦，拉开大气层次。
+   * 停自转（调试口 setSpin(false)）时云也一起停 —— 截图比对才可比。 */
+  if (clouds.visible && spinning) clouds.rotation.y += 0.0017;
   if (wire) wire.rotation.y = planet.rotation.y;
   /* 标记是 planet 的子对象，自转自动跟随；这里不再单独转它（原来是装饰性自旋）。 */
   renderer.render(scene, camera);
@@ -517,8 +640,12 @@ loop();
 window.__demo = {
   ready: true,
   setSpin: function (v) { spinning = !!v; return spinning; },
+  setRotY: function (y) { planet.rotation.y = +y || 0; return planet.rotation.y; },
   rotationY: function () { return planet ? planet.rotation.y : 0; },
   setN: function (n) { n = clamp(n | 0, 8, 512); rebuild(n); return { N: N, cells: 6 * N * N, tris: 6 * 2 * N * N }; },
+  setClouds: function (v) { cloudsOn = !!v; syncCloudVis(); return { on: cloudsOn, visible: clouds.visible }; },
+  setCloudCover: function (v) { cloudMat.uniforms.uCover.value = clamp(+v, 0, 1); return cloudMat.uniforms.uCover.value; },
+  setCloudOpacity: function (v) { cloudMat.uniforms.uOpacity.value = clamp(+v, 0, 1); return cloudMat.uniforms.uOpacity.value; },
   /* 调试口：把选中标记投回屏幕坐标 —— 用来断言「标记就在鼠标点的位置」。
    * 这是回归里唯一能抓住「世界坐标摆进局部空间」这类坐标系错误的判据。 */
   markerScreen: function () {
@@ -540,7 +667,7 @@ window.__demo = {
     return { theta: orbit.theta, phi: orbit.phi, r: orbit.r };
   },
   heightAt: heightAt,
-  stats: function () { return { N: N, cells: 6 * N * N, sea: SEA, relief: RELIEF }; },
+  stats: function () { return { N: N, cells: 6 * N * N, sea: SEA, relief: RELIEF, clouds: cloudsOn }; },
   /* 连续查询口：给经纬，返回海拔（与点击拾取同源） */
   sample: function (latDeg, lonDeg) {
     var la = (latDeg * Math.PI) / 180, lo = (lonDeg * Math.PI) / 180;
