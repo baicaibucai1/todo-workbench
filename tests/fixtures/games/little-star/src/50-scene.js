@@ -246,9 +246,12 @@ function buildScene(sys) {
   // ---- 轨道环线（顶点色 = 亮度带：只有行星所在的弧段亮，其余退成暗线） ----
   sys.planets.forEach(function (p) {
     var pts = [], seg = 96;
+    /* ★ v0.14：椭圆轨道 —— 参数 E 扫出的椭圆 X = a(cosE − e)、Z = a√(1−e²)·sinE
+     * （恒星位于焦点；e=0 时退化成原来的圆，逐点相同）。 */
+    var bAx = p.orbit * Math.sqrt(1 - p.ecc * p.ecc), ecc = p.ecc;
     for (var i = 0; i <= seg; i++) {
       var a = (i / seg) * Math.PI * 2;
-      pts.push(new THREE.Vector3(Math.cos(a) * p.orbit, 0, Math.sin(a) * p.orbit));
+      pts.push(new THREE.Vector3((Math.cos(a) - ecc) * p.orbit, 0, bAx * Math.sin(a)));
     }
     var geo = new THREE.BufferGeometry().setFromPoints(pts);
     geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array((seg + 1) * 3), 3));
@@ -336,7 +339,8 @@ function buildScene(sys) {
       p._ring = null;
     }
 
-    // 卫星：已随 v0.5 移除（原 p._moon 分支删除）
+    // 卫星（v0.14 重新上线）：数据由 34-moons.js 的 genMoons 登记 —— 这里只装配派生视觉
+    buildMoonVisuals(p);
 
     // 选中效果：科幻括号（呼吸淡入，替代旧白色粗环）
     var sel = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -357,26 +361,61 @@ function buildScene(sys) {
     var mid = (orbits[gi] + orbits[gi + 1]) / 2, gap = orbits[gi + 1] - orbits[gi];
     if (gap > gapBest && mid > 24) { gapBest = gap; gapR = mid; }
   }
-  sys._belt = null; sys._beltCount = 0;
+  sys._belt = null; sys._beltCount = 0; sys._beltRocks = null;
   if (gapR > 0) {
+    /* ★ v0.14：陨石带重做（用户：「优化陨石带的陨石效果」）——
+     *   ① 随机走**专属流**：场景装配原是 884 锚点之后唯一还在消耗主 RNG 的
+     *      地方（150 块 × 7 抽）。抽数变化本身无害（锚点之后没人对账），但
+     *      「场景不碰主序列」是更干净的不变量，与外围行星 / 卫星同一口径。
+     *   ② 形状不再千篇一律：6 种**径向畸变**的岩体。畸变按**位置**哈希算
+     *      （不用顺序流）：同一个角在多张面里各有一份顶点副本，只有按位置
+     *      算才能让它们同步位移 —— 按顺序流会把接缝撕开（岩石不能漏气）。
+     *   ③ 尺寸幂律：大量小碎石 + 少数大块（pow 2.2 重尾），不再粗细匀称。
+     *   ④ **差速公转**：每块按自己的半径走开普勒序（内快外慢），带子会缓慢
+     *      流动、剪切成弧，不再是整组刚体绕圈；顺带每块慢速自翻（tumble）。
+     * 性能口径不变：150 网格 / 6 几何 / 3 材质（与重做前同量级 draw call），
+     * 每帧 150 次三角函数 + 3 个欧拉角增量，远低于一帧预算。 */
     var belt = new THREE.Group();
     var beltMats = [
       new THREE.MeshLambertMaterial({ color: 0x8a8578 }),
       new THREE.MeshLambertMaterial({ color: 0x6f6a60 }),
       new THREE.MeshLambertMaterial({ color: 0x9a9488 })
     ];
-    var rockGeo = new THREE.DodecahedronGeometry(0.24, 0);
-    var count = 150;
+    var br = seedStream(EXTRA_SEED, 0x8E17B0A5);
+    var VARIANTS = 6, rockGeos = [];
+    for (var v = 0; v < VARIANTS; v++) {
+      var g0 = new THREE.DodecahedronGeometry(0.24, 0);
+      var pos = g0.attributes.position;
+      for (var vi = 0; vi < pos.count; vi++) {
+        var vx = pos.getX(vi), vy = pos.getY(vi), vz = pos.getZ(vi);
+        var hv = Math.sin(vx * 127.1 + vy * 311.7 + vz * 74.7 + v * 19.7) * 43758.5453;
+        var kk = 1 + (hv - Math.floor(hv) - 0.5) * 0.5;
+        pos.setXYZ(vi, vx * kk, vy * kk, vz * kk);
+      }
+      g0.computeVertexNormals();                 /* 非索引几何 → 逐面法线（裂面感是天生的棱角） */
+      rockGeos.push(g0);
+    }
+    var count = 150, rocks = [];
     for (var bi = 0; bi < count; bi++) {
-      var rock = new THREE.Mesh(rockGeo, pick(beltMats));
-      var ra = rand(0, Math.PI * 2), rr = gapR + rand(-2.2, 2.2);
-      rock.position.set(Math.cos(ra) * rr, rand(-0.9, 0.9), Math.sin(ra) * rr);
-      rock.rotation.set(rand(0, 3), rand(0, 3), rand(0, 3));
-      var sc = rand(0.5, 1.5);
-      rock.scale.set(sc, sc * rand(0.6, 1), sc);
+      var rock = new THREE.Mesh(rockGeos[Math.floor(br() * VARIANTS)], beltMats[Math.floor(br() * 3)]);
+      var rr = gapR + (br() - 0.5) * 5.2;                  /* 径向铺满整道间隙 */
+      var sc = 0.25 + Math.pow(br(), 2.2) * 1.25;          /* 幂律：小碎为主、大块稀少 */
+      rock.scale.set(sc, sc * (0.6 + br() * 0.4), sc);
+      rock.rotation.set(br() * 3, br() * 3, br() * 3);
+      var rk = {
+        m: rock,
+        a: br() * Math.PI * 2,
+        r: rr,
+        y: (br() - 0.5) * 1.1,                              /* 盘很薄（与行星盘一致） */
+        sp: 0.022 * Math.pow(gapR / rr, 1.5),               /* 差速：内快外慢（开普勒序） */
+        tx: (br() - 0.5) * 0.22, ty: (br() - 0.5) * 0.22, tz: (br() - 0.5) * 0.22
+      };
+      rock.position.set(Math.cos(rk.a) * rr, rk.y, Math.sin(rk.a) * rr);
       belt.add(rock);
+      rocks.push(rk);
     }
     sys._belt = belt;
+    sys._beltRocks = rocks;
     sys._beltCount = count;
     systemGroup.add(belt);
   }
@@ -461,33 +500,36 @@ function updateScene(sys, dt) {
   syncFocusSurface();
 
   sys.planets.forEach(function (p) {
-    /* ★ v0.12.2：聚焦档 = 「观察 / 操作地表」的模式 —— 冻结的是「**相对镜头
-     * 的姿态**」：自转与云漂移停住（玩家对准的面不转走）；**公转不冻** ——
-     * 星球继续在轨道上运动，镜头跟随（target lerp）随它一起运动（背景星空
-     * 缓缓移动，世界是活的；晨昏线随之自然推移）。
-     * ★ 不是「世界定格」：上一版把公转也冻住，画面完全静止 —— 那不对。
-     * 冻结只是**暂停累加**、不改写任何相位，因此进出聚焦都没有跳变；
-     * 判定与相机模式同帧同源。 */
-    var frozen = FSM_CAMERA.is("focus") && G.focusPlanet === p;
-    p._spinFrozen = frozen;
-
+    /* ★ v0.14：聚焦**不再冻结自转** —— 用户反馈「行星在被聚焦时完全停止了自转」，
+     * 那不对：世界永远在转。自转照常推进；「对准的面不转走」改由**镜头一侧**
+     * 解决 —— 相机以同行星自转的角速度**同向**绕行（同步卫星视角，99-boot 每帧读
+     * p._rotDelta 后 orbit.theta **同向**等量推进 —— 方向写反会让面以 2 倍
+     * 自转速度滑走，见 99-boot 的修正注）。于是面在画面上稳住，而自转可见于
+     * 星空扫过 / 日下点推移 / 云层漂移 —— 既没停转，也不丢「对准的面」。 */
     p.angle += p.orbitSpeed * eff;
-    var ci = Math.cos(p.incl), si = Math.sin(p.incl);
-    var x = Math.cos(p.angle) * p.orbit, z0 = Math.sin(p.angle) * p.orbit;
-    p._group.position.set(x, z0 * si, z0 * ci);
-
-    /* 自转：潮汐锁定的行星把**同一面**永远朝向恒星，贴图的日下点画在
-     * u=0.25 —— 初始相位在 mesh 创建处对齐 -(angle + π/2)，此后每帧按
-     * 「公转角速度」增量推进（增量式 = 冻结语义连续，旧的全量重算式在
-     * 冻结后恢复会整段跳相位）。未锁定的行星按自转周期转动。 */
-    if (!frozen) {
-      if (p.tidal) {
-        p._mesh.rotation.y -= p.orbitSpeed * eff;
-      } else {
-        p._mesh.rotation.y += p.spin * eff;
+    /* ★ v0.14：椭圆轨道 —— M 均匀推进（开普勒均近点角），位置由 E − e·sinE = M
+     * 解出（牛顿迭代 3 步）：x = a(cosE − e)（恒星位于焦点）、z = a√(1−e²)·sinE。
+     * e=0 时 E ≡ M，位置与旧式**逐字节一致** —— 既有行星的轨道分毫不动。 */
+    var ox = Math.cos(p.angle) * p.orbit, oz = Math.sin(p.angle) * p.orbit;
+    p._E = p.angle;
+    if (p.ecc > 0) {
+      var E = p.angle;
+      for (var it = 0; it < 3; it++) {
+        E -= (E - p.ecc * Math.sin(E) - p.angle) / (1 - p.ecc * Math.cos(E));
       }
+      p._E = E;
+      ox = (Math.cos(E) - p.ecc) * p.orbit;
+      oz = Math.sqrt(1 - p.ecc * p.ecc) * Math.sin(E) * p.orbit;
     }
-    if (p._cloud && !frozen) p._cloud.rotation.y += p.spin * 1.35 * eff;
+    var ci = Math.cos(p.incl), si = Math.sin(p.incl);
+    p._group.position.set(ox, oz * si, oz * ci);
+
+    /* 自转：照常推进（不再有 frozen 分支）。潮汐锁定行星仍按「公转角速度」
+     * 增量式推进（初始相位在 mesh 创建处对齐 -(angle + π/2)）。 */
+    var dRot = p.tidal ? -p.orbitSpeed * eff : p.spin * eff;
+    p._mesh.rotation.y += dRot;
+    p._rotDelta = dRot;              /* 镜头同速随动的口径（99-boot 每帧读） */
+    if (p._cloud) p._cloud.rotation.y += p.spin * 1.35 * eff;
 
     /* 聚焦 = 沉浸观察地表：云与大气雾按相机模式淡出（否则半透明白雾
      * 正好糊在要看的表面上 —— v0.11 首版的「聚焦仍糊」就是它）。
@@ -503,12 +545,14 @@ function updateScene(sys, dt) {
 
     /* 聚焦地表（v0.12）：跟随贴图网格的同一自转；云壳独立漂移（比地表略快
      * 1.35 倍 —— 与贴图云同一口径），拉开「大气在动」的层次。
-     * ★ v0.12.1：聚焦时云壳同冻 —— 装饰层也要「相对静止」，云在漂，
-     * 玩家看到的「面」就还在变。 */
+     * ★ v0.14：云壳不再冻结 —— 云在漂正是「世界在转」的可见信号之一。 */
     if (p._cs && p._cs.group.visible) {
       p._cs.mesh.rotation.y = p._mesh.rotation.y;
-      if (p._cs.cloud && !frozen) p._cs.cloud.rotation.y += p.spin * 1.35 * eff;
+      if (p._cs.cloud) p._cs.cloud.rotation.y += p.spin * 1.35 * eff;
     }
+
+    /* ★ v0.14：卫星环绕推进（34-moons.js；无卫星的行星零开销） */
+    updateMoons(p, eff);
 
     // 行星选中：科幻括号（呼吸淡入）
     if (p._selRing) {
@@ -539,6 +583,17 @@ function updateScene(sys, dt) {
     }
   });
 
-  if (sys._belt) sys._belt.rotation.y += 0.018 * eff;
+  /* 小行星带（v0.14）：每块差速公转 + 慢速自翻 —— 带子会缓慢流动、剪切成弧，
+   * 不再是整组刚体绕圈（150 块的三角函数远低于一帧预算）。 */
+  if (sys._beltRocks) {
+    for (var ri = 0; ri < sys._beltRocks.length; ri++) {
+      var rk = sys._beltRocks[ri];
+      rk.a += rk.sp * eff;
+      rk.m.position.set(Math.cos(rk.a) * rk.r, rk.y, Math.sin(rk.a) * rk.r);
+      rk.m.rotation.x += rk.tx * eff;
+      rk.m.rotation.y += rk.ty * eff;
+      rk.m.rotation.z += rk.tz * eff;
+    }
+  }
 }
 

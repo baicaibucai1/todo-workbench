@@ -35,22 +35,46 @@ function projectToNdc(v3) {
   return { x: v.x, y: v.y, z: v.z };
 }
 
+var _mwTmp = new THREE.Vector3();   /* pickAt 的卫星世界坐标临时量（34-moons.js 的口径） */
 function pickAt(cx, cy) {
   var bp = null, bpd = 34;
   G.sys.planets.forEach(function (pl) {
-    var q = pl._group.position.clone().project(camera);
+    var q = projectToNdc(pl._group.position);
+    if (q.z > 1) return;                      /* 相机背后（v0.14 外围行星可飞出默认视距）：看不见，也不占拾取位 */
     var px = (q.x * 0.5 + 0.5) * window.innerWidth, py = (-q.y * 0.5 + 0.5) * window.innerHeight;
     var d = Math.hypot(px - cx, py - cy);
     if (d < bpd) { bpd = d; bp = pl; }
   });
+  /* ★ v0.14：卫星拾取（嵌套聚焦的口子）—— 只有「当前聚焦目标所在系统」的卫星
+   * 可点：聚焦行星时双击它的卫星 → 聚焦卫星；不聚焦时卫星不占拾取位，全景的
+   * 既有行为一帧不变。阈值按视半径自适应（14px 下限），与母星的 34px 分开
+   * 计分、谁离点击点近谁赢；被母星挡住的（背对半球）不参与。 */
+  var bm = null, bmd = Infinity;
+  var f = G.focusPlanet;
+  var host = f ? (f._isMoon ? f.parent : f) : null;
+  if (host && host._moons && host._moons.length) {
+    var centre = host._group.position, c = camera.position;
+    for (var i = 0; i < host._moons.length; i++) {
+      var m = host._moons[i];
+      if (!m._group) continue;
+      var w = moonWorldPos(m, _mwTmp);
+      var qm = projectToNdc(w);
+      if (qm.z > 1) continue;                              /* 相机背后 */
+      var rx = w.x - centre.x, ry = w.y - centre.y, rz = w.z - centre.z;
+      var vx = c.x - centre.x, vy = c.y - centre.y, vz = c.z - centre.z;
+      if (rx * vx + ry * vy + rz * vz <= 0) continue;      /* 背对母星：被挡着 */
+      var mx = (qm.x * 0.5 + 0.5) * window.innerWidth, my = (-qm.y * 0.5 + 0.5) * window.innerHeight;
+      var dm = Math.hypot(mx - cx, my - cy);
+      if (dm < Math.max(14, apparentRadius(m.size, c.distanceTo(w)) * 1.15) && dm < bmd) { bmd = dm; bm = m; }
+    }
+  }
+  if (bm && (!bp || bmd < bpd)) return { type: "moon", moon: bm };
   if (bp) return { type: "planet", planet: bp };
   // 恒星：按屏幕投影半径估算可点区域
   var sp = projectToScreen(_zeroV);
   var Rg = G.sys.starType.size * 2.1;
   var dist = camera.position.length();
-  var tanH = Math.tan((camera.fov * Math.PI) / 360);
-  var pxr = (Rg * 1.05) * ((window.innerHeight / 2) / Math.max(dist * tanH, 0.001));
-  if (Math.hypot(sp.x - cx, sp.y - cy) < Math.max(pxr, 26)) return { type: "star" };
+  if (Math.hypot(sp.x - cx, sp.y - cy) < Math.max(apparentRadius(Rg, dist) * 1.05, 26)) return { type: "star" };
   return null;
 }
 
@@ -100,7 +124,12 @@ function setupInput() {
   }, { passive: false });
   canvas.addEventListener("dblclick", function (ev) {
     var hit = pickAt(ev.clientX, ev.clientY);
-    if (hit && hit.type === "planet") {
+    if (hit && hit.type === "moon") {
+      /* ★ v0.14：嵌套聚焦 —— 行星聚焦档里双击它的卫星 → 聚焦卫星
+       * （选中先落到母行星：面板与选中效果始终给得出语境）。 */
+      selectPlanet(hit.moon.parent);
+      enterFocus(hit.moon);
+    } else if (hit && hit.type === "planet") {
       selectPlanet(hit.planet);
       enterFocus(hit.planet);        /* v0.10：双击行星 = 聚焦（贴近档） */
     } else {
@@ -159,6 +188,8 @@ function handleClick(cx, cy) {
   if (siteModeOn() && handleSiteClick(cx, cy)) return;
   var hit = pickAt(cx, cy);
   if (hit && hit.type === "planet") selectPlanet(hit.planet);
+  /* ★ v0.14：单击卫星 = 选中母行星（卫星是母行星的条目，面板给语境） */
+  else if (hit && hit.type === "moon") selectPlanet(hit.moon.parent);
   else if (hit && hit.type === "star") selectStar();
   else clearSelection();
 }

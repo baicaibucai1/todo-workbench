@@ -104,6 +104,8 @@ function planetPhysics(sysName, i, d, star) {
     bulk: bulk, type: type,
     /* 轨道 */
     orbit: d.orbit, au: au, incl: (d.iR - 0.5) * 0.28, angle: d.pR * Math.PI * 2,
+    /* ★ v0.14：偏心率（0 = 圆轨道；>0 走椭圆解算 —— 恒星位于椭圆的一个焦点） */
+    ecc: 0,
     periodDays: periodDays, vOrbit: vOrbit,
     orbitSpeed: VIS_ORBIT_K / Math.pow(d.orbit, 1.5),
     /* 组分 */
@@ -126,11 +128,42 @@ function genSystem() {
   var starType = weightedPick(STAR_TYPES);
   G._starRoll = +weightedPick.lastR.toFixed(6);   // 恒星级抽值（确定性回归用）
   G._starDraws = rngDraws;                        // 抽到星型时的累计抽数（序列锚点）
-  return {
-    name: name,
-    starType: starType,
-    planets: genPlanets(name, irand(5, 7), starType)
-  };
+  var planets = genPlanets(name, irand(5, 7), starType);
+  /* ★ v0.14：外围增补行星（用户：测试星系行星太少了）—— 走**专属流**，不消耗主序列。
+   * 主序列在星型抽出之后还要被「发源地 / 星海 / 陨石带」连续消费：在中间多抽
+   * 一格，后面全部整体错位（确定性守恒，见 README §四）。专属流与主种子同源
+   * （10-core 的 mulberry32(20261014)）—— 同一次抽签永远长出同一个星系。 */
+  planets = planets.concat(genExtraPlanets(name, planets.length, starType));
+  /* ★ v0.14：卫星登记（每颗行星一份；细节走本行星派生流 —— 同样不碰主序列） */
+  planets.forEach(function (p) { genMoons(p); });
+  return { name: name, starType: starType, planets: planets };
+}
+
+/* ---- v0.14：外围增补行星（3 颗，含椭圆轨道）----
+ * 抽值口径与 genPlanets 完全一致（同一组字段，直接喂 planetPhysics），
+ * 物理上与被主序列抽出的行星没有任何差别；唯一的不同是随机来源。
+ * 类型取向：前两颗强制岩质（其一高偏心 ——「椭圆轨道行星」的确定性样本），
+ * 第三颗强制巨行星（外带巨行星，与行星盘模型一致，也当卫星的宿主）。 */
+var EXTRA_SEED = 20261014;                    /* 与主种子同源（10-core 的 mulberry32(20261014)） */
+function genExtraPlanets(sysName, start, star) {
+  var xr = seedStream(EXTRA_SEED, 0x9E4B0A17);
+  var out = [];
+  for (var k = 0; k < 3; k++) {
+    var d = {
+      orbit: 16 + (start + k) * 9.5 + (xr() - 0.5) * 2.4,   // 顺势外延（间距与内侧一致）
+      rR: xr(), wR: xr(), mR: xr(), aR: xr(), cR: xr(),
+      gR: k === 2 ? 0.02 : 0.88,                            // 岩 · 岩 · 巨
+      tR: xr(), sR: xr(), iR: xr(), pR: xr(), sdR: xr()
+    };
+    var p = planetPhysics(sysName, start + k, d, star);
+    /* 偏心率：一颗轻椭圆 + 一颗显著椭圆（近日掠过 / 远日慢行）+ 一颗近圆 */
+    p.ecc = k === 0 ? +(0.08 + xr() * 0.08).toFixed(4)
+      : k === 1 ? +(0.24 + xr() * 0.10).toFixed(4)
+        : +(xr() * 0.05).toFixed(4);
+    if (k === 2) p._extraTail = true;                       // 最外一颗（genMoons 的卫星宿主之一）
+    out.push(p);
+  }
+  return out;
 }
 
 /* ================= three.js 基础 ================= */

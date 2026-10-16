@@ -10,9 +10,25 @@ function loop(tms) {
 
   updateScene(G.sys, dt);
 
+  /* ★ v0.14：聚焦档「镜头与目标同速绕行」—— 自转**永不冻结**（世界永远在转），
+   * 「对准的面不转走」由镜头一侧兑现：每帧把目标自转的增量等量补给相机方位角
+   * （同步卫星视角）。面在画面上稳住，而自转可见于星空扫过 / 日下点推移 /
+   * 云层漂移 —— 既没停转，也不丢「对准的面」。（v0.12.1 的「冻结自转」把
+   * 世界摁停了，用户实测反馈「行星被聚焦时完全停止了自转」—— 那条路已废。）
+   * 只作用于聚焦档：中距离跟随本来就该看见行星在转。
+   * ★★ 方向（v0.14.1 修正，初版写反了）：是 **θ += rotDelta**（同向），不是 −=。
+   * 推导：three.js 的 rotation.y += β 绕 +Y 正向转 → 面上固定点的世界方位
+   * = α + β；屏幕上该点的水平角 = 点方位 − 相机方位 θ。要它稳，必须
+   * dθ ≡ dβ ≡ rotDelta。写成 −= 时 θ 与 rotY 反向等量，屏幕上点以 **2 倍
+   * 自转速度**滑走（实测 ~69px/s）—— [23] 的聚落点击踩中它：选点时是可建
+   * 陆地，0.7s 后滑进海里（「不可建：海面」），贴地偏差 24.7px。 */
+  if (FSM_CAMERA.is("focus") && G.focusPlanet && G.focusPlanet._rotDelta) {
+    orbit.theta += G.focusPlanet._rotDelta;
+  }
+
   // 相机：聚焦行星时平滑跟随；半径趋近目标值（双击聚焦/拉远都是平滑过渡）
   if (G.focusPlanet && G.focusPlanet._group) {
-    var fpos = G.focusPlanet._group.position;
+    var fpos = focusWorldPos(_fwTmp);      /* ★ v0.14：目标可能是卫星（世界坐标，34-moons.js） */
     var focusMode = FSM_CAMERA.is("focus");
     /* 聚焦档跟得更紧：贴近时行星公移一点、视角变化就很大（dt*5.5 vs 中距离 3.2） */
     var k = focusMode ? 5.5 : 3.2;
@@ -21,12 +37,22 @@ function loop(tms) {
        * = v/k（实测内圈行星 0.44 units ≈ 屏幕上 ~70px 的缓慢绕圈，行星不在
        * 画面正中）。目标点前移 v/k 后稳态误差归零：行星钉住画面中心，画面里
        * 在动的只有背景星空 ——「镜头随星球一起运动」。
-       * v 用上一帧位移：与分母 dt*k 同源相除，dt 数学上抵消、无帧率噪声。 */
+       * v 用上一帧位移：与分母 dt*k 同源相除，dt 数学上抵消、无帧率噪声。
+       * ★ v0.14：再补**二阶项**（向心加速度 a = −v²/R³·r，R = 公转半径）——
+       * 一阶前馈只对匀速直线目标严格成立，圆周运动还剩 a/k² 的残差
+       * （实测 ~6px，[23] 的聚落点击正踩它：站点在海岸附近时，6px 滑移
+       * 就把落点从陆地送进海里 ——「不可建：海面」）。二阶补齐后行星
+       * 钉在中心到亚像素级，「面稳」才是真稳（ecc>0 的行星速度真变，
+       * 二阶是近似，但残差从一阶量级掉到三阶）。 */
       var dtk = Math.max(dt * k, 1e-4);
+      var vx = (fpos.x - _fprev.x) / dtk, vy = (fpos.y - _fprev.y) / dtk, vz = (fpos.z - _fprev.z) / dtk;
+      var R2 = fpos.x * fpos.x + fpos.y * fpos.y + fpos.z * fpos.z;
+      var v2 = vx * vx + vy * vy + vz * vz;
+      var accK = R2 > 1e-6 ? -v2 / (R2 * Math.sqrt(R2) * (k * k)) : 0;
       _fLead.set(
-        fpos.x + (fpos.x - _fprev.x) / dtk,
-        fpos.y + (fpos.y - _fprev.y) / dtk,
-        fpos.z + (fpos.z - _fprev.z) / dtk
+        fpos.x + vx + accK * fpos.x,
+        fpos.y + vy + accK * fpos.y,
+        fpos.z + vz + accK * fpos.z
       );
       orbit.target.lerp(_fLead, Math.min(1, dt * k));
     } else {
@@ -93,7 +119,10 @@ function boot() {
         starRoll: G._starRoll,
         rngDraws: G._starDraws,          // 确定性锚点：抽到星型时主 RNG 已抽次数
         planets: G.sys.planets.map(function (p) {
-          return { name: p.name, type: p.type.name, size: +p.size.toFixed(2), orbit: +p.orbit.toFixed(1) };
+          return {
+            name: p.name, type: p.type.name, size: +p.size.toFixed(2), orbit: +p.orbit.toFixed(1),
+            ecc: p.ecc, moons: (p._moons || []).length      /* ★ v0.14：偏心率 + 卫星数 */
+          };
         }),
         selectedPlanet: G.selectedPlanet ? G.selectedPlanet.name : null,
         focus: G.focusPlanet ? G.focusPlanet.name : null
@@ -107,7 +136,7 @@ function boot() {
         textured: s.planets.filter(function (p) { return !!(p._mesh && p._mesh.material.map); }).length,
         clouds: s.planets.filter(function (p) { return !!p._cloud; }).length,
         rings: s.planets.filter(function (p) { return !!p._ring; }).length,
-        moons: s.planets.filter(function (p) { return !!p._moon; }).length,
+        moons: G.sys.planets.reduce(function (n, p) { return n + (p._moons ? p._moons.length : 0); }, 0),
         atmo: s.planets.filter(function (p) { return !!p._atmo; }).length,
         beltRocks: s._beltCount || 0,
         hzLines: (s._hzLines || []).length,
@@ -126,6 +155,8 @@ function boot() {
         phi: +orbit.phi.toFixed(3),
         mode: FSM_CAMERA.get(),
         focus: G.focusPlanet ? G.focusPlanet.name : null,
+        /* ★ v0.14：聚焦目标是不是卫星（嵌套聚焦）—— 面板 / HUD / 判据都读这一个口 */
+        focusIsMoon: !!(G.focusPlanet && G.focusPlanet._isMoon),
         /* 距地表读数（推导量，与 HUD 同源）：(radius - 行星半径) / 行星半径 */
         surface: G.focusPlanet ? +((orbit.radius - G.focusPlanet.size) / G.focusPlanet.size).toFixed(2) : null,
         minR: orbit.minR,
@@ -135,8 +166,14 @@ function boot() {
     planetScreenPos: function (name) {
       for (var i = 0; i < G.sys.planets.length; i++) {
         if (G.sys.planets[i].name === name) {
-          var p = projectToScreen(G.sys.planets[i]._group.position);
-          return { x: Math.round(p.x), y: Math.round(p.y) };
+          var q = projectToNdc(G.sys.planets[i]._group.position);
+          return {
+            x: Math.round((q.x * 0.5 + 0.5) * window.innerWidth),
+            y: Math.round((-q.y * 0.5 + 0.5) * window.innerHeight),
+            /* NDC 深度：>1 = 在相机背后（v0.14 外围行星可飞出默认视距 92，
+             * 那时它的屏幕投影是镜像的 —— 拾取 / 找空白点都要先问这一问） */
+            z: +q.z.toFixed(3)
+          };
         }
       }
       return null;
@@ -174,6 +211,48 @@ function boot() {
       return false;
     },
     unfocus: unfocusCamera,
+    /* ---- v0.14 卫星观测点 ----
+     * moons(name)：某行星的全部卫星 —— 数据（尺寸 / 轨道半径 / 角速度 / 相位）、
+     * 世界坐标与屏幕坐标、网格自转相位、以及「是否在母星朝向相机的半球」
+     * （背面那颗被母星挡着，拾取与可见性判定都读它）。 */
+    moons: function (name) {
+      var p = null, i;
+      for (i = 0; i < G.sys.planets.length; i++) {
+        if (G.sys.planets[i].name === name) { p = G.sys.planets[i]; break; }
+      }
+      if (!p || !p._moons) return null;
+      return p._moons.map(function (m) {
+        var w = moonWorldPos(m, new THREE.Vector3());
+        var s = projectToScreen(w);
+        var c = camera.position, ce = p._group.position;
+        var rx = w.x - ce.x, ry = w.y - ce.y, rz = w.z - ce.z;
+        var vx = c.x - ce.x, vy = c.y - ce.y, vz = c.z - ce.z;
+        return {
+          name: m.name, parent: p.name,
+          size: +m.size.toFixed(3), a: +m.a.toFixed(3), speed: +m.speed.toFixed(3),
+          angle: +m.angle.toFixed(4), incl: +m.incl.toFixed(3),
+          dist: +w.distanceTo(ce).toFixed(3),              /* 与母星心的距率（应 ≈ a） */
+          rotY: m._mesh ? +m._mesh.rotation.y.toFixed(6) : null,
+          world: { x: +w.x.toFixed(3), y: +w.y.toFixed(3), z: +w.z.toFixed(3) },
+          screen: { x: Math.round(s.x), y: Math.round(s.y) },
+          front: rx * vx + ry * vy + rz * vz > 0            /* 母星朝向相机的半球（未被挡住） */
+        };
+      });
+    },
+    /* 聚焦一颗卫星（嵌套聚焦）—— 与 focusPlanetByName 同构：先选中母行星
+     * （面板给语境），再进聚焦。 Esc 回母行星聚焦档（exitFocus）。 */
+    focusMoonByName: function (moonName) {
+      for (var i = 0; i < G.sys.planets.length; i++) {
+        var ms = G.sys.planets[i]._moons || [];
+        for (var k = 0; k < ms.length; k++) {
+          if (ms[k].name === moonName) {
+            selectPlanet(G.sys.planets[i]);
+            return enterFocus(ms[k]);
+          }
+        }
+      }
+      return false;
+    },
     planetMesh: function (name) {          /* 调试：真网格引用（getState 是快照，摸不到材质） */
       for (var i = 0; i < G.sys.planets.length; i++) {
         if (G.sys.planets[i].name === name) return G.sys.planets[i]._mesh;
@@ -240,6 +319,10 @@ function boot() {
           return {
             name: p.name, typeId: p.type.id, typeName: p.type.name, bulk: p.bulk,
             seed: p.seed, orbit: +p.orbit.toFixed(3),
+            /* ★ v0.14：椭圆轨道三件套 —— ecc 偏心率 / angle 均近点角 M /
+             * E 偏近点角（ecc=0 时 E ≡ M；由 50-scene 的牛顿迭代解出） */
+            ecc: p.ecc, angle: +p.angle.toFixed(6),
+            E: p.ecc > 0 && p._E !== undefined ? +p._E.toFixed(6) : null,
             au: p.au, teq0: p.teq0, teq: p.teq, tempSurf: p.tempSurf,
             albedo: p.type.albedo, green: p.type.green,
             rE: p.rE, mE: p.mE, radiusKm: p.radiusKm, dens: p.dens, g: p.g, vEsc: p.vEsc,
@@ -377,10 +460,13 @@ function boot() {
           texMs: _cloudTexMs
         } : null,
         meshVisible: p._mesh.visible,
-        /* ★ v0.12.1：聚焦静止对账点 —— meshRotY = 自转相位（读贴图网格，退出聚焦
-         * 后仍持续演进，是自转的真值）；frozen = 聚焦冻结是否生效（50-scene 每帧写）。 */
+        /* meshRotY = 自转相位（读贴图网格，退出聚焦后仍持续演进，是自转的真值）；
+         * rotDelta = 自转增量（50-scene 每帧写）—— 聚焦档镜头同速随动的口径。
+         * 自转**永不冻结**：v0.12.1 的「聚焦冻结自转」已废（世界永远在转，
+         * 「对准的面不转走」由镜头以同角速度绕行兑现，见 99-boot 的 loop），
+         * 所以 v0.12.1 的 frozen 字段随那套方案一起退役。 */
         meshRotY: +p._mesh.rotation.y.toFixed(6),
-        frozen: !!p._spinFrozen,
+        rotDelta: +p._rotDelta.toFixed(6),
         sunDir: cs ? [
           +cs.mat.uniforms.uSunDir.value.x.toFixed(3),
           +cs.mat.uniforms.uSunDir.value.y.toFixed(3),

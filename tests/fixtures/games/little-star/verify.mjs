@@ -1,10 +1,10 @@
 /**
- * Little Star —— Web 端真机验证（v0.13.0：源码拆分 src/ 20 片段 + 拼装器 build.mjs）
+ * Little Star —— Web 端真机验证（v0.14.0：21 片段 + 卫星系统 / 椭圆轨道 / 聚焦随动）
  *
- * 覆盖（25 节，与下方 `/* ---- N. ... ---- *\/` 区块注释一一对应）：
+ * 覆盖（26 节，与下方 `/* ---- N. ... ---- *\/` 区块注释一一对应）：
  *   0. 工程自检：game.js 是否等于 src/ 片段的拼装结果（不需要浏览器）
  *   1. 加载 / WebGL / rAF 渲染调用
- *   2. 场景精简（v0.5）：飞船 / 卫星 / 空间站 / 防务平台 / 彗星全部下线
+ *   2. 场景构成（v0.14 起 8~10 颗行星 + 卫星系统；飞船 / 空间站 / 防务平台 / 彗星仍全部下线）
  *   3. 默认界面：面板隐藏 · 左上角工具条 · 指导书默认关闭
  *      + ★ 黑白硬边审计（UI 本体 R=G=B 无彩色 · 圆角统一 · 边框 ≥ 2px）
  *   4. 交互：拖拽旋转 · 滚轮缩放
@@ -41,6 +41,8 @@
  *      ④ 资源页真点击 + 内容与快照同源 + 15 星型标签闭包扫描 + 重载确定性
  *  20. ★ 聚焦镜头（v0.10 新增）：相机第三态 focus ——
  *      ★ v0.12：聚焦档表面表示换成立方球连续地表（贴图升级路径退役，见 22）
+ *      ★ v0.14：聚焦**不冻自转** —— 世界永远在转，「对准的面不转走」由镜头
+ *        以同角速度绕行兑现（同步卫星视角：Δθ ≡ −ΔrotY，见节内三条运动判据）
  *      ① 双击行星 → focus：距离 = 行星半径 × 3.6（clamp 1.6~9.4）+ minR 放宽 + HUD 现身
  *      ② 「镜头内基本全是星球」：行星屏幕投影直径 ≥ 视口高 50%（真投影量取）
  *      ③ 距地表读数随缩放实时更新（推导量，与 cameraState().surface 同源）
@@ -62,7 +64,12 @@
  *      ① B 键选址模式 + 光标预览 · ② 硬闸门 = 连续场纯函数（海 / 坡度 / 极冠 / 叠城）
  *      ③ 点击放置（UI 全链路）· ④ 站心贴地（worldToLocal · 连续场）
  *      ⑤ 重建自愈（数据是真值源）· ⑥ 全景档点位标记
- *  24. 全程零 console error / pageerror
+ *  24. ★ 卫星与嵌套聚焦（v0.14 新增）：卫星系统 + 「聚焦行星 → 双击卫星 → 聚焦卫星」——
+ *      ① 卫星数据自洽（|世界−母星| ≈ a · 相位推进 · 潮汐锁定自转与公转同速反向）
+ *      ② 嵌套聚焦走真实双击链路（pickAt 卫星分支）：focus 态目标 = 卫星、距离公式同款
+ *      ③ HUD 跟到卫星 · 卫星钉在画面中心 · 卫星聚焦档镜头同速随动（Δθ ≡ −ΔrotY）
+ *      ④ Esc 从卫星回上一级（母行星聚焦档 —— 层层退出）
+ *  25. 全程零 console error / pageerror
  *
  * 用法：node verify.mjs   （端口 4322，与常驻预览服务器 4321 错开，可随时运行）
  *       截图输出到 screenshots/n*.png（索引见 README.md）
@@ -141,14 +148,16 @@ async function findEmptyPoint(page) {
     const st = g.getState();
     const W = window.innerWidth, H = window.innerHeight;
     const ss = g.starScreenPos();
-    const cands = [[60, 60], [60, H - 60], [W / 2, 70], [W / 2, H - 70], [120, H / 2], [W / 4, H / 3]];
+    /* v0.14：行星 8~10 颗，候选点加密到 12 个；相机背后的行星投影是镜像的，不挡路 */
+    const cands = [[60, 60], [60, H - 60], [W / 2, 70], [W / 2, H - 70], [120, H / 2], [W / 4, H / 3],
+      [W - 120, 90], [W * 0.3, H - 90], [W * 0.7, H - 90], [W * 0.3, H * 0.3], [W * 0.7, H * 0.3], [W * 0.5, H * 0.55]];
     for (const [x, y] of cands) {
       if (x > W - 360) continue;                     // 避开右侧面板
       if (y < 80 && x < 300) continue;               // 避开左上角工具条
       let ok = Math.hypot(ss.x - x, ss.y - y) > 110; // 避开恒星
       if (ok) for (const p of st.planets) {
         const sp = g.planetScreenPos(p.name);
-        if (sp && Math.hypot(sp.x - x, sp.y - y) < 80) { ok = false; break; }
+        if (sp && sp.z <= 1 && Math.hypot(sp.x - x, sp.y - y) < 80) { ok = false; break; }
       }
       if (ok) return { x: Math.round(x), y: Math.round(y) };
     }
@@ -187,7 +196,7 @@ async function frameStar(page, radius) {
       const s = checkSync();
       check("game.js 与 src/ 一致（不一致就跑 node scripts/build.mjs）", s.ok, s.detail);
       /* ★ 数字写死：加/删片段或顶层区块时必须**有意**改这里，防止顺手改坏拼装而不自知 */
-      check("★ 20 个源片段 · 24 个顶层区块", s.fragments === 20 && s.blocks === 24,
+      check("★ 21 个源片段 · 25 个顶层区块", s.fragments === 21 && s.blocks === 25,
         `${s.fragments} 片段 · ${s.blocks} 区块 · ${s.lines} 行`);
     }
 
@@ -211,7 +220,7 @@ async function frameStar(page, radius) {
       api: window.__game.version,
       badge: (document.getElementById("ver") || {}).textContent || ""
     }));
-    check("版本号为 0.13.0（调试接口）", verInfo.api === "0.13.0");
+    check("版本号为 0.14.0（调试接口）", verInfo.api === "0.14.0");
     check("右下角版本戳与调试接口同源", verInfo.badge === "v" + verInfo.api, `#ver = "${verInfo.badge}"`);
     console.log(`  ℹ 星系「${st0.system}」 · ${st0.starType}（${st0.starId}） · ${st0.planets.length} 颗行星`);
     await shot(page, "n1-system.png");
@@ -220,12 +229,17 @@ async function frameStar(page, radius) {
     console.log("\n[2] 场景元素：聚焦恒星与行星");
     const vis = await page.evaluate(() => window.__game.sceneStats());
     check("恒星", vis.star);
-    check("行星数量 5-7", vis.planets >= 5 && vis.planets <= 7, `${vis.planets} 颗`);
+    /* ★ v0.14：外围增补 3 颗（5~7 + 3 = 8~10；其中两颗走椭圆轨道，见 [17]） */
+    check("行星数量 8-10（v0.14 外围增补 3 颗）", vis.planets >= 8 && vis.planets <= 10, `${vis.planets} 颗`);
     check("行星全部带表面纹理", vis.textured === vis.planets, `${vis.textured}/${vis.planets}`);
     check("小行星带", vis.beltRocks >= 100, `${vis.beltRocks} 块`);
-    check("飞船 / 空间站 / 防务平台 / 彗星 / 卫星已下线（v0.5）",
-      vis.ships === 0 && !vis.station && !vis.platform && !vis.comet && vis.moons === 0,
-      `ships=${vis.ships} station=${vis.station} platform=${vis.platform} comet=${vis.comet} moons=${vis.moons}`);
+    check("飞船 / 空间站 / 防务平台 / 彗星已下线（v0.5）",
+      vis.ships === 0 && !vis.station && !vis.platform && !vis.comet,
+      `ships=${vis.ships} station=${vis.station} platform=${vis.platform} comet=${vis.comet}`);
+    /* ★ v0.14：卫星重新上线（v0.5 随「聚焦恒星与行星舞台」移除的那一批的**继任者**）
+     * —— 数据登记在 p._moons（唯一真值源），网格 / 轨道线全是派生。 */
+    check("★ 卫星系统（v0.14）：部分行星带卫星，数量随行星数递增",
+      vis.moons >= 1 && vis.moons <= vis.planets * 2, `${vis.moons} 颗 / ${vis.planets} 颗行星`);
     check("★ 宜居带标线在场景里（v0.6 轨道优化）", vis.hzLines === 2, `${vis.hzLines} 条虚线`);
     const civ0 = await page.evaluate(() => window.__game.civInfo());
     check("★ 发源地信标在场景里（v0.8）：恰 1 枚，且挂在发源地上",
@@ -233,10 +247,10 @@ async function frameStar(page, radius) {
       `${vis.civRings} 枚 · 挂在「${civ0[0] ? civ0[0].home : "?"}」`);
 
     /* ★ 场景图全量审计（比上面的计数断言硬）：
-     *   sceneStats 的 ships / moons 等字段在实现被删后就没有生产者了，恒为 0——
+     *   sceneStats 的 ships 等字段在实现被删后就没有生产者了，恒为 0——
      *   万一有「建了网格但没接线到字段」的残留，计数照样报 0。
      *   唯一抓得住残留的办法是直接遍历 scene：网格总数必须正好等于
-     *   恒星 1 + 行星 + 云 + 大气 + 行星环 + 小行星带碎块。
+     *   恒星 1 + 行星 + 云 + 大气 + 行星环 + 小行星带碎块 + 卫星（v0.14）。
      *   多一个 = 有没删干净的可见元素；少一个 = 有元素没建出来。 */
     const grid = await page.evaluate(() => {
       const r = window.__game.debugRefs();
@@ -250,15 +264,16 @@ async function frameStar(page, radius) {
       })(r.scene);
       return { meshes, sprites, points, lines };
     });
-    const expectMeshes = 1 + vis.planets + vis.clouds + vis.atmo + vis.rings + vis.beltRocks;
+    const expectMeshes = 1 + vis.planets + vis.clouds + vis.atmo + vis.rings + vis.beltRocks + vis.moons;
     check("场景图审计：网格总数与元素构成吻合（无残留对象）",
       grid.meshes === expectMeshes,
-      `实测 ${grid.meshes} = 恒星 1 + 行星 ${vis.planets} + 云 ${vis.clouds} + 大气 ${vis.atmo} + 环 ${vis.rings} + 碎石 ${vis.beltRocks}（Sprite ${grid.sprites} / Points ${grid.points} / Line ${grid.lines}）`);
-    /* 线类对象也点名：行星轨道线（每颗一条）+ 宜居带虚线（最多 2）+ 发源地信标（v0.8，恰 1） */
-    const expectLines = vis.planets + vis.hzLines + vis.civRings;
-    check("★ 线类对象审计：轨道线 + 宜居带 + 信标环（无残留、无遗漏）",
+      `实测 ${grid.meshes} = 恒星 1 + 行星 ${vis.planets} + 云 ${vis.clouds} + 大气 ${vis.atmo} + 环 ${vis.rings} + 碎石 ${vis.beltRocks} + 卫星 ${vis.moons}（Sprite ${grid.sprites} / Points ${grid.points} / Line ${grid.lines}）`);
+    /* 线类对象也点名：行星轨道线（每颗一条）+ 卫星轨道线（v0.14，每颗一条）+
+     * 宜居带虚线（最多 2）+ 发源地信标（v0.8，恰 1） */
+    const expectLines = vis.planets + vis.moons + vis.hzLines + vis.civRings;
+    check("★ 线类对象审计：轨道线 + 卫星轨线 + 宜居带 + 信标环（无残留、无遗漏）",
       grid.lines === expectLines,
-      `实测 ${grid.lines} = 轨道 ${vis.planets} + 宜居带 ${vis.hzLines} + 信标 ${vis.civRings}`);
+      `实测 ${grid.lines} = 行星轨道 ${vis.planets} + 卫星轨道 ${vis.moons} + 宜居带 ${vis.hzLines} + 信标 ${vis.civRings}`);
     console.log(`  ℹ 云层 ${vis.clouds} · 行星环 ${vis.rings} · 大气辉光 ${vis.atmo}`);
 
     /* ---- 3. 默认界面 ---- */
@@ -993,7 +1008,7 @@ async function frameStar(page, radius) {
     const nanBad = [];
     for (const p of pd) {
       for (const k of ["au", "teq0", "teq", "tempSurf", "rE", "mE", "radiusKm", "dens", "g", "vEsc",
-        "periodDays", "vOrbit", "orbitSpeed", "rotH", "insol", "iron", "water", "metal", "compSum"]) {
+        "periodDays", "vOrbit", "orbitSpeed", "rotH", "insol", "iron", "water", "metal", "compSum", "ecc"]) {
         if (!Number.isFinite(p[k])) nanBad.push(`${p.name}.${k}=${p[k]}`);
       }
     }
@@ -1128,6 +1143,24 @@ async function frameStar(page, radius) {
     const spdBad = pd.filter((p, i) => !near(p.orbitSpeed, 10.2 / Math.pow(p.au * 700, 1.5), 1e-9));
     check("★ 视觉公转按 1/a^1.5 缩放（内圈显著更快）", spdBad.length === 0 && spd[0] > spd[spd.length - 1] * 4,
       `${spd[0].toFixed(4)} → ${spd[spd.length - 1].toFixed(4)}（${(spd[0] / spd[spd.length - 1]).toFixed(1)}×）`);
+
+    /* ④c ★ v0.14：椭圆轨道（外围增补行星：一颗轻椭圆 + 一颗显著椭圆 + 一颗近圆）。
+     * 机器判据 = 两件事：① 偏心率落在设计区间且确有显著椭圆；
+     * ② **解算守住开普勒方程**：E − e·sinE ≡ M（mod 2π）—— 牛顿迭代 3 步的
+     * 现场读数与均近点角独立复算，残差 < 1e-5。圆轨道行星 E ≡ M，退化为旧式。 */
+    const eccList = pd.filter((p) => p.ecc > 0);
+    const kepBad = [];
+    for (const p of eccList) {
+      let d = (p.E - p.ecc * Math.sin(p.E) - p.angle) % (Math.PI * 2);
+      if (d > Math.PI) d -= Math.PI * 2;
+      if (d < -Math.PI) d += Math.PI * 2;
+      if (Math.abs(d) > 1e-5) kepBad.push(`${p.name} 残差 ${d.toExponential(2)}`);
+      if (p.ecc > 0.34) kepBad.push(`${p.name} 偏心率 ${p.ecc} 越界`);
+    }
+    check("★ 椭圆轨道（v0.14）：偏心率设计区间 + 解算守住开普勒方程（E − e·sinE ≡ M）",
+      kepBad.length === 0 && eccList.length >= 2 && eccList.some((p) => p.ecc > 0.2),
+      kepBad.slice(0, 2).join(" | ") ||
+        eccList.map((p) => `${p.name.split(" ")[1]} e=${p.ecc}`).join(" · "));
 
     /* ④b 轨道优化：宜居带随恒星重算 + 亮度带 */
     const hz = await page.evaluate(() => window.__game.hzInfo());
@@ -1669,17 +1702,26 @@ async function frameStar(page, radius) {
      * 本节验八件事：进得去（双击 → focus，距离对、minR 放宽、HUD 现身）、
      * 贴得近（行星占视口高一半以上）、读得动（距地表读数随缩放变）、
      * 变得精（聚焦态滚轮一步 < 全景一步的 60%）、**跟得住**（v0.12.2：
-     * 镜头随星球一起运动 —— 自转冻结、对准的面不转走；行星钉在画面中心
-     * 随轨道一起飞）；退出即恢复）、退得回（Esc → follow、
-     * 双击空白 → free，两次退出 minR 都复原）、换得动（拉远后双击换目标）。
+     * 镜头随星球一起运动 —— 公转在推进、行星钉在画面中心随轨道一起飞；
+     * v0.12.1 的「聚焦冻结自转」被用户否掉，v0.14 起改为**镜头与自转同速
+     * 绕行**：世界永远在转，对准的面由镜头一侧稳住）、退出即恢复）、
+     * 退得回（Esc → follow、双击空白 → free，两次退出 minR 都复原）、
+     * 换得动（拉远后双击换目标）。
      * 页面此时刚 reload 过（[19] 末尾），从干净状态开始。 */
-    /* focusDistance 独立复算。注意 getState() 的 size 是两位小数快照、而游戏内用全精度，
-     * 所以对账用 ±0.02 容差（0.005 的舍入 × 3.6 ≈ 0.018），不用全等。 */
-    const fc = (size) => Math.min(Math.max(size * 3.6, 1.6), 9.4);
+    /* focusDistance 独立复算（v0.14 起含卫星放宽：max(3.6R, 1.55×最大卫星轨道)，
+     * clamp [1.6, 10.0] —— 无卫星行星仍是一帧不变的 3.6 口径）。注意 getState()
+     * 的 size 是两位小数快照、而游戏内用全精度，所以对账用 ±0.02 容差
+     * （0.005 的舍入 × 3.6 ≈ 0.018），不用全等。 */
+    const fc = (size, amax) => Math.min(Math.max(size * 3.6, (amax || 0) * 1.55, 1.6), 10.0);
     const tgt20 = await page.evaluate(() => {
       const st = window.__game.getState();
       const pl = st.planets[1] || st.planets[0];
-      return { name: pl.name, size: pl.size, pos: window.__game.planetScreenPos(pl.name) };
+      const ms = window.__game.moons(pl.name) || [];
+      return {
+        name: pl.name, size: pl.size,
+        amax: ms.reduce((m, x) => Math.max(m, x.a), 0),
+        pos: window.__game.planetScreenPos(pl.name)
+      };
     });
     /* ---- 地形生成器（v0.11）：全景档低分辨率 + 凹凸；聚焦时升级并隐藏选中标记 ---- */
     const ter0 = await page.evaluate(() => window.__game.terrain());
@@ -1709,9 +1751,9 @@ async function frameStar(page, radius) {
     check("★ 双击行星 → 聚焦（相机第三态 focus，目标 = G.focusPlanet）",
       fo1.cs.mode === "focus" && fo1.cs.focus === tgt20.name,
       `mode=${fo1.cs.mode} · 目标「${fo1.cs.focus}」`);
-    check("★ 聚焦距离 = 行星半径 × 3.6（clamp 1.6~9.4，与行星大小解耦）",
-      Math.abs(fo1.cs.goal - fc(tgt20.size)) <= 0.02,
-      `size=${tgt20.size} → goal=${fo1.cs.goal}（复算 ${fc(tgt20.size).toFixed(2)}）`);
+    check("★ 聚焦距离 = 行星半径 × 3.6（带卫星行星放宽到 1.55×最大轨道，clamp 1.6~10.0）",
+      Math.abs(fo1.cs.goal - fc(tgt20.size, tgt20.amax)) <= 0.02,
+      `size=${tgt20.size}${tgt20.amax ? ` · 卫星轨道 ${tgt20.amax}` : ""} → goal=${fo1.cs.goal}（复算 ${fc(tgt20.size, tgt20.amax).toFixed(2)}）`);
     check("★ 聚焦档放宽 orbit.minR（否则 16 的底线会把推距钳死、贴不上去）",
       fo1.cs.minR < 1.5 && Math.abs(fo1.cs.minR - fo1.cs.goal * 0.25) < 0.05,
       `minR=${fo1.cs.minR.toFixed(3)} ≈ goal×0.25`);
@@ -1734,21 +1776,24 @@ async function frameStar(page, radius) {
       `「${tgt20.name}」solid=${foT.cs.solid} built=${foT.cs.built} active=${foT.cs.active} hi=${foT.ter.hi}`);
     await shot(page, "n20-focus-surface.png");
 
-    /* ★ v0.12.2：聚焦时的两条运动约定 ——
-     * ① 自转冻结：对准的面不转走（frozen=true 时 rotY 零变化）；
-     * ② **镜头随星球一起运动**：星球继续公转（在轨道上走），镜头跟随 ——
-     *    行星被钉在画面中心（偏移 ≤ 15px），而 target 随星球位移了一段
-     *    （画面里在动的是背景：轨道线 / 其他行星 / 晨昏线缓移 —— 世界是活的，
-     *    不是「世界定格」）。对照是下一条「退出聚焦必须恢复自转」——
-     *    若星球本来就不动，那边会拆穿假阳性。 */
+    /* ★ v0.14：聚焦时的运动约定（v0.12.1「冻结自转」已废 —— 用户实测反馈
+     * 「行星在被聚焦时完全停止了自转」，那不对：世界永远在转）——
+     * ① 自转**不停**：相位持续演进（rotY 变化量 > 0）；
+     * ② 「对准的面不转走」改由**镜头一侧**兑现：相机以同行星自转的角速度
+     *    绕行（同步卫星视角）—— Δθ ≡ −ΔrotY。于是面在画面上稳住，而自转
+     *    可见于星空扫过 / 日下点推移 / 云层漂移；
+     * ③ 公转照常推进：target 随星球位移、行星钉在画面中心（动的是镜头和背景）。
+     *    三条合起来 = 「既没停转，也不丢对准的面」—— 少任何一条都拆穿：
+     *    只转镜头不转行星 = 面在转走；只停自转 = 世界定格（v0.12.1 的旧病）。 */
     const mv1 = await page.evaluate((nm) => {
       const g = window.__game;
       const sp = g.planetScreenPos(nm), cs = g.cameraState();
       return {
-        rotY: g.focusSurface(nm).meshRotY, frozen: g.focusSurface(nm).frozen,
+        rotY: g.focusSurface(nm).meshRotY, th: cs.theta,
         ang: g.planetAngle(nm),
         dx: +(sp.x - window.innerWidth / 2).toFixed(1), dy: +(sp.y - window.innerHeight / 2).toFixed(1),
-        t: { x: cs.target.x, y: cs.target.y, z: cs.target.z }
+        t: { x: cs.target.x, y: cs.target.y, z: cs.target.z },
+        surf: g.siteScreen(nm, [0.6, 0.35, 0.7])
       };
     }, tgt20.name);
     await sleep(1600);
@@ -1756,15 +1801,28 @@ async function frameStar(page, radius) {
       const g = window.__game;
       const sp = g.planetScreenPos(nm), cs = g.cameraState();
       return {
-        rotY: g.focusSurface(nm).meshRotY,
+        rotY: g.focusSurface(nm).meshRotY, th: cs.theta,
         ang: g.planetAngle(nm),
         dx: +(sp.x - window.innerWidth / 2).toFixed(1), dy: +(sp.y - window.innerHeight / 2).toFixed(1),
-        t: { x: cs.target.x, y: cs.target.y, z: cs.target.z }
+        t: { x: cs.target.x, y: cs.target.y, z: cs.target.z },
+        surf: g.siteScreen(nm, [0.6, 0.35, 0.7])
       };
     }, tgt20.name);
-    check("★ 聚焦时自转冻结（1.6s 内相位零变化 —— 玩家对准的面不会自己转走）",
-      mv1.frozen === true && Math.abs(mv2.rotY - mv1.rotY) < 1e-9,
-      `frozen=${mv1.frozen} · rotY ${mv1.rotY} → ${mv2.rotY}`);
+    const dRot = mv2.rotY - mv1.rotY, dTheta = mv2.th - mv1.th;
+    check("★ 聚焦时自转不停（v0.14：世界永远在转 —— 1.6s 内相位持续演进）",
+      Math.abs(dRot) > 1e-3,
+      `rotY ${mv1.rotY} → ${mv2.rotY}（Δ ${dRot.toFixed(4)} rad）`);
+    /* ★★ 方向（v0.14.1 修正）：Δθ ≡ **+**ΔrotY（同向）。推导：rotation.y += β
+     * 绕 +Y 正向转 → 面上点世界方位 = α+β，屏幕水平角 = 点方位 − 相机方位 θ，
+     * 要稳必须 dθ ≡ dβ。初版写反（−=）→ 面以 2 倍自转速度滑走（69px/s），
+     * [23] 的聚落点击因此从陆地滑进海里。θ/rotY 关系只是代理量，下面还有
+     * 一条**地表网格投影**的真判据（面稳不稳，最终要看网格在屏幕上动不动）。 */
+    check("★ 镜头与行星自转同速绕行（同步卫星视角：Δθ ≡ +ΔrotY，同向补偿）",
+      Math.abs(dTheta - dRot) < 3e-3 && Math.abs(dTheta) > 1e-3,
+      `ΔrotY ${dRot.toFixed(4)} · Δθ ${dTheta.toFixed(4)}（残差 ${(dTheta - dRot).toFixed(5)}）`);
+    const surfDrift = mv1.surf && mv2.surf ? Math.hypot(mv2.surf.x - mv1.surf.x, mv2.surf.y - mv1.surf.y) : 999;
+    check("★ 地表网格在画面上真稳（面固定点的屏幕投影 1.6s 内 < 8px —— 面稳的终判据）",
+      surfDrift < 8, `地表点投影漂移 ${surfDrift.toFixed(1)}px`);
     const fTravel = Math.hypot(mv2.t.x - mv1.t.x, mv2.t.y - mv1.t.y, mv2.t.z - mv1.t.z);
     check("★ 镜头随星球一起运动（公转在推进 · 行星钉在画面中心 —— 动的是镜头和背景）",
       Math.abs(mv2.ang - mv1.ang) > 1e-4 && fTravel > 0.5 &&
@@ -1831,13 +1889,13 @@ async function frameStar(page, radius) {
       backSel.planet && backSel.planet.visible === true && backSel.planet.opacity > 0.2,
       `visible=${backSel.planet && backSel.planet.visible} · opacity=${backSel.planet && backSel.planet.opacity}`);
 
-    /* ★ v0.12.2 配套：退出聚焦 → 自转恢复（冻结只是暂停累加、不改写相位 ——
-     * 恢复是「从冻结点续走」，不是「跳回本该在的地方」，所以进出都无跳变；
-     * 公转从未冻结、一直在推进，不需要「恢复」）。 */
+    /* ★ v0.14 配套：退出聚焦 → 跟随档镜头**不再**随动，自转直接暴露在画面上
+     * （相位继续演进）。自转从来没停过 —— 聚焦时也在走（上面两条已验），
+     * 这条兜住「退出后还接着走」：若谁把退出写成「跳回某个相位」，这里见红。 */
     const rotC = await page.evaluate((nm) => window.__game.focusSurface(nm).meshRotY, tgt20.name);
     await sleep(800);
     const rotD = await page.evaluate((nm) => window.__game.focusSurface(nm).meshRotY, tgt20.name);
-    check("★ 退出聚焦 → 自转恢复（相位继续演进；若星球从不自转，这条会拆穿上一条）",
+    check("★ 退出聚焦 → 自转在画面上看得见（相位继续演进；若自转从未推进会拆穿上面两条）",
       Math.abs(rotD - rotC) > 1e-4,
       `rotY ${rotC} → ${rotD}`);
 
@@ -1854,22 +1912,35 @@ async function frameStar(page, radius) {
       relFocus < relFree * 0.6,
       `聚焦 ${relFocus.toFixed(4)} vs 全景 ${relFree.toFixed(4)}（${(relFocus / relFree * 100).toFixed(0)}%）`);
 
-    /* 幂等换目标：聚焦态下其他行星已出画（贴近 = 沉浸观察）—— 先拉远到看得见，再双击 */
+    /* 幂等换目标：聚焦态下其他行星已出画（贴近 = 沉浸观察）—— 先拉远到看得见，再双击。
+     * v0.14 星系扩到 8~10 颗 + 椭圆轨道后，固定机位下候选可能全在屏外/背后 ——
+     * 边转视角边找（换目标本来就允许先转镜头），最多扫 8 个方位。 */
     const pos20 = await page.evaluate((n) => window.__game.planetScreenPos(n), tgt20.name);
     await page.mouse.dblclick(pos20.x, pos20.y);
     await sleep(2200);
     await page.evaluate(() => window.__game.zoomTo(140));
     await sleep(1500);
-    const cand20 = await page.evaluate(() => {
-      const g = window.__game;
-      const W = window.innerWidth, H = window.innerHeight;
-      const cur = g.cameraState().focus;
-      const list = g.getState().planets.map((p) => {
-        const sp = g.planetScreenPos(p.name);
-        return { name: p.name, x: Math.round(sp.x), y: Math.round(sp.y) };
-      }).filter((p) => p.name !== cur && p.x > 220 && p.x < W - 400 && p.y > 140 && p.y < H - 140);
-      return list[0] || null;
-    });
+    let cand20 = null;
+    for (let sweep = 0; sweep < 8 && !cand20; sweep++) {
+      cand20 = await page.evaluate(() => {
+        const g = window.__game;
+        const W = window.innerWidth, H = window.innerHeight;
+        const cur = g.cameraState().focus;
+        const list = g.getState().planets.map((p) => {
+          const sp = g.planetScreenPos(p.name);
+          return { name: p.name, x: Math.round(sp.x), y: Math.round(sp.y), z: sp.z };
+        }).filter((p) => p.name !== cur && p.z <= 1 && p.x > 60 && p.x < W - 60 && p.y > 140 && p.y < H - 140);
+        return list[0] || null;
+      });
+      if (!cand20) {
+        await page.evaluate(() => {
+          const g = window.__game;
+          const cs = g.cameraState();
+          g.setOrbitAngles(cs.theta + 0.8, cs.phi);
+        });
+        await sleep(700);
+      }
+    }
     check("★ 拉远后屏内出现可换目标的行星（聚焦 = 沉浸观察，换目标本就要先拉远）",
       !!cand20, cand20 ? `候选「${cand20.name}」` : "无候选");
     if (cand20) {
@@ -1877,12 +1948,14 @@ async function frameStar(page, radius) {
       await sleep(2200);
       const fo4 = await page.evaluate((nm) => {
         const g = window.__game;
+        const ms = g.moons(nm) || [];
         return {
           cs: g.cameraState(),
-          size: g.getState().planets.find((p) => p.name === nm).size
+          size: g.getState().planets.find((p) => p.name === nm).size,
+          amax: ms.reduce((m, x) => Math.max(m, x.a), 0)
         };
       }, cand20.name);
-      const goal4 = fc(fo4.size);
+      const goal4 = fc(fo4.size, fo4.amax);
       check("★ focus 态换目标幂等：仍聚焦、目标与距离换成新行星",
         fo4.cs.mode === "focus" && fo4.cs.focus === cand20.name && Math.abs(fo4.cs.goal - goal4) <= 0.02,
         `「${fo4.cs.focus}」· goal=${fo4.cs.goal}（复算 ${goal4.toFixed(2)}）`);
@@ -2184,6 +2257,15 @@ async function frameStar(page, radius) {
     check("★ 选一颗有海固态行星作试验场（海面闸门需要「海」）", !!sp23, sp23 || "（世界变了？）");
     await page.evaluate((n) => window.__game.focusPlanetByName(n), sp23);
     await sleep(2400);
+    /* ★ v0.14：聚焦机位默认对准卫星（aimFocusAtMoonSystem，见 [24]）—— 那是
+     * 「看卫星系」的机位，不是「看地表放城」的机位。本节显式把相机定到正视
+     * 赤道的标准机位：测试条件显式化，不依赖「aim 选了哪颗卫星」的隐式相位。 */
+    await page.evaluate(() => {
+      const g = window.__game;
+      const cs = g.cameraState();
+      g.setOrbitAngles(0.6, Math.PI / 2);
+    });
+    await sleep(400);
 
     /* ① B 键 → 选址模式 */
     await page.keyboard.press("b");
@@ -2231,8 +2313,11 @@ async function frameStar(page, radius) {
         const c = G.siteCheck(n, d);
         if (!c || !c.ok) continue;
         const s = G.siteScreen(n, d);
-        /* front：只取真正可见的点（视界圆以内 —— 背面/掠射带的投影也在屏内，但点不着） */
-        if (!s || s.front !== true || !(s.x > 340 && s.x < 940 && s.y > 200 && s.y < 600)) continue;
+        /* front：只取真正可见的点（视界圆以内 —— 背面/掠射带的投影也在屏内，但点不着）。
+         * 屏幕范围收到 0.8 个盘半径以内：贴近盘缘是**掠射带**（入射角 ≈ 70°+），
+         * 射线解析与投影的系统差按 1/sin(入射角) 放大 —— v0.14 实测缘外点偏差
+         * 24.7px / 0.069 rad，「贴地 <12px」与「太近 0.05」两条判据都会被它打穿。 */
+        if (!s || s.front !== true || !(s.x > 430 && s.x < 850 && s.y > 250 && s.y < 570)) continue;
         /* ★ 往返自检：从该屏幕坐标反投影必须回到同一方向、且落点也可建 ——
          * 这一关把「球缘掠射带」的贴边点滤掉（投影在屏内但点击会先命中边缘） */
         const pb = G.siteProbe(n, s.x, s.y);
@@ -2306,8 +2391,120 @@ async function frameStar(page, radius) {
     await page.evaluate(() => { window.__game.unfocus(); window.__game.clearSelection(); });
     await sleep(400);
 
-    /* ---- 24. 零报错 ---- */
-    console.log("\n[24] 控制台");
+    /* ---- 24. ★ 卫星与嵌套聚焦（v0.14）---- */
+    console.log("\n[24] ★ 卫星与嵌套聚焦（v0.14）");
+    /* 立场：卫星是「某些行星」的天体条目 —— 数据 p._moons 是唯一真值源，
+     * 网格 / 轨道线 / 贴图全是派生；聚焦目标从「行星」泛化到「行星或卫星」。
+     * 本节验四件事：① 卫星数据自洽（轨率 ≈ a、世界坐标 = 母星 + 轨道局部、
+     * 相位持续推进、潮汐锁定自转与公转同速反向）；② 嵌套聚焦全链路
+     * （聚焦行星 → **双击它的卫星** → 聚焦卫星 → Esc 回母行星聚焦档）；
+     * ③ 卫星聚焦时距地表读数与目标都对；④ 卫星聚焦档镜头同样同速随动
+     * （Δθ ≡ −ΔrotY —— 与行星同一套口径）。页面此时在 Panorama（[23] 收尾）。 */
+    const mh = await page.evaluate(() => {
+      const g = window.__game;
+      const ps = g.getState().planets.filter((p) => p.moons > 0);
+      for (const p of ps) {
+        const ms = g.moons(p.name) || [];
+        const front = ms.find((m) => m.front);
+        if (front) return { host: p.name, moon: front, count: ms.length };
+      }
+      return null;
+    });
+    check("★ 卫星数据在场景里（部分行星带 1~2 颗，p._moons 登记）",
+      !!mh, mh ? `「${mh.host}」${mh.count} 颗 · 样本「${mh.moon.name}」` : "无卫星");
+    if (mh) {
+      await page.evaluate((n) => window.__game.focusPlanetByName(n), mh.host);
+      await sleep(2300);                        /* 等半径与 target 收敛（聚焦档 target lerp 5.5） */
+      const md0 = await page.evaluate((n) => window.__game.moons(n), mh.host);
+      const mk0 = md0.find((m) => m.name === mh.moon.name);
+      await sleep(1200);
+      const md1 = await page.evaluate((n) => window.__game.moons(n), mh.host);
+      const mk1 = md1.find((m) => m.name === mh.moon.name);
+      check("★ 卫星轨道自洽（|世界−母星| ≈ a · 相位持续推进）",
+        Math.abs(mk0.dist - mk0.a) < 0.06 && mk1.angle !== mk0.angle,
+        `a=${mk0.a} · 实测距率 ${mk0.dist} · angle ${mk0.angle} → ${mk1.angle}`);
+      check("★ 卫星潮汐锁定（自转与公转同速反向 —— 一面永朝母星）",
+        mk1.rotY !== mk0.rotY && Math.sign(mk1.rotY - mk0.rotY) === Math.sign(mk1.angle - mk0.angle) * -1,
+        `rotY ${mk0.rotY} → ${mk1.rotY} · angle ${mk0.angle} → ${mk1.angle}`);
+
+      /* 嵌套聚焦：走**真实双击链路**（pickAt 的卫星分支），不走调试后门。
+       * 选一颗**屏内 + 朝相机这侧**的卫星 —— 卫星沿弧划走，任一瞬间通常有
+       * 一颗正在视野里（FOCUS_MOON_K + DIP 机位保证轨道贴着屏幕上沿）；
+       * 等不到就重聚焦一次（重新对准、换一批相位），最多两轮。 */
+      let msp = null;
+      for (let round = 0; round < 2 && !msp; round++) {
+        for (let wait = 0; wait < 6 && !msp; wait++) {
+          msp = await page.evaluate((n) => {
+            const g = window.__game;
+            const W = window.innerWidth, H = window.innerHeight;
+            return g.moons(n).find((m) => m.front && m.screen.x > 40 && m.screen.x < W - 40
+              && m.screen.y > 60 && m.screen.y < H - 60) || null;
+          }, mh.host);
+          if (!msp) await sleep(900);
+        }
+        if (!msp) await page.evaluate((n) => window.__game.focusPlanetByName(n), mh.host);
+      }
+      if (!msp) {
+        check("★ 嵌套聚焦：行星聚焦档里双击卫星 → 聚焦卫星", false, "两轮等待后视野内都没有可点的卫星");
+      }
+      if (msp) {
+      await page.mouse.dblclick(msp.screen.x, msp.screen.y);
+      await sleep(2300);
+      const nf = await page.evaluate(() => ({
+        cs: window.__game.cameraState(),
+        hudHidden: document.getElementById("focus-hud").classList.contains("hidden"),
+        hudName: (document.getElementById("fh-name") || {}).textContent
+      }));
+      const mgoal = Math.min(Math.max(msp.size * 3.6, 1.6), 10.0);
+      check("★ 嵌套聚焦：行星聚焦档里双击卫星 → 聚焦卫星（focus 态 · 目标 = 卫星）",
+        nf.cs.mode === "focus" && nf.cs.focusIsMoon === true && nf.cs.focus === msp.name,
+        `mode=${nf.cs.mode} · 目标「${nf.cs.focus}」· isMoon=${nf.cs.focusIsMoon}`);
+      check("★ 卫星聚焦距离 = 卫星半径 × 3.6（与行星同一公式，clamp 1.6~10.0）",
+        Math.abs(nf.cs.goal - mgoal) <= 0.02,
+        `size=${msp.size} → goal=${nf.cs.goal}（复算 ${mgoal.toFixed(2)}）`);
+      check("★ 聚焦 HUD 跟到卫星（名字即目标名）", !nf.hudHidden && nf.hudName === msp.name,
+        `HUD「${nf.hudName}」`);
+      const mcent = await page.evaluate((n) => {
+        const g = window.__game;
+        const ms = g.moons(n);
+        const m = ms.find((x) => g.cameraState().focus === x.name);
+        return m ? { dx: +(m.screen.x - window.innerWidth / 2).toFixed(1), dy: +(m.screen.y - window.innerHeight / 2).toFixed(1) } : null;
+      }, mh.host);
+      check("★ 卫星被钉在画面中心（镜头跟随小天体，同速前馈口径不变）",
+        !!mcent && Math.hypot(mcent.dx, mcent.dy) < 15, mcent ? `偏移 (${mcent.dx},${mcent.dy})` : "目标丢失");
+
+      /* 卫星聚焦档的镜头同速随动：Δθ ≡ +ΔrotY（同向 —— v0.14.1 修正，与行星
+      * 同一套口径；卫星潮汐锁定，dRot 为负，故 Δθ 亦为负） */
+      const mc1 = await page.evaluate((n) => {
+        const g = window.__game;
+        const m = g.moons(n).find((x) => g.cameraState().focus === x.name);
+        return { th: g.cameraState().theta, rotY: m.rotY };
+      }, mh.host);
+      await sleep(1400);
+      const mc2 = await page.evaluate((n) => {
+        const g = window.__game;
+        const m = g.moons(n).find((x) => g.cameraState().focus === x.name);
+        return { th: g.cameraState().theta, rotY: m.rotY };
+      }, mh.host);
+      const mdRot = mc2.rotY - mc1.rotY, mdTheta = mc2.th - mc1.th;
+      check("★ 卫星聚焦档镜头同速随动（Δθ ≡ +ΔrotY，与行星同一套口径）",
+        Math.abs(mdTheta - mdRot) < 3e-3 && Math.abs(mdRot) > 1e-3,
+        `ΔrotY ${mdRot.toFixed(4)} · Δθ ${mdTheta.toFixed(4)}（残差 ${(mdTheta - mdRot).toFixed(5)}）`);
+
+      /* Esc → 回上一级（母行星的聚焦档），不是中距离跟随、更不是全景 */
+      await page.keyboard.press("Escape");
+      await sleep(1000);
+      const back24 = await page.evaluate(() => window.__game.cameraState());
+      check("★ Esc 从卫星回上一级（母行星聚焦档 —— 层层退出）",
+        back24.mode === "focus" && back24.focus === mh.host && back24.focusIsMoon === false,
+        `mode=${back24.mode} · 目标「${back24.focus}」`);
+      await page.evaluate(() => { window.__game.unfocus(); window.__game.clearSelection(); });
+      await sleep(500);
+      }
+    }
+
+    /* ---- 25. 零报错 ---- */
+    console.log("\n[25] 控制台");
     check("全程零 console error / pageerror", errors.length === 0, errors.slice(0, 3).join(" | ") || "无");
   } finally {
     await browser.close();
