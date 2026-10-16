@@ -36,6 +36,11 @@
                    > #fh-sites 聚落计数与 B 键提示 / #fh-mode 选址模式与评分（v0.13）
                    > #fh-exit 退出钮（Esc 等效，回落中距离跟随）
   #ver            右下角版本戳（文本由 game.js 的 VERSION 常量写入）
+  #focus-panel    聚焦操作面板（v0.15 · 实验：建城）：默认 .hidden（左下角）
+                   只在「实验场行星」（薄曙 III）被聚焦时出现；主按钮与 B 键同源
+                   > .fp-head > #fp-name + .fp-tag
+                   > #fp-build  放置城市 / 停止放置
+                   > #fp-count 聚落计数 / #fp-read 光标处读数 / #fp-note 结果提示
   #guide          指导书覆盖层，默认 .hidden；点遮罩 / Esc / × 关闭
                     > .g-book > .g-head > #guide-close
                               > .g-main > #guide-nav  左栏栏目导航（由 renderGuide() 生成）
@@ -96,6 +101,28 @@
     <span id="fh-sites">聚落 —</span>
     <span id="fh-mode" class="hidden">选址模式</span>
     <button id="fh-exit" title="退出聚焦（Esc）">退出</button>
+  </div>
+
+  <!-- 聚焦操作面板（v0.15 · 实验：建城）：默认 .hidden（左下角一块）
+       ★ 只在「实验场行星」被聚焦时出现 —— 实验场是谁写在 46-settlements.js 的
+         EXPERIMENT_PLANET（当前 = 薄曙 III）。其余行星保持干净。
+       第一件事 = 放置城市：主按钮与 B 键**同源**（都走 setSiteMode 唯一入口）。
+         > .fp-head > #fp-name 行星名 + .fp-tag「实验」
+         > #fp-build   主按钮：放置城市 / 停止放置（选址模式中 = 实心白）
+         > #fp-count   聚落计数
+         > #fp-read    光标处读数（可建 + 评分 / 不可建 + 闸门）
+         > #fp-note    结果提示（建成 / 不可建，短暂显示）
+       ★ 新增 DOM 要同步三处：本文件、game.js 的 $(...)、style.css 的选择器。 -->
+  <div id="focus-panel" class="hidden">
+    <div class="fp-head">
+      <span id="fp-name">—</span>
+      <span class="fp-tag">实验</span>
+    </div>
+    <button id="fp-build">放置城市</button>
+    <div class="fp-row"><span class="fp-k">聚落</span><span class="fp-v" id="fp-count">—</span></div>
+    <div class="fp-row"><span class="fp-k">陆地</span><span class="fp-v" id="fp-land">—</span></div>
+    <div class="fp-row"><span class="fp-k">选址</span><span class="fp-v" id="fp-read">—</span></div>
+    <div id="fp-note" class="hidden">—</div>
   </div>
 
   <!-- 右下角版本戳：防「页面没刷新」误判（内容由 game.js 写入） -->

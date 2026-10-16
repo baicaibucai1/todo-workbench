@@ -103,6 +103,7 @@ function boot() {
   setupInput();
   setupGuide();
   setupFocusHud();             /* 聚焦 HUD（v0.10）：按钮 + 初刷 */
+  setupSitePanel();            /* 聚焦操作面板（v0.15 · 实验：建城）：按钮 + 初刷 */
   renderPanel();
   requestAnimationFrame(loop);
 
@@ -585,6 +586,63 @@ function boot() {
       };
     },
     setSiteMode: function (on) { return setSiteMode(!!on); },
+    /* ★ v0.15：聚焦操作面板的读数（verify 断言面板真的是一块「投影」而不是自说自话）。
+     * host = 面板宿主行星名（null = 面板不出现）；build 是主按钮文案 —— 它必须与
+     * siteModeOn() 同源（同一入口的两种呈现）。 */
+    sitePanel: function () {
+      var host = sitePanelHost();
+      return {
+        host: host ? host.name : null,
+        experiment: EXPERIMENT_PLANET,
+        visible: !!(elFocusPanel && !elFocusPanel.classList.contains("hidden")),
+        build: elFpBuild ? elFpBuild.textContent : null,
+        buildOn: !!(elFpBuild && elFpBuild.classList.contains("on")),
+        count: elFpCount ? elFpCount.textContent : null,
+        land: elFpLand ? elFpLand.textContent : null,
+        read: elFpRead ? elFpRead.textContent : null,
+        /* ★ 光标处诊断：面板读数到底算的是哪个坐标、落点在哪（对账「读数 = 点击」用） */
+        cursor: _site.mouse
+          ? {
+            mouse: [_site.mouse[0], _site.mouse[1]],
+            dir: _site.dir ? [+_site.dir[0].toFixed(4), +_site.dir[1].toFixed(4), +_site.dir[2].toFixed(4)] : null,
+            h: _site.check ? +_site.check.h.toFixed(5) : null,
+            ok: _site.check ? !!_site.check.ok : null,
+            gate: _site.check ? _site.check.gate : null,
+            score: _site.check ? _site.check.score : null,
+            visible: !!(_siteCursor && _siteCursor.visible),
+            frames: (typeof __frames === "number" ? __frames : -1),
+            trace: _site.trace ? _site.trace.slice(-4) : null
+          }
+          : null,
+        note: elFpNote && !elFpNote.classList.contains("hidden") ? elFpNote.textContent : "",
+        lastClick: _site.lastClick || null,
+        mode: siteModeOn()
+      };
+    },
+    /* ★ v0.15 光标落点对账：用**光标的宿主行星**现算一次（`_site.p`），
+     * 与 siteProbe(名字) 对比 —— 用来抓「预览落点 ≠ 现算落点」这类链路分叉。 */
+    siteCursorProbe: function () {
+      if (!_site.p || !_site.mouse) return null;
+      var d = rayToSurfaceDir(_site.p, _site.mouse[0], _site.mouse[1]);
+      var chk = d ? siteCheck(_site.p, d) : null;
+      var d2 = _site.dir, ang = null;
+      if (d && d2) {
+        var dot = d[0] * d2[0] + d[1] * d2[1] + d[2] * d2[2];
+        ang = +(Math.acos(Math.min(1, Math.max(-1, dot))) * 180 / Math.PI).toFixed(3);
+      }
+      return {
+        sameAsFocus: _site.p === G.focusPlanet,
+        pName: _site.p.name,
+        meshRotY: _site.p._cs ? +_site.p._cs.mesh.rotation.y.toFixed(5) : null,
+        cx: _site.mouse[0], cy: _site.mouse[1],
+        now: d ? [+d[0].toFixed(4), +d[1].toFixed(4), +d[2].toFixed(4)] : null,
+        cached: d2 ? [+d2[0].toFixed(4), +d2[1].toFixed(4), +d2[2].toFixed(4)] : null,
+        angCachedVsNow: ang,
+        dir: d ? [+d[0].toFixed(4), +d[1].toFixed(4), +d[2].toFixed(4)] : null,
+        h: chk ? +chk.h.toFixed(5) : null,
+        ok: chk ? !!chk.ok : null
+      };
+    },
     /* 屏幕坐标 → 地表落点方向 + 可建判定（对账「点击落点」用 —— rayToSurfaceDir 的精度） */
     siteProbe: function (name, cx, cy) {
       var p = null, i;

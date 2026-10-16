@@ -58,18 +58,18 @@
  *    1899    495  程序化贴图（全部画布绘制，零外部资源）               src/40-textures.js:1
  *    2394    501  地形生成器（v0.11：固态行星表面构建）                src/42-terrain.js:1
  *    2895    489  聚焦地表（v0.12：立方球连续地表）                    src/44-focus-surface.js:1
- *    3384    455  聚落系统（v0.13 · 实验性）                           src/46-settlements.js:1
- *    3839    427  场景                                                 src/50-scene.js:1
- *    4266    172  场景更新                                             src/50-scene.js:428
- *    4438    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
- *    4632     25  相机聚焦                                             src/70-camera-input.js:1
- *    4657    171  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
- *    4828    158  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
- *    4986    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
- *    5253    614  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
- *    5867     72  主循环                                               src/99-boot.js:1
- *    5939    670  启动                                                 src/99-boot.js:73
- *   共 25 个区块 · 21 个源文件 · 6608 行
+ *    3384    562  聚落系统（v0.13 · 实验性）                           src/46-settlements.js:1
+ *    3946    427  场景                                                 src/50-scene.js:1
+ *    4373    172  场景更新                                             src/50-scene.js:428
+ *    4545    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
+ *    4739     25  相机聚焦                                             src/70-camera-input.js:1
+ *    4764    171  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
+ *    4935    158  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
+ *    5093    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
+ *    5360    614  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
+ *    5974     72  主循环                                               src/99-boot.js:1
+ *    6046    728  启动                                                 src/99-boot.js:73
+ *   共 25 个区块 · 21 个源文件 · 6773 行
  * @nav:end
  * ─────────────────────────────────────────────────────────────────────
  *
@@ -733,7 +733,7 @@ function typeCond(t) {
  * 同时写入 ① 右下角版本戳（#ver）② __game.version。
  * 用途：一眼判断「眼前这页是不是最新构建」——历史上出现过改了代码但浏览器
  * 没刷新、误判「功能没生效」的情况。发版时只改这一行。 */
-var VERSION = "0.14.0";
+var VERSION = "0.15.0";
 
 function $(id) { return document.getElementById(id); }
 function fmtNum(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
@@ -3704,8 +3704,8 @@ function _raySphere(o, d, R) {
 
 var _site = {
   on: false, p: null, mouse: null,
-  dir: null, check: null, hudKey: "", note: "", noteUntil: 0,
-  lastCheck: 0
+  dir: null, check: null, hudKey: "", panelKey: "", note: "", noteUntil: 0,
+  lastCheck: 0, trace: []
 };
 var _siteCursor = null;
 
@@ -3733,6 +3733,7 @@ function setSiteMode(on) {
     _site.note = "";
   }
   _site.hudKey = "";                    /* 强制刷新 HUD */
+  _site.panelKey = "";                  /* 强制刷新操作面板（v0.15） */
   return _site.on;
 }
 
@@ -3783,15 +3784,45 @@ function siteUpdateCursor(cx, cy, force) {
     _siteCursor.material.opacity = ok ? 0.95 : 0.55;
   }
   _site.hudKey = "";                       /* 评分/可建变了 → HUD 刷新 */
+  /* 调试 trace：最近 6 次光标更新（帧号 + 坐标 + 落点）—— 抓「缓存落点 ≠ 现算落点」用 */
+  if (_site.trace) {
+    _site.trace.push({
+      f: typeof __frames === "number" ? __frames : -1, cx: cx, cy: cy,
+      d: [+dir[0].toFixed(4), +dir[1].toFixed(4), +dir[2].toFixed(4)]
+    });
+    if (_site.trace.length > 6) _site.trace.shift();
+  }
   return dir;
 }
 
-/* 点击 = 尝试放置（返回 true 表示已被选址模式消费） */
+/* 点击 = 尝试放置（返回 true 表示已被选址模式消费）
+ *
+ * ★★ v0.15 关键修正：**点击直接用预览算出的落点方向**（`_site.dir`），不再自己重做一次射线。
+ * 起因：预览与点击各做一次 rayToSurfaceDir，两次之间隔着若干帧，且屏幕坐标取整 0.5px
+ * （盘缘附近 ≈0.17°）—— 在**海岸线**（h ≈ 0.5 的等值线）上这点差就足以翻转判定：
+ * 实测同一鼠标点连采得到 true/true/false/true，玩家会看到「白环显示可建、点下去说海面」。
+ * 预览算出的方向就是「玩家此刻看到的那块地」，点击照它落城 = 所见即所得，
+ * 而且这条链路**只有一个转换点**（契约⑦的精神：预览与提交共用同一个真值）。 */
 function handleSiteClick(cx, cy) {
   if (!_site.on || !_site.p) return false;
-  var dir = rayToSurfaceDir(_site.p, cx, cy);
+  var dir = null;
+  if (_site.dir && _site.mouse &&
+    Math.abs(_site.mouse[0] - cx) <= 2 && Math.abs(_site.mouse[1] - cy) <= 2) {
+    dir = _site.dir;                      /* 鼠标没动过 → 用预览的落点（真值同源） */
+  } else {
+    dir = rayToSurfaceDir(_site.p, cx, cy);   /* 兜底：位置对不上才现算 */
+  }
   if (!dir) return true;                  /* 点到太空：消费但不动作 */
   var res = placeCity(_site.p, dir);
+  /* ★ v0.15：记下「这一次点击用的是哪个落点」—— 让「预览 = 点击 = 城市落点」可对账
+   * （城市数据里的 dir 就是这里的 dir，同一个数组，逐位相同）。 */
+  _site.lastClick = {
+    dir: [+dir[0].toFixed(6), +dir[1].toFixed(6), +dir[2].toFixed(6)],
+    src: _site.dir === dir ? "preview" : "recompute",
+    cx: cx, cy: cy, ok: res.ok,
+    gate: res.ok ? null : res.gate,
+    n: res.ok ? res.city.n : null, score: res.ok ? res.city.score : null
+  };
   if (res.ok) {
     _site.note = "已建聚落 #" + res.city.n + " · " + res.city.score + " 分（" +
       res.city.parts.map(function (x) { return x.k + " " + x.v; }).join(" · ") + "）";
@@ -3834,6 +3865,82 @@ function syncSettlements() {
       elMode.classList.toggle("hidden", !show);
       if (show) elMode.textContent = noteTxt || ("选址模式 · " + (scoreTxt || "移动光标") + " · 点击放置 · B 退出");
     }
+  }
+  updateSitePanel(false);              /* ★ v0.15：聚焦操作面板（左下角一块） */
+}
+
+/* ---- ⑩ 聚焦操作面板（v0.15 · 实验：建城） ----
+ * 用户原话：「我们现在选薄曙三作为实验项目的开始，第一增加聚焦时的操作面板，我们需要放置城市」。
+ *
+ * ★ **实验场收敛到一颗行星**：`EXPERIMENT_PLANET` 只在这一颗的聚焦档里露出操作面板 ——
+ *   其余行星一个字节都不出现（用户审美「花活越少越好」；实验没成熟前不外溢）。
+ *   要放开成「所有固态行星」：把常量改成 `null`（判据就只剩「聚焦 + 固态」）。
+ * ★ **单一写入者**：主按钮与 B 键走**同一个** `setSiteMode()` —— 面板只是它的投影，
+ *   面板里不写任何互斥分支（第四节 7 的纪律）。
+ * ★ 零 RNG：面板只读已有字段 + 写 DOM，不抽任何随机数（不变量 8）。 */
+
+var EXPERIMENT_PLANET = "薄曙 III";
+var elFocusPanel = null, elFpName = null, elFpBuild = null;
+var elFpCount = null, elFpLand = null, elFpRead = null, elFpNote = null;
+
+/* 面板宿主 = 当前聚焦目标，且它必须是「实验场」固态行星（卫星 / 气态 / 别的行星一律 null） */
+function sitePanelHost() {
+  if (!FSM_CAMERA.is("focus") || !G.focusPlanet) return null;
+  var p = G.focusPlanet;
+  if (p._isMoon || !isSolidPlanet(p)) return null;
+  if (EXPERIMENT_PLANET && p.name !== EXPERIMENT_PLANET) return null;
+  return p;
+}
+
+function setupSitePanel() {
+  elFocusPanel = $("focus-panel");
+  elFpName = $("fp-name");
+  elFpBuild = $("fp-build");
+  elFpCount = $("fp-count");
+  elFpLand = $("fp-land");
+  elFpRead = $("fp-read");
+  elFpNote = $("fp-note");
+  /* 主按钮 = B 键的等价入口（同一个 setSiteMode；不在这里写任何模式逻辑） */
+  if (elFpBuild) elFpBuild.addEventListener("click", function () { setSiteMode(!siteModeOn()); });
+  updateSitePanel(true);
+}
+
+/* 每帧刷新（syncSettlements 尾调）—— 只在关键值变了才碰 DOM：
+ * 整段重绘会吃掉真实点击（见 72-focus 的 HUD 节流同一条教训）。 */
+function updateSitePanel(force) {
+  if (!elFocusPanel) return;
+  var p = sitePanelHost();
+  var cnt = p && p._cities ? p._cities.length : 0;
+  /* 陆地占比：连续场实测（海平面重标定后的水面覆盖的补）—— 薄曙 III 是 90% 水的
+   * 海洋行星，可建陆地只有一成（实测 10%），玩家得知道这件事（不然会以为「建不了」）。 */
+  var landTxt = "—";
+  if (p) landTxt = p._cs ? (100 - p._cs.seaFrac * 100).toFixed(0) + "%" : "—";
+  var readTxt = "—", readCls = "";
+  if (p) {
+    if (_site.on && _site.check) {
+      readTxt = _site.check.ok ? "可建 · " + _site.check.score + " 分" : "不可建 · " + _site.check.gate;
+      readCls = _site.check.ok ? "ok" : "bad";
+    } else {
+      readTxt = _site.on ? "移动光标" : "未开始";
+    }
+  }
+  var noteTxt = _site.note && performance.now() < _site.noteUntil ? _site.note : "";
+  var key = (p ? p.name : "") + "|" + cnt + "|" + landTxt + "|" + (_site.on ? 1 : 0) + "|" + readTxt + "|" + noteTxt;
+  if (!force && key === _site.panelKey) return;
+  _site.panelKey = key;
+  elFocusPanel.classList.toggle("hidden", !p);
+  if (!p) return;
+  if (elFpName) elFpName.textContent = p.name;
+  if (elFpBuild) {
+    elFpBuild.textContent = _site.on ? "停止放置" : "放置城市";
+    elFpBuild.classList.toggle("on", _site.on);
+  }
+  if (elFpCount) elFpCount.textContent = cnt + " 座";
+  if (elFpLand) elFpLand.textContent = landTxt;
+  if (elFpRead) { elFpRead.textContent = readTxt; elFpRead.className = "fp-v " + readCls; }
+  if (elFpNote) {
+    elFpNote.classList.toggle("hidden", !noteTxt);
+    if (noteTxt) elFpNote.textContent = noteTxt;
   }
 }
 /* ================= 场景 ================= */
@@ -5969,6 +6076,7 @@ function boot() {
   setupInput();
   setupGuide();
   setupFocusHud();             /* 聚焦 HUD（v0.10）：按钮 + 初刷 */
+  setupSitePanel();            /* 聚焦操作面板（v0.15 · 实验：建城）：按钮 + 初刷 */
   renderPanel();
   requestAnimationFrame(loop);
 
@@ -6451,6 +6559,63 @@ function boot() {
       };
     },
     setSiteMode: function (on) { return setSiteMode(!!on); },
+    /* ★ v0.15：聚焦操作面板的读数（verify 断言面板真的是一块「投影」而不是自说自话）。
+     * host = 面板宿主行星名（null = 面板不出现）；build 是主按钮文案 —— 它必须与
+     * siteModeOn() 同源（同一入口的两种呈现）。 */
+    sitePanel: function () {
+      var host = sitePanelHost();
+      return {
+        host: host ? host.name : null,
+        experiment: EXPERIMENT_PLANET,
+        visible: !!(elFocusPanel && !elFocusPanel.classList.contains("hidden")),
+        build: elFpBuild ? elFpBuild.textContent : null,
+        buildOn: !!(elFpBuild && elFpBuild.classList.contains("on")),
+        count: elFpCount ? elFpCount.textContent : null,
+        land: elFpLand ? elFpLand.textContent : null,
+        read: elFpRead ? elFpRead.textContent : null,
+        /* ★ 光标处诊断：面板读数到底算的是哪个坐标、落点在哪（对账「读数 = 点击」用） */
+        cursor: _site.mouse
+          ? {
+            mouse: [_site.mouse[0], _site.mouse[1]],
+            dir: _site.dir ? [+_site.dir[0].toFixed(4), +_site.dir[1].toFixed(4), +_site.dir[2].toFixed(4)] : null,
+            h: _site.check ? +_site.check.h.toFixed(5) : null,
+            ok: _site.check ? !!_site.check.ok : null,
+            gate: _site.check ? _site.check.gate : null,
+            score: _site.check ? _site.check.score : null,
+            visible: !!(_siteCursor && _siteCursor.visible),
+            frames: (typeof __frames === "number" ? __frames : -1),
+            trace: _site.trace ? _site.trace.slice(-4) : null
+          }
+          : null,
+        note: elFpNote && !elFpNote.classList.contains("hidden") ? elFpNote.textContent : "",
+        lastClick: _site.lastClick || null,
+        mode: siteModeOn()
+      };
+    },
+    /* ★ v0.15 光标落点对账：用**光标的宿主行星**现算一次（`_site.p`），
+     * 与 siteProbe(名字) 对比 —— 用来抓「预览落点 ≠ 现算落点」这类链路分叉。 */
+    siteCursorProbe: function () {
+      if (!_site.p || !_site.mouse) return null;
+      var d = rayToSurfaceDir(_site.p, _site.mouse[0], _site.mouse[1]);
+      var chk = d ? siteCheck(_site.p, d) : null;
+      var d2 = _site.dir, ang = null;
+      if (d && d2) {
+        var dot = d[0] * d2[0] + d[1] * d2[1] + d[2] * d2[2];
+        ang = +(Math.acos(Math.min(1, Math.max(-1, dot))) * 180 / Math.PI).toFixed(3);
+      }
+      return {
+        sameAsFocus: _site.p === G.focusPlanet,
+        pName: _site.p.name,
+        meshRotY: _site.p._cs ? +_site.p._cs.mesh.rotation.y.toFixed(5) : null,
+        cx: _site.mouse[0], cy: _site.mouse[1],
+        now: d ? [+d[0].toFixed(4), +d[1].toFixed(4), +d[2].toFixed(4)] : null,
+        cached: d2 ? [+d2[0].toFixed(4), +d2[1].toFixed(4), +d2[2].toFixed(4)] : null,
+        angCachedVsNow: ang,
+        dir: d ? [+d[0].toFixed(4), +d[1].toFixed(4), +d[2].toFixed(4)] : null,
+        h: chk ? +chk.h.toFixed(5) : null,
+        ok: chk ? !!chk.ok : null
+      };
+    },
     /* 屏幕坐标 → 地表落点方向 + 可建判定（对账「点击落点」用 —— rayToSurfaceDir 的精度） */
     siteProbe: function (name, cx, cy) {
       var p = null, i;

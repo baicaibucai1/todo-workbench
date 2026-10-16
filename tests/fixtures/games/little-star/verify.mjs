@@ -64,6 +64,8 @@
  *      ① B 键选址模式 + 光标预览 · ② 硬闸门 = 连续场纯函数（海 / 坡度 / 极冠 / 叠城）
  *      ③ 点击放置（UI 全链路）· ④ 站心贴地（worldToLocal · 连续场）
  *      ⑤ 重建自愈（数据是真值源）· ⑥ 全景档点位标记
+ *      ⑦ v0.15 聚焦操作面板：实验场白名单 + 主按钮与 B 键同源（setSiteMode 唯一入口）
+ *         + 读数与点击链路同源（「可建 · N 分」= siteCheck 的 N）
  *  24. ★ 卫星与嵌套聚焦（v0.14 新增）：卫星系统 + 「聚焦行星 → 双击卫星 → 聚焦卫星」——
  *      ① 卫星数据自洽（|世界−母星| ≈ a · 相位推进 · 潮汐锁定自转与公转同速反向）
  *      ② 嵌套聚焦走真实双击链路（pickAt 卫星分支）：focus 态目标 = 卫星、距离公式同款
@@ -220,7 +222,7 @@ async function frameStar(page, radius) {
       api: window.__game.version,
       badge: (document.getElementById("ver") || {}).textContent || ""
     }));
-    check("版本号为 0.14.0（调试接口）", verInfo.api === "0.14.0");
+    check("版本号为 0.15.0（调试接口）", verInfo.api === "0.15.0");
     check("右下角版本戳与调试接口同源", verInfo.badge === "v" + verInfo.api, `#ver = "${verInfo.badge}"`);
     console.log(`  ℹ 星系「${st0.system}」 · ${st0.starType}（${st0.starId}） · ${st0.planets.length} 颗行星`);
     await shot(page, "n1-system.png");
@@ -2242,13 +2244,14 @@ async function frameStar(page, radius) {
     /* ---- 23. ★ 聚落系统（v0.13 · 实验性）：连续场选址 + 点击放置 ---- */
     console.log("\n[23] ★ 聚落系统：连续场选址 + 点击放置（实验性）");
     /* 立场：DESIGN.md §5 的实验性落地 —— 聚焦档在星球表面放置聚落。
-     * 本节验六件事（全部机器判据）：
+     * 本节验七件事（全部机器判据）：
      *   ① B 键进入选址模式（键盘链路）+ 光标在屏
      *   ② 硬闸门 = 连续场纯函数（海面 / 极冠被拒，合格点通过并给评分）
      *   ③ 点击放置（UI 全链路）+ 不叠城闸门
      *   ④ 城市贴地（站心 = 连续场表面点；投影回屏幕 ≈ 点击点 —— 契约⑦）
      *   ⑤ 重建地表后城市自愈（数据是唯一真值源、几何是派生）
      *   ⑥ 退出聚焦 → 点位标记仍挂全景网格（DESIGN §5.4 方案 A）
+     *   ⑦ ★ v0.15 聚焦操作面板（实验场白名单 / 按钮与 B 键同源 / 读数与点击同源）
      * 试验场选「有海行星」—— 海面闸门需要它。 */
     const sp23 = await page.evaluate(() => {
       const t = window.__game.terrain().filter((x) => x.solid && x.sea)[0];
@@ -2391,6 +2394,139 @@ async function frameStar(page, radius) {
     await page.evaluate(() => { window.__game.unfocus(); window.__game.clearSelection(); });
     await sleep(400);
 
+    /* ⑦ ★ v0.15：聚焦操作面板（实验：建城）
+     * 立场：面板是聚落模式的**投影**，不是第二套状态 —— 主按钮与 B 键必须走同一个
+     * setSiteMode()；面板只在「实验场行星」（EXPERIMENT_PLANET = 薄曙 III）出现。 */
+    const expName = await page.evaluate(() => window.__game.sitePanel().experiment);
+    await page.evaluate((n) => window.__game.focusPlanetByName(n), expName);
+    await sleep(1400);
+    const pn1 = await page.evaluate(() => window.__game.sitePanel());
+    check("★ 实验场聚焦 → 操作面板现身（host = 实验场 · 按钮「放置城市」· 陆地读数在位）",
+      pn1.host === expName && pn1.visible === true &&
+        pn1.build === "放置城市" && pn1.buildOn === false &&
+        /%\s*$/.test(pn1.land || ""),
+      `host=${pn1.host} · visible=${pn1.visible} · build="${pn1.build}" · 陆地 ${pn1.land} · 聚落 ${pn1.count}`);
+
+    /* 主按钮 = B 键同源：点开 → 模式开 + 按钮转实心「停止放置」；再点 → 复原 */
+    await page.click("#fp-build");
+    await sleep(300);
+    const pn2 = await page.evaluate(() => window.__game.sitePanel());
+    await page.click("#fp-build");
+    await sleep(300);
+    const pn3 = await page.evaluate(() => window.__game.sitePanel());
+    check("★ 面板主按钮与 B 键同源（同一个 setSiteMode：开 → 实心「停止放置」；再点 → 复原）",
+      pn2.mode === true && pn2.buildOn === true && pn2.build === "停止放置" &&
+        pn3.mode === false && pn3.buildOn === false && pn3.build === "放置城市",
+      `开：mode=${pn2.mode}·"${pn2.build}" · 关：mode=${pn3.mode}·"${pn3.build}"`);
+
+    /* 非实验场行星 → 面板不出现（实验场白名单） */
+    const otherSolid = await page.evaluate(
+      (n) => window.__game.terrain().filter((t) => t.solid && t.name !== n)[0].name, expName);
+    await page.evaluate((n) => window.__game.focusPlanetByName(n), otherSolid);
+    await sleep(1400);
+    const pn4 = await page.evaluate(() => window.__game.sitePanel());
+    check("★ 非实验场行星聚焦 → 面板不出现（白名单：实验没成熟前不外溢）",
+      pn4.host === null && pn4.visible === false,
+      `${otherSolid}：host=${pn4.host} · visible=${pn4.visible}`);
+
+    /* ★★ 面板读数是点击链路的同源投影 —— **必须在产品链路上选点**：
+     * 玩家看到的光标环 / 读数来自 rAF 内的 siteUpdateCursor（用当帧矩阵），
+     * 而 evaluate 里的 siteProbe 用的是「渲染后」的矩阵，两者相差一帧（实测 3~6°）。
+     * 断言「选点分数 = 读数分数」若跨这两个时机比，就是在比两个不同的落点 ——
+     * 那不是面板的锅。正确做法：**把选点本身也放到产品链路上**（鼠标移过去 → 读读数），
+     * 然后断言「点击落下的城市 = 预览的落点（逐位相同）」—— 所见即所得。 */
+    await page.evaluate((n) => window.__game.focusPlanetByName(n), expName);
+    await sleep(1400);
+    /* 相机推距是**平滑推进**的（v0.10 的过场）：先 zoomTo(goal) 立即到位 + 显式摆机位，
+     * 把「相机还在动」这个变量钉死。 */
+    await page.evaluate(() => { const g = window.__game; g.zoomTo(g.cameraState().goal); });
+    await sleep(400);
+    await page.evaluate(() => window.__game.setOrbitAngles(1.57, 1.35));   /* 该 θ 下屏内可建点最多 */
+    await sleep(600);
+    await page.click("#fp-build");
+    await sleep(300);
+    const pnCands = await page.evaluate((n) => {
+      const G = window.__game;
+      const out = [];
+      for (let a = 0; a < 2400; a++) {
+        const lat = -1.2 + (a % 40) * 0.06, lon = Math.floor(a / 40) * 0.35 + 0.05;
+        const d = [Math.sin(lat) * Math.cos(lon), Math.cos(lat), Math.sin(lat) * Math.sin(lon)];
+        const c = G.siteCheck(n, d);
+        if (!c || !c.ok || c.h < 0.54) continue;      /* 离海面有余量：实验场是海洋行星，可建点贴着海岸线 */
+        const s = G.siteScreen(n, d);
+        if (!s || s.front !== true) continue;
+        if (!(s.x > 380 && s.x < 900 && s.y > 200 && s.y < 640)) continue;
+        out.push({ x: Math.round(s.x), y: Math.round(s.y), score: c.score });
+      }
+      out.sort((a, b) => b.score - a.score);          /* 优先高分点：落点更「内陆」、更稳 */
+      return out.slice(0, 40);
+    }, expName);
+    const angDeg = (a, b) => Math.acos(Math.min(1, Math.max(-1,
+      a[0] * b[0] + a[1] * b[1] + a[2] * b[2]))) * 180 / Math.PI;
+    let pnHit = null;
+    for (let i = 0; i < pnCands.length; i++) {
+      await page.mouse.move(pnCands[i].x, pnCands[i].y);
+      await sleep(180);
+      const s1 = await page.evaluate(() => window.__game.sitePanel());
+      if (!(s1.cursor && s1.cursor.ok === true && s1.cursor.dir && s1.cursor.h > 0.55)) continue;
+      /* ★ 相机「平滑到位」的过渡期内（聚焦推进 / setOrbitAngles 后的旋转），屏幕上任何
+       * 固定点的落点都还在大幅移动（实测 130ms 内差 28°）。判据：**隔 220ms 再读一次，
+       * 两次落点同址（< 0.5°）才算稳定** —— 即「先问两次采样之间还有什么在变」。 */
+      await sleep(220);
+      const s2 = await page.evaluate(() => window.__game.sitePanel());
+      if (!(s2.cursor && s2.cursor.ok === true && s2.cursor.dir && s2.cursor.h > 0.55)) continue;
+      if (angDeg(s1.cursor.dir, s2.cursor.dir) > 0.5) continue;
+      pnHit = { x: pnCands[i].x, y: pnCands[i].y, read: s2.read, dir: s2.cursor.dir, score: s2.cursor.score };
+      break;
+    }
+    let pnClick = null;
+    if (pnHit) {
+      await page.mouse.click(pnHit.x, pnHit.y);
+      await sleep(500);
+      const after = await page.evaluate((n) => {
+        const G = window.__game;
+        const st = G.settlements(n);
+        const panel = G.sitePanel();
+        return { panel: panel, city: st.list[st.count - 1], last: panel.lastClick };
+      }, expName);
+      pnClick = { after: after.panel, city: after.city, last: after.last };
+      pnClick.hit = pnHit;
+    }
+    /* 判据分两层（都稳定、都不依赖「两次采样之间世界没在转」这个不成立的前提）：
+     *   ① 结构性：点击用的落点 === 城市数据里的落点（逐位）—— 同一个数组，必然相同；
+     *   ② 所见即所得：点击用的落点 ≈ 鼠标停下时的预览落点（帧间漂移 < 3°）。
+     * 注：「预览读数」与「点击结果」之间隔着 130ms+（世界在转、光标落点每帧重算），
+     * 分数差 1~2 分是**固有**的 —— 不该拿它当「同源」的判据。 */
+    const angOf = (a, b) => {
+      const d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      return Math.acos(Math.min(1, Math.max(-1, d))) * 180 / Math.PI;
+    };
+    const citySameAsClick = pnClick && pnClick.city && pnClick.last &&
+      pnClick.city.dir.every((v, k) => Math.abs(v - pnClick.last.dir[k]) < 1e-6) &&
+      pnClick.city.score === pnClick.last.score && pnClick.last.src === "preview";
+    const clickVsPreview = pnClick && pnClick.last ? angOf(pnClick.last.dir, pnClick.hit.dir) : 999;
+    check("★ 面板读数是点击链路的同源投影（点击落点 === 城市落点（逐位）· 与预览落点同址 < 3°）",
+      !!pnClick &&
+        pnClick.hit.read === "可建 · " + pnClick.hit.score + " 分" &&
+        citySameAsClick &&
+        clickVsPreview < 3 &&
+        pnClick.after.count === "1 座" &&
+        /已建聚落/.test(pnClick.after.note),
+      pnClick
+        ? `读数「${pnClick.hit.read}」→ 点 (${pnClick.hit.x},${pnClick.hit.y}) → #${pnClick.city && pnClick.city.n} ${pnClick.city && pnClick.city.score} 分（落点源=${pnClick.last && pnClick.last.src} · 与预览差 ${clickVsPreview.toFixed(2)}°）· ${pnClick.after.count}`
+        : "面板链路上找不到可建点");
+
+    /* 退出聚焦 → 面板隐藏 + 选址模式解除（不残留状态） */
+    await page.keyboard.press("Escape");
+    await sleep(900);
+    const pn5 = await page.evaluate(() => window.__game.sitePanel());
+    check("★ 退出聚焦 → 面板隐藏 + 选址模式解除",
+      pn5.host === null && pn5.visible === false && pn5.mode === false,
+      `host=${pn5.host} · visible=${pn5.visible} · mode=${pn5.mode}`);
+
+    await page.evaluate(() => { window.__game.unfocus(); window.__game.clearSelection(); });
+    await sleep(400);
+
     /* ---- 24. ★ 卫星与嵌套聚焦（v0.14）---- */
     console.log("\n[24] ★ 卫星与嵌套聚焦（v0.14）");
     /* 立场：卫星是「某些行星」的天体条目 —— 数据 p._moons 是唯一真值源，
@@ -2400,6 +2536,11 @@ async function frameStar(page, radius) {
      * （聚焦行星 → **双击它的卫星** → 聚焦卫星 → Esc 回母行星聚焦档）；
      * ③ 卫星聚焦时距地表读数与目标都对；④ 卫星聚焦档镜头同样同速随动
      * （Δθ ≡ −ΔrotY —— 与行星同一套口径）。页面此时在 Panorama（[23] 收尾）。 */
+    /* ★ v0.15：[23] 的面板测试把相机摆到 θ=1.57/φ=1.35 才收尾 —— 而 enterFocus 的
+     * aimFocusAtMoonSystem 是**按当前相机位置**挑「朝相机这侧」的卫星的。本节不
+     * 隐式继承那个机位：先显式回标准机位（正视赤道），让「挑中哪颗卫星」有确定输入。 */
+    await page.evaluate(() => window.__game.setOrbitAngles(0.6, Math.PI / 2));
+    await sleep(400);
     const mh = await page.evaluate(() => {
       const g = window.__game;
       const ps = g.getState().planets.filter((p) => p.moons > 0);
@@ -2429,41 +2570,62 @@ async function frameStar(page, radius) {
 
       /* 嵌套聚焦：走**真实双击链路**（pickAt 的卫星分支），不走调试后门。
        * 选一颗**屏内 + 朝相机这侧**的卫星 —— 卫星沿弧划走，任一瞬间通常有
-       * 一颗正在视野里（FOCUS_MOON_K + DIP 机位保证轨道贴着屏幕上沿）；
-       * 等不到就重聚焦一次（重新对准、换一批相位），最多两轮。 */
-      let msp = null;
-      for (let round = 0; round < 2 && !msp; round++) {
-        for (let wait = 0; wait < 6 && !msp; wait++) {
-          msp = await page.evaluate((n) => {
-            const g = window.__game;
-            const W = window.innerWidth, H = window.innerHeight;
-            return g.moons(n).find((m) => m.front && m.screen.x > 40 && m.screen.x < W - 40
-              && m.screen.y > 60 && m.screen.y < H - 60) || null;
-          }, mh.host);
-          if (!msp) await sleep(900);
+       * 一颗正在视野里（FOCUS_MOON_K + DIP 机位保证轨道贴着屏幕上沿）。
+       * ★ v0.15：卫星在轨道上是**持续运动**的（真实天体运动，不是静止靶），而 [23]
+       * 的面板测试让页面多跑了十几秒 —— 本节 enterFocus 时的卫星相位与上一版不同。
+       * 「读一次就点」于是偶发落空（读到的位置 → 双击之间卫星已划走 / 正压在母星
+       * 盘上被判给母星）。做法：读 → 双击 → 核对焦点有没有交给卫星 → 没交给就换
+       * 相位重来（最多 5 次）；命中在第几次记进 detail。测试条件仍是产品链路的
+       * 真实双击 —— 只是对运动靶做了「重试」，不是换成调试后门。 */
+      let msp = null, nf = null, mtry = 0;
+      /* 重聚焦：先 unfocus 再 focus —— enterFocus 的 aim 只在「进入聚焦」那一次跑，
+       * 已在该行星聚焦档里再调 focusPlanetByName 不会重新对准（换不了相位）。 */
+      const refocusHost = async () => {
+        await page.evaluate(() => window.__game.unfocus());
+        await sleep(350);
+        await page.evaluate((n) => window.__game.focusPlanetByName(n), mh.host);
+        await sleep(1900);
+      };
+      for (let att = 0; att < 5 && !nf; att++) {
+        const cand = await page.evaluate((n) => {
+          const g = window.__game;
+          const W = window.innerWidth, H = window.innerHeight;
+          return g.moons(n).find((m) => m.front && m.screen.x > 40 && m.screen.x < W - 40
+            && m.screen.y > 60 && m.screen.y < H - 60) || null;
+        }, mh.host);
+        if (!cand) {                      /* 这瞬没有屏内 front 卫星 → 重聚焦换相位 */
+          await refocusHost();
+          continue;
         }
-        if (!msp) await page.evaluate((n) => window.__game.focusPlanetByName(n), mh.host);
+        await page.mouse.dblclick(cand.screen.x, cand.screen.y);
+        await sleep(2000);
+        const st = await page.evaluate(() => {
+          const cs = window.__game.cameraState();
+          return {
+            cs: cs,
+            hudHidden: document.getElementById("focus-hud").classList.contains("hidden"),
+            hudName: (document.getElementById("fh-name") || {}).textContent
+          };
+        });
+        if (st.cs.mode === "focus" && st.cs.focusIsMoon === true && st.cs.focus === cand.name) {
+          msp = cand; nf = st; mtry = att + 1;
+        } else {                          /* 落空（打到母星/空白）→ 回母行星聚焦档再试 */
+          await refocusHost();
+        }
       }
-      if (!msp) {
-        check("★ 嵌套聚焦：行星聚焦档里双击卫星 → 聚焦卫星", false, "两轮等待后视野内都没有可点的卫星");
-      }
-      if (msp) {
-      await page.mouse.dblclick(msp.screen.x, msp.screen.y);
-      await sleep(2300);
-      const nf = await page.evaluate(() => ({
-        cs: window.__game.cameraState(),
-        hudHidden: document.getElementById("focus-hud").classList.contains("hidden"),
-        hudName: (document.getElementById("fh-name") || {}).textContent
-      }));
-      const mgoal = Math.min(Math.max(msp.size * 3.6, 1.6), 10.0);
       check("★ 嵌套聚焦：行星聚焦档里双击卫星 → 聚焦卫星（focus 态 · 目标 = 卫星）",
-        nf.cs.mode === "focus" && nf.cs.focusIsMoon === true && nf.cs.focus === msp.name,
-        `mode=${nf.cs.mode} · 目标「${nf.cs.focus}」· isMoon=${nf.cs.focusIsMoon}`);
+        !!nf && nf.cs.mode === "focus" && nf.cs.focusIsMoon === true && nf.cs.focus === msp.name,
+        nf
+          ? `第 ${mtry} 次双击命中：mode=${nf.cs.mode} · 目标「${nf.cs.focus}」· isMoon=${nf.cs.focusIsMoon}`
+          : "5 次双击都没把焦点交给卫星（视野内没有可点的 front 卫星）");
+      if (nf) {
+      const mgoal = Math.min(Math.max(msp.size * 3.6, 1.6), 10.0);
       check("★ 卫星聚焦距离 = 卫星半径 × 3.6（与行星同一公式，clamp 1.6~10.0）",
         Math.abs(nf.cs.goal - mgoal) <= 0.02,
         `size=${msp.size} → goal=${nf.cs.goal}（复算 ${mgoal.toFixed(2)}）`);
       check("★ 聚焦 HUD 跟到卫星（名字即目标名）", !nf.hudHidden && nf.hudName === msp.name,
         `HUD「${nf.hudName}」`);
+      await sleep(400);            /* 让聚焦推进的半径 lerp 收干，再读「钉屏」偏移 */
       const mcent = await page.evaluate((n) => {
         const g = window.__game;
         const ms = g.moons(n);

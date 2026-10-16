@@ -11,6 +11,7 @@
  *   1. 画布与光标状态        #scene
  *   2. 右侧信息面板          #panel / .p-*（v0.9 起含标签页 .p-tab / #p-res / #p-civ）
  *   3. 左上工具条 + 指导书   #hud / #guide / .g-*
+ *   3′ 聚焦档两块（v0.10 / v0.15）：顶部 #focus-hud（.fh-*）/ 左下 #focus-panel（.fp-*）
  *
  * ★ 指导书是「左栏导航 + 右栏单栏」两栏结构（v0.6.1 栏目化，不是一页长卷）：
  *   .g-main > #guide-nav（固定 210px，栏目按钮 .gn-item / 篇分隔 .g-part）
@@ -254,6 +255,52 @@ html, body {
   transition: color 0.12s ease, border-color 0.12s ease;
 }
 #fh-exit:hover { color: var(--paper); border-color: var(--edge); }
+
+/* ---------- 3a″. 聚焦操作面板（v0.15 · 实验：建城） ----------
+ * 左下角一块，与 #panel / #focus-hud 同一套语言：黑底抬一档 #0b0b0b + 中灰 2px 外框
+ * + 容器圆角 8 / 小件圆角 4；显隐走 opacity 过渡（与另外两块一致，别用 display）。
+ * ★ 只在「实验场行星」（薄曙 III）的聚焦档出现 —— 其余行星不出现，保持画面干净。 */
+#focus-panel {
+  position: fixed; left: 24px; bottom: 24px; z-index: 10; width: 226px;
+  padding: 12px;
+  background: #0b0b0b;
+  border: 2px solid var(--edge);
+  border-radius: var(--r);
+  color: var(--txt);
+  font: 13px/1.6 var(--sans);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+#focus-panel.hidden { opacity: 0; transform: translateY(10px); pointer-events: none; }
+.fp-head {
+  display: flex; align-items: baseline; gap: 8px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--rule);
+}
+#fp-name { font-size: 13px; font-weight: 600; letter-spacing: 1px; color: var(--txt); }
+.fp-tag {
+  font-size: 10px; letter-spacing: 2px; color: var(--dim2);
+  padding: 0 5px; border: 1px solid var(--rule); border-radius: var(--r-sm);
+}
+/* 主按钮：默认线框；hover / 选址模式下填成实心白（交互反馈 = 线框转实心，不变色不发光） */
+#fp-build {
+  display: block; width: 100%; margin: 10px 0;
+  padding: 7px 0;
+  font: 12.5px/1.4 var(--sans); letter-spacing: 2px;
+  color: var(--txt); background: transparent;
+  border: 2px solid var(--rule); border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+#fp-build:hover, #fp-build.on { color: var(--ink); background: var(--paper); border-color: var(--paper); }
+.fp-row { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; padding: 2px 0; }
+.fp-k { color: var(--dim2); letter-spacing: 1px; flex: none; }
+.fp-v { font-family: var(--mono); color: var(--dim); text-align: right; }
+.fp-v.ok { color: var(--paper); }
+.fp-v.bad { color: var(--dim2); }
+#fp-note {
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--rule);
+  font-size: 11px; line-height: 1.55; color: var(--dim);
+}
+#fp-note.hidden { display: none; }
 
 /* 右下角版本戳：纯观察用，不参与交互 */
 #ver {

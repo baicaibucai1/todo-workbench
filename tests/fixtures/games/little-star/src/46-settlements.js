@@ -321,8 +321,8 @@ function _raySphere(o, d, R) {
 
 var _site = {
   on: false, p: null, mouse: null,
-  dir: null, check: null, hudKey: "", note: "", noteUntil: 0,
-  lastCheck: 0
+  dir: null, check: null, hudKey: "", panelKey: "", note: "", noteUntil: 0,
+  lastCheck: 0, trace: []
 };
 var _siteCursor = null;
 
@@ -350,6 +350,7 @@ function setSiteMode(on) {
     _site.note = "";
   }
   _site.hudKey = "";                    /* 强制刷新 HUD */
+  _site.panelKey = "";                  /* 强制刷新操作面板（v0.15） */
   return _site.on;
 }
 
@@ -400,15 +401,45 @@ function siteUpdateCursor(cx, cy, force) {
     _siteCursor.material.opacity = ok ? 0.95 : 0.55;
   }
   _site.hudKey = "";                       /* 评分/可建变了 → HUD 刷新 */
+  /* 调试 trace：最近 6 次光标更新（帧号 + 坐标 + 落点）—— 抓「缓存落点 ≠ 现算落点」用 */
+  if (_site.trace) {
+    _site.trace.push({
+      f: typeof __frames === "number" ? __frames : -1, cx: cx, cy: cy,
+      d: [+dir[0].toFixed(4), +dir[1].toFixed(4), +dir[2].toFixed(4)]
+    });
+    if (_site.trace.length > 6) _site.trace.shift();
+  }
   return dir;
 }
 
-/* 点击 = 尝试放置（返回 true 表示已被选址模式消费） */
+/* 点击 = 尝试放置（返回 true 表示已被选址模式消费）
+ *
+ * ★★ v0.15 关键修正：**点击直接用预览算出的落点方向**（`_site.dir`），不再自己重做一次射线。
+ * 起因：预览与点击各做一次 rayToSurfaceDir，两次之间隔着若干帧，且屏幕坐标取整 0.5px
+ * （盘缘附近 ≈0.17°）—— 在**海岸线**（h ≈ 0.5 的等值线）上这点差就足以翻转判定：
+ * 实测同一鼠标点连采得到 true/true/false/true，玩家会看到「白环显示可建、点下去说海面」。
+ * 预览算出的方向就是「玩家此刻看到的那块地」，点击照它落城 = 所见即所得，
+ * 而且这条链路**只有一个转换点**（契约⑦的精神：预览与提交共用同一个真值）。 */
 function handleSiteClick(cx, cy) {
   if (!_site.on || !_site.p) return false;
-  var dir = rayToSurfaceDir(_site.p, cx, cy);
+  var dir = null;
+  if (_site.dir && _site.mouse &&
+    Math.abs(_site.mouse[0] - cx) <= 2 && Math.abs(_site.mouse[1] - cy) <= 2) {
+    dir = _site.dir;                      /* 鼠标没动过 → 用预览的落点（真值同源） */
+  } else {
+    dir = rayToSurfaceDir(_site.p, cx, cy);   /* 兜底：位置对不上才现算 */
+  }
   if (!dir) return true;                  /* 点到太空：消费但不动作 */
   var res = placeCity(_site.p, dir);
+  /* ★ v0.15：记下「这一次点击用的是哪个落点」—— 让「预览 = 点击 = 城市落点」可对账
+   * （城市数据里的 dir 就是这里的 dir，同一个数组，逐位相同）。 */
+  _site.lastClick = {
+    dir: [+dir[0].toFixed(6), +dir[1].toFixed(6), +dir[2].toFixed(6)],
+    src: _site.dir === dir ? "preview" : "recompute",
+    cx: cx, cy: cy, ok: res.ok,
+    gate: res.ok ? null : res.gate,
+    n: res.ok ? res.city.n : null, score: res.ok ? res.city.score : null
+  };
   if (res.ok) {
     _site.note = "已建聚落 #" + res.city.n + " · " + res.city.score + " 分（" +
       res.city.parts.map(function (x) { return x.k + " " + x.v; }).join(" · ") + "）";
@@ -451,5 +482,81 @@ function syncSettlements() {
       elMode.classList.toggle("hidden", !show);
       if (show) elMode.textContent = noteTxt || ("选址模式 · " + (scoreTxt || "移动光标") + " · 点击放置 · B 退出");
     }
+  }
+  updateSitePanel(false);              /* ★ v0.15：聚焦操作面板（左下角一块） */
+}
+
+/* ---- ⑩ 聚焦操作面板（v0.15 · 实验：建城） ----
+ * 用户原话：「我们现在选薄曙三作为实验项目的开始，第一增加聚焦时的操作面板，我们需要放置城市」。
+ *
+ * ★ **实验场收敛到一颗行星**：`EXPERIMENT_PLANET` 只在这一颗的聚焦档里露出操作面板 ——
+ *   其余行星一个字节都不出现（用户审美「花活越少越好」；实验没成熟前不外溢）。
+ *   要放开成「所有固态行星」：把常量改成 `null`（判据就只剩「聚焦 + 固态」）。
+ * ★ **单一写入者**：主按钮与 B 键走**同一个** `setSiteMode()` —— 面板只是它的投影，
+ *   面板里不写任何互斥分支（第四节 7 的纪律）。
+ * ★ 零 RNG：面板只读已有字段 + 写 DOM，不抽任何随机数（不变量 8）。 */
+
+var EXPERIMENT_PLANET = "薄曙 III";
+var elFocusPanel = null, elFpName = null, elFpBuild = null;
+var elFpCount = null, elFpLand = null, elFpRead = null, elFpNote = null;
+
+/* 面板宿主 = 当前聚焦目标，且它必须是「实验场」固态行星（卫星 / 气态 / 别的行星一律 null） */
+function sitePanelHost() {
+  if (!FSM_CAMERA.is("focus") || !G.focusPlanet) return null;
+  var p = G.focusPlanet;
+  if (p._isMoon || !isSolidPlanet(p)) return null;
+  if (EXPERIMENT_PLANET && p.name !== EXPERIMENT_PLANET) return null;
+  return p;
+}
+
+function setupSitePanel() {
+  elFocusPanel = $("focus-panel");
+  elFpName = $("fp-name");
+  elFpBuild = $("fp-build");
+  elFpCount = $("fp-count");
+  elFpLand = $("fp-land");
+  elFpRead = $("fp-read");
+  elFpNote = $("fp-note");
+  /* 主按钮 = B 键的等价入口（同一个 setSiteMode；不在这里写任何模式逻辑） */
+  if (elFpBuild) elFpBuild.addEventListener("click", function () { setSiteMode(!siteModeOn()); });
+  updateSitePanel(true);
+}
+
+/* 每帧刷新（syncSettlements 尾调）—— 只在关键值变了才碰 DOM：
+ * 整段重绘会吃掉真实点击（见 72-focus 的 HUD 节流同一条教训）。 */
+function updateSitePanel(force) {
+  if (!elFocusPanel) return;
+  var p = sitePanelHost();
+  var cnt = p && p._cities ? p._cities.length : 0;
+  /* 陆地占比：连续场实测（海平面重标定后的水面覆盖的补）—— 薄曙 III 是 90% 水的
+   * 海洋行星，可建陆地只有一成（实测 10%），玩家得知道这件事（不然会以为「建不了」）。 */
+  var landTxt = "—";
+  if (p) landTxt = p._cs ? (100 - p._cs.seaFrac * 100).toFixed(0) + "%" : "—";
+  var readTxt = "—", readCls = "";
+  if (p) {
+    if (_site.on && _site.check) {
+      readTxt = _site.check.ok ? "可建 · " + _site.check.score + " 分" : "不可建 · " + _site.check.gate;
+      readCls = _site.check.ok ? "ok" : "bad";
+    } else {
+      readTxt = _site.on ? "移动光标" : "未开始";
+    }
+  }
+  var noteTxt = _site.note && performance.now() < _site.noteUntil ? _site.note : "";
+  var key = (p ? p.name : "") + "|" + cnt + "|" + landTxt + "|" + (_site.on ? 1 : 0) + "|" + readTxt + "|" + noteTxt;
+  if (!force && key === _site.panelKey) return;
+  _site.panelKey = key;
+  elFocusPanel.classList.toggle("hidden", !p);
+  if (!p) return;
+  if (elFpName) elFpName.textContent = p.name;
+  if (elFpBuild) {
+    elFpBuild.textContent = _site.on ? "停止放置" : "放置城市";
+    elFpBuild.classList.toggle("on", _site.on);
+  }
+  if (elFpCount) elFpCount.textContent = cnt + " 座";
+  if (elFpLand) elFpLand.textContent = landTxt;
+  if (elFpRead) { elFpRead.textContent = readTxt; elFpRead.className = "fp-v " + readCls; }
+  if (elFpNote) {
+    elFpNote.classList.toggle("hidden", !noteTxt);
+    if (noteTxt) elFpNote.textContent = noteTxt;
   }
 }
