@@ -1,6 +1,7 @@
 /* ================= 场景 ================= */
 var systemGroup = new THREE.Group();
 var systemT = 0;                  // 装饰动画时钟（真实秒）
+var _tmpSunV = new THREE.Vector3();  /* v0.17：云壳每帧复用的临时量（世界坐标 → 指向恒星） */
 
 function buildStarfield(sc) {
   var n = 1600, pos = new Float32Array(n * 3), i;
@@ -274,13 +275,22 @@ function buildScene(sys) {
     p._group = grp;
 
     var maps = paintPlanetMaps(p);                  /* ← 贴图由行星物理数据算出 */
-    var mat = new THREE.MeshLambertMaterial({ map: maps.map });
+    /* ★ v0.17：固态行星从 Lambert 换成 Phong —— 唯一目的是拿到**高光通道**，
+     * 让海面能出太阳耀斑（Lambert 没有 specular，海因此永远是一片哑光蓝 ——
+     * 「像不像水」几乎全看这一条）。漫反射两者一致；只有带 specularMap 的行星
+     * 才换，气态 / 熔岩照旧走 Lambert，不给它们凭空加反光。 */
+    var mat = maps.specularMap
+      ? new THREE.MeshPhongMaterial({ map: maps.map, specular: 0xdfeaf2, shininess: 78 })
+      : new THREE.MeshLambertMaterial({ map: maps.map });
     if (maps.bumpMap) {
       /* 凹凸 = 同一个高程场（42-terrain.js 导出）—— 贴近时地形会被光照塑形。
-       * 强度跟着「起伏」走：被大气磨平的世界不该有刀劈一般的阴影。 */
+       * 强度跟着「起伏」走：被大气磨平的世界不该有刀劈一般的阴影。
+       * ★ v0.17 系数 0.19 → BUMP_K(0.42)：立体感的主力改由**实时光照**承担，
+       *   贴图里那道烘死的固定方向阴影退居次要（见 buildTerrainMaps 的 shade）。 */
       mat.bumpMap = maps.bumpMap;
-      mat.bumpScale = 0.19 * clamp(maps.params.relief, 0.35, 1.4);
+      mat.bumpScale = BUMP_K * clamp(maps.params.relief, 0.35, 1.4);
     }
+    if (maps.specularMap) mat.specularMap = maps.specularMap;
     if (maps.emissiveMap) {
       mat.emissive = new THREE.Color(0xff9a4a);
       mat.emissiveMap = maps.emissiveMap;
@@ -311,9 +321,13 @@ function buildScene(sys) {
     // 云层：大气够厚、且不是气态行星（本身已是云顶）或熔岩（水汽不凝）才有
     var cloudy = planetCloudy(p);
     if (cloudy) {
+      /* ★ v0.17：云图改成**按行星各自生成**（cloudTexFor —— 零随机流，见 40-textures），
+       * 材质换成带**临边增亮**的云材质（cloudMaterial）—— 旧版是 5 颗行星共用一张
+       * 256×128 的圆斑图。球段数 24×18 → 48×32：云是这颗星的主视觉，24 段的多边形
+       * 轮廓在近景一眼就看得出。 */
       var cloud = new THREE.Mesh(
-        new THREE.SphereGeometry(p.size * 1.02, 24, 18),
-        new THREE.MeshLambertMaterial({ map: cloudT, transparent: true, opacity: 0.25 + 0.5 * p.atmo, depthWrite: false })
+        new THREE.SphereGeometry(p.size * 1.02, 48, 32),
+        cloudMaterial(cloudTexFor(p), 0.25 + 0.5 * p.atmo)
       );
       grp.add(cloud);
       p._cloud = cloud;
@@ -530,13 +544,24 @@ function updateScene(sys, dt) {
     p._mesh.rotation.y += dRot;
     p._rotDelta = dRot;              /* 镜头同速随动的口径（99-boot 每帧读） */
     if (p._cloud) p._cloud.rotation.y += p.spin * 1.35 * eff;
+    /* 云壳的太阳方向（世界系）：恒星在原点 → 由行星的世界坐标反推。
+     * 云自己每帧在转（rotation.y），所以必须用**世界系**法线去点乘它 ——
+     * 否则光照会跟着云一起转，晨昏线就钉死在贴图上了。 */
+    if (p._cloud) {
+      var cu = p._cloud.material.uniforms;
+      if (cu && cu.uSun) {
+        p._mesh.getWorldPosition(_tmpSunV);
+        cu.uSun.value.copy(_tmpSunV).normalize().negate();
+      }
+    }
 
     /* 聚焦 = 沉浸观察地表：云与大气雾按相机模式淡出（否则半透明白雾
      * 正好糊在要看的表面上 —— v0.11 首版的「聚焦仍糊」就是它）。
      * base 存在 userData 上，退出聚焦原样恢复。 */
     if (p._cloud) {
-      if (p._cloud.userData.base === undefined) p._cloud.userData.base = p._cloud.material.opacity;
-      p._cloud.material.opacity = p._cloud.userData.base * (FSM_CAMERA.is("focus") ? 0.30 : 1);
+      /* v0.17：云材质是 ShaderMaterial，不透明度在 uniform 里（uBase 记原值） */
+      var cu2 = p._cloud.material.uniforms;
+      if (cu2 && cu2.uOpacity) cu2.uOpacity.value = cu2.uBase.value * (FSM_CAMERA.is("focus") ? 0.30 : 1);
     }
     if (p._atmo) {
       if (p._atmo.userData.base === undefined) p._atmo.userData.base = p._atmo.material.uniforms.uRim.value;

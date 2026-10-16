@@ -31,6 +31,11 @@
  *   先做固态行星（bulk === "rock"）—— 气态仍用 v0.6 的带纹做法。 */
 
 var TEX_LO = 768, TEX_HI = 2048;      /* 贴图宽度×2 = 高度的 equirect 规格 */
+/* 凹凸强度系数（v0.17）：0.19 → 0.42。原来山几乎不出立体感（实测各行星
+ * bumpScale 只有 0.09~0.18，冰行星 0.092 基本是个光滑球），因为旧设计把立体感
+ * 全押在贴图里那道**烘死的方向性阴影**上。现在反过来：让**实时光照**（bumpMap）
+ * 当主力，烘的那道退居次要 —— 山影于是永远和晨昏线一致。 */
+var BUMP_K = 0.42;
 
 /* ───────────────────────── ① 标量噪声（零 RNG） ───────────────────────── */
 /* 整数哈希：输入相同永远得到相同的值，抽多少次都不影响世界的随机序列 */
@@ -398,6 +403,12 @@ function buildTerrainMaps(p, W) {
     var cBump = document.createElement("canvas"); cBump.width = W; cBump.height = H;
     var gB = cBump.getContext("2d");
     var imgB = gB.createImageData(W, H), dB = imgB.data;
+    /* 镜面遮罩（v0.17）：决定**太阳耀斑出现在哪里** —— 海面满、冰/雪中等、裸岩哑光。
+     * ★ 「看起来像水」几乎全靠这一层：Lambert 没有高光通道，光靠调颜色只能得到
+     *   一片哑光蓝（v0.16 及以前就是这样）；有了它，海面才会被阳光点燃出一小片反光。 */
+    var cSpec = document.createElement("canvas"); cSpec.width = W; cSpec.height = H;
+    var gS = cSpec.getContext("2d");
+    var imgS = gS.createImageData(W, H), dS = imgS.data;
     var cEm = pr.lava ? document.createElement("canvas") : null;
     var gE = null, imgE = null, dE = null;
     if (cEm) { cEm.width = W; cEm.height = H; gE = cEm.getContext("2d"); imgE = gE.createImageData(W, H); dE = imgE.data; }
@@ -409,16 +420,30 @@ function buildTerrainMaps(p, W) {
       var latAbs = Math.abs((j / (H - 1)) * 2 - 1);            /* 0 = 赤道，1 = 极点 */
       /* 极冠：纬度越靠近极点越白；冷星（capFrac 大）从更低的纬度就开始封冰 */
       var white = pr.capFrac > 0 ? clamp((latAbs - (1 - pr.capFrac)) / Math.max(0.06, pr.capFrac * 0.55), 0, 1) : 0;
-      /* 山体阴影（hillshade）：高程梯度的固定西北光。为什么它必不可少 ——
-       * 潮汐锁定的行星永远正面朝光，真实光照下凹凸贴图几乎不出影子；
-       * 把「立体感」直接烘进颜色，贴到哪颗星、什么角度都看得见地形。 */
+      /* ★ v0.17 山体着色：从「固定方向 hillshade」改成「曲率遮蔽 + 轻微方向感」。
+       * 为什么必须改：旧写法把一道**固定东南向**的光烘进贴图（`(gx+gy)*14`），但
+       * 除了潮汐锁定的行星，贴图空间里的真实光照方向每时每刻都在扫（行星在自转），
+       * 于是烘死的影子会和实时光照的晨昏线**长期互相矛盾** —— 亮面上冒出暗坡、
+       * 暗面上冒出亮坡。这是「失真」最主要的来源之一。
+       * 现在的分工：立体感的**主力**交给 bumpMap + 实时光照（bumpScale 同步调大），
+       * 贴图里只留两样：
+       *   ① 曲率遮蔽（**无方向**：脊/峰提亮、谷/坑底压暗 —— 在任何光照下都成立）；
+       *   ② 一点点方向感（幅度压到原来的约三分之一，只作暗示，偶尔撞了也不刺眼）。
+       * 另：经度梯度按 cos(lat) 还原真实距离 —— 不做的话极点附近被 equirect 横向
+       *     拉伸，|lat| > 70° 的阴影会糊成条纹（旧写法的可见畸变）。 */
       var jm = Math.max(0, j - 1), jp = Math.min(H - 1, j + 1);
+      var cosLatJ = Math.max(0.15, Math.cos((j / (H - 1)) * Math.PI - Math.PI / 2));
       for (var i = 0; i < W; i++) {
         var idx = j * W + i;
         var hgt = clamp(field[idx], 0, 1);
-        var gx = field[j * W + ((i + 1) % W)] - field[j * W + ((i - 1 + W) % W)];
-        var gy = field[jp * W + i] - field[jm * W + i];
-        var shade = clamp(1.16 - (gx + gy) * 14 * pr.relief, 0.62, 1.42);
+        var hL = field[j * W + ((i - 1 + W) % W)], hR = field[j * W + ((i + 1) % W)];
+        var hU = field[jm * W + i], hD = field[jp * W + i];
+        var gx = (hR - hL) / cosLatJ, gy = hD - hU;
+        /* 曲率 = 邻域均值 − 中心：谷底/坑底为正（凹），脊线/峰顶为负（凸） */
+        var curv = (hL + hR + hU + hD) * 0.25 - hgt;
+        var ao = clamp(1 - curv * 26 * pr.relief, 0.74, 1.26);
+        var dir = clamp(1 - (gx * 0.62 + gy * 0.62) * 5 * pr.relief, 0.90, 1.10);
+        var shade = ao * dir;
         /* 高度走一遍 S 曲线再取色：把「高度差」放大成「色差」——
          * 色带本身相邻两档差距温和，直接取色会让地形糊成一片（v0.11 教训） */
         var rgb = rampAt(ramp, clamp(0.5 + (hgt - 0.5) * 1.55, 0, 1));
@@ -437,14 +462,34 @@ function buildTerrainMaps(p, W) {
           var w2 = white * white;
           r += (252 - r) * w2; gg += (253 - gg) * w2; bb += (255 - bb) * w2;
         }
-        /* 水下：越深越暗、越偏蓝 —— 水体自身的吸收与遮蔽 */
+        /* 水下（v0.17 重做）：三段 —— 拍岸浅滩（透光见底，偏青绿并**提亮**）、
+         * 陆架过渡、深海（吸收红光 → 压暗压蓝）。
+         * ★ 旧写法 `dep = (seaA − h) / 0.30` 在 0.30 水深就**饱和**：薄曙 III 实测
+         *   31.9% 的海洋像素已经是「同一片最暗的死蓝」，再深也毫无区别 —— 那片海
+         *   因此看着像刷了一层蓝漆。现在改成 sqrt 压缩：浅处变化快（层次都堆在
+         *   近岸，正是眼睛看得出深浅的地方），深处仍可分（饱和点推到 0.45 且非线性）。 */
         if (seaA > 0 && hgt < seaA) {
-          var dep = clamp((seaA - hgt) / 0.30, 0, 1);
-          r *= 1 - 0.35 * dep; gg *= 1 - 0.22 * dep; bb *= 1 - 0.05 * dep;
+          /* ★ 变量名必须是 wd 而不是 d：`var` 是**函数作用域**，写成 var d 会把外层
+           * 那个 ImageData.data（`d = img.data`，下面 `d[o] = r`）整个遮蔽掉 ——
+           * 于是颜色数组变成 number，第一颗有海的行星就崩在 d[o] 上。 */
+          var wd = seaA - hgt;
+          var shallow = 1 - clamp(wd / 0.055, 0, 1);      /* 1 = 贴岸，0 = 深过陆架 */
+          var deep = clamp(Math.sqrt(wd / 0.45), 0, 1);   /* 0 = 水面，1 = 最深 */
+          r *= 1 - 0.46 * deep; gg *= 1 - 0.30 * deep; bb *= 1 - 0.08 * deep;
+          var sw2 = shallow * shallow;                    /* 平方：只有紧贴岸线才泛绿 */
+          r += (88 - r) * sw2 * 0.55; gg += (178 - gg) * sw2 * 0.55; bb += (172 - bb) * sw2 * 0.55;
         }
 
         var o = idx * 4;
         d[o] = r; d[o + 1] = gg; d[o + 2] = bb; d[o + 3] = 255;
+
+        /* 镜面遮罩：海面满、冰与雪中等、裸岩近乎哑光。水下越深反光越弱（碎浪散光）。 */
+        var specV = 26;
+        if (seaA > 0 && hgt < seaA) specV = 255 - 46 * clamp((seaA - hgt) / 0.30, 0, 1);
+        if (pr.snowH < 1 && hgt > pr.snowH) specV = Math.max(specV, 150);
+        if (white > 0) specV = Math.max(specV, 40 + 150 * white);
+        if (pr.prof.id === "ice" || pr.prof.id === "cryo") specV = Math.max(specV, 90);
+        dS[o] = dS[o + 1] = dS[o + 2] = Math.round(specV); dS[o + 3] = 255;
 
         /* 凹凸 = 同一份高程（×由args起伏调整的强度）——山脊与坑都会被光照塑形 */
         var bv = Math.round(255 * clamp(hgt, 0, 1));
@@ -460,6 +505,7 @@ function buildTerrainMaps(p, W) {
     }
     g.putImageData(img, 0, 0);
     gB.putImageData(imgB, 0, 0);
+    gS.putImageData(imgS, 0, 0);
 
     /* 潮汐锁定：永昼面 / 永夜面的热反差（沿用 v0.6 的做法） */
     if (p.tidal) {
@@ -472,8 +518,9 @@ function buildTerrainMaps(p, W) {
 
     var texMap = new THREE.CanvasTexture(cCol);
     var texBump = new THREE.CanvasTexture(cBump);
-    texMap.anisotropy = 4; texBump.anisotropy = 4;
-    var out = { map: texMap, bumpMap: texBump, height: field, params: pr };
+    var texSpec = new THREE.CanvasTexture(cSpec);
+    texMap.anisotropy = 4; texBump.anisotropy = 4; texSpec.anisotropy = 4;
+    var out = { map: texMap, bumpMap: texBump, specularMap: texSpec, height: field, params: pr };
     if (cEm) out.emissiveMap = new THREE.CanvasTexture(cEm);
     return out;
   });
@@ -493,7 +540,8 @@ function refineSurface(p) {
   if (!hi) return false;
   var m = p._mesh.material;
   m.map = hi.map;
-  if (hi.bumpMap) { m.bumpMap = hi.bumpMap; m.bumpScale = 0.19 * clamp(hi.params.relief, 0.35, 1.4); }
+  if (hi.bumpMap) { m.bumpMap = hi.bumpMap; m.bumpScale = BUMP_K * clamp(hi.params.relief, 0.35, 1.4); }
+  if (hi.specularMap) m.specularMap = hi.specularMap;
   if (hi.emissiveMap) m.emissiveMap = hi.emissiveMap;
   m.needsUpdate = true;
   p._surfHi = true;

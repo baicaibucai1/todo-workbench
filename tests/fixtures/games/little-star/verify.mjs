@@ -224,7 +224,7 @@ async function frameStar(page, radius) {
       api: window.__game.version,
       badge: (document.getElementById("ver") || {}).textContent || ""
     }));
-    check("版本号为 0.16.0（调试接口）", verInfo.api === "0.16.0");
+    check("版本号为 0.17.0（调试接口）", verInfo.api === "0.17.0");
     check("右下角版本戳与调试接口同源", verInfo.badge === "v" + verInfo.api, `#ver = "${verInfo.badge}"`);
     console.log(`  ℹ 星系「${st0.system}」 · ${st0.starType}（${st0.starId}） · ${st0.planets.length} 颗行星`);
     await shot(page, "n1-system.png");
@@ -2252,6 +2252,101 @@ async function frameStar(page, radius) {
       cloudBuild && cloudBuild.cloud
         ? `贴图 ${cloudBuild.cloud.texW}×${cloudBuild.cloud.texH} · 生成 ${cloudBuild.cloud.texMs}ms（一次性）`
         : "（无云壳）");
+
+    /* ---- 22b. ★ v0.17 表面真实感：海洋层次 / 云按行星各异 / 山体立体感 ---- */
+    /* 起因是用户一句「很多行星看起来依旧过于失真，尤其是海洋、云雾和山体」。
+     * 失真不是感觉问题，是三处**可量化的实现缺口**，所以这里各立一条判据守着：
+     *   海洋 旧公式 `dep = (0.5−h)/0.30` 在 0.30 水深就饱和 —— 薄曙 III 实测
+     *        **31.9%** 的海洋像素是同一片最暗的死蓝（再深毫无区别）；加上
+     *        Lambert 没有高光通道，海永远是一片哑光蓝。→ 判「最平档占比」+「有镜面遮罩」
+     *   云雾 旧版 5 颗行星**共用一张** 256×128 的圆斑图。→ 判「两两差异」+「纬向带骨架」
+     *   山体 bumpScale 只有 0.09~0.18（冰行星 0.092 ≈ 光滑球），且贴图里烘着一道
+     *        **固定东南向**的假阴影，与实时光照的晨昏线长期互相矛盾。→ 判 bumpScale 下限 */
+    const vis17 = await page.evaluate(() => {
+      const g = window.__game;
+      const rows = g.terrain();
+
+      /* ① 海洋层次：读颜色贴图，取最暗的一批（≈ 海）看亮度分布 */
+      const seaStats = [];
+      for (const t of rows) {
+        if (!t.solid || (t.profile !== "ocean" && t.profile !== "terra")) continue;
+        const mat = g.planetMesh(t.name).material;
+        const cv = mat.map.image;
+        const im = cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data;
+        const lum = [];
+        for (let i = 0; i < im.length; i += 4) lum.push(0.299 * im[i] + 0.587 * im[i + 1] + 0.114 * im[i + 2]);
+        lum.sort((a, b) => a - b);
+        /* 「海」= 最暗的那 ×% 像素（比例取自 heightField 的实测水面占比） */
+        const n = Math.round(lum.length * (t.profile === "ocean" ? 0.898 : 0.654));
+        const s = lum.slice(0, n);
+        const mean = s.reduce((a, x) => a + x, 0) / s.length;
+        const sd = Math.sqrt(s.reduce((a, x) => a + (x - mean) * (x - mean), 0) / s.length);
+        const floorV = s[Math.round(s.length * 0.02)] + 1;      /* 最深那一档的亮度 */
+        const flat = s.filter((x) => x <= floorV).length / s.length;
+        seaStats.push({
+          name: t.name, prof: t.profile, sd: +sd.toFixed(1), flat: +(flat * 100).toFixed(1),
+          spec: !!mat.specularMap, phong: mat.type === "MeshPhongMaterial"
+        });
+      }
+
+      /* ② 云：两两差异 + 纬向带骨架（赤道辐合带 vs 副热带晴空带） */
+      const clouds = [];
+      for (const t of rows) {
+        const mesh = g.planetMesh(t.name);
+        if (!mesh || !mesh.parent) continue;
+        let cm = null;
+        for (const c of mesh.parent.children) {
+          if (c !== mesh && c.geometry && c.geometry.type === "SphereGeometry"
+            && c.material && c.material.uniforms && c.material.uniforms.map) { cm = c; break; }
+        }
+        if (!cm) continue;
+        const tex = cm.material.uniforms.map.value, d = tex.image.data;
+        const W = tex.image.width, H = tex.image.height, raw = new Uint8Array(W * H);
+        for (let i = 0; i < W * H; i++) raw[i] = d[i * 4];
+        const band = (j0, j1) => {
+          let s = 0;
+          for (let j = j0; j < j1; j++) for (let k = 0; k < W; k++) s += raw[j * W + k];
+          return s / ((j1 - j0) * W);
+        };
+        clouds.push({
+          name: t.name, raw: raw, W: W, H: H,
+          eq: band(Math.round(H * 0.44), Math.round(H * 0.56)),                       /* 赤道辐合带 */
+          sub: (band(Math.round(H * 0.30), Math.round(H * 0.38))                      /* 副热带（南北各取一段） */
+            + band(Math.round(H * 0.62), Math.round(H * 0.70))) / 2
+        });
+      }
+      let minDiff = 999, pairs = [];
+      for (let a = 0; a < clouds.length; a++) for (let b = a + 1; b < clouds.length; b++) {
+        let s = 0;
+        for (let i = 0; i < clouds[a].raw.length; i++) s += Math.abs(clouds[a].raw[i] - clouds[b].raw[i]);
+        const dv = +(s / clouds[a].raw.length).toFixed(1);
+        pairs.push(clouds[a].name + "↔" + clouds[b].name + " " + dv);
+        if (dv < minDiff) minDiff = dv;
+      }
+
+      /* ③ 山体：bumpScale（旧系数 0.19 → 新 BUMP_K 0.42） */
+      const bumps = rows.filter((t) => t.solid).map((t) => ({
+        name: t.name, bs: +g.planetMesh(t.name).material.bumpScale.toFixed(4)
+      }));
+      return {
+        seaStats: seaStats, minDiff: minDiff, pairs: pairs,
+        clouds: clouds.map((c) => ({ name: c.name, eq: +c.eq.toFixed(1), sub: +c.sub.toFixed(1) })),
+        cloudTexW: clouds.length ? clouds[0].W : 0, bumps: bumps
+      };
+    });
+    check("★ 海洋不再是一整片死蓝（最平档 < 12% · 有镜面遮罩 —— v0.17）",
+      vis17.seaStats.length > 0 && vis17.seaStats.every((s) => s.flat < 12 && s.spec && s.phong && s.sd > 8),
+      vis17.seaStats.map((s) => `「${s.name}」${s.prof} 层次 sd=${s.sd} · 最平档 ${s.flat}% · ${s.phong ? "Phong" : "Lambert"} + 镜面${s.spec ? "✓" : "✗"}`).join(" · ")
+        || "本星系无「有海的固态行星」");
+    check("★ 云图按行星各异（两两差异 > 15 —— 不再是 5 颗共用一张）",
+      vis17.clouds.length >= 2 && vis17.minDiff > 15,
+      `${vis17.clouds.length} 颗有云 · ${vis17.cloudTexW} 宽 · 最小两两差异 ${vis17.minDiff}（0 = 同一张）· ${vis17.pairs[0]}`);
+    check("★ 云有纬向带骨架（赤道辐合带 > 副热带晴空带 ×1.4 —— 云是被行星风梳成条带的）",
+      vis17.clouds.length > 0 && vis17.clouds.every((c) => c.eq > c.sub * 1.4),
+      vis17.clouds.map((c) => `「${c.name}」赤道 ${c.eq} vs 副热带 ${c.sub}`).join(" · "));
+    check("★ 山体立体感由实时光照承担（bumpScale ≥ 0.14 —— 旧版最低 0.067）",
+      vis17.bumps.length > 0 && vis17.bumps.every((b) => b.bs >= 0.14),
+      vis17.bumps.map((b) => `「${b.name}」${b.bs}`).join(" · "));
 
     await page.evaluate(() => { window.__game.unfocus(); window.__game.clearSelection(); });
     await sleep(400);

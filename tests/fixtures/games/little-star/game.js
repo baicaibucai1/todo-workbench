@@ -55,21 +55,21 @@
  *    1575     28  three.js 基础                                        src/30-system.js:169
  *    1603    192  卫星（v0.14 起；v0.16 扩张）：小天体环绕             src/34-moons.js:1
  *    1795    123  文明（实例）· 发源地信标（v0.8 新增）                src/35-civ.js:1
- *    1918    495  程序化贴图（全部画布绘制，零外部资源）               src/40-textures.js:1
- *    2413    501  地形生成器（v0.11：固态行星表面构建）                src/42-terrain.js:1
- *    2914    489  聚焦地表（v0.12：立方球连续地表）                    src/44-focus-surface.js:1
- *    3403    562  聚落系统（v0.13 · 实验性）                           src/46-settlements.js:1
- *    3965    427  场景                                                 src/50-scene.js:1
- *    4392    172  场景更新                                             src/50-scene.js:428
- *    4564    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
- *    4758     25  相机聚焦                                             src/70-camera-input.js:1
- *    4783    171  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
- *    4954    158  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
- *    5112    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
- *    5379    614  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
- *    5993     72  主循环                                               src/99-boot.js:1
- *    6065    728  启动                                                 src/99-boot.js:73
- *   共 25 个区块 · 21 个源文件 · 6792 行
+ *    1918    608  程序化贴图（全部画布绘制，零外部资源）               src/40-textures.js:1
+ *    2526    549  地形生成器（v0.11：固态行星表面构建）                src/42-terrain.js:1
+ *    3075    489  聚焦地表（v0.12：立方球连续地表）                    src/44-focus-surface.js:1
+ *    3564    562  聚落系统（v0.13 · 实验性）                           src/46-settlements.js:1
+ *    4126    441  场景                                                 src/50-scene.js:1
+ *    4567    183  场景更新                                             src/50-scene.js:442
+ *    4750    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
+ *    4944     25  相机聚焦                                             src/70-camera-input.js:1
+ *    4969    171  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
+ *    5140    158  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
+ *    5298    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
+ *    5565    614  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
+ *    6179     72  主循环                                               src/99-boot.js:1
+ *    6251    728  启动                                                 src/99-boot.js:73
+ *   共 25 个区块 · 21 个源文件 · 6978 行
  * @nav:end
  * ─────────────────────────────────────────────────────────────────────
  *
@@ -733,7 +733,7 @@ function typeCond(t) {
  * 同时写入 ① 右下角版本戳（#ver）② __game.version。
  * 用途：一眼判断「眼前这页是不是最新构建」——历史上出现过改了代码但浏览器
  * 没刷新、误判「功能没生效」的情况。发版时只改这一行。 */
-var VERSION = "0.16.0";
+var VERSION = "0.17.0";
 
 function $(id) { return document.getElementById(id); }
 function fmtNum(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
@@ -2139,7 +2139,11 @@ function paintPlanetMaps(p) {
     return { map: map };
   });
 }
-/* 云层（类地/海洋） */
+/* 云层（类地/海洋）—— v0.17 起**只作兜底**，行星实际用的是下面的 cloudTexFor。
+ * ★★ 为什么不能删这个调用：它消耗主随机流（46 × 4 次 rand），而
+ *   `setupTextures()` 里的调用次序是**确定性契约的一部分**（roll-check 的
+ *   rngDraws = 884 就锚在这条序列上）。删掉或改它的抽取次数 → 星系整体错位。
+ *   所以这里原样保留，全景档改走 cloudTexFor（零随机流的哈希噪声）。 */
 function cloudTex() {
   return mkTex(256, 128, function (g, w, h) {
     g.clearRect(0, 0, w, h);
@@ -2150,6 +2154,65 @@ function cloudTex() {
     }
     g.globalAlpha = 1;
   });
+}
+
+/* ── 云层（v0.17 重做）─────────────────────────────────────────────
+ * ★ 旧实现是一张 256×128 的全局单例：46 个随机圆斑，**所有行星共用同一张**
+ *   —— 5 颗有云的行星顶着同一团斑块、只是转速不同。这是「一眼假」的根源。
+ * 现在按行星各自生成，并且带上真实大气环流的**纬向带**骨架（云是被行星风
+ * 梳成条带的，不是一堆圆斑）。
+ * ★ 零随机流：噪声坐标的偏移直接由 p.seed 算出，一格主 RNG 都不碰
+ *   （确定性守恒的铁律 —— 同 IIFE 内可复用聚焦档云壳那套 _cvn3，纯 hash）。
+ * 缓存按 seed：同一颗行星不会重复生成。 */
+var CLOUD_PAN_W = 512, CLOUD_PAN_H = 256;
+var _cloudPanCache = {};
+
+/* 纬向带：赤道辐合带多云 · 副热带高压（±26°）晴 · 中纬气旋带（±56°）多云 · 极区少云。
+ * 真实行星的云几乎都是这个骨架 —— 没有它，云就只是一团均匀噪声。 */
+function cloudLatBand(latDeg) {
+  var a = Math.abs(latDeg);
+  var itcz = Math.exp(-Math.pow(a / 10, 2));          /* 赤道辐合带（ITCZ） */
+  var sub = Math.exp(-Math.pow((a - 26) / 12, 2));    /* 副热带高压：晴空带 */
+  var mid = Math.exp(-Math.pow((a - 56) / 16, 2));    /* 中纬气旋带 */
+  /* 副热带只压到 0.20 而不到 0：晴空带是「云少」，不是「一滴都没有」——
+   * 压到 0 会露出一条僵直的秃带，看着像画上去的刻度线。 */
+  return clamp(0.50 + 0.46 * itcz + 0.36 * mid - 0.30 * sub, 0, 1.28);
+}
+
+function cloudTexFor(p) {
+  var sd = (p && p.seed) | 0;
+  if (_cloudPanCache[sd]) return _cloudPanCache[sd];
+  var W = CLOUD_PAN_W, H = CLOUD_PAN_H;
+  /* 由 seed 派生三个坐标偏移：同一套噪声，换颗星就是另一片天 */
+  var ox = (sd % 977) * 0.137, oy = (((sd / 977) | 0) % 613) * 0.211, oz = (((sd / 613) | 0) % 401) * 0.173;
+  var data = new Uint8Array(W * H * 4), i = 0;
+  for (var j = 0; j < H; j++) {
+    var band = cloudLatBand(((j + 0.5) / H) * 180 - 90);
+    var lat = ((j + 0.5) / H) * Math.PI;
+    var sl = Math.sin(lat), cl = Math.cos(lat);
+    for (var k = 0; k < W; k++) {
+      var lon = ((k + 0.5) / W) * Math.PI * 2;
+      var dx = sl * Math.cos(lon), dy = cl, dz = sl * Math.sin(lon);
+      /* 纬度方向频率更高 → 云团被纬向风拉成东西向的长条（气旋带的观感） */
+      var s = 0, nn = 0, a = 0.5;
+      var px = dx * 2.60 + ox, py = dy * 2.60 * 2.35 + oy, pz = dz * 2.60 + oz;
+      for (var o = 0; o < 4; o++) {
+        s += a * _cvn3(px, py, pz); nn += a; a *= 0.5;
+        px *= 2.07; py *= 2.07; pz *= 2.07;
+      }
+      var v = ((s / nn) - 0.5) * 2.0 + 0.5;
+      var b = (clamp(v * band, 0, 1) * 255) | 0;
+      data[i++] = b; data[i++] = b; data[i++] = b; data[i++] = 255;
+    }
+  }
+  var tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+  tex.wrapS = THREE.RepeatWrapping;                    /* 经度环绕无缝 */
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;      /* mipmap 预过滤 = 远景不走样 */
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return (_cloudPanCache[sd] = tex);
 }
 
 /* 星云背景贴图（柔和团絮） */
@@ -2300,6 +2363,56 @@ function atmoMaterial(colorHex, strength) {
   });
 }
 
+/* 云层材质（v0.17）：比 Lambert 多两件真实大气该有的事
+ *   ① **临边增亮**（limb brightening）—— 视线在行星边缘穿过的大气更厚，云也更白；
+ *      没有它，云看着就是贴在球面上的一张纸（这是「大气」与「贴纸」的分界）。
+ *   ② **夜面的云看不见** —— Lambert 会把夜半球压成一层**黑色半透明**（云变黑
+ *      盖住地表），而真实情况是那里没光、云就不显现；所以让 alpha 随光照衰减。
+ * uSun 由场景每帧喂（世界系指向恒星的单位向量）。 */
+function cloudMaterial(map, opacity) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      map: { value: map },
+      uSun: { value: new THREE.Vector3(1, 0, 0) },
+      uBase: { value: opacity },        /* 原始不透明度（聚焦档淡出要用） */
+      uOpacity: { value: opacity },
+      uRim: { value: 0.95 }
+    },
+    vertexShader: [
+      "varying vec2 vUv;",
+      "varying vec3 vN;",
+      "varying vec3 vV;",
+      "void main() {",
+      "  vUv = uv;",
+      "  vec4 wp = modelMatrix * vec4(position, 1.0);",
+      "  vN = normalize(mat3(modelMatrix) * normal);",   /* 世界系法线：跟着自转转 */
+      "  vV = normalize(cameraPosition - wp.xyz);",
+      "  gl_Position = projectionMatrix * viewMatrix * wp;",
+      "}"
+    ].join("\n"),
+    fragmentShader: [
+      "uniform sampler2D map;",
+      "uniform vec3 uSun;",
+      "uniform float uOpacity;",
+      "uniform float uRim;",
+      "varying vec2 vUv;",
+      "varying vec3 vN;",
+      "varying vec3 vV;",
+      "void main() {",
+      "  float c = texture2D(map, vUv).r;",
+      "  vec3 N = normalize(vN);",
+      "  float lam = dot(N, normalize(uSun));",
+      "  float lit = clamp(lam * 1.10 + 0.04, 0.0, 1.0);",       /* 晨昏线留一点软过渡 */
+      "  float rim = pow(clamp(0.80 - dot(N, normalize(vV)), 0.0, 1.0), 1.9);",
+      "  float a = c * uOpacity * lit * (1.0 + uRim * rim);",
+      "  gl_FragColor = vec4(vec3(1.0), clamp(a, 0.0, 1.0));",
+      "}"
+    ].join("\n"),
+    transparent: true,
+    depthWrite: false
+  });
+}
+
 /* 纯 ShaderMaterial 的颜色按 sRGB 原值输出（不受色彩管理转换影响） */
 function rawColor(hex) {
   return new THREE.Color(hex).convertLinearToSRGB();
@@ -2443,6 +2556,11 @@ function buildTextures() {
  *   先做固态行星（bulk === "rock"）—— 气态仍用 v0.6 的带纹做法。 */
 
 var TEX_LO = 768, TEX_HI = 2048;      /* 贴图宽度×2 = 高度的 equirect 规格 */
+/* 凹凸强度系数（v0.17）：0.19 → 0.42。原来山几乎不出立体感（实测各行星
+ * bumpScale 只有 0.09~0.18，冰行星 0.092 基本是个光滑球），因为旧设计把立体感
+ * 全押在贴图里那道**烘死的方向性阴影**上。现在反过来：让**实时光照**（bumpMap）
+ * 当主力，烘的那道退居次要 —— 山影于是永远和晨昏线一致。 */
+var BUMP_K = 0.42;
 
 /* ───────────────────────── ① 标量噪声（零 RNG） ───────────────────────── */
 /* 整数哈希：输入相同永远得到相同的值，抽多少次都不影响世界的随机序列 */
@@ -2810,6 +2928,12 @@ function buildTerrainMaps(p, W) {
     var cBump = document.createElement("canvas"); cBump.width = W; cBump.height = H;
     var gB = cBump.getContext("2d");
     var imgB = gB.createImageData(W, H), dB = imgB.data;
+    /* 镜面遮罩（v0.17）：决定**太阳耀斑出现在哪里** —— 海面满、冰/雪中等、裸岩哑光。
+     * ★ 「看起来像水」几乎全靠这一层：Lambert 没有高光通道，光靠调颜色只能得到
+     *   一片哑光蓝（v0.16 及以前就是这样）；有了它，海面才会被阳光点燃出一小片反光。 */
+    var cSpec = document.createElement("canvas"); cSpec.width = W; cSpec.height = H;
+    var gS = cSpec.getContext("2d");
+    var imgS = gS.createImageData(W, H), dS = imgS.data;
     var cEm = pr.lava ? document.createElement("canvas") : null;
     var gE = null, imgE = null, dE = null;
     if (cEm) { cEm.width = W; cEm.height = H; gE = cEm.getContext("2d"); imgE = gE.createImageData(W, H); dE = imgE.data; }
@@ -2821,16 +2945,30 @@ function buildTerrainMaps(p, W) {
       var latAbs = Math.abs((j / (H - 1)) * 2 - 1);            /* 0 = 赤道，1 = 极点 */
       /* 极冠：纬度越靠近极点越白；冷星（capFrac 大）从更低的纬度就开始封冰 */
       var white = pr.capFrac > 0 ? clamp((latAbs - (1 - pr.capFrac)) / Math.max(0.06, pr.capFrac * 0.55), 0, 1) : 0;
-      /* 山体阴影（hillshade）：高程梯度的固定西北光。为什么它必不可少 ——
-       * 潮汐锁定的行星永远正面朝光，真实光照下凹凸贴图几乎不出影子；
-       * 把「立体感」直接烘进颜色，贴到哪颗星、什么角度都看得见地形。 */
+      /* ★ v0.17 山体着色：从「固定方向 hillshade」改成「曲率遮蔽 + 轻微方向感」。
+       * 为什么必须改：旧写法把一道**固定东南向**的光烘进贴图（`(gx+gy)*14`），但
+       * 除了潮汐锁定的行星，贴图空间里的真实光照方向每时每刻都在扫（行星在自转），
+       * 于是烘死的影子会和实时光照的晨昏线**长期互相矛盾** —— 亮面上冒出暗坡、
+       * 暗面上冒出亮坡。这是「失真」最主要的来源之一。
+       * 现在的分工：立体感的**主力**交给 bumpMap + 实时光照（bumpScale 同步调大），
+       * 贴图里只留两样：
+       *   ① 曲率遮蔽（**无方向**：脊/峰提亮、谷/坑底压暗 —— 在任何光照下都成立）；
+       *   ② 一点点方向感（幅度压到原来的约三分之一，只作暗示，偶尔撞了也不刺眼）。
+       * 另：经度梯度按 cos(lat) 还原真实距离 —— 不做的话极点附近被 equirect 横向
+       *     拉伸，|lat| > 70° 的阴影会糊成条纹（旧写法的可见畸变）。 */
       var jm = Math.max(0, j - 1), jp = Math.min(H - 1, j + 1);
+      var cosLatJ = Math.max(0.15, Math.cos((j / (H - 1)) * Math.PI - Math.PI / 2));
       for (var i = 0; i < W; i++) {
         var idx = j * W + i;
         var hgt = clamp(field[idx], 0, 1);
-        var gx = field[j * W + ((i + 1) % W)] - field[j * W + ((i - 1 + W) % W)];
-        var gy = field[jp * W + i] - field[jm * W + i];
-        var shade = clamp(1.16 - (gx + gy) * 14 * pr.relief, 0.62, 1.42);
+        var hL = field[j * W + ((i - 1 + W) % W)], hR = field[j * W + ((i + 1) % W)];
+        var hU = field[jm * W + i], hD = field[jp * W + i];
+        var gx = (hR - hL) / cosLatJ, gy = hD - hU;
+        /* 曲率 = 邻域均值 − 中心：谷底/坑底为正（凹），脊线/峰顶为负（凸） */
+        var curv = (hL + hR + hU + hD) * 0.25 - hgt;
+        var ao = clamp(1 - curv * 26 * pr.relief, 0.74, 1.26);
+        var dir = clamp(1 - (gx * 0.62 + gy * 0.62) * 5 * pr.relief, 0.90, 1.10);
+        var shade = ao * dir;
         /* 高度走一遍 S 曲线再取色：把「高度差」放大成「色差」——
          * 色带本身相邻两档差距温和，直接取色会让地形糊成一片（v0.11 教训） */
         var rgb = rampAt(ramp, clamp(0.5 + (hgt - 0.5) * 1.55, 0, 1));
@@ -2849,14 +2987,34 @@ function buildTerrainMaps(p, W) {
           var w2 = white * white;
           r += (252 - r) * w2; gg += (253 - gg) * w2; bb += (255 - bb) * w2;
         }
-        /* 水下：越深越暗、越偏蓝 —— 水体自身的吸收与遮蔽 */
+        /* 水下（v0.17 重做）：三段 —— 拍岸浅滩（透光见底，偏青绿并**提亮**）、
+         * 陆架过渡、深海（吸收红光 → 压暗压蓝）。
+         * ★ 旧写法 `dep = (seaA − h) / 0.30` 在 0.30 水深就**饱和**：薄曙 III 实测
+         *   31.9% 的海洋像素已经是「同一片最暗的死蓝」，再深也毫无区别 —— 那片海
+         *   因此看着像刷了一层蓝漆。现在改成 sqrt 压缩：浅处变化快（层次都堆在
+         *   近岸，正是眼睛看得出深浅的地方），深处仍可分（饱和点推到 0.45 且非线性）。 */
         if (seaA > 0 && hgt < seaA) {
-          var dep = clamp((seaA - hgt) / 0.30, 0, 1);
-          r *= 1 - 0.35 * dep; gg *= 1 - 0.22 * dep; bb *= 1 - 0.05 * dep;
+          /* ★ 变量名必须是 wd 而不是 d：`var` 是**函数作用域**，写成 var d 会把外层
+           * 那个 ImageData.data（`d = img.data`，下面 `d[o] = r`）整个遮蔽掉 ——
+           * 于是颜色数组变成 number，第一颗有海的行星就崩在 d[o] 上。 */
+          var wd = seaA - hgt;
+          var shallow = 1 - clamp(wd / 0.055, 0, 1);      /* 1 = 贴岸，0 = 深过陆架 */
+          var deep = clamp(Math.sqrt(wd / 0.45), 0, 1);   /* 0 = 水面，1 = 最深 */
+          r *= 1 - 0.46 * deep; gg *= 1 - 0.30 * deep; bb *= 1 - 0.08 * deep;
+          var sw2 = shallow * shallow;                    /* 平方：只有紧贴岸线才泛绿 */
+          r += (88 - r) * sw2 * 0.55; gg += (178 - gg) * sw2 * 0.55; bb += (172 - bb) * sw2 * 0.55;
         }
 
         var o = idx * 4;
         d[o] = r; d[o + 1] = gg; d[o + 2] = bb; d[o + 3] = 255;
+
+        /* 镜面遮罩：海面满、冰与雪中等、裸岩近乎哑光。水下越深反光越弱（碎浪散光）。 */
+        var specV = 26;
+        if (seaA > 0 && hgt < seaA) specV = 255 - 46 * clamp((seaA - hgt) / 0.30, 0, 1);
+        if (pr.snowH < 1 && hgt > pr.snowH) specV = Math.max(specV, 150);
+        if (white > 0) specV = Math.max(specV, 40 + 150 * white);
+        if (pr.prof.id === "ice" || pr.prof.id === "cryo") specV = Math.max(specV, 90);
+        dS[o] = dS[o + 1] = dS[o + 2] = Math.round(specV); dS[o + 3] = 255;
 
         /* 凹凸 = 同一份高程（×由args起伏调整的强度）——山脊与坑都会被光照塑形 */
         var bv = Math.round(255 * clamp(hgt, 0, 1));
@@ -2872,6 +3030,7 @@ function buildTerrainMaps(p, W) {
     }
     g.putImageData(img, 0, 0);
     gB.putImageData(imgB, 0, 0);
+    gS.putImageData(imgS, 0, 0);
 
     /* 潮汐锁定：永昼面 / 永夜面的热反差（沿用 v0.6 的做法） */
     if (p.tidal) {
@@ -2884,8 +3043,9 @@ function buildTerrainMaps(p, W) {
 
     var texMap = new THREE.CanvasTexture(cCol);
     var texBump = new THREE.CanvasTexture(cBump);
-    texMap.anisotropy = 4; texBump.anisotropy = 4;
-    var out = { map: texMap, bumpMap: texBump, height: field, params: pr };
+    var texSpec = new THREE.CanvasTexture(cSpec);
+    texMap.anisotropy = 4; texBump.anisotropy = 4; texSpec.anisotropy = 4;
+    var out = { map: texMap, bumpMap: texBump, specularMap: texSpec, height: field, params: pr };
     if (cEm) out.emissiveMap = new THREE.CanvasTexture(cEm);
     return out;
   });
@@ -2905,7 +3065,8 @@ function refineSurface(p) {
   if (!hi) return false;
   var m = p._mesh.material;
   m.map = hi.map;
-  if (hi.bumpMap) { m.bumpMap = hi.bumpMap; m.bumpScale = 0.19 * clamp(hi.params.relief, 0.35, 1.4); }
+  if (hi.bumpMap) { m.bumpMap = hi.bumpMap; m.bumpScale = BUMP_K * clamp(hi.params.relief, 0.35, 1.4); }
+  if (hi.specularMap) m.specularMap = hi.specularMap;
   if (hi.emissiveMap) m.emissiveMap = hi.emissiveMap;
   m.needsUpdate = true;
   p._surfHi = true;
@@ -3965,6 +4126,7 @@ function updateSitePanel(force) {
 /* ================= 场景 ================= */
 var systemGroup = new THREE.Group();
 var systemT = 0;                  // 装饰动画时钟（真实秒）
+var _tmpSunV = new THREE.Vector3();  /* v0.17：云壳每帧复用的临时量（世界坐标 → 指向恒星） */
 
 function buildStarfield(sc) {
   var n = 1600, pos = new Float32Array(n * 3), i;
@@ -4238,13 +4400,22 @@ function buildScene(sys) {
     p._group = grp;
 
     var maps = paintPlanetMaps(p);                  /* ← 贴图由行星物理数据算出 */
-    var mat = new THREE.MeshLambertMaterial({ map: maps.map });
+    /* ★ v0.17：固态行星从 Lambert 换成 Phong —— 唯一目的是拿到**高光通道**，
+     * 让海面能出太阳耀斑（Lambert 没有 specular，海因此永远是一片哑光蓝 ——
+     * 「像不像水」几乎全看这一条）。漫反射两者一致；只有带 specularMap 的行星
+     * 才换，气态 / 熔岩照旧走 Lambert，不给它们凭空加反光。 */
+    var mat = maps.specularMap
+      ? new THREE.MeshPhongMaterial({ map: maps.map, specular: 0xdfeaf2, shininess: 78 })
+      : new THREE.MeshLambertMaterial({ map: maps.map });
     if (maps.bumpMap) {
       /* 凹凸 = 同一个高程场（42-terrain.js 导出）—— 贴近时地形会被光照塑形。
-       * 强度跟着「起伏」走：被大气磨平的世界不该有刀劈一般的阴影。 */
+       * 强度跟着「起伏」走：被大气磨平的世界不该有刀劈一般的阴影。
+       * ★ v0.17 系数 0.19 → BUMP_K(0.42)：立体感的主力改由**实时光照**承担，
+       *   贴图里那道烘死的固定方向阴影退居次要（见 buildTerrainMaps 的 shade）。 */
       mat.bumpMap = maps.bumpMap;
-      mat.bumpScale = 0.19 * clamp(maps.params.relief, 0.35, 1.4);
+      mat.bumpScale = BUMP_K * clamp(maps.params.relief, 0.35, 1.4);
     }
+    if (maps.specularMap) mat.specularMap = maps.specularMap;
     if (maps.emissiveMap) {
       mat.emissive = new THREE.Color(0xff9a4a);
       mat.emissiveMap = maps.emissiveMap;
@@ -4275,9 +4446,13 @@ function buildScene(sys) {
     // 云层：大气够厚、且不是气态行星（本身已是云顶）或熔岩（水汽不凝）才有
     var cloudy = planetCloudy(p);
     if (cloudy) {
+      /* ★ v0.17：云图改成**按行星各自生成**（cloudTexFor —— 零随机流，见 40-textures），
+       * 材质换成带**临边增亮**的云材质（cloudMaterial）—— 旧版是 5 颗行星共用一张
+       * 256×128 的圆斑图。球段数 24×18 → 48×32：云是这颗星的主视觉，24 段的多边形
+       * 轮廓在近景一眼就看得出。 */
       var cloud = new THREE.Mesh(
-        new THREE.SphereGeometry(p.size * 1.02, 24, 18),
-        new THREE.MeshLambertMaterial({ map: cloudT, transparent: true, opacity: 0.25 + 0.5 * p.atmo, depthWrite: false })
+        new THREE.SphereGeometry(p.size * 1.02, 48, 32),
+        cloudMaterial(cloudTexFor(p), 0.25 + 0.5 * p.atmo)
       );
       grp.add(cloud);
       p._cloud = cloud;
@@ -4494,13 +4669,24 @@ function updateScene(sys, dt) {
     p._mesh.rotation.y += dRot;
     p._rotDelta = dRot;              /* 镜头同速随动的口径（99-boot 每帧读） */
     if (p._cloud) p._cloud.rotation.y += p.spin * 1.35 * eff;
+    /* 云壳的太阳方向（世界系）：恒星在原点 → 由行星的世界坐标反推。
+     * 云自己每帧在转（rotation.y），所以必须用**世界系**法线去点乘它 ——
+     * 否则光照会跟着云一起转，晨昏线就钉死在贴图上了。 */
+    if (p._cloud) {
+      var cu = p._cloud.material.uniforms;
+      if (cu && cu.uSun) {
+        p._mesh.getWorldPosition(_tmpSunV);
+        cu.uSun.value.copy(_tmpSunV).normalize().negate();
+      }
+    }
 
     /* 聚焦 = 沉浸观察地表：云与大气雾按相机模式淡出（否则半透明白雾
      * 正好糊在要看的表面上 —— v0.11 首版的「聚焦仍糊」就是它）。
      * base 存在 userData 上，退出聚焦原样恢复。 */
     if (p._cloud) {
-      if (p._cloud.userData.base === undefined) p._cloud.userData.base = p._cloud.material.opacity;
-      p._cloud.material.opacity = p._cloud.userData.base * (FSM_CAMERA.is("focus") ? 0.30 : 1);
+      /* v0.17：云材质是 ShaderMaterial，不透明度在 uniform 里（uBase 记原值） */
+      var cu2 = p._cloud.material.uniforms;
+      if (cu2 && cu2.uOpacity) cu2.uOpacity.value = cu2.uBase.value * (FSM_CAMERA.is("focus") ? 0.30 : 1);
     }
     if (p._atmo) {
       if (p._atmo.userData.base === undefined) p._atmo.userData.base = p._atmo.material.uniforms.uRim.value;

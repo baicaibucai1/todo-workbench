@@ -222,7 +222,11 @@ function paintPlanetMaps(p) {
     return { map: map };
   });
 }
-/* 云层（类地/海洋） */
+/* 云层（类地/海洋）—— v0.17 起**只作兜底**，行星实际用的是下面的 cloudTexFor。
+ * ★★ 为什么不能删这个调用：它消耗主随机流（46 × 4 次 rand），而
+ *   `setupTextures()` 里的调用次序是**确定性契约的一部分**（roll-check 的
+ *   rngDraws = 884 就锚在这条序列上）。删掉或改它的抽取次数 → 星系整体错位。
+ *   所以这里原样保留，全景档改走 cloudTexFor（零随机流的哈希噪声）。 */
 function cloudTex() {
   return mkTex(256, 128, function (g, w, h) {
     g.clearRect(0, 0, w, h);
@@ -233,6 +237,65 @@ function cloudTex() {
     }
     g.globalAlpha = 1;
   });
+}
+
+/* ── 云层（v0.17 重做）─────────────────────────────────────────────
+ * ★ 旧实现是一张 256×128 的全局单例：46 个随机圆斑，**所有行星共用同一张**
+ *   —— 5 颗有云的行星顶着同一团斑块、只是转速不同。这是「一眼假」的根源。
+ * 现在按行星各自生成，并且带上真实大气环流的**纬向带**骨架（云是被行星风
+ * 梳成条带的，不是一堆圆斑）。
+ * ★ 零随机流：噪声坐标的偏移直接由 p.seed 算出，一格主 RNG 都不碰
+ *   （确定性守恒的铁律 —— 同 IIFE 内可复用聚焦档云壳那套 _cvn3，纯 hash）。
+ * 缓存按 seed：同一颗行星不会重复生成。 */
+var CLOUD_PAN_W = 512, CLOUD_PAN_H = 256;
+var _cloudPanCache = {};
+
+/* 纬向带：赤道辐合带多云 · 副热带高压（±26°）晴 · 中纬气旋带（±56°）多云 · 极区少云。
+ * 真实行星的云几乎都是这个骨架 —— 没有它，云就只是一团均匀噪声。 */
+function cloudLatBand(latDeg) {
+  var a = Math.abs(latDeg);
+  var itcz = Math.exp(-Math.pow(a / 10, 2));          /* 赤道辐合带（ITCZ） */
+  var sub = Math.exp(-Math.pow((a - 26) / 12, 2));    /* 副热带高压：晴空带 */
+  var mid = Math.exp(-Math.pow((a - 56) / 16, 2));    /* 中纬气旋带 */
+  /* 副热带只压到 0.20 而不到 0：晴空带是「云少」，不是「一滴都没有」——
+   * 压到 0 会露出一条僵直的秃带，看着像画上去的刻度线。 */
+  return clamp(0.50 + 0.46 * itcz + 0.36 * mid - 0.30 * sub, 0, 1.28);
+}
+
+function cloudTexFor(p) {
+  var sd = (p && p.seed) | 0;
+  if (_cloudPanCache[sd]) return _cloudPanCache[sd];
+  var W = CLOUD_PAN_W, H = CLOUD_PAN_H;
+  /* 由 seed 派生三个坐标偏移：同一套噪声，换颗星就是另一片天 */
+  var ox = (sd % 977) * 0.137, oy = (((sd / 977) | 0) % 613) * 0.211, oz = (((sd / 613) | 0) % 401) * 0.173;
+  var data = new Uint8Array(W * H * 4), i = 0;
+  for (var j = 0; j < H; j++) {
+    var band = cloudLatBand(((j + 0.5) / H) * 180 - 90);
+    var lat = ((j + 0.5) / H) * Math.PI;
+    var sl = Math.sin(lat), cl = Math.cos(lat);
+    for (var k = 0; k < W; k++) {
+      var lon = ((k + 0.5) / W) * Math.PI * 2;
+      var dx = sl * Math.cos(lon), dy = cl, dz = sl * Math.sin(lon);
+      /* 纬度方向频率更高 → 云团被纬向风拉成东西向的长条（气旋带的观感） */
+      var s = 0, nn = 0, a = 0.5;
+      var px = dx * 2.60 + ox, py = dy * 2.60 * 2.35 + oy, pz = dz * 2.60 + oz;
+      for (var o = 0; o < 4; o++) {
+        s += a * _cvn3(px, py, pz); nn += a; a *= 0.5;
+        px *= 2.07; py *= 2.07; pz *= 2.07;
+      }
+      var v = ((s / nn) - 0.5) * 2.0 + 0.5;
+      var b = (clamp(v * band, 0, 1) * 255) | 0;
+      data[i++] = b; data[i++] = b; data[i++] = b; data[i++] = 255;
+    }
+  }
+  var tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+  tex.wrapS = THREE.RepeatWrapping;                    /* 经度环绕无缝 */
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;      /* mipmap 预过滤 = 远景不走样 */
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return (_cloudPanCache[sd] = tex);
 }
 
 /* 星云背景贴图（柔和团絮） */
@@ -379,6 +442,56 @@ function atmoMaterial(colorHex, strength) {
     transparent: true,
     blending: THREE.AdditiveBlending,
     side: THREE.BackSide,
+    depthWrite: false
+  });
+}
+
+/* 云层材质（v0.17）：比 Lambert 多两件真实大气该有的事
+ *   ① **临边增亮**（limb brightening）—— 视线在行星边缘穿过的大气更厚，云也更白；
+ *      没有它，云看着就是贴在球面上的一张纸（这是「大气」与「贴纸」的分界）。
+ *   ② **夜面的云看不见** —— Lambert 会把夜半球压成一层**黑色半透明**（云变黑
+ *      盖住地表），而真实情况是那里没光、云就不显现；所以让 alpha 随光照衰减。
+ * uSun 由场景每帧喂（世界系指向恒星的单位向量）。 */
+function cloudMaterial(map, opacity) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      map: { value: map },
+      uSun: { value: new THREE.Vector3(1, 0, 0) },
+      uBase: { value: opacity },        /* 原始不透明度（聚焦档淡出要用） */
+      uOpacity: { value: opacity },
+      uRim: { value: 0.95 }
+    },
+    vertexShader: [
+      "varying vec2 vUv;",
+      "varying vec3 vN;",
+      "varying vec3 vV;",
+      "void main() {",
+      "  vUv = uv;",
+      "  vec4 wp = modelMatrix * vec4(position, 1.0);",
+      "  vN = normalize(mat3(modelMatrix) * normal);",   /* 世界系法线：跟着自转转 */
+      "  vV = normalize(cameraPosition - wp.xyz);",
+      "  gl_Position = projectionMatrix * viewMatrix * wp;",
+      "}"
+    ].join("\n"),
+    fragmentShader: [
+      "uniform sampler2D map;",
+      "uniform vec3 uSun;",
+      "uniform float uOpacity;",
+      "uniform float uRim;",
+      "varying vec2 vUv;",
+      "varying vec3 vN;",
+      "varying vec3 vV;",
+      "void main() {",
+      "  float c = texture2D(map, vUv).r;",
+      "  vec3 N = normalize(vN);",
+      "  float lam = dot(N, normalize(uSun));",
+      "  float lit = clamp(lam * 1.10 + 0.04, 0.0, 1.0);",       /* 晨昏线留一点软过渡 */
+      "  float rim = pow(clamp(0.80 - dot(N, normalize(vV)), 0.0, 1.0), 1.9);",
+      "  float a = c * uOpacity * lit * (1.0 + uRim * rim);",
+      "  gl_FragColor = vec4(vec3(1.0), clamp(a, 0.0, 1.0));",
+      "}"
+    ].join("\n"),
+    transparent: true,
     depthWrite: false
   });
 }
