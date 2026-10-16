@@ -53,23 +53,23 @@
  *    1407     10  全局状态                                             src/30-system.js:1
  *    1417    158  星系生成（确定性：每次打开同一个星系）               src/30-system.js:11
  *    1575     28  three.js 基础                                        src/30-system.js:169
- *    1603    173  卫星（v0.14）：小天体环绕                            src/34-moons.js:1
- *    1776    123  文明（实例）· 发源地信标（v0.8 新增）                src/35-civ.js:1
- *    1899    495  程序化贴图（全部画布绘制，零外部资源）               src/40-textures.js:1
- *    2394    501  地形生成器（v0.11：固态行星表面构建）                src/42-terrain.js:1
- *    2895    489  聚焦地表（v0.12：立方球连续地表）                    src/44-focus-surface.js:1
- *    3384    562  聚落系统（v0.13 · 实验性）                           src/46-settlements.js:1
- *    3946    427  场景                                                 src/50-scene.js:1
- *    4373    172  场景更新                                             src/50-scene.js:428
- *    4545    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
- *    4739     25  相机聚焦                                             src/70-camera-input.js:1
- *    4764    171  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
- *    4935    158  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
- *    5093    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
- *    5360    614  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
- *    5974     72  主循环                                               src/99-boot.js:1
- *    6046    728  启动                                                 src/99-boot.js:73
- *   共 25 个区块 · 21 个源文件 · 6773 行
+ *    1603    192  卫星（v0.14 起；v0.16 扩张）：小天体环绕             src/34-moons.js:1
+ *    1795    123  文明（实例）· 发源地信标（v0.8 新增）                src/35-civ.js:1
+ *    1918    495  程序化贴图（全部画布绘制，零外部资源）               src/40-textures.js:1
+ *    2413    501  地形生成器（v0.11：固态行星表面构建）                src/42-terrain.js:1
+ *    2914    489  聚焦地表（v0.12：立方球连续地表）                    src/44-focus-surface.js:1
+ *    3403    562  聚落系统（v0.13 · 实验性）                           src/46-settlements.js:1
+ *    3965    427  场景                                                 src/50-scene.js:1
+ *    4392    172  场景更新                                             src/50-scene.js:428
+ *    4564    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
+ *    4758     25  相机聚焦                                             src/70-camera-input.js:1
+ *    4783    171  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
+ *    4954    158  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
+ *    5112    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
+ *    5379    614  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
+ *    5993     72  主循环                                               src/99-boot.js:1
+ *    6065    728  启动                                                 src/99-boot.js:73
+ *   共 25 个区块 · 21 个源文件 · 6792 行
  * @nav:end
  * ─────────────────────────────────────────────────────────────────────
  *
@@ -733,7 +733,7 @@ function typeCond(t) {
  * 同时写入 ① 右下角版本戳（#ver）② __game.version。
  * 用途：一眼判断「眼前这页是不是最新构建」——历史上出现过改了代码但浏览器
  * 没刷新、误判「功能没生效」的情况。发版时只改这一行。 */
-var VERSION = "0.15.0";
+var VERSION = "0.16.0";
 
 function $(id) { return document.getElementById(id); }
 function fmtNum(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
@@ -1566,7 +1566,7 @@ function genExtraPlanets(sysName, start, star) {
     p.ecc = k === 0 ? +(0.08 + xr() * 0.08).toFixed(4)
       : k === 1 ? +(0.24 + xr() * 0.10).toFixed(4)
         : +(xr() * 0.05).toFixed(4);
-    if (k === 2) p._extraTail = true;                       // 最外一颗（genMoons 的卫星宿主之一）
+    if (k === 2) p._extraTail = true;                       // 最外一颗（标记用；v0.16 起卫星按体量分配，不再看它）
     out.push(p);
   }
   return out;
@@ -1600,10 +1600,11 @@ function applyOrbit(cam, o) {
   cam.lookAt(o.target);
 }
 
-/* ================= 卫星（v0.14）：小天体环绕 ================= */
+/* ================= 卫星（v0.14 起；v0.16 扩张）：小天体环绕 ================= */
 
-/* 是什么：为「某些行星」挂上 1~2 颗环绕的小天体 —— 用户需求：「为某些行星增加卫星，
- * 卫星在行星被聚焦时，可以被再次聚焦」。
+/* 是什么：为**每一颗**行星挂上环绕的小天体 —— v0.14 只给「某些行星」挂 1~2 颗
+ * （用户：「为某些行星增加卫星，卫星在行星被聚焦时，可以被再次聚焦」），
+ * v0.16 按用户「增加卫星」把覆盖铺满、颗数按体量分档（不与聚焦耦合）。
  *
  * 三条纪律：
  *   ① **数据是唯一真值源**：p._moons 登记全部卫星（位置是角度的纯函数）；
@@ -1624,26 +1625,44 @@ function applyOrbit(cam, o) {
 var MOON_SEED_SALT = 0x3D0D5A17;          /* genMoons 的派生流盐 */
 var MOON_TEX_W = 512, MOON_TEX_H = 256;   /* 卫星贴图：聚焦时占大半个屏幕也不糊 */
 
-/* ---- ① 数据登记（genSystem 的 planets.forEach 调一次）---- */
+/* ---- ① 数据登记（genSystem 的 planets.forEach 调一次）----
+ *
+ * ★ v0.16「增加卫星」：**每颗行星都有卫星**，颗数按体量分档 ——
+ *   巨行星 2~3 颗 · 大岩质（半径 ≥ 1.0）1~2 颗 · 小岩质 1 颗。
+ *   轨道沿半径方向**均匀铺开**（不再是「2.1~2.9 倍母星半径」的小区间）：
+ *   多颗卫星挤在同一条带上会互相穿插，「均匀铺开 + 内侧更快」才像一套卫星系。
+ *
+ * ★ 轨道的硬上界来自聚焦档，不是随手取的：`FOCUS_MOON_K = 1.55` 要把**整条轨道**
+ *   收进视野，而 `focusDistance` 的上限是 10.0 → 最外轨道必须满足 1.55 × a ≤ 10。
+ *   所以 arMax 随母星半径收缩（大行星的轨道半径倍数必须更小）。
+ *   —— 本片**不碰**聚焦代码：下面这行只是把那条既有约束抄进来当设计预算。 */
+function moonCountFor(p, r) {
+  if (p.bulk === "giant") return 2 + (r() < 0.55 ? 1 : 0);
+  if (p.size >= 1.0) return 1 + (r() < 0.35 ? 1 : 0);
+  return 1;
+}
+
 function genMoons(p) {
   var r = seedStream(p.seed, MOON_SEED_SALT);
-  var want = 0;
-  if (p.idx === 1) want = 2;                                  /* 薄曙 II：两颗（演示样本） */
-  else if (p.bulk === "giant") want = 1 + (r() < 0.45 ? 1 : 0);  /* 巨行星：1~2 颗 */
-  else if (p._extraTail) want = 1;                            /* 最外一颗增补行星 */
-  else if (r() < 0.22 && p.size > 0.5) want = 1;              /* 其余：少量点缀 */
+  var want = moonCountFor(p, r);
+  var arMin = 1.95;
+  var arMax = Math.max(arMin + 0.15, Math.min(2.75, 6.30 / p.size));
   p._moons = [];
   for (var k = 0; k < want; k++) {
+    /* 每颗各占一条**等宽的径向带**，带内随机（0.25~0.75）—— 留出间距，
+     * 不做「整条带随机」（那样相邻两颗可能贴到一起）。 */
+    var slot = (arMax - arMin) / want;
+    var ar = arMin + slot * (k + 0.25 + 0.5 * r());   /* 轨道半径 / 母星半径 */
     p._moons.push({
       _isMoon: true,
-      name: p.name + " · 卫" + ["一", "二"][k],
+      name: p.name + " · 卫" + ["一", "二", "三", "四"][k],
       parent: p,
       seed: 1 + Math.floor(r() * 2e9),
       size: clamp(p.size * (0.22 + 0.10 * r()), 0.16, 0.62),
-      a: p.size * (2.1 + 0.8 * r()),           /* 轨道半径（母星半径的 2.1~2.9 倍） */
-      /* 公转角速度：一圈 26~63 秒（内侧卫星更快，开普勒序）。刻意压慢 ——
+      a: p.size * ar,                           /* 轨道半径（半径倍数见上） */
+      /* 公转角速度：开普勒序（内侧更快，一圈约 25~59 秒）。刻意压慢 ——
        * 卫星是「夜空里一个稳定的同伴」，不是陀螺；也好在聚焦档里点得中它。 */
-      speed: (0.10 + 0.14 * r()) * (k === 0 ? 1 : 1.25),
+      speed: 0.22 * Math.pow(1.95 / ar, 1.5) * (0.80 + 0.35 * r()),
       incl: (r() - 0.5) * 0.16,               /* 轨道面相对母星赤道的小倾角（±0.08 rad ≈ ±4.6°，卫星系近共面） */
       angle: r() * Math.PI * 2,
       tint: 0.55 + 0.30 * r(),                 /* 灰度基色 */

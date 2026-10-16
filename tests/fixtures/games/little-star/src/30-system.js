@@ -160,7 +160,7 @@ function genExtraPlanets(sysName, start, star) {
     p.ecc = k === 0 ? +(0.08 + xr() * 0.08).toFixed(4)
       : k === 1 ? +(0.24 + xr() * 0.10).toFixed(4)
         : +(xr() * 0.05).toFixed(4);
-    if (k === 2) p._extraTail = true;                       // 最外一颗（genMoons 的卫星宿主之一）
+    if (k === 2) p._extraTail = true;                       // 最外一颗（标记用；v0.16 起卫星按体量分配，不再看它）
     out.push(p);
   }
   return out;

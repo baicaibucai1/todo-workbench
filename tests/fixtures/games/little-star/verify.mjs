@@ -66,11 +66,13 @@
  *      ⑤ 重建自愈（数据是真值源）· ⑥ 全景档点位标记
  *      ⑦ v0.15 聚焦操作面板：实验场白名单 + 主按钮与 B 键同源（setSiteMode 唯一入口）
  *         + 读数与点击链路同源（「可建 · N 分」= siteCheck 的 N）
- *  24. ★ 卫星与嵌套聚焦（v0.14 新增）：卫星系统 + 「聚焦行星 → 双击卫星 → 聚焦卫星」——
- *      ① 卫星数据自洽（|世界−母星| ≈ a · 相位推进 · 潮汐锁定自转与公转同速反向）
- *      ② 嵌套聚焦走真实双击链路（pickAt 卫星分支）：focus 态目标 = 卫星、距离公式同款
- *      ③ HUD 跟到卫星 · 卫星钉在画面中心 · 卫星聚焦档镜头同速随动（Δθ ≡ −ΔrotY）
- *      ④ Esc 从卫星回上一级（母行星聚焦档 —— 层层退出）
+ *  24. ★ 卫星与嵌套聚焦（v0.14 新增；v0.16 覆盖铺满）：每颗行星 1~3 颗卫星
+ *      + 「聚焦行星 → 双击卫星 → 聚焦卫星」——
+ *      ① 覆盖与轨道预算（每颗行星都有卫星 · 最外轨道 1.55×a ≤ 10 —— v0.16）
+ *      ② 卫星数据自洽（|世界−母星| ≈ a · 相位推进 · 潮汐锁定自转与公转同速反向）
+ *      ③ 嵌套聚焦走真实双击链路（pickAt 卫星分支）：focus 态目标 = 卫星、距离公式同款
+ *      ④ HUD 跟到卫星 · 卫星钉在画面中心 · 卫星聚焦档镜头同速随动（Δθ ≡ +ΔrotY）
+ *      ⑤ Esc 从卫星回上一级（母行星聚焦档 —— 层层退出）
  *  25. 全程零 console error / pageerror
  *
  * 用法：node verify.mjs   （端口 4322，与常驻预览服务器 4321 错开，可随时运行）
@@ -222,7 +224,7 @@ async function frameStar(page, radius) {
       api: window.__game.version,
       badge: (document.getElementById("ver") || {}).textContent || ""
     }));
-    check("版本号为 0.15.0（调试接口）", verInfo.api === "0.15.0");
+    check("版本号为 0.16.0（调试接口）", verInfo.api === "0.16.0");
     check("右下角版本戳与调试接口同源", verInfo.badge === "v" + verInfo.api, `#ver = "${verInfo.badge}"`);
     console.log(`  ℹ 星系「${st0.system}」 · ${st0.starType}（${st0.starId}） · ${st0.planets.length} 颗行星`);
     await shot(page, "n1-system.png");
@@ -239,9 +241,10 @@ async function frameStar(page, radius) {
       vis.ships === 0 && !vis.station && !vis.platform && !vis.comet,
       `ships=${vis.ships} station=${vis.station} platform=${vis.platform} comet=${vis.comet}`);
     /* ★ v0.14：卫星重新上线（v0.5 随「聚焦恒星与行星舞台」移除的那一批的**继任者**）
-     * —— 数据登记在 p._moons（唯一真值源），网格 / 轨道线全是派生。 */
-    check("★ 卫星系统（v0.14）：部分行星带卫星，数量随行星数递增",
-      vis.moons >= 1 && vis.moons <= vis.planets * 2, `${vis.moons} 颗 / ${vis.planets} 颗行星`);
+     * —— 数据登记在 p._moons（唯一真值源），网格 / 轨道线全是派生。
+     * ★ v0.16：覆盖铺满 —— **每颗行星都有卫星**（颗数按体量分档 1~3）。 */
+    check("★ 卫星系统（v0.16）：每颗行星都有卫星（颗数 1~3，按体量分档）",
+      vis.moons >= vis.planets && vis.moons <= vis.planets * 3, `${vis.moons} 颗 / ${vis.planets} 颗行星`);
     check("★ 宜居带标线在场景里（v0.6 轨道优化）", vis.hzLines === 2, `${vis.hzLines} 条虚线`);
     const civ0 = await page.evaluate(() => window.__game.civInfo());
     check("★ 发源地信标在场景里（v0.8）：恰 1 枚，且挂在发源地上",
@@ -2187,17 +2190,29 @@ async function frameStar(page, radius) {
       !fsC.active && fsC.meshVisible === true,
       `active=${fsC.active} meshVisible=${fsC.meshVisible}`);
 
-    /* 气态行星不参与（没有固体表面） */
+    /* 气态行星不参与（没有固体表面）
+     * ★ v0.16：显式**转镜头**找一颗落在「安全区」的气态行星 —— 上一段聚焦过的行星
+     * 现在带卫星，`aimFocusAtMoonSystem` 的机位随卫星相位变（这台的机位是隐式继承来的），
+     * 不能再指望某个固定机位下气态行星恰好停在画面中部。转一圈找，找不到才算失败。 */
     await page.evaluate(() => { window.__game.unfocus(); window.__game.clearSelection(); window.__game.zoomTo(140); });
-    await sleep(1400);
-    const gasPick = await page.evaluate(() => {
-      const g = window.__game;
-      const W = window.innerWidth, H = window.innerHeight;
-      const t = g.terrain().find((x) => !x.solid);
-      if (!t) return null;
-      const sp = g.planetScreenPos(t.name);
-      return { name: t.name, x: Math.round(sp.x), y: Math.round(sp.y), ok: sp.x > 220 && sp.x < W - 400 && sp.y > 140 && sp.y < H - 140 };
-    });
+    await sleep(900);
+    let gasPick = null;
+    for (let a = 0; a < 14 && !gasPick; a++) {
+      const gp = await page.evaluate((th) => {
+        const g = window.__game;
+        g.setOrbitAngles(th, 1.12);
+        const W = window.innerWidth, H = window.innerHeight;
+        const t = g.terrain().find((x) => !x.solid);
+        if (!t) return null;
+        const sp = g.planetScreenPos(t.name);
+        return {
+          name: t.name, x: Math.round(sp.x), y: Math.round(sp.y),
+          ok: sp.z <= 1 && sp.x > 220 && sp.x < W - 400 && sp.y > 140 && sp.y < H - 140
+        };
+      }, 0.9 + a * 0.48);
+      if (gp && gp.ok) gasPick = gp;
+      else await sleep(200);
+    }
     if (gasPick && gasPick.ok) {
       await page.mouse.dblclick(gasPick.x, gasPick.y);
       await sleep(1600);
@@ -2475,8 +2490,11 @@ async function frameStar(page, radius) {
       await sleep(220);
       const s2 = await page.evaluate(() => window.__game.sitePanel());
       if (!(s2.cursor && s2.cursor.ok === true && s2.cursor.dir && s2.cursor.h > 0.55)) continue;
-      if (angDeg(s1.cursor.dir, s2.cursor.dir) > 0.5) continue;
-      pnHit = { x: pnCands[i].x, y: pnCands[i].y, read: s2.read, dir: s2.cursor.dir, score: s2.cursor.score };
+      if (angDeg(s2.cursor.dir, s1.cursor.dir) > 0.5) continue;
+      pnHit = {
+        x: pnCands[i].x, y: pnCands[i].y, read: s2.read,
+        dir: s2.cursor.dir, score: s2.cursor.score
+      };
       break;
     }
     let pnClick = null;
@@ -2492,11 +2510,22 @@ async function frameStar(page, radius) {
       pnClick = { after: after.panel, city: after.city, last: after.last };
       pnClick.hit = pnHit;
     }
-    /* 判据分两层（都稳定、都不依赖「两次采样之间世界没在转」这个不成立的前提）：
-     *   ① 结构性：点击用的落点 === 城市数据里的落点（逐位）—— 同一个数组，必然相同；
-     *   ② 所见即所得：点击用的落点 ≈ 鼠标停下时的预览落点（帧间漂移 < 3°）。
-     * 注：「预览读数」与「点击结果」之间隔着 130ms+（世界在转、光标落点每帧重算），
-     * 分数差 1~2 分是**固有**的 —— 不该拿它当「同源」的判据。 */
+    /* 判据落在**精确的结构事实**上（不用角度容差）：
+     *   ① 点击用的落点 === 城市数据里的落点（逐位）—— 同一个数组，必然相同；
+     *   ② `lastClick.src === "preview"` —— 点击用的是**画环用的那个变量** `_site.dir`，
+     *      不是当场重算一次射线。v0.15 那个「白环显示可建、点下去说海面」的 bug
+     *      就死在这两条上（修之前 src 恒为 "recompute"，①也必然不同）。
+     *   ③ 读数「可建 · N 分」= 城市分数、聚落计数与提示条同时到位。
+     * ★ 为什么不拿「预览角度 ≈ 点击角度」当判据（v0.16 改）：光标链路在 rAF 里算落点，
+     *   那一刻 `_cs.mesh.matrixWorld` 还是**上一帧 render 留下的**（renderer.render 才
+     *   updateMatrixWorld）；而指针事件（pointermove）重算时用的是刚渲染完的那份。
+     *   两份矩阵差一帧的**行星公移**，落在球面上还要按 1/cos(入射角) 放大 ——
+     *   探针逐帧取证：盘心 1.2°、盘缘 2/3 处 3.5°（且两条序列各自稳定、互不收敛，
+     *   所以它不是「时间漂移」，是**两次快照的取样基准不同**）。
+     *   玩家看到的环与点击用的落点其实是**同一个变量** `_site.dir`（同帧必然一致）；
+     *   跨帧比角度，量到的是「世界在这一帧里走了多远」，不是「落点对不对」。
+     *   所以角度只作**信息**打印；下面留一个 8° 的粗界，专门拦「落点跑到别的半球去」
+     *   这类真错（正常量级 1~4°，有 2 倍余量）。 */
     const angOf = (a, b) => {
       const d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
       return Math.acos(Math.min(1, Math.max(-1, d))) * 180 / Math.PI;
@@ -2505,15 +2534,15 @@ async function frameStar(page, radius) {
       pnClick.city.dir.every((v, k) => Math.abs(v - pnClick.last.dir[k]) < 1e-6) &&
       pnClick.city.score === pnClick.last.score && pnClick.last.src === "preview";
     const clickVsPreview = pnClick && pnClick.last ? angOf(pnClick.last.dir, pnClick.hit.dir) : 999;
-    check("★ 面板读数是点击链路的同源投影（点击落点 === 城市落点（逐位）· 与预览落点同址 < 3°）",
+    check("★ 面板读数是点击链路的同源投影（点击落点 === 城市落点（逐位）· 用的就是预览落点）",
       !!pnClick &&
         pnClick.hit.read === "可建 · " + pnClick.hit.score + " 分" &&
         citySameAsClick &&
-        clickVsPreview < 3 &&
+        clickVsPreview < 8 &&
         pnClick.after.count === "1 座" &&
         /已建聚落/.test(pnClick.after.note),
       pnClick
-        ? `读数「${pnClick.hit.read}」→ 点 (${pnClick.hit.x},${pnClick.hit.y}) → #${pnClick.city && pnClick.city.n} ${pnClick.city && pnClick.city.score} 分（落点源=${pnClick.last && pnClick.last.src} · 与预览差 ${clickVsPreview.toFixed(2)}°）· ${pnClick.after.count}`
+        ? `读数「${pnClick.hit.read}」→ 点 (${pnClick.hit.x},${pnClick.hit.y}) → #${pnClick.city && pnClick.city.n} ${pnClick.city && pnClick.city.score} 分（落点源=${pnClick.last && pnClick.last.src} · 与读数快照差 ${clickVsPreview.toFixed(2)}°—— 帧间取样基准差，非判据）· ${pnClick.after.count}`
         : "面板链路上找不到可建点");
 
     /* 退出聚焦 → 面板隐藏 + 选址模式解除（不残留状态） */
@@ -2531,10 +2560,11 @@ async function frameStar(page, radius) {
     console.log("\n[24] ★ 卫星与嵌套聚焦（v0.14）");
     /* 立场：卫星是「某些行星」的天体条目 —— 数据 p._moons 是唯一真值源，
      * 网格 / 轨道线 / 贴图全是派生；聚焦目标从「行星」泛化到「行星或卫星」。
-     * 本节验四件事：① 卫星数据自洽（轨率 ≈ a、世界坐标 = 母星 + 轨道局部、
-     * 相位持续推进、潮汐锁定自转与公转同速反向）；② 嵌套聚焦全链路
+     * 本节验五件事：① v0.16 覆盖与轨道预算（每颗行星都有卫星 · 最外轨道
+     * 1.55×a ≤ 10 —— 卫星参数与聚焦档之间唯一的耦合）；② 卫星数据自洽（轨率 ≈ a、
+     * 世界坐标 = 母星 + 轨道局部、相位持续推进、潮汐锁定自转与公转同速反向）；③ 嵌套聚焦全链路
      * （聚焦行星 → **双击它的卫星** → 聚焦卫星 → Esc 回母行星聚焦档）；
-     * ③ 卫星聚焦时距地表读数与目标都对；④ 卫星聚焦档镜头同样同速随动
+     * ④ 卫星聚焦时距地表读数与目标都对；⑤ 卫星聚焦档镜头同样同速随动
      * （Δθ ≡ −ΔrotY —— 与行星同一套口径）。页面此时在 Panorama（[23] 收尾）。 */
     /* ★ v0.15：[23] 的面板测试把相机摆到 θ=1.57/φ=1.35 才收尾 —— 而 enterFocus 的
      * aimFocusAtMoonSystem 是**按当前相机位置**挑「朝相机这侧」的卫星的。本节不
@@ -2551,8 +2581,32 @@ async function frameStar(page, radius) {
       }
       return null;
     });
-    check("★ 卫星数据在场景里（部分行星带 1~2 颗，p._moons 登记）",
+    check("★ 卫星数据在场景里（每颗行星 1~3 颗，p._moons 登记）",
       !!mh, mh ? `「${mh.host}」${mh.count} 颗 · 样本「${mh.moon.name}」` : "无卫星");
+    /* ★ v0.16：卫星覆盖与轨道预算（两条设计不变量的机器判据）——
+     *   ① 覆盖铺满：**每颗行星都有卫星**（没有「光秃秃」的行星），颗数 1~3；
+     *   ② 轨道预算：最外轨道满足 **1.55 × a ≤ 10** —— `FOCUS_MOON_K=1.55` 要把整条
+     *      轨道收进视野，而 `focusDistance` 的上限是 10.0。这条是卫星参数与聚焦档
+     *      之间**唯一的耦合**：谁把轨道半径放大，这里必须先红。 */
+    const cov16 = await page.evaluate(() => {
+      const g = window.__game;
+      const ps = g.getState().planets;
+      let minN = 99, maxN = 0, worst = 0, worstName = "";
+      const barren = [];
+      for (const p of ps) {
+        const ms = g.moons(p.name) || [];
+        if (!ms.length) barren.push(p.name);
+        minN = Math.min(minN, ms.length);
+        maxN = Math.max(maxN, ms.length);
+        for (const m of ms) if (m.a > worst) { worst = m.a; worstName = m.name; }
+      }
+      return { n: ps.length, minN, maxN, worst: +worst.toFixed(3), worstName, barren };
+    });
+    check("★ v0.16 卫星覆盖与轨道预算（每颗行星 1~3 颗 · 最外轨道 1.55×a ≤ 10）",
+      cov16.barren.length === 0 && cov16.minN >= 1 && cov16.maxN <= 3 && cov16.worst * 1.55 <= 10,
+      cov16.barren.length
+        ? `无卫星行星：${cov16.barren.join(" / ")}`
+        : `${cov16.n} 颗行星 · 每颗 ${cov16.minN}~${cov16.maxN} 颗 · 最外轨道 ${cov16.worst}（${cov16.worstName} → 1.55× = ${(cov16.worst * 1.55).toFixed(2)}）`);
     if (mh) {
       await page.evaluate((n) => window.__game.focusPlanetByName(n), mh.host);
       await sleep(2300);                        /* 等半径与 target 收敛（聚焦档 target lerp 5.5） */
