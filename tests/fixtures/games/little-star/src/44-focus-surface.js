@@ -203,7 +203,7 @@ function buildFocusGeometry(p, pr, N) {
   geo.setAttribute("aH", new THREE.Float32BufferAttribute(hgt, 1));
   geo.setIndex(idx);
   return {
-    geo: geo, amp: amp, field: field, N: N, verts: total, tris: idx.length / 3,
+    geo: geo, amp: amp, field: field, N: N, lvl: N, verts: total, tris: idx.length / 3,
     seaFrac: seaA > 0 ? below / st.npix : 0,
     sig: +sig.toFixed(3), ms: Math.round(performance.now() - t0)
   };
@@ -235,7 +235,12 @@ function focusRampTex(prof) {
 
 var FOCUS_VS = [
   "attribute float aH;",
+  "/* ★ v0.19：Goldberg（六/五边形）每格都要带自己的三个数 —— aCellH 本格中心高程、",
+  "   aCell 本格的哈希色号、aEdge 0 = 格心 / 1 = 格角（渲染出格边界）。",
+  "   另两种网格（cube / healpix）没有这几个属性 → 取通用值 0，配 uXXX_K = 0 即无效。 */",
+  "attribute float aCellH; attribute float aCell; attribute float aEdge;",
   "varying float vH;",
+  "varying float vCellH; varying float vCell; varying float vEdge;",
   "varying vec3 vWN;",       /* 世界空间法线：星球自转，光照得在物体空间之外算 */
   "varying vec3 vWDir;",     /* 世界空间径向：量坡度用 */
   "varying vec3 vDir;",      /* 物体空间方向：细节噪声与纬度都挂在它上面（跟着地表转） */
@@ -243,6 +248,7 @@ var FOCUS_VS = [
   "varying vec3 vWP;",       /* 世界空间位置：视线方向（水面高光要用） */
   "void main() {",
   "  vH = aH;",
+  "  vCellH = aCellH; vCell = aCell; vEdge = aEdge;",
   "  vDir = normalize(position);",
   "  vNObj = normalize(normal);",
   "  vWN = normalize(mat3(modelMatrix) * normal);",
@@ -264,7 +270,10 @@ var FOCUS_FS = [
   "uniform float uSea; uniform float uSnowH; uniform float uCapFrac; uniform float uLava;",
   "uniform float uHasSea; uniform float uDetailK; uniform float uMottK;",
   "uniform float uBumpK; uniform float uWaveK; uniform float uSpecK; uniform float uFresK;",
+  "/* ★ v0.19：六/五边形的「一格一块」三件套（几何位移仍走连续场，只有着色用它们） */",
+  "uniform float uPlateauK; uniform float uAlbedoK; uniform float uEdgeK;",
   "varying float vH;",
+  "varying float vCellH; varying float vCell; varying float vEdge;",
   "varying vec3 vWN; varying vec3 vWDir; varying vec3 vDir; varying vec3 vNObj; varying vec3 vWP;",
   "",
   "/* ★ v0.18：逐像素细节。h31/vn3 与 CPU 侧 _ch31/_cvn3 同族（同一套哈希常数与",
@@ -307,7 +316,14 @@ var FOCUS_FS = [
   "  float coastGuard = uHasSea * (1.0 - smoothstep(0.02, 0.10, abs(vH - uSea)));",
   "  float hDet = uDetailK * (a1 * 0.62 * (n1 - 0.5) + a2 * 0.38 * (n2 - 0.5));",
   "  hDet *= 1.0 - 0.65 * coastGuard;",
-  "  float hF = clamp(vH + hDet, 0.0, 1.0);",
+  "  /* ★ v0.19 plateau：着色时向「本格中心高程」混合 —— 一格一个高度平台，",
+  "     才是眼睛能认出来的铺砌（而不是「凑巧用了六边形做个网格」）。",
+  "     ★ 只改**着色**，几何位移照样按连续场 —— 一旦往顶点上加每格偏移，",
+  "     相邻两格会对同一个角点给出不同高度 ⇒ 裂缝。",
+  "     ★ 贴岸 35% 区域内不玩这套：海岸线必须与 CPU 连续场逐点一致，否则",
+  "     「白环说可建、点下去说海面」会回来（与 v0.15 那条 bug 同一根电线）。 */",
+  "  float plate = uPlateauK * (1.0 - coastGuard);",
+  "  float hF = clamp(mix(vH, vCellH, plate) + hDet, 0.0, 1.0);",
   "",
   "  /* ③ 水陆分界：连续量等值线 + 像素宽过渡（下限 1e-5 是 C 路线契约③） */",
   "  float fw = max(fwidth(hF) * 1.2, 1e-5);",
@@ -344,6 +360,15 @@ var FOCUS_FS = [
   "     水面只要一点点 —— 平的水面长出颗粒感会显脏。 */",
   "  float mott = a3 * (n3 - 0.5) * 1.32 + a4 * (n4 - 0.5) * 0.68;",
   "  base *= 1.0 + uMottK * mott * (1.0 - 0.72 * wMask);",
+  "",
+  "  /* ⑦b ★ v0.19：每格一色 + 格边界压暗 —— 「六边形拼出来的球面」最后一步。",
+  "     aCell 是本格自己的哈希（零 RNG）；aEdge 在格心 = 0、格角 = 1，而三角扇的",
+  "     **外边**整条都是 1 ⇒ smoothstep 出来的是一圈贴着边界的暗环，相邻两格压的",
+  "     正好是同一条边（两端都是 1）⇒ 不会出现接不上的缝。 */",
+  "  base *= 1.0 + uAlbedoK * (vCell - 0.5) * 2.0;",
+  "  float ed = smoothstep(0.74, 1.0, vEdge) * uEdgeK * (1.0 - 0.45 * wMask);",
+  "  ed *= 1.0 - 0.5 * coastGuard;",
+  "  base *= 1.0 - ed;",
   "",
   "  /* ⑧ 细节法线：物体空间求切向梯度，再用 uModel3 转回世界 ——",
   "     山脊与波纹因此由**真实光照**塑形（立体感的主力），而不是烘死在颜色里。",
@@ -508,9 +533,11 @@ var FS_FRES_K = 1.15;         /* 掠射菲涅尔强度 */
  * uOpacity 一直挂在 0.72，等于拿一层半透明白雾糊在要看的表面上。对齐到同一档。 */
 var FOCUS_CLOUD_OP = 0.27;
 
-/* ★ v0.18：聚焦网格的方案。默认 HEALPix（等面积采样 + 分层 LOD，见 47）；
- * 保留立方球以便 A/B 对照（__game.setFocusMesh("cube" | "healpix")）。 */
-var FOCUS_MESH_KIND = "healpix";
+/* ★ v0.19：聚焦网格的方案。默认 **Goldberg 六/五边形**（用户可以一眼看出球面是
+ * 被一块块拼起来的，见 47）；HEALPix 与立方球留作 A/B 对照
+ * （`__game.setFocusMesh("hex" | "healpix" | "cube")`）。
+ * ★★ 不管用哪种网格，**统计都走 HEALPix 采样**（hpStatSample）—— 换网格不算重新生成星球。 */
+var FOCUS_MESH_KIND = "hex";
 var FOCUS_LOD_HOLD_MS = 500;      /* 换档的最小间隔：贴着阈值来回缩会一直重建 */
 
 /* 屏幕「每弧度多少像素」—— LOD 选档的输入（相机到最近表面点的距离） */
@@ -518,26 +545,47 @@ function focusPxPerRad(p) {
   var d = Math.max(0.05, orbit.radius - p.size);
   return (window.innerHeight / 2) / (Math.tan(camera.fov * Math.PI / 360) * d);
 }
-function focusNsideFor(p) {
-  return FOCUS_MESH_KIND === "healpix" ? hpPickNside(focusPxPerRad(p)) : FOCUS_N;
+function focusLvlFor(p) {
+  if (FOCUS_MESH_KIND === "hex") return hexPickNu(focusPxPerRad(p));
+  if (FOCUS_MESH_KIND === "healpix") return hpPickNside(focusPxPerRad(p));
+  return FOCUS_N;
 }
-function focusBuildGeom(p, pr, nside) {
-  return FOCUS_MESH_KIND === "healpix"
-    ? buildHealpixGeometry(p, pr, nside)
-    : buildFocusGeometry(p, pr, FOCUS_N);
+function focusBuildGeom(p, pr, lvl) {
+  if (FOCUS_MESH_KIND === "hex") return buildHexGeometry(p, pr, lvl);
+  if (FOCUS_MESH_KIND === "healpix") return buildHealpixGeometry(p, pr, lvl);
+  return buildFocusGeometry(p, pr, FOCUS_N);
+}
+/* ★ v0.19：「一格一块」的三件套只有 hex 网格有那几个逐格属性 ——
+ * 换到其它网格时把强度归零（属性缺失时 WebGL 给通用值 0，乘 0 天然安全）。 */
+function hexUniforms() {
+  var on = (FOCUS_MESH_KIND === "hex");
+  return {
+    uPlateauK: on ? HEX_PLATEAU_K : 0,
+    uAlbedoK: on ? HEX_ALBEDO_K : 0,
+    uEdgeK: on ? HEX_EDGE_K : 0
+  };
+}
+function applyHexUniforms(cs) {
+  if (!cs || !cs.mat) return;
+  var u = hexUniforms();
+  cs.mat.uniforms.uPlateauK.value = u.uPlateauK;
+  cs.mat.uniforms.uAlbedoK.value = u.uAlbedoK;
+  cs.mat.uniforms.uEdgeK.value = u.uEdgeK;
 }
 /* 只换几何（档位变了）：材质 / 云壳 / 城市都留着 —— 城市数据是唯一真值源 */
 function rebuildFocusGeom(p) {
   var cs = p._cs;
   if (!cs) return null;
   var pr = terrainParams(p);
-  var g = focusBuildGeom(p, pr, focusNsideFor(p));
+  var g = focusBuildGeom(p, pr, focusLvlFor(p));
   if (cs.mesh.geometry) cs.mesh.geometry.dispose();
   cs.mesh.geometry = g.geo;
-  cs.nside = g.nside; cs.N = g.N; cs.verts = g.verts; cs.tris = g.tris;
+  cs.nside = g.lvl; cs.lvl = g.lvl; cs.N = g.N; cs.verts = g.verts; cs.tris = g.tris;
+  cs.pents = g.pents || 0; cs.hexes = g.hexes || 0;
   cs.ms = g.ms; cs.seaFrac = g.seaFrac; cs.sig = g.sig;
   cs.field = g.field; cs.amp = g.amp; cs.sea = pr.sea ? 0.5 : -1;
   cs.switchedAt = performance.now();
+  applyHexUniforms(cs);
   syncCityMeshes(p);
   return cs;
 }
@@ -545,7 +593,7 @@ function rebuildFocusGeom(p) {
 function ensureFocusSurface(p) {
   if (!p || p._cs || !isSolidPlanet(p)) return p ? p._cs || null : null;
   var pr = terrainParams(p);
-  var g = focusBuildGeom(p, pr, focusNsideFor(p));
+  var g = focusBuildGeom(p, pr, focusLvlFor(p));
   var rel = clamp(pr.relief, 0.3, 1.5);
   var mat = new THREE.ShaderMaterial({
     uniforms: {
@@ -564,7 +612,11 @@ function ensureFocusSurface(p) {
       uBumpK: { value: FS_BUMP_K * rel },
       uWaveK: { value: FS_WAVE_K * clamp(rel, 0.5, 1.2) },
       uSpecK: { value: FS_SPEC_K },
-      uFresK: { value: FS_FRES_K }
+      uFresK: { value: FS_FRES_K },
+      /* ★ v0.19：紧紧只属于 hex 网格的三件套（非 hex 一律 0，见 hexUniforms） */
+      uPlateauK: { value: hexUniforms().uPlateauK },
+      uAlbedoK: { value: hexUniforms().uAlbedoK },
+      uEdgeK: { value: hexUniforms().uEdgeK }
     },
     /* 片元里 dFdx/fwidth 求像素足迹（细节带限 + 等值线抗锯齿）。
      * WebGL2 里导数是核心功能，WebGL1 下 three 会按这个开关插扩展声明。 */
@@ -600,8 +652,11 @@ function ensureFocusSurface(p) {
   p._group.add(group);
   p._cs = {
     group: group, mesh: mesh, mat: mat, cloud: cloud, cloudMat: cloudMat,
-    kind: FOCUS_MESH_KIND, nside: g.nside || 0,
-    N: g.N, verts: g.verts, tris: g.tris, ms: g.ms, seaFrac: g.seaFrac, sig: g.sig,
+    /* v0.19：kind = hex | healpix | cube；nside = 当前 LOD 档位（hex 是 ν，
+     * healpix 是 nside，cube 恒为 FOCUS_N）。pents/hexes 只在 hex 网格有意义。 */
+    kind: FOCUS_MESH_KIND, nside: g.lvl || 0, lvl: g.lvl || 0,
+    N: g.N, pents: g.pents || 0, hexes: g.hexes || 0,
+    verts: g.verts, tris: g.tris, ms: g.ms, seaFrac: g.seaFrac, sig: g.sig,
     /* ★ v0.13：连续场 + 位移幅度 + 海平面 —— 聚落系统（46）的就地查询口 */
     field: g.field, amp: g.amp, sea: pr.sea ? 0.5 : -1,
     switchedAt: 0
@@ -650,15 +705,13 @@ function syncFocusSurface() {
     _csM3.setFromMatrix4(_csM4);
     cs.mat.uniforms.uModel3.value.copy(_csM3);
 
-    /* ★ v0.18 LOD：HEALPix 的层级第一次真正派上用场 —— 相机拉近（或拉远）跨过
-     * 档位阈值就换 nside 重建，单元的屏幕尺寸因此始终压在 ~9px 上下，不会像
-     * 固定 N 那样「拉得越近越糊」。两道闸门：档位真的变了 + 距上次换档 > 500ms
-     * （否则缩放在阈值附近抖一下就会一直重建 —— 重建是同步的，会卡）。 */
-    if (FOCUS_MESH_KIND === "healpix" && cs.nside) {
-      var wantN = hpPickNside(focusPxPerRad(p));
-      if (wantN !== cs.nside && (performance.now() - (cs.switchedAt || 0)) > FOCUS_LOD_HOLD_MS) {
-        rebuildFocusGeom(p);
-      }
+    /* ★ LOD（hex + healpix 都走这里）：相机拉近/拉远跨过档位阈值就按新档重建，
+     * 一格的屏幕尺寸因此始终压在十几 px，不会像固定 N 那样「拉得越近越糊」。
+     * 两道闸门：档位真的变了 + 距上次换档 > 500ms（否则在阈值附近缩放会一直重建）。 */
+    var wantLvl = focusLvlFor(p);
+    if (cs.lvl && wantLvl !== cs.lvl
+      && (performance.now() - (cs.switchedAt || 0)) > FOCUS_LOD_HOLD_MS) {
+      rebuildFocusGeom(p);
     }
     /* 无分配：setHex 会走色彩管理，convertLinearToSRGB 还原成「raw sRGB」
      * —— 与 40-textures.rawColor 同一口径（纯 ShaderMaterial 直写输出） */

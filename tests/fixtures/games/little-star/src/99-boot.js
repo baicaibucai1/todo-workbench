@@ -444,8 +444,12 @@ function boot() {
         name: p.name, solid: isSolidPlanet(p),
         cloudy: isSolidPlanet(p) && planetCloudy(p),
         built: !!cs, active: !!(cs && cs.group.visible),
-        /* v0.18：kind = healpix | cube；nside = HEALPix 档位（LOD 会随相机换档） */
-        kind: cs ? cs.kind : "", nside: cs ? cs.nside : 0,
+        /* v0.19：kind = hex（六/五边形）| healpix | cube；nside = 当前 LOD 档位
+         * （hex 是 ν · healpix 是 nside · cube 恒等于 FOCUS_N），LOD 会随相机换档。 */
+        kind: cs ? cs.kind : "", nside: cs ? cs.nside : 0, lvl: cs ? cs.nside : 0,
+        /* pxPerRad = 屏幕「每弧度多少像素」：LOD 选档的唯一输入 */
+        pxPerRad: cs ? +focusPxPerRad(p).toFixed(1) : 0,
+        pents: cs ? cs.pents : 0, hexes: cs ? cs.hexes : 0,
         N: cs ? cs.N : 0,
         verts: cs ? cs.verts : 0, tris: cs ? cs.tris : 0, ms: cs ? cs.ms : 0,
         sea: pr && pr.sea ? 0.5 : -1, seaFrac: cs ? +cs.seaFrac.toFixed(4) : 0,
@@ -486,7 +490,7 @@ function boot() {
     /* ★ v0.18：聚焦地表的网格方案（A/B 对照用）—— healpix（默认，等面积 + LOD）
      * 与 cube（v0.12~v0.17 的立方球）。切换会重建当前聚焦行星的几何。 */
     setFocusMesh: function (kind) {
-      var k = (kind === "cube") ? "cube" : "healpix";
+      var k = (kind === "cube") ? "cube" : (kind === "healpix") ? "healpix" : "hex";
       if (k === FOCUS_MESH_KIND) return k;
       FOCUS_MESH_KIND = k;
       var list = G.sys ? G.sys.planets : [];
@@ -495,15 +499,31 @@ function boot() {
         if (!p._cs) continue;
         if (p._cs.mesh.geometry) p._cs.mesh.geometry.dispose();
         var pr = terrainParams(p);
-        var g = focusBuildGeom(p, pr, focusNsideFor(p));
+        var g = focusBuildGeom(p, pr, focusLvlFor(p));
         p._cs.mesh.geometry = g.geo;
-        p._cs.kind = k; p._cs.nside = g.nside || 0; p._cs.N = g.N;
-        p._cs.verts = g.verts; p._cs.tris = g.tris; p._cs.ms = g.ms;
+        p._cs.kind = k; p._cs.nside = g.lvl || 0; p._cs.lvl = g.lvl || 0;
+        p._cs.pents = g.pents || 0; p._cs.hexes = g.hexes || 0;
+        p._cs.N = g.N; p._cs.verts = g.verts; p._cs.tris = g.tris; p._cs.ms = g.ms;
         p._cs.seaFrac = g.seaFrac; p._cs.sig = g.sig;
         p._cs.field = g.field; p._cs.amp = g.amp; p._cs.sea = pr.sea ? 0.5 : -1;
+        p._cs.switchedAt = performance.now();
+        applyHexUniforms(p._cs);
         syncCityMeshes(p);
       }
       return k;
+    },
+    /* ★ v0.19：现场调「一格一块」的观感（不重建网格，只改 uniform + 选档阈值）。
+     *   不传参数 = 只读当前值。plateau 给 1 = 每格纯平台（一格一色、一眼六边形），
+     *   给 0 = 回到连续高程；edge 是格边界压暗的强度。 */
+    setHexStyle: function (o) {
+      if (!o) return { plateau: HEX_PLATEAU_K, albedo: HEX_ALBEDO_K, edge: HEX_EDGE_K, targetPx: HEX_TARGET_PX };
+      if (typeof o.plateau === "number") HEX_PLATEAU_K = clamp(o.plateau, 0, 1);
+      if (typeof o.albedo === "number") HEX_ALBEDO_K = clamp(o.albedo, 0, 0.4);
+      if (typeof o.edge === "number") HEX_EDGE_K = clamp(o.edge, 0, 0.6);
+      if (typeof o.targetPx === "number") HEX_TARGET_PX = clamp(o.targetPx, 4, 60);
+      var list = G.sys ? G.sys.planets : [];
+      for (var i = 0; i < list.length; i++) if (list[i]._cs) applyHexUniforms(list[i]._cs);
+      return { plateau: HEX_PLATEAU_K, albedo: HEX_ALBEDO_K, edge: HEX_EDGE_K, targetPx: HEX_TARGET_PX };
     },
     /* 聚焦云壳相位（调试：看不同方位下的云图案 —— 对照「云多/云少的一面」） */
     setFocusCloudPhase: function (a) {

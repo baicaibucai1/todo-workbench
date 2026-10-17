@@ -57,20 +57,20 @@
  *    1796    123  文明（实例）· 发源地信标（v0.8 新增）                src/35-civ.js:1
  *    1919    608  程序化贴图（全部画布绘制，零外部资源）               src/40-textures.js:1
  *    2527    549  地形生成器（v0.11：固态行星表面构建）                src/42-terrain.js:1
- *    3076    672  聚焦地表（v0.12：立方球连续地表）                    src/44-focus-surface.js:1
- *    3748    562  聚落系统（v0.13 · 实验性）                           src/46-settlements.js:1
- *    4310    270  HEALPix（v0.18）：等面积分层球面像素化               src/47-healpix.js:1
- *    4580    441  场景                                                 src/50-scene.js:1
- *    5021    185  场景更新                                             src/50-scene.js:442
- *    5206    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
- *    5400     25  相机聚焦                                             src/70-camera-input.js:1
- *    5425    171  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
- *    5596    158  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
- *    5754    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
- *    6021    614  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
- *    6635     72  主循环                                               src/99-boot.js:1
- *    6707    752  启动                                                 src/99-boot.js:73
- *   共 26 个区块 · 22 个源文件 · 7458 行
+ *    3076    725  聚焦地表（v0.12：立方球连续地表）                    src/44-focus-surface.js:1
+ *    3801    562  聚落系统（v0.13 · 实验性）                           src/46-settlements.js:1
+ *    4363    562  HEALPix（v0.18）：等面积分层球面像素化               src/47-healpix.js:1
+ *    4925    441  场景                                                 src/50-scene.js:1
+ *    5366    185  场景更新                                             src/50-scene.js:442
+ *    5551    194  恒星专章：耀斑 / 镜头光斑                            src/60-star-fx.js:1
+ *    5745     25  相机聚焦                                             src/70-camera-input.js:1
+ *    5770    171  输入：轨道相机 + 拾取                                src/70-camera-input.js:26
+ *    5941    158  聚焦镜头（v0.10 新增）                               src/72-focus.js:1
+ *    6099    267  右侧信息面板（选中天体时展开）                       src/80-panel.js:1
+ *    6366    614  恒星指导书（游戏内科普档案）                         src/90-guide.js:1
+ *    6980     72  主循环                                               src/99-boot.js:1
+ *    7052    772  启动                                                 src/99-boot.js:73
+ *   共 26 个区块 · 22 个源文件 · 7823 行
  * @nav:end
  * ─────────────────────────────────────────────────────────────────────
  *
@@ -734,7 +734,7 @@ function typeCond(t) {
  * 同时写入 ① 右下角版本戳（#ver）② __game.version。
  * 用途：一眼判断「眼前这页是不是最新构建」——历史上出现过改了代码但浏览器
  * 没刷新、误判「功能没生效」的情况。发版时只改这一行。 */
-var VERSION = "0.18.0";
+var VERSION = "0.19.0";
 
 function $(id) { return document.getElementById(id); }
 function fmtNum(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
@@ -3278,7 +3278,7 @@ function buildFocusGeometry(p, pr, N) {
   geo.setAttribute("aH", new THREE.Float32BufferAttribute(hgt, 1));
   geo.setIndex(idx);
   return {
-    geo: geo, amp: amp, field: field, N: N, verts: total, tris: idx.length / 3,
+    geo: geo, amp: amp, field: field, N: N, lvl: N, verts: total, tris: idx.length / 3,
     seaFrac: seaA > 0 ? below / st.npix : 0,
     sig: +sig.toFixed(3), ms: Math.round(performance.now() - t0)
   };
@@ -3310,7 +3310,12 @@ function focusRampTex(prof) {
 
 var FOCUS_VS = [
   "attribute float aH;",
+  "/* ★ v0.19：Goldberg（六/五边形）每格都要带自己的三个数 —— aCellH 本格中心高程、",
+  "   aCell 本格的哈希色号、aEdge 0 = 格心 / 1 = 格角（渲染出格边界）。",
+  "   另两种网格（cube / healpix）没有这几个属性 → 取通用值 0，配 uXXX_K = 0 即无效。 */",
+  "attribute float aCellH; attribute float aCell; attribute float aEdge;",
   "varying float vH;",
+  "varying float vCellH; varying float vCell; varying float vEdge;",
   "varying vec3 vWN;",       /* 世界空间法线：星球自转，光照得在物体空间之外算 */
   "varying vec3 vWDir;",     /* 世界空间径向：量坡度用 */
   "varying vec3 vDir;",      /* 物体空间方向：细节噪声与纬度都挂在它上面（跟着地表转） */
@@ -3318,6 +3323,7 @@ var FOCUS_VS = [
   "varying vec3 vWP;",       /* 世界空间位置：视线方向（水面高光要用） */
   "void main() {",
   "  vH = aH;",
+  "  vCellH = aCellH; vCell = aCell; vEdge = aEdge;",
   "  vDir = normalize(position);",
   "  vNObj = normalize(normal);",
   "  vWN = normalize(mat3(modelMatrix) * normal);",
@@ -3339,7 +3345,10 @@ var FOCUS_FS = [
   "uniform float uSea; uniform float uSnowH; uniform float uCapFrac; uniform float uLava;",
   "uniform float uHasSea; uniform float uDetailK; uniform float uMottK;",
   "uniform float uBumpK; uniform float uWaveK; uniform float uSpecK; uniform float uFresK;",
+  "/* ★ v0.19：六/五边形的「一格一块」三件套（几何位移仍走连续场，只有着色用它们） */",
+  "uniform float uPlateauK; uniform float uAlbedoK; uniform float uEdgeK;",
   "varying float vH;",
+  "varying float vCellH; varying float vCell; varying float vEdge;",
   "varying vec3 vWN; varying vec3 vWDir; varying vec3 vDir; varying vec3 vNObj; varying vec3 vWP;",
   "",
   "/* ★ v0.18：逐像素细节。h31/vn3 与 CPU 侧 _ch31/_cvn3 同族（同一套哈希常数与",
@@ -3382,7 +3391,14 @@ var FOCUS_FS = [
   "  float coastGuard = uHasSea * (1.0 - smoothstep(0.02, 0.10, abs(vH - uSea)));",
   "  float hDet = uDetailK * (a1 * 0.62 * (n1 - 0.5) + a2 * 0.38 * (n2 - 0.5));",
   "  hDet *= 1.0 - 0.65 * coastGuard;",
-  "  float hF = clamp(vH + hDet, 0.0, 1.0);",
+  "  /* ★ v0.19 plateau：着色时向「本格中心高程」混合 —— 一格一个高度平台，",
+  "     才是眼睛能认出来的铺砌（而不是「凑巧用了六边形做个网格」）。",
+  "     ★ 只改**着色**，几何位移照样按连续场 —— 一旦往顶点上加每格偏移，",
+  "     相邻两格会对同一个角点给出不同高度 ⇒ 裂缝。",
+  "     ★ 贴岸 35% 区域内不玩这套：海岸线必须与 CPU 连续场逐点一致，否则",
+  "     「白环说可建、点下去说海面」会回来（与 v0.15 那条 bug 同一根电线）。 */",
+  "  float plate = uPlateauK * (1.0 - coastGuard);",
+  "  float hF = clamp(mix(vH, vCellH, plate) + hDet, 0.0, 1.0);",
   "",
   "  /* ③ 水陆分界：连续量等值线 + 像素宽过渡（下限 1e-5 是 C 路线契约③） */",
   "  float fw = max(fwidth(hF) * 1.2, 1e-5);",
@@ -3419,6 +3435,15 @@ var FOCUS_FS = [
   "     水面只要一点点 —— 平的水面长出颗粒感会显脏。 */",
   "  float mott = a3 * (n3 - 0.5) * 1.32 + a4 * (n4 - 0.5) * 0.68;",
   "  base *= 1.0 + uMottK * mott * (1.0 - 0.72 * wMask);",
+  "",
+  "  /* ⑦b ★ v0.19：每格一色 + 格边界压暗 —— 「六边形拼出来的球面」最后一步。",
+  "     aCell 是本格自己的哈希（零 RNG）；aEdge 在格心 = 0、格角 = 1，而三角扇的",
+  "     **外边**整条都是 1 ⇒ smoothstep 出来的是一圈贴着边界的暗环，相邻两格压的",
+  "     正好是同一条边（两端都是 1）⇒ 不会出现接不上的缝。 */",
+  "  base *= 1.0 + uAlbedoK * (vCell - 0.5) * 2.0;",
+  "  float ed = smoothstep(0.74, 1.0, vEdge) * uEdgeK * (1.0 - 0.45 * wMask);",
+  "  ed *= 1.0 - 0.5 * coastGuard;",
+  "  base *= 1.0 - ed;",
   "",
   "  /* ⑧ 细节法线：物体空间求切向梯度，再用 uModel3 转回世界 ——",
   "     山脊与波纹因此由**真实光照**塑形（立体感的主力），而不是烘死在颜色里。",
@@ -3583,9 +3608,11 @@ var FS_FRES_K = 1.15;         /* 掠射菲涅尔强度 */
  * uOpacity 一直挂在 0.72，等于拿一层半透明白雾糊在要看的表面上。对齐到同一档。 */
 var FOCUS_CLOUD_OP = 0.27;
 
-/* ★ v0.18：聚焦网格的方案。默认 HEALPix（等面积采样 + 分层 LOD，见 47）；
- * 保留立方球以便 A/B 对照（__game.setFocusMesh("cube" | "healpix")）。 */
-var FOCUS_MESH_KIND = "healpix";
+/* ★ v0.19：聚焦网格的方案。默认 **Goldberg 六/五边形**（用户可以一眼看出球面是
+ * 被一块块拼起来的，见 47）；HEALPix 与立方球留作 A/B 对照
+ * （`__game.setFocusMesh("hex" | "healpix" | "cube")`）。
+ * ★★ 不管用哪种网格，**统计都走 HEALPix 采样**（hpStatSample）—— 换网格不算重新生成星球。 */
+var FOCUS_MESH_KIND = "hex";
 var FOCUS_LOD_HOLD_MS = 500;      /* 换档的最小间隔：贴着阈值来回缩会一直重建 */
 
 /* 屏幕「每弧度多少像素」—— LOD 选档的输入（相机到最近表面点的距离） */
@@ -3593,26 +3620,47 @@ function focusPxPerRad(p) {
   var d = Math.max(0.05, orbit.radius - p.size);
   return (window.innerHeight / 2) / (Math.tan(camera.fov * Math.PI / 360) * d);
 }
-function focusNsideFor(p) {
-  return FOCUS_MESH_KIND === "healpix" ? hpPickNside(focusPxPerRad(p)) : FOCUS_N;
+function focusLvlFor(p) {
+  if (FOCUS_MESH_KIND === "hex") return hexPickNu(focusPxPerRad(p));
+  if (FOCUS_MESH_KIND === "healpix") return hpPickNside(focusPxPerRad(p));
+  return FOCUS_N;
 }
-function focusBuildGeom(p, pr, nside) {
-  return FOCUS_MESH_KIND === "healpix"
-    ? buildHealpixGeometry(p, pr, nside)
-    : buildFocusGeometry(p, pr, FOCUS_N);
+function focusBuildGeom(p, pr, lvl) {
+  if (FOCUS_MESH_KIND === "hex") return buildHexGeometry(p, pr, lvl);
+  if (FOCUS_MESH_KIND === "healpix") return buildHealpixGeometry(p, pr, lvl);
+  return buildFocusGeometry(p, pr, FOCUS_N);
+}
+/* ★ v0.19：「一格一块」的三件套只有 hex 网格有那几个逐格属性 ——
+ * 换到其它网格时把强度归零（属性缺失时 WebGL 给通用值 0，乘 0 天然安全）。 */
+function hexUniforms() {
+  var on = (FOCUS_MESH_KIND === "hex");
+  return {
+    uPlateauK: on ? HEX_PLATEAU_K : 0,
+    uAlbedoK: on ? HEX_ALBEDO_K : 0,
+    uEdgeK: on ? HEX_EDGE_K : 0
+  };
+}
+function applyHexUniforms(cs) {
+  if (!cs || !cs.mat) return;
+  var u = hexUniforms();
+  cs.mat.uniforms.uPlateauK.value = u.uPlateauK;
+  cs.mat.uniforms.uAlbedoK.value = u.uAlbedoK;
+  cs.mat.uniforms.uEdgeK.value = u.uEdgeK;
 }
 /* 只换几何（档位变了）：材质 / 云壳 / 城市都留着 —— 城市数据是唯一真值源 */
 function rebuildFocusGeom(p) {
   var cs = p._cs;
   if (!cs) return null;
   var pr = terrainParams(p);
-  var g = focusBuildGeom(p, pr, focusNsideFor(p));
+  var g = focusBuildGeom(p, pr, focusLvlFor(p));
   if (cs.mesh.geometry) cs.mesh.geometry.dispose();
   cs.mesh.geometry = g.geo;
-  cs.nside = g.nside; cs.N = g.N; cs.verts = g.verts; cs.tris = g.tris;
+  cs.nside = g.lvl; cs.lvl = g.lvl; cs.N = g.N; cs.verts = g.verts; cs.tris = g.tris;
+  cs.pents = g.pents || 0; cs.hexes = g.hexes || 0;
   cs.ms = g.ms; cs.seaFrac = g.seaFrac; cs.sig = g.sig;
   cs.field = g.field; cs.amp = g.amp; cs.sea = pr.sea ? 0.5 : -1;
   cs.switchedAt = performance.now();
+  applyHexUniforms(cs);
   syncCityMeshes(p);
   return cs;
 }
@@ -3620,7 +3668,7 @@ function rebuildFocusGeom(p) {
 function ensureFocusSurface(p) {
   if (!p || p._cs || !isSolidPlanet(p)) return p ? p._cs || null : null;
   var pr = terrainParams(p);
-  var g = focusBuildGeom(p, pr, focusNsideFor(p));
+  var g = focusBuildGeom(p, pr, focusLvlFor(p));
   var rel = clamp(pr.relief, 0.3, 1.5);
   var mat = new THREE.ShaderMaterial({
     uniforms: {
@@ -3639,7 +3687,11 @@ function ensureFocusSurface(p) {
       uBumpK: { value: FS_BUMP_K * rel },
       uWaveK: { value: FS_WAVE_K * clamp(rel, 0.5, 1.2) },
       uSpecK: { value: FS_SPEC_K },
-      uFresK: { value: FS_FRES_K }
+      uFresK: { value: FS_FRES_K },
+      /* ★ v0.19：紧紧只属于 hex 网格的三件套（非 hex 一律 0，见 hexUniforms） */
+      uPlateauK: { value: hexUniforms().uPlateauK },
+      uAlbedoK: { value: hexUniforms().uAlbedoK },
+      uEdgeK: { value: hexUniforms().uEdgeK }
     },
     /* 片元里 dFdx/fwidth 求像素足迹（细节带限 + 等值线抗锯齿）。
      * WebGL2 里导数是核心功能，WebGL1 下 three 会按这个开关插扩展声明。 */
@@ -3675,8 +3727,11 @@ function ensureFocusSurface(p) {
   p._group.add(group);
   p._cs = {
     group: group, mesh: mesh, mat: mat, cloud: cloud, cloudMat: cloudMat,
-    kind: FOCUS_MESH_KIND, nside: g.nside || 0,
-    N: g.N, verts: g.verts, tris: g.tris, ms: g.ms, seaFrac: g.seaFrac, sig: g.sig,
+    /* v0.19：kind = hex | healpix | cube；nside = 当前 LOD 档位（hex 是 ν，
+     * healpix 是 nside，cube 恒为 FOCUS_N）。pents/hexes 只在 hex 网格有意义。 */
+    kind: FOCUS_MESH_KIND, nside: g.lvl || 0, lvl: g.lvl || 0,
+    N: g.N, pents: g.pents || 0, hexes: g.hexes || 0,
+    verts: g.verts, tris: g.tris, ms: g.ms, seaFrac: g.seaFrac, sig: g.sig,
     /* ★ v0.13：连续场 + 位移幅度 + 海平面 —— 聚落系统（46）的就地查询口 */
     field: g.field, amp: g.amp, sea: pr.sea ? 0.5 : -1,
     switchedAt: 0
@@ -3725,15 +3780,13 @@ function syncFocusSurface() {
     _csM3.setFromMatrix4(_csM4);
     cs.mat.uniforms.uModel3.value.copy(_csM3);
 
-    /* ★ v0.18 LOD：HEALPix 的层级第一次真正派上用场 —— 相机拉近（或拉远）跨过
-     * 档位阈值就换 nside 重建，单元的屏幕尺寸因此始终压在 ~9px 上下，不会像
-     * 固定 N 那样「拉得越近越糊」。两道闸门：档位真的变了 + 距上次换档 > 500ms
-     * （否则缩放在阈值附近抖一下就会一直重建 —— 重建是同步的，会卡）。 */
-    if (FOCUS_MESH_KIND === "healpix" && cs.nside) {
-      var wantN = hpPickNside(focusPxPerRad(p));
-      if (wantN !== cs.nside && (performance.now() - (cs.switchedAt || 0)) > FOCUS_LOD_HOLD_MS) {
-        rebuildFocusGeom(p);
-      }
+    /* ★ LOD（hex + healpix 都走这里）：相机拉近/拉远跨过档位阈值就按新档重建，
+     * 一格的屏幕尺寸因此始终压在十几 px，不会像固定 N 那样「拉得越近越糊」。
+     * 两道闸门：档位真的变了 + 距上次换档 > 500ms（否则在阈值附近缩放会一直重建）。 */
+    var wantLvl = focusLvlFor(p);
+    if (cs.lvl && wantLvl !== cs.lvl
+      && (performance.now() - (cs.switchedAt || 0)) > FOCUS_LOD_HOLD_MS) {
+      rebuildFocusGeom(p);
     }
     /* 无分配：setHex 会走色彩管理，convertLinearToSRGB 还原成「raw sRGB」
      * —— 与 40-textures.rawColor 同一口径（纯 ShaderMaterial 直写输出） */
@@ -4571,9 +4624,301 @@ function buildHealpixGeometry(p, pr, nside) {
   geo.setAttribute("aH", new THREE.Float32BufferAttribute(hgt, 1));
   geo.setIndex(new THREE.Uint32BufferAttribute(idx, 1));
   return {
-    geo: geo, amp: amp, field: field, nside: nside, N: nside,
+    geo: geo, amp: amp, field: field, nside: nside, lvl: nside, N: nside,
     verts: vcount, tris: tris,
     seaFrac: seaA > 0 ? below / st.npix : 0,
+    sig: +sig.toFixed(3), ms: Math.round(performance.now() - t0)
+  };
+}
+
+/* ============================================================================
+ * Goldberg 多面体（v0.19）：六边形 + 12 个五边形拼成一个球面
+ * ==========================================================================
+ * 用户为什么要换：「改成六边形和五边形拼接成球面」—— HEALPix 的**统计**无可挑剔
+ * （严格等面积），但它铺出来的是菱形格，肉眼看不出「球面是被一块块拼起来的」。
+ * 能同时满足「每个铺砌单元同构」与「恰好拼满球面」的，是 geodesic 的**对偶**
+ * = Goldberg 多面体（C60 那一族）：
+ *
+ *   正二十面体每条边分 ν 段 → 20ν² 个小三角 → 顶点 10ν²+2 个；
+ *   每个顶点周围恰好 5 或 6 个三角形 ⇒ 对偶出来的每个**面**就是 5 或 6 边形，
+ *   五边形正好 12 个（正二十面体原本的 12 个顶点，曲率缺陷躲不掉），
+ *   其余 10ν²−10 个是六边形。
+ *
+ * 数量关系（全可被机器复算，verify [22] 逐条验）：
+ *   格数     = 10ν² + 2        （= 细分球顶点数）
+ *   五边形   = 12
+ *   六边形   = 10ν² − 10
+ *   三角形   = 3 × 20ν² = 60ν² （每个 k 边形发 k 个三角扇）
+ *   顶点     = 格心副本 + Σk = (10ν²+2) + 60ν² = 70ν² + 2
+ *
+ * ★ 为什么 ν 只能是 2 的幂：网格靠 1→4 递归细分生成，每条边的中点用**整数键**
+ *   (a,b) 缓存去重 —— 一旦用浮点坐标当哈希键做合并，接缝两侧「相等的」两个点
+ *   可能量化到不同桶里 ⇒ 共享边被拆成两条 ⇒ 那个顶点各自只拿到一半邻面 ⇒
+ *   复发「折叠三角形」那一类事故（签到过一次，不重来）。
+ *
+ * ★ 严格等面积的六边形球不存在 —— 所以 **统计仍然走上面的 HEALPix 采样**：
+ *     显示网格 = Goldberg（好看） · 统计采样 = HEALPix（无偏）
+ *   两者解耦，换网格 / 换 LOD 档都不会挪动海岸线（hpStatSample 的功劳）。
+ *
+ * ★ 零 RNG：全是坐标的解析函数 + 按索引的哈希，主随机流一格不碰。
+ */
+
+var HEX_LADDER = [8, 16, 32];   /* ν 阶梯（必须是 2 的幂，见上） */
+var HEX_TARGET_PX = 26;         /* 一格在屏幕上不超过 26px —— 再小就看不出「是一块一块的」了 */
+var HEX_PLATEAU_K = 0.45;       /* 一格一高：着色时向「本格中心高程」混合的比例 */
+var HEX_ALBEDO_K = 0.07;        /* 每格反照率抖动（让同一片地形看出格子） */
+var HEX_EDGE_K = 0.16;          /* 格边界压暗（读/bindings 见 44 片元 ⑦b） */
+
+function hexCells(nu) { return 10 * nu * nu + 2; }
+function hexCellRad(nu) { return Math.sqrt(4 * Math.PI / hexCells(nu)); }   /* 一格边长量级（rad） */
+function hexPickNu(pxPerRad) {
+  for (var i = 0; i < HEX_LADDER.length; i++) {
+    if (hexCellRad(HEX_LADDER[i]) * pxPerRad <= HEX_TARGET_PX) return HEX_LADDER[i];
+  }
+  return HEX_LADDER[HEX_LADDER.length - 1];
+}
+
+/* ---- 正二十面体 + 1→4 递归细分（按 ν 缓存：与行星无关） ---- */
+var _geoSph = {};
+function geoSphere(nu) {
+  if (_geoSph[nu]) return _geoSph[nu];
+  var t0 = (1 + Math.sqrt(5)) / 2;
+  var rv = [
+    [-1, t0, 0], [1, t0, 0], [-1, -t0, 0], [1, -t0, 0],
+    [0, -1, t0], [0, 1, t0], [0, -1, -t0], [0, 1, -t0],
+    [t0, 0, -1], [t0, 0, 1], [-t0, 0, -1], [-t0, 0, 1]
+  ];
+  /* 标准面表（外法线 CCW）；缠绕最终还有一道几何校正，符号对不对不至于致命 */
+  var rf = [
+    [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+    [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+    [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+    [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]
+  ];
+  var vx = [], fx = [], i;
+  for (i = 0; i < 12; i++) {
+    var ax = rv[i][0], ay = rv[i][1], az = rv[i][2];
+    var L0 = Math.sqrt(ax * ax + ay * ay + az * az);
+    vx.push(ax / L0, ay / L0, az / L0);
+  }
+  for (i = 0; i < 20; i++) fx.push(rf[i][0], rf[i][1], rf[i][2]);
+
+  var levels = Math.round(Math.log(nu) / Math.LN2);
+  for (var lv = 0; lv < levels; lv++) {
+    var cache = Object.create(null);
+    var nf = fx.length / 3;
+    var of = new Int32Array(nf * 12);
+    var o = 0;
+    /* 一条边的中点只建一次 —— 整数键去重，不看浮点坐标（见上方 ★） */
+    var midOf = function (a, b) {
+      var key = a < b ? a * 1e7 + b : b * 1e7 + a;
+      var m = cache[key];
+      if (m !== undefined) return m;
+      var sx = vx[a * 3] + vx[b * 3], sy = vx[a * 3 + 1] + vx[b * 3 + 1], sz = vx[a * 3 + 2] + vx[b * 3 + 2];
+      var L = Math.sqrt(sx * sx + sy * sy + sz * sz) || 1;
+      m = vx.length / 3;
+      vx.push(sx / L, sy / L, sz / L);
+      cache[key] = m;
+      return m;
+    };
+    for (var f = 0; f < nf; f++) {
+      var a = fx[f * 3], b = fx[f * 3 + 1], c = fx[f * 3 + 2];
+      var ab = midOf(a, b), bc = midOf(b, c), ca = midOf(c, a);
+      of[o++] = a; of[o++] = ab; of[o++] = ca;
+      of[o++] = ab; of[o++] = b; of[o++] = bc;
+      of[o++] = ca; of[o++] = bc; of[o++] = c;
+      of[o++] = ab; of[o++] = bc; of[o++] = ca;
+    }
+    fx = of;
+  }
+  return (_geoSph[nu] = { v: new Float32Array(vx), f: fx });
+}
+
+/* ---- 几何：Goldberg 的每一格 = 一个三角扇 ---- */
+function buildHexGeometry(p, pr, nu) {
+  var t0 = performance.now();
+  var amp = 0.075 * clamp(pr.relief, 0.3, 1.5);
+  var field = makeFocusField(p, pr);            /* ★ 与 HEALPix / 立方球同源（44） */
+  var st = hpStatSample(field, p, pr.sea);      /* ★ 统计仍走 HEALPix 采样（网格无关） */
+  var gs = geoSphere(nu);
+  var V = gs.v.length / 3, F = gs.f.length / 3;
+  var PN = V + F;                               /* 唯一的采样点：格心 + 格角 */
+  var dir = new Float32Array(PN * 3);
+  var k, i, f;
+
+  /* ① 采样点：格心 = 细分球顶点；格角 = 相邻三角形的外心范数（对偶的定义） */
+  dir.set(gs.v, 0);
+  for (f = 0; f < F; f++) {
+    var a = gs.f[f * 3], b = gs.f[f * 3 + 1], c = gs.f[f * 3 + 2];
+    var cx = gs.v[a * 3] + gs.v[b * 3] + gs.v[c * 3];
+    var cy = gs.v[a * 3 + 1] + gs.v[b * 3 + 1] + gs.v[c * 3 + 1];
+    var cz = gs.v[a * 3 + 2] + gs.v[b * 3 + 2] + gs.v[c * 3 + 2];
+    var cl = Math.sqrt(cx * cx + cy * cy + cz * cz) || 1;
+    var oo = (V + f) * 3;
+    dir[oo] = cx / cl; dir[oo + 1] = cy / cl; dir[oo + 2] = cz / cl;
+  }
+
+  /* ② 高程：基底 → 归一化用固定采样的 mn/mx → 坑 + 细节（与另两种网格逐段同序） */
+  var hgt = new Float32Array(PN);
+  for (k = 0; k < PN; k++) {
+    hgt[k] = field.baseAt(dir[k * 3], dir[k * 3 + 1], dir[k * 3 + 2]);
+  }
+  field.setRange(st.mn, st.mx);
+  var inv = 1 / Math.max(1e-6, st.mx - st.mn);
+  for (k = 0; k < PN; k++) {
+    var dx = dir[k * 3], dy = dir[k * 3 + 1], dz = dir[k * 3 + 2];
+    hgt[k] = (hgt[k] - st.mn) * inv + field.dentAt(dx, dy, dz) + field.detailAt(dx, dy, dz);
+  }
+  var sea = pr.sea, seaA = sea ? 0.5 : -1;
+  if (sea) {
+    var seaLvl = st.seaLvl, sinv = st.sinv;
+    for (k = 0; k < PN; k++) hgt[k] = 0.5 + (hgt[k] - seaLvl) * sinv;
+    field.setSea(seaLvl, sinv);
+  }
+
+  /* ③ 位置 + 解析法线（与 HEALPix 同一套：有限差分 + 水面法线取径向） */
+  var pn = new Float32Array(PN * 3), nn = new Float32Array(PN * 3);
+  var e = 0.85 * hexCellRad(nu);                /* 差分步长 ≈ 一格 */
+  for (k = 0; k < PN; k++) {
+    var vx = dir[k * 3], vy = dir[k * 3 + 1], vz = dir[k * 3 + 2];
+    var h2 = hgt[k];
+    var disp = h2 > 0.5 ? amp * (h2 - 0.5) : 0;
+    var rad = p.size * (1 + disp);
+    pn[k * 3] = vx * rad; pn[k * 3 + 1] = vy * rad; pn[k * 3 + 2] = vz * rad;
+    var nx, ny, nz;
+    if (seaA > 0 && h2 <= seaA) { nx = vx; ny = vy; nz = vz; }
+    else {
+      var t1x = -vz, t1y = 0, t1z = vx;
+      var t1L = Math.sqrt(t1x * t1x + t1z * t1z);
+      if (t1L < 1e-6) { t1x = 1; t1y = 0; t1z = 0; t1L = 1; }
+      t1x /= t1L; t1z /= t1L;
+      var t2x = vy * t1z - vz * t1y, t2y = vz * t1x - vx * t1z, t2z = vx * t1y - vy * t1x;
+      var h0 = field.hAt(vx, vy, vz);
+      var ha = field.hAt(vx + t1x * e, vy + t1y * e, vz + t1z * e);
+      var hb = field.hAt(vx + t2x * e, vy + t2y * e, vz + t2z * e);
+      var s = p.size * amp;
+      var g1 = (ha - h0) * s / e, g2 = (hb - h0) * s / e;
+      nx = vx - (t1x * g1 + t2x * g2);
+      ny = vy - (t1y * g1 + t2y * g2);
+      nz = vz - (t1z * g1 + t2z * g2);
+      var nL = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+      nx /= nL; ny /= nL; nz /= nL;
+    }
+    nn[k * 3] = nx; nn[k * 3 + 1] = ny; nn[k * 3 + 2] = nz;
+  }
+
+  /* ④ 邻接：每个格心周围有哪些格角（= 它周围有哪些三角形）。必须按**绕格心的
+     真实方位角**排序 —— 排出来的环就是这一格的多边形边界。 */
+  var deg = new Int32Array(V + 1), start = new Int32Array(V + 1);
+  for (f = 0; f < F; f++) {
+    deg[gs.f[f * 3]]++; deg[gs.f[f * 3 + 1]]++; deg[gs.f[f * 3 + 2]]++;
+  }
+  var tot = 0;
+  for (i = 0; i < V; i++) { start[i] = tot; tot += deg[i]; }
+  start[V] = tot;                               /* = 3F = 60ν² */
+  var cur = new Int32Array(V);
+  for (i = 0; i < V; i++) cur[i] = start[i];
+  var nbr = new Int32Array(tot);                /* 每格自己的、已排好绕序的角点表 */
+  for (f = 0; f < F; f++) {
+    nbr[cur[gs.f[f * 3]]++] = f;
+    nbr[cur[gs.f[f * 3 + 1]]++] = f;
+    nbr[cur[gs.f[f * 3 + 2]]++] = f;
+  }
+  for (i = 0; i < V; i++) {
+    var bx = gs.v[i * 3], by = gs.v[i * 3 + 1], bz = gs.v[i * 3 + 2];
+    var e1x = -bz, e1y = 0, e1z = bx;
+    var e1L = Math.sqrt(e1x * e1x + e1z * e1z);
+    if (e1L < 1e-6) { e1x = 1; e1y = 0; e1z = 0; e1L = 1; }
+    e1x /= e1L; e1z /= e1L;
+    var e2x = by * e1z - bz * e1y, e2y = bz * e1x - bx * e1z, e2z = bx * e1y - by * e1x;
+    var s0 = start[i], dn = deg[i];
+    /* 插入排序（每格 5~6 个）：闭包里算方位角，避免临时数组 */
+    var ang = function (ff) {
+      var ox = dir[(V + ff) * 3] - bx, oy = dir[(V + ff) * 3 + 1] - by, oz = dir[(V + ff) * 3 + 2] - bz;
+      return Math.atan2(ox * e2x + oy * e2y + oz * e2z, ox * e1x + oy * e1y + oz * e1z);
+    };
+    for (var q = 1; q < dn; q++) {
+      var ff = nbr[s0 + q], wa = ang(ff), r = q - 1;
+      while (r >= 0 && ang(nbr[s0 + r]) > wa) { nbr[s0 + r + 1] = nbr[s0 + r]; r--; }
+      nbr[s0 + r + 1] = ff;
+    }
+  }
+
+  /* ⑤ 顶点：每格**各写一份**自己的角点（共享关系靠「同一份 Results 值」保证——
+   *    同一坐标两次算出来的 pos/nor 逐位相同，所以看起来是无缝的），
+   *    省去跨格索引，也让「每格一个属性」（aCell / aCellH）成为可能。 */
+  var pents = 0, hexes = 0;
+  for (i = 0; i < V; i++) { if (deg[i] === 5) pents++; else if (deg[i] === 6) hexes++; }
+  var vcount = V + tot;                         /* 格心副本 + Σk = 70ν²+2 */
+  var pos = new Float32Array(vcount * 3);
+  var nor = new Float32Array(vcount * 3);
+  var aH = new Float32Array(vcount);
+  var aCellH = new Float32Array(vcount);
+  var aCell = new Float32Array(vcount);
+  var aEdge = new Float32Array(vcount);
+  var cellHash = new Float32Array(V);
+  for (i = 0; i < V; i++) cellHash[i] = _ch31(i * 0.137 + 0.71, 3.13, i * 0.061 + 1.7);
+
+  function writeVert(o3, src, hHere, cellH, hv, ed) {
+    pos[o3] = pn[src * 3]; pos[o3 + 1] = pn[src * 3 + 1]; pos[o3 + 2] = pn[src * 3 + 2];
+    nor[o3] = nn[src * 3]; nor[o3 + 1] = nn[src * 3 + 1]; nor[o3 + 2] = nn[src * 3 + 2];
+    aH[o3 / 3] = hHere; aCellH[o3 / 3] = cellH; aCell[o3 / 3] = hv; aEdge[o3 / 3] = ed;
+  }
+  var vc = 0;
+  for (i = 0; i < V; i++) {
+    for (var q = 0; q < deg[i]; q++) {
+      var fq = nbr[start[i] + q];
+      writeVert(vc * 3, V + fq, hgt[V + fq], hgt[i], cellHash[i], 1);
+      vc++;
+    }
+  }
+  var cbase = vc;
+  for (i = 0; i < V; i++) {
+    writeVert(vc * 3, i, hgt[i], hgt[i], cellHash[i], 0);
+    vc++;
+  }
+
+  /* ⑥ 三角扇：格心 + 相邻两角。每条边对应一个三角形 ⇒ 三角形数 = tot = 60ν² */
+  var tris = tot;
+  var idx = new Uint32Array(tris * 3);
+  var t = 0;
+  for (i = 0; i < V; i++) {
+    var base = start[i], dn2 = deg[i], ctr = cbase + i;
+    for (var q2 = 0; q2 < dn2; q2++) {
+      idx[t++] = ctr;
+      idx[t++] = base + q2;
+      idx[t++] = base + ((q2 + 1) % dn2);
+    }
+  }
+  /* 缠绕：逐面按「面法线朝外」校正（与 HEALPix 同一道保险）。
+   * ★ 别复用 t（它是填索引的游标），用独立游标 w。 */
+  for (var w = 0; w < tris; w++) {
+    var o = w * 3, ia2 = idx[o], ib2 = idx[o + 1], ic2 = idx[o + 2];
+    var axx = pos[ib2 * 3] - pos[ia2 * 3], ayy = pos[ib2 * 3 + 1] - pos[ia2 * 3 + 1], azz = pos[ib2 * 3 + 2] - pos[ia2 * 3 + 2];
+    var bxx = pos[ic2 * 3] - pos[ia2 * 3], byy = pos[ic2 * 3 + 1] - pos[ia2 * 3 + 1], bzz = pos[ic2 * 3 + 2] - pos[ia2 * 3 + 2];
+    var ccx = ayy * bzz - azz * byy, ccy = azz * bxx - axx * bzz, ccz = axx * byy - ayy * bxx;
+    var rx = pos[ia2 * 3] + pos[ib2 * 3] + pos[ic2 * 3];
+    var ry = pos[ia2 * 3 + 1] + pos[ib2 * 3 + 1] + pos[ic2 * 3 + 1];
+    var rz = pos[ia2 * 3 + 2] + pos[ib2 * 3 + 2] + pos[ic2 * 3 + 2];
+    if (ccx * rx + ccy * ry + ccz * rz < 0) { var tm = idx[o + 1]; idx[o + 1] = idx[o + 2]; idx[o + 2] = tm; }
+  }
+
+  /* ⑦ 高程签名：只取格心（逐格求和），与网格种类无关的稳定指纹 */
+  var sig = 0;
+  for (i = 0; i < V; i++) sig += hgt[i];
+
+  var geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  geo.setAttribute("aH", new THREE.Float32BufferAttribute(aH, 1));
+  geo.setAttribute("aCellH", new THREE.Float32BufferAttribute(aCellH, 1));
+  geo.setAttribute("aCell", new THREE.Float32BufferAttribute(aCell, 1));
+  geo.setAttribute("aEdge", new THREE.Float32BufferAttribute(aEdge, 1));
+  geo.setIndex(new THREE.Uint32BufferAttribute(idx, 1));
+  return {
+    geo: geo, amp: amp, field: field, nu: nu, lvl: nu, N: nu,
+    verts: vcount, tris: tris, pents: pents, hexes: hexes,
+    seaFrac: seaA > 0 ? st.below / st.npix : 0,
     sig: +sig.toFixed(3), ms: Math.round(performance.now() - t0)
   };
 }
@@ -7078,8 +7423,12 @@ function boot() {
         name: p.name, solid: isSolidPlanet(p),
         cloudy: isSolidPlanet(p) && planetCloudy(p),
         built: !!cs, active: !!(cs && cs.group.visible),
-        /* v0.18：kind = healpix | cube；nside = HEALPix 档位（LOD 会随相机换档） */
-        kind: cs ? cs.kind : "", nside: cs ? cs.nside : 0,
+        /* v0.19：kind = hex（六/五边形）| healpix | cube；nside = 当前 LOD 档位
+         * （hex 是 ν · healpix 是 nside · cube 恒等于 FOCUS_N），LOD 会随相机换档。 */
+        kind: cs ? cs.kind : "", nside: cs ? cs.nside : 0, lvl: cs ? cs.nside : 0,
+        /* pxPerRad = 屏幕「每弧度多少像素」：LOD 选档的唯一输入 */
+        pxPerRad: cs ? +focusPxPerRad(p).toFixed(1) : 0,
+        pents: cs ? cs.pents : 0, hexes: cs ? cs.hexes : 0,
         N: cs ? cs.N : 0,
         verts: cs ? cs.verts : 0, tris: cs ? cs.tris : 0, ms: cs ? cs.ms : 0,
         sea: pr && pr.sea ? 0.5 : -1, seaFrac: cs ? +cs.seaFrac.toFixed(4) : 0,
@@ -7120,7 +7469,7 @@ function boot() {
     /* ★ v0.18：聚焦地表的网格方案（A/B 对照用）—— healpix（默认，等面积 + LOD）
      * 与 cube（v0.12~v0.17 的立方球）。切换会重建当前聚焦行星的几何。 */
     setFocusMesh: function (kind) {
-      var k = (kind === "cube") ? "cube" : "healpix";
+      var k = (kind === "cube") ? "cube" : (kind === "healpix") ? "healpix" : "hex";
       if (k === FOCUS_MESH_KIND) return k;
       FOCUS_MESH_KIND = k;
       var list = G.sys ? G.sys.planets : [];
@@ -7129,15 +7478,31 @@ function boot() {
         if (!p._cs) continue;
         if (p._cs.mesh.geometry) p._cs.mesh.geometry.dispose();
         var pr = terrainParams(p);
-        var g = focusBuildGeom(p, pr, focusNsideFor(p));
+        var g = focusBuildGeom(p, pr, focusLvlFor(p));
         p._cs.mesh.geometry = g.geo;
-        p._cs.kind = k; p._cs.nside = g.nside || 0; p._cs.N = g.N;
-        p._cs.verts = g.verts; p._cs.tris = g.tris; p._cs.ms = g.ms;
+        p._cs.kind = k; p._cs.nside = g.lvl || 0; p._cs.lvl = g.lvl || 0;
+        p._cs.pents = g.pents || 0; p._cs.hexes = g.hexes || 0;
+        p._cs.N = g.N; p._cs.verts = g.verts; p._cs.tris = g.tris; p._cs.ms = g.ms;
         p._cs.seaFrac = g.seaFrac; p._cs.sig = g.sig;
         p._cs.field = g.field; p._cs.amp = g.amp; p._cs.sea = pr.sea ? 0.5 : -1;
+        p._cs.switchedAt = performance.now();
+        applyHexUniforms(p._cs);
         syncCityMeshes(p);
       }
       return k;
+    },
+    /* ★ v0.19：现场调「一格一块」的观感（不重建网格，只改 uniform + 选档阈值）。
+     *   不传参数 = 只读当前值。plateau 给 1 = 每格纯平台（一格一色、一眼六边形），
+     *   给 0 = 回到连续高程；edge 是格边界压暗的强度。 */
+    setHexStyle: function (o) {
+      if (!o) return { plateau: HEX_PLATEAU_K, albedo: HEX_ALBEDO_K, edge: HEX_EDGE_K, targetPx: HEX_TARGET_PX };
+      if (typeof o.plateau === "number") HEX_PLATEAU_K = clamp(o.plateau, 0, 1);
+      if (typeof o.albedo === "number") HEX_ALBEDO_K = clamp(o.albedo, 0, 0.4);
+      if (typeof o.edge === "number") HEX_EDGE_K = clamp(o.edge, 0, 0.6);
+      if (typeof o.targetPx === "number") HEX_TARGET_PX = clamp(o.targetPx, 4, 60);
+      var list = G.sys ? G.sys.planets : [];
+      for (var i = 0; i < list.length; i++) if (list[i]._cs) applyHexUniforms(list[i]._cs);
+      return { plateau: HEX_PLATEAU_K, albedo: HEX_ALBEDO_K, edge: HEX_EDGE_K, targetPx: HEX_TARGET_PX };
     },
     /* 聚焦云壳相位（调试：看不同方位下的云图案 —— 对照「云多/云少的一面」） */
     setFocusCloudPhase: function (a) {
