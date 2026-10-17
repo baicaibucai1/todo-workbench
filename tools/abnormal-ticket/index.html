@@ -26,25 +26,32 @@
 -->
 <style>
   :root {
-    --bg: #ffffff; --fg: #2c2c2a; --fg2: #5f5e5b; --dim: #918f89;
-    --line: #e6e4dd; --chip: #f2f0ea; --accent: #378add; --danger: #a32d2d;
+    /* ★ 两层底色：--page 是页面（极淡暖灰），--bg 是卡片/输入框/表格（白）。
+       以前两者都是纯白 —— 一整页白纸上摞白卡，层次全靠 1px 边框撑着，
+       所以看着「单调」。分开之后卡片自己就浮起来了，不需要阴影。 */
+    --page: #f3f2ec;
+    --bg: #ffffff; --field: #ffffff; --fg: #2c2c2a; --fg2: #5f5e5b; --dim: #918f89;
+    --line: #e6e4dd; --chip: #eceadf; --accent: #378add; --danger: #a32d2d;
     --ok: #2f9e63; --warn: #c9820b;
     --sel: #eef4fe;                     /* 列表选中行的底色 */
+    --ring: rgba(55,138,221,.16);       /* 输入框聚焦时那圈很淡的光 */
     --mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
     color-scheme: light;
   }
   html[data-theme="dark"] {
-    --bg: #1c1c1a; --fg: #e8e6e0; --fg2: #b3b0a8; --dim: #8a8780;
+    --page: #151513;
+    --bg: #232320; --field: #1b1b18; --fg: #e8e6e0; --fg2: #b3b0a8; --dim: #8a8780;
     /* ★ 边框在浅色里比面板暗、在深色里必须比面板亮，否则整条线消失 */
-    --line: #35342f; --chip: #2a2925; --accent: #5b9de8; --danger: #e07272;
+    --line: #3a3932; --chip: #2f2e28; --accent: #5b9de8; --danger: #e07272;
     --ok: #4ec78a; --warn: #e0b458;
     --sel: #24303f;
+    --ring: rgba(91,157,232,.22);
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0; height: 100vh; overflow: hidden;
-    background: var(--bg); color: var(--fg);
+    background: var(--page); color: var(--fg);
     font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
     display: flex; flex-direction: column;
   }
@@ -58,11 +65,21 @@
   .view[hidden] { display: none !important; }
 
   input, select, textarea {
-    font: inherit; color: var(--fg); background: var(--bg);
-    border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px;
+    font: inherit; color: var(--fg); background: var(--field);
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
+    transition: border-color .12s, box-shadow .12s;
   }
-  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+  /* hover 只动边框色（不提亮底色）：一整排输入框不会跟着鼠标一起闪 */
+  input:not(:disabled):hover, select:not(:disabled):hover, textarea:hover { border-color: var(--dim); }
+  input:focus, select:focus, textarea:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring);
+  }
   input::placeholder, textarea::placeholder { color: var(--dim); }
+  /* ★ 空值的下拉显成灰的「待选」—— 原来写「（没选）」，加括号像在报错；
+     灰色的字一眼就知道"这格还空着"，而不是"这格填错了"。
+     option 用原生渲染，颜色在 Chromium 上跟着 select 走，所以由 JS 打 is-empty。 */
+  select.is-empty { color: var(--dim); }
+  select.is-empty option { color: var(--fg); }
   button {
     font: inherit; border-radius: 7px; border: 1px solid var(--line);
     background: var(--bg); color: var(--fg); padding: 7px 13px; cursor: pointer; white-space: nowrap;
@@ -75,7 +92,9 @@
   button.danger { color: var(--danger); }
 
   /* ---- 顶部 ---- */
-  .top { padding: 14px 20px 0; max-width: 1120px; width: 100%; margin: 0 auto; }
+  /* ★ 不再限宽 1120px：窗口拉多宽就用多宽（登记表单的字段是网格排的，
+     宽了会自己往上长一列，不会出现"一列超长输入框"）。 */
+  .top { padding: 14px 22px 0; }
   .head { display: flex; align-items: center; gap: 10px; }
   h1 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
   /* ★ 约定之一：宿主状态位。四态文案由 JS 填 */
@@ -97,14 +116,17 @@
   .tabs button[aria-selected="true"] { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
 
   /* ---- 主体 ---- */
-  .body { flex: 1; min-height: 0; max-width: 1120px; width: 100%; margin: 0 auto; padding: 12px 20px 16px; display: flex; }
+  .body { flex: 1; min-height: 0; padding: 12px 22px 18px; display: flex; }
   .view { flex: 1; min-height: 0; display: flex; }
   #view-create { display: block; overflow-y: auto; }
   #view-settings { display: block; overflow-y: auto; }
+  /* 设置页的卡片自己限宽（内联 720px）：页面铺满后它们会全挤在左边，
+     宽屏时居中摆，两侧留白对称。 */
+  #view-settings > .card { margin-left: auto; margin-right: auto; }
 
   /* ---- 登记 ---- */
-  .card { border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
-  .card h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--fg2); }
+  .card { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 18px 22px 16px; }
+  .card h2 { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg); }
   .r { display: flex; gap: 8px; flex-wrap: wrap; }
   .r + .r, .r + input, input + .r { margin-top: 8px; }
   .r > .grow { flex: 1 1 220px; min-width: 0; }
@@ -113,35 +135,77 @@
      ★ 标签**始终可见**：填了值之后 placeholder 就没了，靠位置去猜"这格是什么"
      最容易填错（8 个字段排在一起时尤其）。所以每个字段都有个固定的标签行，
      placeholder 只负责示例 / 补充说明。 */
-  /* 表单放宽：第一行 4 个字段（店铺/订单号/快递单号/快递公司）在 640px 里每格只有
-     ~150px，22 字符的订单号框挤得看不全；880px 下每格 ~200px，粘长单号一眼看全，
-     右侧留白也比把字段挤窄强。 */
-  #create-card { max-width: 880px; }
-  #create-card > * + * { margin-top: 11px; }
-  #create-card > h2 + * { margin-top: 0; }        /* h2 自己带 10px，别叠成两截 */
-  .f { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
-  .f > span { font-size: 11px; color: var(--dim); }
+  /* ★ 0.9.0：卡片不再写死 880px，改成**铺满 + 24 列栅格**。
+     宽度够时一行四格（店铺/订单号/快递单号/快递公司），窗口收窄就自己折行 ——
+     字段的宽窄由 span 定，不由"窗口减去一串固定 px"定。 */
+  #create-card { position: relative; }
+  #create-card > * + * { margin-top: 16px; }
+
+  /* 卡片头：标题 + 一句说明 + 右上角今日条数。整页原来只有一行灰标题，
+     信息没有落点；有了这条分隔线，卡片才像一个"面板"而不是一段表单。 */
+  .cardhead { display: flex; align-items: flex-start; gap: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .cardhead .ct { min-width: 0; }
+  /* 标题前那根竖条：3px 圆角小色块，比整条横幅克制，也比纯文字有精神 */
+  .cardhead h2 { display: flex; align-items: center; gap: 8px; }
+  .cardhead h2::before { content: ""; width: 3px; height: 15px; border-radius: 2px; background: var(--accent); }
+  .cardsub { margin: 3px 0 0; color: var(--dim); font-size: 11.5px; }
+  #todayTip { margin-left: auto; flex: 0 0 auto; color: var(--fg2); background: var(--chip);
+    border-radius: 999px; padding: 3px 11px; font-size: 11.5px; white-space: nowrap; }
+  #todayTip b { color: var(--fg); font-weight: 600; }
+
+  /* 分组：订单 / 异常 —— 一组一个小标题，两组之间留白隔开。
+     8 个字段平铺时用户要自己数"哪几格是一伙的"，分组之后不用数。 */
+  .fgroup + .fgroup { margin-top: 14px; }
+  .gtitle { display: flex; align-items: center; gap: 8px; margin-bottom: 7px;
+    font-size: 11px; letter-spacing: .06em; color: var(--dim); }
+  .gtitle::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+  .fgrid { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 10px 12px; align-items: start; }
+  .f { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .f > span { font-size: 11.5px; color: var(--fg2); }
   .f > select, .f > input, .f > textarea { width: 100%; }
   .f > textarea { font-family: inherit; font-size: 12.5px; resize: vertical; }
-  .f-full { width: 100%; }
-  .f-store { flex: 0 0 118px; }
-  .f-track { flex: 1 1 140px; }
-  .f-courier { flex: 0 0 92px; }
-  .f-cat { flex: 1 1 150px; }
-  .f-day { flex: 0 0 138px; }
+  /* 24 列上的跨度：2+9+6+5 + 6+8+10 = 24 —— 两行都刚好铺满，右边不留豁口 */
+  .f-store { grid-column: span 3; }
+  .f-sn { grid-column: span 8; }
+  .f-track { grid-column: span 6; }
+  .f-courier { grid-column: span 7; }
+  .f-day { grid-column: span 4; }
+  .f-cat { grid-column: span 7; }
+  .f-desc { grid-column: span 13; }
+  .f-full { grid-column: span 24; }
   #orderSn { font-family: var(--mono); font-size: 13px; }
   #trackingNo { font-family: var(--mono); font-size: 12.5px; }
   /* 订单号 + 它下面那条格式提示要捆在一起：提示得贴在订单号框正下方，
      不能横铺一整行 —— 那样看着像在说左边的「异常单号」。 */
-  .r-sn { align-items: flex-start; }
-  .snwrap { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; }
+  .snwrap { display: flex; flex-direction: column; min-width: 0; }
   .snwrap > .f { flex: 0 0 auto; }
   .snwrap .hint { margin-top: 4px; }
-  /* 按钮行：按钮与"单号怎么生成"那条说明并排（说明贴按钮，不再另起一整行） */
-  .actions { align-items: center; gap: 10px; }
+
+  /* 操作条：一条分隔线把"填"和"交"分开 */
+  .actions { align-items: center; gap: 12px; border-top: 1px solid var(--line); padding-top: 14px; }
   .actions .hint { margin-top: 0; }
-  .actions button.primary { padding: 7px 22px; font-size: 13px; }
+  .actions button.primary { padding: 8px 26px; font-size: 13.5px; border-radius: 8px; }
   #title { width: 100%; }
+
+  /* 中等宽度：一行从 4 格退到 2 格（栅格换成 12 列，跨度按比例收） */
+  @media (max-width: 900px) {
+    .fgrid { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+    .f-store { grid-column: span 4; }
+    .f-sn { grid-column: span 8; }
+    .f-track { grid-column: span 6; }
+    .f-courier { grid-column: span 6; }
+    .f-day { grid-column: span 5; }
+    .f-cat { grid-column: span 7; }
+    .f-desc { grid-column: span 12; }
+    .f-full { grid-column: span 12; }
+  }
+  /* 窄窗口：一格一行，标签也不再和输入框抢横向空间 */
+  @media (max-width: 560px) {
+    .fgrid { grid-template-columns: minmax(0, 1fr); }
+    .f-store, .f-sn, .f-track, .f-courier, .f-day, .f-cat, .f-desc, .f-full { grid-column: 1 / -1; }
+    .cardhead { flex-wrap: wrap; }
+  }
   /* 设置页那条「粘一条链接绑店铺」：等宽字体，一眼能看出粘进去的是不是整条链接 */
   #bindLink { width: 100%; font-family: var(--mono); font-size: 12px; }
   #bindLink + .hint { margin-top: 4px; }
@@ -165,9 +229,12 @@
   .hint code, .cfg-note code { font-family: var(--mono); color: var(--fg2); }
   .cfg-note { color: var(--dim); font-size: 11.5px; margin: 0 0 8px; }
 
-  /* ---- 查看：左右分栏 ---- */
-  #view-browse { gap: 12px; }
-  .pane-left { flex: 0 0 306px; min-width: 0; display: flex; flex-direction: column; }
+  /* ---- 查看：左右分栏 ----
+     0.9.0 起整块也做成一张白卡：页面底色是暖灰，内容区不包一层就"浮"在灰底上，
+     和登记页的白卡不是一个世界。 */
+  #view-browse { gap: 12px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 12px; padding: 12px 14px; }
+  .pane-left { flex: 0 0 320px; min-width: 0; display: flex; flex-direction: column; }
   .pane-right { flex: 1 1 auto; min-width: 0; border-left: 1px solid var(--line); padding-left: 14px; display: flex; flex-direction: column; }
   .filters { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
   #search { flex: 1 1 100%; min-width: 0; }
@@ -264,7 +331,7 @@
   #d-note { width: 100%; min-height: 96px; resize: vertical; font-family: inherit; }
   /* 处理区第一行：处理方式 / 结果 / 已结账 —— 状态就是从这三个派生的（见 statusOf） */
   .prorow { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 10px; }
-  .prorow .f { flex: 1 1 130px; }
+  .prorow .f { flex: 1 1 130px; max-width: 340px; }
   .chk { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; color: var(--fg2);
     white-space: nowrap; padding-bottom: 6px; cursor: pointer; }
   .chk input { width: auto; }
@@ -295,7 +362,8 @@
   .tblbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
   #tableSearch { flex: 1 1 260px; min-width: 0; }
   .tblbar .stats { margin: 0; }
-  .tblscroll { flex: 1; min-height: 0; min-width: 0; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+  .tblscroll { flex: 1; min-height: 0; min-width: 0; overflow: auto; border: 1px solid var(--line);
+    border-radius: 12px; background: var(--bg); }
 
   /* ---- 表格页的列配置 ---- */
   .colwrap { position: relative; flex: 0 0 auto; }
@@ -370,54 +438,69 @@
   <!-- ============ 一、登记 ============ -->
   <section class="view" id="view-create">
     <div class="card" id="create-card">
-      <h2>登记一条异常</h2>
+      <div class="cardhead">
+        <div class="ct">
+          <h2>登记一条异常</h2>
+          <p class="cardsub">订单号、快递单号至少填一个 · 处理方式 / 结果 / 结账 登记后在「查看」页补</p>
+        </div>
+        <!-- 今日条数：连录时用来确认"刚才那条真的进去了"（load 后由 JS 填） -->
+        <span id="todayTip"></span>
+      </div>
       <!-- 主线三样：哪个店、哪一单、哪个包裹。
            字段都带**可见的小标签** —— 填了值之后 placeholder 就没了，
            靠位置去猜"这格是什么"最容易填错，标签一直看得见。 -->
       <!-- 字段与用户那张登记台账一一对应（0.7.0）：
-           快递单号 / 快递 / 订单发货时间 / 情况 / 登记时间(自动) / 处理方式 / 结果 /
+           快递单号 / 快递 / 登记时间 / 情况 / 录入时间(自动) / 处理方式 / 结果 /
            附件(详细描述) / 店铺 / 订单号 / 结账。
            处理方式、结果、结账是**事后**才有的信息，登记页不摆 —— 在「查看」页那条
            单子的处理区里补；补到哪一步，状态就跟到哪一步（见 statusOf）。 -->
-      <div class="r r-sn">
-        <label class="f f-store">
-          <span>店铺</span>
-          <select id="store" title="这条单是哪个店铺的 —— 呼起客户端时按它取对应的客服 ID"></select>
-        </label>
-        <span class="snwrap">
-          <label class="f">
-            <span>订单号</span>
-            <!-- 粘 ERP 给的整条链接也认：链接里本来就有订单号和客服 ID -->
-            <input id="orderSn" placeholder="粘单号，或整条 ERP 链接" />
+      <div class="fgroup">
+        <div class="gtitle">订单</div>
+        <div class="fgrid">
+          <label class="f f-store">
+            <span>店铺</span>
+            <select id="store" title="这条单是哪个店铺的 —— 呼起客户端时按它取对应的客服 ID"></select>
           </label>
-          <span class="hint snhint" id="snHint"></span>
-        </span>
-        <label class="f f-track">
-          <span>快递单号</span>
-          <input id="trackingNo" placeholder="台账第一列的 A 单号" />
-        </label>
-        <label class="f f-courier">
-          <span>快递公司</span>
-          <select id="courier" title="申通 / 中通 / 圆通… —— 选项在「设置」页里加"></select>
-        </label>
+          <span class="snwrap f-sn">
+            <label class="f">
+              <span>订单号</span>
+              <!-- 粘 ERP 给的整条链接也认：链接里本来就有订单号和客服 ID -->
+              <input id="orderSn" placeholder="粘单号，或整条 ERP 链接" />
+            </label>
+            <span class="hint snhint" id="snHint"></span>
+          </span>
+          <label class="f f-track">
+            <span>快递单号</span>
+            <input id="trackingNo" placeholder="台账第一列的 A 单号" />
+          </label>
+          <label class="f f-courier">
+            <span>快递公司</span>
+            <select id="courier" title="申通 / 中通 / 圆通… —— 选项在「设置」页里加"></select>
+          </label>
+        </div>
       </div>
-      <div class="r">
-        <label class="f f-day">
-          <span>订单发货时间</span>
-          <input id="shipped" type="date" title="台账里的「订单发货时间」" />
-        </label>
-        <label class="f f-cat">
-          <span>情况</span>
-          <select id="category" title="这条单是什么情况 —— 选项在「设置」页里加"></select>
-        </label>
+      <div class="fgroup">
+        <div class="gtitle">异常</div>
+        <div class="fgrid">
+          <!-- 本条是哪天登记的。字段仍写 shipped_at（推 WPS 时落到那张表的「发货时间」列），
+               界面上叫「登记时间」—— 因为实际填的就是"今天登的这条"。 -->
+          <label class="f f-day">
+            <span>登记时间</span>
+            <input id="shipped" type="date" title="这条异常是哪天登记的（默认今天）—— 推到台账就是那一列" />
+          </label>
+          <label class="f f-cat">
+            <span>情况</span>
+            <select id="category" title="这条单是什么情况 —— 选项在「设置」页里加"></select>
+          </label>
+          <label class="f f-desc">
+            <span>详细描述</span>
+            <textarea id="title" rows="2" placeholder="对应台账的「附件（详细描述）」，有就写，选填"></textarea>
+          </label>
+        </div>
       </div>
-      <label class="f f-full">
-        <span>详细描述</span>
-        <textarea id="title" rows="2" placeholder="对应台账的「附件（详细描述）」，有就写，选填"></textarea>
-      </label>
       <div class="r actions">
         <button class="primary" id="add">登记</button>
-        <span class="hint" id="formHint">订单号、快递单号至少填一个 · 处理方式 / 结果 / 结账 登记后在「查看」页补</span>
+        <span class="hint" id="formHint">登记后可直接接着录下一条 · 店铺 / 快递公司 / 登记时间会保留</span>
       </div>
     </div>
   </section>
@@ -1014,18 +1097,33 @@
     return out;
   }
 
-  /** 一个选项下拉的 <option> 串：开头放「（没选）」—— 不选就保持空，
-      别把第一项悄悄记进单子。单子上的旧值就算从配置里删了也要能显示出来。 */
+  /** 一个选项下拉的 <option> 串：开头放灰色的「待选」—— 不选就保持空，
+      别把第一项悄悄记进单子。单子上的旧值就算从配置里删了也要能显示出来。
+      ★ 文案从「（没选）」改成「待选」：加括号读起来像一句报错，
+      "待选"是状态描述 —— 这格还没定，不是这格填错了。 */
   function optOptions(list, cur) {
     var opts = list.slice();
     if (cur && opts.indexOf(cur) < 0) opts.push(cur);
-    return '<option value="">（没选）</option>' + opts.map(function (v) {
+    return '<option value="">待选</option>' + opts.map(function (v) {
       return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + ">" + esc(v) + "</option>";
     }).join("");
   }
 
+  /** 空值的下拉整体变灰（CSS 的 select.is-empty）。
+      原生 select 的"空选项"没法单独上色，只能按当前值给整个控件挂 class。
+      所有会重写 option 的地方（refreshOptSelects / renderDetail / 流程）之后都要调一次。 */
+  function markSel(el) {
+    if (!el || el.tagName !== "SELECT") return;
+    if (el.value === "") el.classList.add("is-empty");
+    else el.classList.remove("is-empty");
+  }
+  function syncSelEmpty() {
+    var list = document.querySelectorAll("select");
+    for (var i = 0; i < list.length; i++) markSel(list[i]);
+  }
+
   /** 刷新登记页的选项下拉（配置刚读回来 / 刚保存时调）。
-      现场录单时保持已选的那项 —— 用户先选了「中通」再改选项，不该被弹回「（没选）」。 */
+      现场录单时保持已选的那项 —— 用户先选了「中通」再改选项，不该被弹回「待选」。 */
   function refreshOptSelects() {
     for (var i = 0; i < OPT_DEFS.length; i++) {
       var def = OPT_DEFS[i];
@@ -1038,6 +1136,7 @@
         if (cur && list.indexOf(cur) >= 0) el.value = cur;
       }
     }
+    syncSelEmpty();
     fillBrowseFilters();
   }
 
@@ -1051,7 +1150,7 @@
       box.value = list.join("\n");
     }
     var hint = document.getElementById("optHint");
-    if (hint) hint.textContent = "登记页、处理区和流程「记录一步」的下拉都在用这几组选项，空着也行（那就只剩「（没选）」）。其中「流程状态」配的是中间步骤 —— 收尾的「完结」是内置的，不用配、也改不掉（它恒在下拉最后一项）。";
+    if (hint) hint.textContent = "登记页、处理区和流程「记录一步」的下拉都在用这几组选项，空着也行（那就只剩「待选」）。其中「流程状态」配的是中间步骤 —— 收尾的「完结」是内置的，不用配、也改不掉（它恒在下拉最后一项）。";
   }
 
   async function saveOpts() {
@@ -1359,6 +1458,7 @@
     { key: "order_sn", label: "订单号", w: 160, mono: true },
     { key: "tracking_no", label: "快递单号", w: 132, mono: true },
     { key: "courier", label: "快递公司", w: 84 },
+    // 列名跟 WPS 台账那张表走（表头写的「发货时间」），跟登记页的「登记时间」是同一列
     { key: "shipped_at", label: "发货时间", w: 96, mono: true },
     { key: "store", label: "店铺", w: 82 },
     { key: "category", label: "情况", w: 84 },
@@ -1794,16 +1894,18 @@
     }
 
     var st = statusOf(r);
-    // kv 顺序对齐用户的台账：哪一单（订单号）→ 哪个包裹（快递单号/公司/发货时间）→
-    // 什么情况 → 登记时间。**店铺不在 kv 里**：它同时是呼起的编辑入口（下面那排
+    // kv 顺序对齐用户的台账：哪一单（订单号）→ 哪个包裹（快递单号/公司/登记时间）→
+    // 什么情况 → 录入时间。**店铺不在 kv 里**：它同时是呼起的编辑入口（下面那排
     // 快捷行里就能改），在 kv 里再写一遍就是同一个值出现两次。
+    // ★ 0.9.0：「登记时间」指手填的那个日期（shipped_at，推 WPS 落到「发货时间」列）；
+    // 系统时间戳 created_at 改叫「录入时间」—— 两个都叫登记时间会分不清哪个能改。
     var kv = [
       ["订单号", r.order_sn],
       ["快递单号", r.tracking_no],
       ["快递公司", r.courier],
-      ["订单发货时间", dayText(r.shipped_at)],
+      ["登记时间", dayText(r.shipped_at)],
       ["情况", r.category],
-      ["登记时间", fullTime(r.created_at)],
+      ["录入时间", fullTime(r.created_at)],
       ["最近更新", fullTime(r.updated_at)],
     ].map(function (pair) {
       return "<dt>" + esc(pair[0]) + "</dt><dd>" + (pair[1] ? esc(pair[1]) : '<span style="color:var(--dim)">—</span>') + "</dd>";
@@ -1850,6 +1952,8 @@
     // 「记录一步」的时刻默认现在（可改——补记上午发生的事很常见）
     var flowAt = document.getElementById("flowAt");
     if (flowAt) flowAt.value = isoToLocalInput(new Date().toISOString());
+    // 右栏三个下拉（处理方式/结果/流程步）刚重建，空值的挂回灰色「待选」样式
+    syncSelEmpty();
   }
 
   function markSaved(text) {
@@ -2114,6 +2218,24 @@
     renderStats();
   }
 
+  /** 卡片右上角那颗「今日 N 条」：连录时用来确认"刚才那条真的进去了"。
+      created_at 存的是 toISOString（UTC），所以要先转回本地再比日期 ——
+      直接切字符串在晚上 8 点之后会算错一天。 */
+  function renderTodayTip() {
+    var el = document.getElementById("todayTip");
+    if (!el) return;
+    var now = new Date();
+    var key = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+    var n = 0;
+    for (var i = 0; i < allRows.length; i++) {
+      var t = new Date(String(allRows[i].created_at || ""));
+      if (isNaN(t.getTime())) continue;
+      if (t.getFullYear() + "-" + pad(t.getMonth() + 1) + "-" + pad(t.getDate()) === key) n++;
+    }
+    // 列表只取最近 200 条：一天真录到 200 条以上时这个数是下限，不是谎报
+    el.innerHTML = n ? "今日 <b>" + n + "</b> 条" : "今日还没有登记";
+  }
+
   async function load() {
     try {
       var res = await Db.select({ table: TABLE, orderBy: "created_at", orderDir: "desc", limit: 200 });
@@ -2124,6 +2246,7 @@
       repaint();
       renderDetail();
       renderTable();           // 表格页是只读快照 —— 拉取/增删改之后它也必须是新的
+      renderTodayTip();
       if (state === "standalone") showMeta();   // 读到了才知道 localStorage 通不通，副标题要跟上
     } catch (err) {
       document.getElementById("list").innerHTML =
@@ -2184,7 +2307,7 @@
       document.getElementById("trackingNo").value = "";
       document.getElementById("title").value = "";
       dupAck = "";
-      // 店铺、快递公司、发货时间**不清** —— 连着录同一个店 / 同一批发货的单子是常态
+      // 店铺、快递公司、登记时间**不清** —— 连着录同一个店 / 同一批单子是常态
       showSnHint();        // 清空后那条格式提示也要跟着消掉
       await load();
       // 故意**不**自动跳到「查看」：现场录单常常是一条接一条，
@@ -2293,7 +2416,7 @@
   refreshOptSelects();           // 配置还没读回来之前先用出厂默认，loadCfg 回来会再刷一遍
   buildTableHead();              // 表格页的列头/列宽（一次成，之后只换 tbody）
   // （状态筛选下拉由 fillBrowseFilters 填：三个派生态 ∪ 流程名，见那边）
-  // 发货时间默认今天 —— 大多数单子登的就是最近几天发的货
+  // 登记时间默认今天 —— 绝大多数单子就是当天登记（补录历史单才改它）
   document.getElementById("shipped").value =
     "" + new Date().getFullYear() + "-" + pad(new Date().getMonth() + 1) + "-" + pad(new Date().getDate());
 
@@ -2312,6 +2435,11 @@
   document.getElementById("bindDo").addEventListener("click", function () { void doBind(); });
 
   document.getElementById("add").addEventListener("click", function () { void add(); });
+  // 任何下拉选完都同步一次"空/非空"的灰字状态（挂在 document 上：右栏、流程、
+  // 处理区都是动态重建的，逐个绑监听会漏）
+  document.addEventListener("change", function (e) {
+    if (e.target && e.target.tagName === "SELECT") markSel(e.target);
+  });
   document.getElementById("saveCfg").addEventListener("click", function () { void saveCfg(); });
   document.getElementById("saveOpts").addEventListener("click", function () { void saveOpts(); });
   // 店铺表：加一行 / 删一行。删的只是编辑区里的那一行，要点「保存店铺表」才落盘 ——

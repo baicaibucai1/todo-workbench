@@ -1086,9 +1086,9 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     boxes: ["optCouriers", "optSituations", "optHandlings", "optResults"].filter((id) => document.getElementById(id)).length,
     hasTrack: !!document.getElementById("trackingNo"),
   }));
-  check("异常单：情况选项出厂默认 = 台账里那 7 种（开头还有个「（没选）」）",
+  check("异常单：情况选项出厂默认 = 台账里那 7 种（开头还有个「待选」）",
     JSON.stringify(sitBoot.opts) === JSON.stringify([""].concat(SIT7)), sitBoot.opts.join("/"));
-  check("异常单：快递公司下拉出厂默认 申通/中通/圆通（同样带「（没选）」）",
+  check("异常单：快递公司下拉出厂默认 申通/中通/圆通（同样带「待选」）",
     JSON.stringify(sitBoot.couriers) === JSON.stringify(["", "申通", "中通", "圆通"]), sitBoot.couriers.join("/"));
   check("异常单：设置页有四个选项编辑框（快递公司/情况/处理方式/结果）",
     sitBoot.boxes === 4 && sitBoot.box === SIT7.join("\n"), JSON.stringify(sitBoot));
@@ -1104,7 +1104,7 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     opts: [...document.querySelectorAll("#category option")].map((o) => o.value),
     toast: (document.getElementById("toast") || {}).textContent || "",
   }));
-  check("异常单：保存后登记下拉立刻换成新选项（「（没选）」还在最前面）",
+  check("异常单：保存后登记下拉立刻换成新选项（「待选」还在最前面）",
     JSON.stringify(sitSaved.opts) === JSON.stringify(["", "缺货", "发错", "客户要求", "其他"]),
     sitSaved.opts.join("/"));
   check("异常单：保存完说清四组各存了几个", /情况 4 个/.test(sitSaved.toast), sitSaved.toast);
@@ -1153,8 +1153,8 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
       catTag: row ? (row.querySelector(".cat-tag") || {}).textContent || "" : "",
     };
   });
-  check("异常单：详情 kv 顺序 = 订单号→快递单号→快递公司→发货时间→情况（对齐台账；店铺在快捷行，不重复摆）",
-    trackedDetail.dts.join("/") === "订单号/快递单号/快递公司/订单发货时间/情况/登记时间/最近更新" &&
+  check("异常单：详情 kv 顺序 = 订单号→快递单号→快递公司→登记时间→情况→录入时间（对齐台账；店铺在快捷行，不重复摆）",
+    trackedDetail.dts.join("/") === "订单号/快递单号/快递公司/登记时间/情况/录入时间/最近更新" &&
       trackedDetail.sn === "261011-777000777000777" && trackedDetail.store === "拼多多6店" &&
       trackedDetail.track === "SF9988776655" && trackedDetail.courier === "中通" &&
       trackedDetail.shipped === "2026-10-01" && trackedDetail.cat === "发错",
@@ -1260,8 +1260,8 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   await page.waitForTimeout(400);
   const labels = await page.evaluate(() =>
     [...document.querySelectorAll("#create-card label.f > span")].map((s) => s.textContent.trim()));
-  check("异常单：登记页字段 = 台账有的那些（店铺/订单号/快递单号/快递公司/发货时间/情况/描述），旧字段不再摆出来",
-    JSON.stringify(labels) === JSON.stringify(["店铺", "订单号", "快递单号", "快递公司", "订单发货时间", "情况", "详细描述"]),
+  check("异常单：登记页字段 = 台账有的那些（店铺/订单号/快递单号/快递公司/登记时间/情况/描述），旧字段不再摆出来",
+    JSON.stringify(labels) === JSON.stringify(["店铺", "订单号", "快递单号", "快递公司", "登记时间", "情况", "详细描述"]),
     labels.join("/"));
 
   await page.fill("#orderSn", "261011-597950502412841");
@@ -1272,13 +1272,67 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   check("异常单：填了值之后字段标签还在（说明不靠 placeholder 撑着）",
     labelAfter === "订单号", labelAfter);
 
+  /* ---------- 0.9.0：登记页自适应宽度 + 灰色的「待选」 ----------
+     用户提的三件事：① 卡片不许写死宽度，窗口多宽就多宽；② 「（没选）」改「待选」、灰字；
+     ③ 「订单发货时间」改名「登记时间」；④ 界面太单调（分组 + 卡片头 + 今日条数）。
+     ① 的判据必须量**两个视口下的实际宽度**：只查 CSS 里有没有 max-width 会被别的规则骗过。 */
+  const widths = [];
+  for (const w of [1024, 1440]) {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.waitForTimeout(150);
+    widths.push(await page.evaluate(() => Math.round(document.getElementById("create-card").getBoundingClientRect().width)));
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(150);
+  check("异常单：登记卡片跟着窗口宽度走（1024→1440 宽出 ≥380px，不是写死的 880）",
+    widths[1] - widths[0] >= 380 && widths[0] > 900,
+    JSON.stringify(widths));
+
+  await page.selectOption("#courier", "");   // 前面登记时选过「中通」，卡片不清空 —— 先归零再看空态
+  await page.waitForTimeout(200);
+  const selState = await page.evaluate(() => {
+    const c = document.getElementById("courier");
+    const cat = document.getElementById("category");
+    // --dim 的实际 rgb：借一个临时节点问浏览器，别把颜色值抄进断言（改主题就假红）
+    const probe = document.createElement("span");
+    probe.style.color = "var(--dim)";
+    document.body.appendChild(probe);
+    const dimRgb = getComputedStyle(probe).color;
+    probe.remove();
+    return {
+      text: c.options[0].textContent.trim(),
+      empty: c.classList.contains("is-empty"),
+      // 情况那格前面选过值 —— 它**不能**跟着灰（灰只属于空的那格）
+      catFilledNotGray: !cat.classList.contains("is-empty") && cat.value !== "",
+      color: getComputedStyle(c).color,
+      dimRgb,
+    };
+  });
+  check("异常单：空下拉写的是「待选」、整个控件变灰；已填的那格不跟着灰",
+    selState.text === "待选" && selState.empty && selState.catFilledNotGray &&
+      selState.color === selState.dimRgb,
+    JSON.stringify(selState));
+
+  await page.selectOption("#courier", "中通");
+  await page.waitForTimeout(200);
+  const selAfter = await page.evaluate(() => ({
+    empty: document.getElementById("courier").classList.contains("is-empty"),
+    today: (document.getElementById("todayTip") || {}).textContent || "",
+  }));
+  check("异常单：选完值就不灰了（灰只表示「这格还空着」）",
+    selAfter.empty === false, JSON.stringify(selAfter));
+  check("异常单：卡片右上角有「今日 N 条」",
+    /今日/.test(selAfter.today), selAfter.today);
+  await page.selectOption("#courier", "");
+
   const actions = await page.evaluate(() => {
     const b = document.getElementById("add").getBoundingClientRect();
     const h = document.getElementById("formHint").getBoundingClientRect();
-    return { gap: Math.round(Math.abs(b.top - h.top)), hint: (document.getElementById("formHint") || {}).textContent || "" };
+    const sub = (document.querySelector("#create-card .cardsub") || {}).textContent || "";
+    return { gap: Math.round(Math.abs(b.top - h.top)), hint: (document.getElementById("formHint") || {}).textContent || "", sub };
   });
-  check("异常单：「登记」按钮和那句说明并排，说明里讲清去哪补处理信息",
-    actions.gap < 24 && /处理方式/.test(actions.hint) && /查看/.test(actions.hint), JSON.stringify(actions));
+  check("异常单：「登记」按钮和那句说明并排，卡片头讲清去哪补处理信息",
+    actions.gap < 24 && /处理方式/.test(actions.sub) && /查看/.test(actions.sub), JSON.stringify(actions));
 
   /* ---------- 0.7.0：两个单号都空要拦下 ----------
      台账上每条至少挂着快递单号或订单号之一 —— 全空的基本是误触。 */
