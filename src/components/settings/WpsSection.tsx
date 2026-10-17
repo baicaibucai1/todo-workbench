@@ -424,7 +424,9 @@ export function WpsSection({
               </p>
             )}
 
-            <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+            {/* 窗口能拖到 860（tauri.conf 的 minWidth）—— 那时候并排两个长 URL 框
+                各自只剩一百多像素，所以拆列放到 lg（1024）以上才做 */}
+            <div className="mt-3 grid gap-2.5 lg:grid-cols-2">
               <TextField
                 label="AirScript Webhook"
                 value={cloud.webhook}
