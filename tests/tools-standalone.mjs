@@ -438,6 +438,70 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   check("异常单：点表格一行 → 跳回「查看」并选中它",
     tblJump.browse === true && tblJump.code === "261011-442394294633154", JSON.stringify(tblJump));
 
+  /* ---------- 表格页的列配置（0.8.5）----------
+     用户要能挑显示哪些列、按什么顺序摆；配置要落盘（刷新后还在）。
+     这一节最后留一个「快递公司被隐藏」的状态，交给下面的刷新段落验证持久化。 */
+  await page.click("#tab-table");
+  await page.click("#colBtn");
+  const colPanel = await page.evaluate(() => ({
+    open: !document.getElementById("colPanel").hidden,
+    rows: document.querySelectorAll("#colPanel .crow").length,
+    boxes: document.querySelectorAll("#colPanel input[type=checkbox]").length,
+  }));
+  check("异常单：列配置面板能打开，14 列都在",
+    colPanel.open === true && colPanel.rows === 14 && colPanel.boxes === 14, JSON.stringify(colPanel));
+
+  await page.click('#colPanel input[data-col="courier"]');
+  await page.waitForTimeout(250);
+  const noCourier = await page.evaluate(() => ({
+    heads: Array.from(document.querySelectorAll("#tableHead th")).map((t) => t.textContent),
+    cols: document.querySelectorAll("#tableCols col").length,
+    count: (document.getElementById("colCount") || {}).textContent,
+    minW: document.querySelector("#view-table table.ledger").style.minWidth,
+  }));
+  check("异常单：取消一列 → 表头少一列、计数与整表最小宽度跟着变",
+    noCourier.cols === 13 && noCourier.heads.indexOf("快递公司") < 0 &&
+      noCourier.count === "13/14" && noCourier.minW === "1472px",
+    JSON.stringify(noCourier));
+
+  // 调序：把「店铺」往前挪一格（它前面是「发货时间」）
+  await page.click('#colPanel button[data-act="up"][data-col="store"]');
+  await page.waitForTimeout(250);
+  const reordered = await page.evaluate(() =>
+    Array.from(document.querySelectorAll("#tableHead th")).map((t) => t.textContent).slice(0, 4));
+  check("异常单：↑ 能把列往前挪（店铺 移到 发货时间 前面）",
+    reordered[2] === "店铺" && reordered[3] === "发货时间", reordered.join(","));
+
+  // 只留一列，再试图把最后一列也取消（应被拦住）
+  const COL_KEYS = ["order_sn", "tracking_no", "courier", "shipped_at", "store", "category",
+    "title", "handling", "result", "settled", "_status", "note", "created_at", "updated_at"];
+  for (const k of COL_KEYS) {
+    if (k === "order_sn") continue;
+    const on = await page.evaluate((key) => {
+      const el = document.querySelector(`#colPanel input[data-col="${key}"]`);
+      return el ? el.checked : false;
+    }, k);
+    if (on) await page.click(`#colPanel input[data-col="${k}"]`);
+  }
+  const onlyOne = await page.evaluate(() => ({
+    cols: document.querySelectorAll("#tableHead th").length,
+    count: (document.getElementById("colCount") || {}).textContent,
+  }));
+  check("异常单：可以只留一列", onlyOne.cols === 1 && onlyOne.count === "1/14", JSON.stringify(onlyOne));
+
+  await page.click('#colPanel input[data-col="order_sn"]');
+  await page.waitForTimeout(200);
+  check("异常单：不允许把最后一列也取消",
+    (await page.evaluate(() => document.querySelectorAll("#tableHead th").length)) === 1);
+
+  // 恢复默认 → 只隐藏「快递公司」，给刷新段落留一个可验证的状态
+  await page.click('#colPanel button[data-act="reset"]');
+  await page.waitForTimeout(200);
+  await page.click('#colPanel input[data-col="courier"]');
+  await page.waitForTimeout(200);
+  await page.click("#tab-browse");
+  await page.waitForTimeout(150);
+
   /* ---------- 订单号 + 呼起本地客户端 ----------
    * 这块的核心是**链接拼得对不对**：少一个参数、拼接顺序错了，
    * 客户端那边就是"什么都没发生"，而那是最难查的症状。
@@ -818,6 +882,30 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   check("异常单：改过的店铺表刷新后还在（独立态落 localStorage）",
     afterReload.cfg === "拾野" && afterReload.cs === "cs_999999999" && afterReload.storeRows === 8,
     `${afterReload.storeRows} 行 / ${afterReload.cfg} / ${afterReload.cs}`);
+
+  // 列配置也落盘了：隐藏的「快递公司」刷新后仍然隐藏。
+  // ★ 读配置在 loadCfg 末尾，而独立态要等宿主握手超时才落定 —— 用轮询等它，别死等固定毫秒
+  await page.click("#tab-table");
+  await page
+    .waitForFunction(() => {
+      const el = document.getElementById("colCount");
+      return el && el.textContent === "13/14";
+    }, null, { timeout: 8000 })
+    .catch(() => {});
+  const afterReloadCols = await page.evaluate(() => ({
+    heads: Array.from(document.querySelectorAll("#tableHead th")).map((t) => t.textContent),
+    count: (document.getElementById("colCount") || {}).textContent,
+  }));
+  check("异常单：刷新后列配置还在（隐藏的列仍然隐藏）",
+    afterReloadCols.heads.length === 13 && afterReloadCols.heads.indexOf("快递公司") < 0 &&
+      afterReloadCols.count === "13/14", JSON.stringify(afterReloadCols));
+
+  // 收尾恢复默认，后面的段落按 14 列走
+  await page.click("#colBtn");
+  await page.click('#colPanel button[data-act="reset"]');
+  await page.waitForTimeout(200);
+  await page.click("#tab-browse");
+  await page.waitForTimeout(150);
 
   /* ---------- 状态由处理字段派生（0.7.0）----------
      台账的工作流就是：登记时啥都没填 → 待处理；补了处理方式 → 处理中；

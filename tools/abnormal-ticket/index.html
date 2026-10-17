@@ -296,6 +296,28 @@
   #tableSearch { flex: 1 1 260px; min-width: 0; }
   .tblbar .stats { margin: 0; }
   .tblscroll { flex: 1; min-height: 0; min-width: 0; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+
+  /* ---- 表格页的列配置 ---- */
+  .colwrap { position: relative; flex: 0 0 auto; }
+  #colBtn { padding: 6px 11px; font-size: 12.5px; }
+  #colCount { color: var(--dim); }
+  /* 面板贴着按钮往下弹。★ 不加阴影（与工作台同一套黑白灰审美），靠 1px 边框分层 */
+  .colpanel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30;
+    width: 250px; max-height: 62vh; overflow: auto; padding: 6px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px; }
+  .colpanel .crow { display: flex; align-items: center; gap: 2px; padding: 3px 4px; border-radius: 6px; }
+  .colpanel .crow:hover { background: var(--chip); }
+  .colpanel .crow label { flex: 1; display: flex; align-items: center; gap: 7px;
+    cursor: pointer; font-size: 12.5px; user-select: none; }
+  .colpanel .crow input { margin: 0; }
+  /* 上下移用小按钮：不占地方，但手指也点得中（20px 见方） */
+  .colpanel .crow button { padding: 0 5px; min-width: 20px; height: 20px; line-height: 18px;
+    font-size: 12px; border: 0; background: transparent; color: var(--fg2); }
+  .colpanel .crow button:hover { background: var(--chip); color: var(--fg); }
+  .colpanel .crow button:disabled { opacity: .2; }
+  .colpanel .cfoot { display: flex; gap: 6px; margin-top: 4px; padding: 6px 4px 2px;
+    border-top: 1px solid var(--line); }
+  .colpanel .cfoot button { flex: 1; padding: 4px 8px; font-size: 12px; }
   /* table-layout: fixed + colgroup 的定宽是「省略号截断」能生效的前提（auto 布局下
      td 的 max-width 不可靠）；列宽之和 ≈ min-width，窄了横向滚，宽了按比例铺满 */
   table.ledger { table-layout: fixed; width: 100%; min-width: 1556px;
@@ -424,6 +446,13 @@
     <div class="tblbar">
       <input id="tableSearch" placeholder="搜订单号 / 快递单号 / 店铺 / 描述 / 处理" />
       <span class="stats" id="tableStats"></span>
+      <!-- 列配置：点开勾选要看的列、用 ↑↓ 调顺序。至少留一列 -->
+      <div class="colwrap">
+        <button id="colBtn" type="button" title="选择要显示的列、调整列顺序">
+          列 · <span id="colCount">14/14</span>
+        </button>
+        <div id="colPanel" class="colpanel" hidden></div>
+      </div>
     </div>
     <div class="tblscroll">
       <table class="ledger">
@@ -848,6 +877,12 @@
     fillBrowseFilters();
     showCfgHint();
     showSnHint();     // 订单号框初始化时是空的，这条会自己清掉
+
+    // 列配置：要在第一次真正画表格之前读回来（启动时那次 buildTableHead 用的是默认全列）。
+    // load() 与 loadCfg() 谁先回来不确定，所以这里画一次表头再顺手重画表体。
+    await loadTableCols();
+    buildTableHead();
+    renderTable();
   }
 
   /** 店铺表编辑区：一行 = 店铺名 + 客服 ID + 删除。
@@ -1337,14 +1372,127 @@
     { key: "updated_at", label: "更新时间", w: 104, mono: true, time: true },
   ];
 
-  /** 列头与 colgroup 只建一次（列宽/列名都从 TABLE_COLS 来，表头不会和单元格错位） */
+  /* ---------------- 表格页的列配置 ----------------
+     用户能挑显示哪些列、按什么顺序摆。存 kv（键 tableCols），与店铺表同一套。
+     ★ 存的是「全量顺序 + 隐藏名单」两份，不是「可见列清单」：
+       这样表里将来新增一列时，老配置也能把它带出来（可见、追加在末尾），
+       不会出现「升级后新列永远藏着」。
+     ★ 至少留一列 —— 全隐藏后表格只剩一条空线，用户会以为数据全没了。 */
+  var TABLE_COL_KEY = "tableCols";
+  var tableColOrder = TABLE_COLS.map(function (c) { return c.key; });
+  var tableColHidden = {};
+
+  function defaultColOrder() {
+    return TABLE_COLS.map(function (c) { return c.key; });
+  }
+
+  /** 把存下来的配置收敛成可用的形状：未知键丢掉、缺的列补到末尾、顺序去重 */
+  function normalizeColState(saved) {
+    var valid = {};
+    var order = [], hidden = {};
+    TABLE_COLS.forEach(function (c) { valid[c.key] = true; });
+    if (saved && saved.order && saved.order.length) {
+      saved.order.forEach(function (k) {
+        if (valid[k] && order.indexOf(k) < 0) order.push(k);
+      });
+    }
+    if (saved && saved.hidden && saved.hidden.length) {
+      saved.hidden.forEach(function (k) { if (valid[k]) hidden[k] = true; });
+    }
+    TABLE_COLS.forEach(function (c) { if (order.indexOf(c.key) < 0) order.push(c.key); });
+    return { order: order, hidden: hidden };
+  }
+
+  /** 当前真正要画的列（保持用户排的顺序） */
+  function activeCols() {
+    var byKey = {};
+    TABLE_COLS.forEach(function (c) { byKey[c.key] = c; });
+    return tableColOrder.filter(function (k) { return !tableColHidden[k]; })
+      .map(function (k) { return byKey[k]; })
+      .filter(Boolean);
+  }
+
+  async function loadTableCols() {
+    var raw = null;
+    // ★ 先读本地那份：独立态它就是权威；宿主态它是镜像。
+    //   反过来先等 Cfg.get 的话，页面刚打开那几百毫秒里 settle 还没兑现，
+    //   整个 loadCfg 会被吊在半空（店铺表也会跟着晚到）。
+    try { raw = LocalCfg.get({ key: TABLE_COL_KEY }).value; } catch (e) { /* 读不到往下走 */ }
+    if (!raw) {
+      try {
+        var res = await Cfg.get({ key: TABLE_COL_KEY });
+        raw = res && res.value;
+      } catch (e2) { /* 宿主没回应 → 用默认全部列 */ }
+    }
+    if (!raw) return;
+    try {
+      var st = normalizeColState(JSON.parse(raw));
+      tableColOrder = st.order;
+      tableColHidden = st.hidden;
+    } catch (e3) { /* 解析不了 → 用默认全部列 */ }
+  }
+
+  function saveTableCols() {
+    var payload = JSON.stringify({ order: tableColOrder, hidden: Object.keys(tableColHidden) });
+    // 本地镜像是同步写的，**一定落得下去**：页面刚打开就改列时，宿主握手可能
+    // 还没完成，只走 Cfg.set 的回调会被排队 —— 用户一刷新就回到默认。
+    try { LocalCfg.set({ key: TABLE_COL_KEY, value: payload }); } catch (e) { /* ignore */ }
+    var writeHost = function () {
+      if (!bound()) return;
+      // 宿主态再写一份到工作台的 kv（换台机器/清浏览器缓存也还在）
+      try { Cfg.set({ key: TABLE_COL_KEY, value: payload }); } catch (e2) { /* ignore */ }
+    };
+    if (bound()) writeHost();
+    // 刚打开就改列时握手还没完成：等状态落定再补一次，别只留在本地镜像里
+    else settle.then(writeHost);
+  }
+
+  /** 列头、colgroup 与整表最小宽度都从当前可见列重建 */
   function buildTableHead() {
-    document.getElementById("tableCols").innerHTML = TABLE_COLS.map(function (c) {
+    var cols = activeCols();
+    var total = 0;
+    document.getElementById("tableCols").innerHTML = cols.map(function (c) {
+      total += c.w;
       return '<col style="width:' + c.w + 'px">';
     }).join("");
-    document.getElementById("tableHead").innerHTML = "<tr>" + TABLE_COLS.map(function (c) {
+    document.getElementById("tableHead").innerHTML = "<tr>" + cols.map(function (c) {
       return "<th>" + esc(c.label) + "</th>";
     }).join("") + "</tr>";
+    // min-width 跟着可见列走：隐藏一半列还留着 1556px 的话，等于白白横向滚
+    var table = document.querySelector("#view-table table.ledger");
+    if (table) table.style.minWidth = total + "px";
+    document.getElementById("colCount").textContent = cols.length + "/" + TABLE_COLS.length;
+  }
+
+  /** 列配置面板：勾选显示/隐藏，↑↓ 调顺序 */
+  function renderColPanel() {
+    var panel = document.getElementById("colPanel");
+    var byKey = {};
+    TABLE_COLS.forEach(function (c) { byKey[c.key] = c; });
+    panel.innerHTML = tableColOrder.map(function (k, i) {
+      var c = byKey[k];
+      if (!c) return "";
+      var on = !tableColHidden[k];
+      return '<div class="crow">' +
+        '<label><input type="checkbox" data-col="' + esc(k) + '"' + (on ? " checked" : "") + ">" +
+        esc(c.label) + "</label>" +
+        '<button type="button" data-act="up" data-col="' + esc(k) + '" title="上移"' +
+        (i === 0 ? " disabled" : "") + ">↑</button>" +
+        '<button type="button" data-act="down" data-col="' + esc(k) + '" title="下移"' +
+        (i === tableColOrder.length - 1 ? " disabled" : "") + ">↓</button>" +
+        "</div>";
+    }).join("") +
+      '<div class="cfoot">' +
+      '<button type="button" data-act="all">全选</button>' +
+      '<button type="button" data-act="reset">恢复默认</button>' +
+      "</div>";
+  }
+
+  function afterColsChanged() {
+    saveTableCols();
+    buildTableHead();
+    renderTable();
+    renderColPanel();
   }
 
   /** 表格页的搜索：与「查看」页那个搜索同样的覆盖范围（外加店铺） */
@@ -1363,18 +1511,19 @@
     var body = document.getElementById("tableBody");
     var stats = document.getElementById("tableStats");
     var rows = tableVisibleRows();
+    var cols = activeCols();
     if (!allRows.length) {
-      body.innerHTML = '<tr class="empty-row"><td colspan="' + TABLE_COLS.length +
+      body.innerHTML = '<tr class="empty-row"><td colspan="' + cols.length +
         '">还没有登记过异常单。</td></tr>';
       stats.textContent = "";
       return;
     }
     if (!rows.length) {
-      body.innerHTML = '<tr class="empty-row"><td colspan="' + TABLE_COLS.length +
+      body.innerHTML = '<tr class="empty-row"><td colspan="' + cols.length +
         '">没有符合条件的单号。</td></tr>';
     } else {
       body.innerHTML = rows.map(function (r) {
-        return '<tr data-id="' + esc(r.id) + '">' + TABLE_COLS.map(function (c) {
+        return '<tr data-id="' + esc(r.id) + '">' + cols.map(function (c) {
           var raw = String(r[c.key] == null ? "" : r[c.key]).trim();
           var html, tip = "";
           if (c.key === "_status") {
@@ -2298,6 +2447,60 @@
   // 表格页：搜索只筛表格本身（不动左栏）；点一行 → 跳回「查看」并选中那条
   // （jumpToTicket 会顺手清掉查看页的筛选，保证那条真的看得见）
   document.getElementById("tableSearch").addEventListener("input", renderTable);
+
+  /* 列配置：按钮开关面板，面板里勾选可见列 / ↑↓ 调顺序，点面板外收起。
+     ★ 事件都挂在容器上做委托 —— 面板内容是重画的，逐个绑定会随重画失效。 */
+  document.getElementById("colBtn").addEventListener("click", function (e) {
+    e.stopPropagation();
+    var panel = document.getElementById("colPanel");
+    if (panel.hidden) renderColPanel();
+    panel.hidden = !panel.hidden;
+  });
+  document.getElementById("colPanel").addEventListener("click", function (e) {
+    e.stopPropagation();
+    var btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    var act = btn.getAttribute("data-act");
+    var key = btn.getAttribute("data-col");
+    var i = key ? tableColOrder.indexOf(key) : -1;
+    if (act === "up" && i > 0) {
+      tableColOrder[i] = tableColOrder[i - 1];
+      tableColOrder[i - 1] = key;
+      afterColsChanged();
+    } else if (act === "down" && i >= 0 && i < tableColOrder.length - 1) {
+      tableColOrder[i] = tableColOrder[i + 1];
+      tableColOrder[i + 1] = key;
+      afterColsChanged();
+    } else if (act === "all") {
+      tableColHidden = {};
+      afterColsChanged();
+    } else if (act === "reset") {
+      tableColOrder = defaultColOrder();
+      tableColHidden = {};
+      afterColsChanged();
+    }
+  });
+  document.getElementById("colPanel").addEventListener("change", function (e) {
+    var cb = e.target.closest("input[data-col]");
+    if (!cb) return;
+    var key = cb.getAttribute("data-col");
+    if (cb.checked) {
+      delete tableColHidden[key];
+    } else {
+      // 至少留一列：表格全空比「少看一列」难解释得多
+      if (activeCols().length <= 1) {
+        cb.checked = true;
+        toast("至少要留一列");
+        return;
+      }
+      tableColHidden[key] = true;
+    }
+    afterColsChanged();
+  });
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest(".colwrap")) document.getElementById("colPanel").hidden = true;
+  });
+
   document.getElementById("tableBody").addEventListener("click", function (e) {
     var tr = e.target.closest("tr[data-id]");
     if (tr) jumpToTicket(tr.getAttribute("data-id"));
