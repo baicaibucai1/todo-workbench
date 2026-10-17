@@ -5,6 +5,7 @@ import { Download, ExternalLink, KeyRound, LogOut, RefreshCw, Table2, Upload } f
 import { SETTINGS } from "../../lib/settings";
 import { isTauri } from "../../lib/db";
 import {
+  COLUMNS,
   accountInfo,
   applyPull,
   listFiles,
@@ -478,11 +479,11 @@ export function WpsSection({
             <Card>
               <div className="mb-2 flex items-center gap-1.5 text-[12.5px] text-fg-2">
                 <Download size={14} />
-                从在线表格拉取
+                在线表格 · 查看与拉取
               </div>
               <ActionButton
                 icon={<Download size={14} />}
-                label={busy === "pull" ? "拉取中…" : "拉取一次"}
+                label={busy === "pull" ? "拉取中…" : "拉取并预览"}
                 onClick={() => void doPull()}
                 disabled={!ready || busy === "pull"}
               />
@@ -530,6 +531,10 @@ export function WpsSection({
                       )}
                     </div>
                   )}
+
+                  {/* 这就是「在程序里看见那张在线表」：拉下来的原始内容，只读 */}
+                  <OnlineTable pull={preview.pull} />
+
                   <div className="flex flex-wrap gap-2 pt-1">
                     <ActionButton
                       icon={<Download size={14} />}
@@ -547,6 +552,89 @@ export function WpsSection({
             </Card>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 在线表格的只读预览                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 台账列：中文表头 → SQLite 列名。
+ *
+ * 线上表头就是按 COLUMNS 写上去的，所以这张表能把拉回来的行**按原来的
+ * 列名、原来的列序**摆出来。用户自己在 WPS 里加过的列（认不出来的表头）
+ * 也照样显示表头，只是格子空着 —— 藏掉反而让人以为漏列了。
+ */
+const KEY_BY_LABEL = new Map(COLUMNS.map(([key, label]) => [label, key]));
+
+/**
+ * 一次最多渲染多少行。
+ *
+ * 台账上千行时，把整张表塞进 DOM 会让设置页卡住；真实行数照实写在标题里，
+ * 不给「看起来只有 500 行」的错觉。
+ */
+const PREVIEW_ROWS = 500;
+
+/**
+ * 把 `wps_pull` 拉回来的东西原样摊成一张表。
+ *
+ * 这是「在程序里看见那张在线表」的唯一入口：只读预览，不写库 ——
+ * 写库要用户单独点「确认写库」（见调用处）。列头用**线上那份表头**，
+ * 不是本地列定义，所以 WPS 里改过名字的列在这里立刻就能看出来。
+ */
+function OnlineTable({ pull }: { pull: WpsPull }) {
+  const rows = pull.rows.slice(0, PREVIEW_ROWS);
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[12px] text-fg-dim">
+        <span>在线表格内容（只读）</span>
+        <span>
+          共 <b className="text-fg-2">{pull.rows.length}</b> 行 · {pull.header.length} 列
+        </span>
+        {pull.rows.length > PREVIEW_ROWS && <span>（只显示前 {PREVIEW_ROWS} 行）</span>}
+      </div>
+
+      {pull.rows.length === 0 ? (
+        <div className="rounded-lg border border-line bg-card px-4 py-3 text-[12.5px] text-fg-dim">
+          在线表格里还没有数据 —— 先点上面的「推送」把本地台账传上去
+        </div>
+      ) : (
+        <div className="max-h-[360px] overflow-auto rounded-lg border border-line bg-card">
+          <table className="w-full text-[12px]">
+            <thead className="sticky top-0 bg-chip">
+              <tr className="text-left text-[11.5px] text-fg-dim">
+                {pull.header.map((h, i) => (
+                  <th key={i} className="whitespace-nowrap px-3 py-1.5 font-normal">
+                    {h || `第 ${i + 1} 列`}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <tr key={i} className="border-t border-line">
+                  {pull.header.map((h, j) => {
+                    const key = KEY_BY_LABEL.get(h);
+                    const text = key ? row[key] ?? "" : "";
+                    return (
+                      <td
+                        key={j}
+                        className="max-w-[260px] truncate px-3 py-1.5 text-[11.5px] text-fg-2"
+                        title={text}
+                      >
+                        {text || <span className="text-fg-dim">—</span>}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
