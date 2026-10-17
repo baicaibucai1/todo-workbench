@@ -200,7 +200,7 @@ async function frameStar(page, radius) {
       const s = checkSync();
       check("game.js 与 src/ 一致（不一致就跑 node scripts/build.mjs）", s.ok, s.detail);
       /* ★ 数字写死：加/删片段或顶层区块时必须**有意**改这里，防止顺手改坏拼装而不自知 */
-      check("★ 21 个源片段 · 25 个顶层区块", s.fragments === 21 && s.blocks === 25,
+      check("★ 22 个源片段 · 26 个顶层区块", s.fragments === 22 && s.blocks === 26,
         `${s.fragments} 片段 · ${s.blocks} 区块 · ${s.lines} 行`);
     }
 
@@ -224,7 +224,7 @@ async function frameStar(page, radius) {
       api: window.__game.version,
       badge: (document.getElementById("ver") || {}).textContent || ""
     }));
-    check("版本号为 0.17.0（调试接口）", verInfo.api === "0.17.0");
+    check("版本号为 0.18.0（调试接口）", verInfo.api === "0.18.0");
     check("右下角版本戳与调试接口同源", verInfo.badge === "v" + verInfo.api, `#ver = "${verInfo.badge}"`);
     console.log(`  ℹ 星系「${st0.system}」 · ${st0.starType}（${st0.starId}） · ${st0.planets.length} 颗行星`);
     await shot(page, "n1-system.png");
@@ -2112,12 +2112,14 @@ async function frameStar(page, radius) {
       Object.keys(fsmAll.machines).map((k) => k + "=" + fsmAll.machines[k].state).join(" · ") + " · 非法=" + fsmAll.illegal);
     console.log("  ℹ " + (await page.evaluate(() => window.__game.fsmBrief())));
 
-    /* ---- 22. ★ 聚焦地表（v0.12 新增）：立方球连续地表 ---- */
+    /* ---- 22. ★ 聚焦地表（v0.12 新增，v0.18 改 HEALPix）：连续场地表 ---- */
     console.log("\n[22] ★ 聚焦地表：连续场 + 片元调色（聚焦档的表面表示）");
     /* 立场：v0.12 把 demo（demos/cube-sphere）验证过的 C 路线搬进主工程 ——
-     * 聚焦档不再看贴图，而是看**连续场构建的立方球表面**；非聚焦维持贴图。
-     * 本节验六件事：进得去（聚焦固态 → 立方球亮、贴图网格隐）、结构对
-     * （6 面 × 64² 格，顶点/三角形数机器复算）、物理同源（水面覆盖 =
+     * 聚焦档不再看贴图，而是看**连续场构建的网格表面**；非聚焦维持贴图。
+     * v0.18 网格换成 HEALPix（等面积 + LOD），立方球保留可切（setFocusMesh）。
+     * 本节验七件事：进得去（聚焦固态 → 连续地表亮、贴图网格隐）、结构对
+     * （HEALPix 顶点/三角形数机器复算 + A/B 两套口径都过）、统计网格无关
+     * （换网格海面占比一个数 —— 换档/换网格不动海岸线）、物理同源（水面覆盖 =
      * 挥发分丰度）、确定性（重建签名一致 + 零 RNG）、退得回（Esc → 网格归位）、
      * 气态不参与（没有固体表面）· 云层与贴图口径同源。 */
     await page.evaluate(() => { window.__game.clearSelection(); window.__game.unfocus(); });
@@ -2150,12 +2152,47 @@ async function frameStar(page, radius) {
     await sleep(1800);
 
     const fsA = await page.evaluate((n) => window.__game.focusSurface(n), fsProbe.target);
-    check("★ 聚焦固态行星 → 立方球连续地表登场（贴图网格退场）",
-      fsA.solid && fsA.built && fsA.active === true && fsA.meshVisible === false,
-      `「${fsProbe.target}」built=${fsA.built} active=${fsA.active} meshVisible=${fsA.meshVisible} · 构建 ${fsA.ms}ms`);
-    check("★ 网格结构：6 面 × 64² 格（顶点/三角形数机器复算）",
-      fsA.N === 64 && fsA.verts === 6 * 65 * 65 && fsA.tris === 12 * 64 * 64,
-      `N=${fsA.N} · ${fsA.verts} 顶点 · ${fsA.tris} 三角形`);
+    check("★ 聚焦固态行星 → 连续地表登场（贴图网格退场 · 默认 HEALPix）",
+      fsA.solid && fsA.built && fsA.active === true && fsA.meshVisible === false
+        && fsA.kind === "healpix" && [32, 64, 128].includes(fsA.nside),
+      `「${fsProbe.target}」kind=${fsA.kind} nside=${fsA.nside} built=${fsA.built} active=${fsA.active} · 构建 ${fsA.ms}ms`);
+    /* ★ 网格结构机器复算：HEALPix 顶点 = 12n²+2、三角形 = 24n²（环间拉链 + 双极扇形）。
+     *   nside 随相机距离走（LOD），所以按当前档位复算，不写死 64。 */
+    check("★ 网格结构：HEALPix 顶点/三角形数机器复算（12n²+2 / 24n²）",
+      fsA.verts === 12 * fsA.nside * fsA.nside + 2 && fsA.tris === 24 * fsA.nside * fsA.nside,
+      `nside=${fsA.nside} · ${fsA.verts} 顶点 · ${fsA.tris} 三角形`);
+    /* ★ A/B：切回立方球再切回来 —— 两套口径的结构各自复算，且**统计必须逐位相同**
+     *   （v0.18 把海平面分位数/归一化挪到固定等面积采样上：换网格不动海岸线，
+     *    否则 LOD 换档时整颗星球会「跳一下」）。 */
+    const fsCube = await page.evaluate((n) => {
+      window.__game.setFocusMesh("cube");
+      return window.__game.focusSurface(n);
+    }, fsProbe.target);
+    check("★ A/B 立方球口径仍在（6 面 × 64² 格，机器复算）",
+      fsCube.kind === "cube" && fsCube.N === 64
+        && fsCube.verts === 6 * 65 * 65 && fsCube.tris === 12 * 64 * 64,
+      `kind=${fsCube.kind} · ${fsCube.verts} 顶点 · ${fsCube.tris} 三角形`);
+    check("★ 统计与网格解耦：换网格海面占比逐位相同（海岸线不随 LOD/网格挪动）",
+      fsA.seaFrac === fsCube.seaFrac && fsA.sea === fsCube.sea,
+      `healpix ${fsA.seaFrac} = cube ${fsCube.seaFrac} · 海平面 ${fsA.sea}`);
+    await page.evaluate(() => window.__game.setFocusMesh("healpix"));
+    const fsBack = await page.evaluate((n) => window.__game.focusSurface(n), fsProbe.target);
+    check("★ 切回 HEALPix：结构复算一致（同一颗星球，只有网格不同）",
+      fsBack.kind === "healpix" && fsBack.verts === fsA.verts && fsBack.tris === fsA.tris,
+      `nside=${fsBack.nside} · ${fsBack.verts} 顶点 · ${fsBack.tris} 三角形`);
+    /* ★ LOD：拉近/拉远跨档位 → nside 跟着走、海面占比逐位不动（统计解耦的意义：
+     *   换档重建的是**网格**，不是星球 —— 海岸线钉死）。 */
+    await page.evaluate((n) => window.__game.zoomTo(2.4), fsProbe.target);
+    await sleep(1200);
+    const fsNear = await page.evaluate((n) => window.__game.focusSurface(n), fsProbe.target);
+    await page.evaluate((n) => window.__game.zoomTo(5.5), fsProbe.target);
+    await sleep(1200);
+    const fsFar = await page.evaluate((n) => window.__game.focusSurface(n), fsProbe.target);
+    await page.evaluate((n) => window.__game.zoomTo(2.6), fsProbe.target);
+    await sleep(900);
+    check("★ LOD：拉远跨档位 → nside 降档、海面占比逐位不动",
+      fsFar.kind === "healpix" && fsFar.nside < fsNear.nside && fsFar.seaFrac === fsNear.seaFrac,
+      `nside ${fsNear.nside} → ${fsFar.nside} · 覆盖 ${fsNear.seaFrac} = ${fsFar.seaFrac}`);
     const expCover = Math.min(0.95, Math.max(0.05, fsA.water * 1.15));
     check("★ 物理同源：海平面重标定 0.5 且水面覆盖 = 挥发分丰度（与贴图管线同一保证）",
       fsA.sea === 0.5 ? Math.abs(fsA.seaFrac - expCover) < 0.06

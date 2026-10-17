@@ -444,6 +444,8 @@ function boot() {
         name: p.name, solid: isSolidPlanet(p),
         cloudy: isSolidPlanet(p) && planetCloudy(p),
         built: !!cs, active: !!(cs && cs.group.visible),
+        /* v0.18：kind = healpix | cube；nside = HEALPix 档位（LOD 会随相机换档） */
+        kind: cs ? cs.kind : "", nside: cs ? cs.nside : 0,
         N: cs ? cs.N : 0,
         verts: cs ? cs.verts : 0, tris: cs ? cs.tris : 0, ms: cs ? cs.ms : 0,
         sea: pr && pr.sea ? 0.5 : -1, seaFrac: cs ? +cs.seaFrac.toFixed(4) : 0,
@@ -480,6 +482,28 @@ function boot() {
       if (!G.focusPlanet || !G.focusPlanet._cs || !G.focusPlanet._cs.cloud) return null;
       G.focusPlanet._cs.cloud.visible = !!on;
       return G.focusPlanet._cs.cloud.visible;
+    },
+    /* ★ v0.18：聚焦地表的网格方案（A/B 对照用）—— healpix（默认，等面积 + LOD）
+     * 与 cube（v0.12~v0.17 的立方球）。切换会重建当前聚焦行星的几何。 */
+    setFocusMesh: function (kind) {
+      var k = (kind === "cube") ? "cube" : "healpix";
+      if (k === FOCUS_MESH_KIND) return k;
+      FOCUS_MESH_KIND = k;
+      var list = G.sys ? G.sys.planets : [];
+      for (var i = 0; i < list.length; i++) {
+        var p = list[i];
+        if (!p._cs) continue;
+        if (p._cs.mesh.geometry) p._cs.mesh.geometry.dispose();
+        var pr = terrainParams(p);
+        var g = focusBuildGeom(p, pr, focusNsideFor(p));
+        p._cs.mesh.geometry = g.geo;
+        p._cs.kind = k; p._cs.nside = g.nside || 0; p._cs.N = g.N;
+        p._cs.verts = g.verts; p._cs.tris = g.tris; p._cs.ms = g.ms;
+        p._cs.seaFrac = g.seaFrac; p._cs.sig = g.sig;
+        p._cs.field = g.field; p._cs.amp = g.amp; p._cs.sea = pr.sea ? 0.5 : -1;
+        syncCityMeshes(p);
+      }
+      return k;
     },
     /* 聚焦云壳相位（调试：看不同方位下的云图案 —— 对照「云多/云少的一面」） */
     setFocusCloudPhase: function (a) {

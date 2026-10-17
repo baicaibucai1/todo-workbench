@@ -565,7 +565,9 @@ function updateScene(sys, dt) {
     }
     if (p._atmo) {
       if (p._atmo.userData.base === undefined) p._atmo.userData.base = p._atmo.material.uniforms.uRim.value;
-      p._atmo.material.uniforms.uRim.value = p._atmo.userData.base * (FSM_CAMERA.is("focus") ? 0.55 : 1);
+      /* ★ v0.18：0.55 → 0.38。这层菲涅尔壳是 24×18 的低模球，「蓝雾罩在地表上」
+       * 是近景发糊的第二大来源（第一是云壳，见 44 的 FOCUS_CLOUD_OP）。 */
+      p._atmo.material.uniforms.uRim.value = p._atmo.userData.base * (FSM_CAMERA.is("focus") ? 0.38 : 1);
     }
 
     /* 聚焦地表（v0.12）：跟随贴图网格的同一自转；云壳独立漂移（比地表略快

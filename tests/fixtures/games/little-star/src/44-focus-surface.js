@@ -17,6 +17,18 @@
  *   ③ 边界用连续量等值线 + fwidth；受光用**真实恒星方向**（受光量 = 物理量，
  *      每帧从行星轨道位置反推），太阳色与恒星的灯同源。
  *
+ * ── ★ v0.18：片元细节（「网格只管剪影」这句话的另一半）──────────────
+ *   上面②说的「法线从连续场求梯度」是**顶点级**的：几何 N=64 → 一格 1.4°，
+ *   而颜色的最小尺度＝顶点插值的尺度（近景十几到几十像素）—— 于是近看一片糊。
+ *   注释里写着「细节只保留 N=64 能表达的频段，让位给片元承担」，但片元从来
+ *   只做插值，这活一直没人接。v0.18 补上：
+ *     片元四级值噪声（120/340/900/2400 每弧度 = 波长 3.0/1.06/0.40/0.15°），
+ *     纯坐标哈希（h31/vn3，与 CPU 侧 _ch31/_cvn3 同族）、零随机流；
+ *     低频两级进高程（动等高线位置，贴岸压到 35% 保住「所见即所得」），
+ *     细两级进反照率斑驳，并以 900 那级的切向梯度扰动法线（立体感交给真实光照）。
+ *   ★ 每级按**像素足迹**淡出（bandAA）—— 贴图有 mipmap，程序化噪声得自己算 LOD，
+ *     否则近看是细节、拉远就是一片闪。
+ *
  * ── 生命周期 ─────────────────────────────────────────────────────
  *   ensureFocusSurface(p)  首次聚焦时现场构建（约 150~300ms），缓存在 p._cs
  *   syncFocusSurface()     每帧一处裁决：谁被聚焦谁亮 —— Esc / 退出钮 /
@@ -100,48 +112,40 @@ function buildFocusGeometry(p, pr, N) {
   var t0 = performance.now();
   var amp = 0.075 * clamp(pr.relief, 0.3, 1.5);
   var field = makeFocusField(p, pr);
+  var st = hpStatSample(field, p, pr.sea);   /* ★ v0.18 统计与网格解耦（47）：换网格不动海岸线 */
   var vpf = (N + 1) * (N + 1);
   var total = 6 * vpf;
   var dirs = new Float32Array(total * 3);
   var hgt = new Float32Array(total);
   var f, i, j, k, u, v, d;
 
-  /* pass 1：方向 + 基底 + 范围（归一化常数） */
+  /* pass 1：方向 + 基底（归一化常数来自固定等面积采样，不在本网格上求） */
   k = 0;
-  var mn = Infinity, mx = -Infinity;
   for (f = 0; f < 6; f++) {
     for (j = 0; j <= N; j++) {
       for (i = 0; i <= N; i++) {
         u = -1 + (2 * i) / N; v = -1 + (2 * j) / N;
         d = csCubeToSphere(u, v, f);
         dirs[k * 3] = d[0]; dirs[k * 3 + 1] = d[1]; dirs[k * 3 + 2] = d[2];
-        var b = field.baseAt(d[0], d[1], d[2]);
-        if (b < mn) mn = b;
-        if (b > mx) mx = b;
-        hgt[k] = b;                                  /* 暂存基底，pass 2 覆盖 */
+        hgt[k] = field.baseAt(d[0], d[1], d[2]);
         k++;
       }
     }
   }
-  field.setRange(mn, mx);
+  field.setRange(st.mn, st.mx);
+  var inv = 1 / Math.max(1e-6, st.mx - st.mn);
 
   /* pass 2：特征叠加（坑 + 细节）→ 最终高程 */
   for (k = 0; k < total; k++) {
     var dx = dirs[k * 3], dy = dirs[k * 3 + 1], dz = dirs[k * 3 + 2];
-    /* hAt 的归一化已就位；这里不能直接复用 hgt[k]（那是基底原值） */
-    var h = (hgt[k] - mn) * (1 / Math.max(1e-6, mx - mn))
+    hgt[k] = (hgt[k] - st.mn) * inv
       + field.dentAt(dx, dy, dz) + field.detailAt(dx, dy, dz);
-    hgt[k] = h;
   }
 
-  /* pass 3：有海 → 分位数定海平面 + 重标定到 0.5（与 42-terrain 同一函数、
-   * 同一保证：水面覆盖 = 挥发分丰度） */
+  /* pass 3：有海 → 海平面/缩放用固定采样的统计（与 HEALPix 同一份） */
   var sea = pr.sea;
   if (sea) {
-    var seaLvl = quantile(hgt, clamp(p.water * 1.15, 0.05, 0.95));
-    var lo = Infinity, hi = -Infinity;
-    for (k = 0; k < total; k++) { if (hgt[k] < lo) lo = hgt[k]; if (hgt[k] > hi) hi = hgt[k]; }
-    var sinv = 1.15 / Math.max(1e-6, hi - lo);
+    var seaLvl = st.seaLvl, sinv = st.sinv;
     for (k = 0; k < total; k++) hgt[k] = 0.5 + (hgt[k] - seaLvl) * sinv;
     field.setSea(seaLvl, sinv);
   }
@@ -152,12 +156,11 @@ function buildFocusGeometry(p, pr, N) {
   var seaA = sea ? 0.5 : -1;
   var e = 0.9 * (Math.PI / 2) / N;                   /* 差分步长 ≈ 一格——比这更小
                                                         会采到网格表达不了的噪声 */
-  var sig = 0, below = 0;
+  var sig = 0, below = st.below;   /* ★ 水面占比 = 固定采样的统计（网格无关） */
   for (k = 0; k < total; k++) {
     var vx = dirs[k * 3], vy = dirs[k * 3 + 1], vz = dirs[k * 3 + 2];
     var h2 = hgt[k];
     sig += h2;
-    if (seaA > 0 && h2 < seaA) below++;
     var disp = h2 > 0.5 ? amp * (h2 - 0.5) : 0;      /* 海面压平（水下不参与位移） */
     var rr = p.size * (1 + disp);
     pos[k * 3] = vx * rr; pos[k * 3 + 1] = vy * rr; pos[k * 3 + 2] = vz * rr;
@@ -201,7 +204,7 @@ function buildFocusGeometry(p, pr, N) {
   geo.setIndex(idx);
   return {
     geo: geo, amp: amp, field: field, N: N, verts: total, tris: idx.length / 3,
-    seaFrac: seaA > 0 ? below / total : 0,
+    seaFrac: seaA > 0 ? below / st.npix : 0,
     sig: +sig.toFixed(3), ms: Math.round(performance.now() - t0)
   };
 }
@@ -235,52 +238,150 @@ var FOCUS_VS = [
   "varying float vH;",
   "varying vec3 vWN;",       /* 世界空间法线：星球自转，光照得在物体空间之外算 */
   "varying vec3 vWDir;",     /* 世界空间径向：量坡度用 */
-  "varying vec3 vDir;",      /* 物体空间方向：纬度（极冠）只跟它有关 */
+  "varying vec3 vDir;",      /* 物体空间方向：细节噪声与纬度都挂在它上面（跟着地表转） */
+  "varying vec3 vNObj;",     /* 物体空间法线：细节扰动在物体空间做（零 RNG 的噪声也锚在这） */
+  "varying vec3 vWP;",       /* 世界空间位置：视线方向（水面高光要用） */
   "void main() {",
   "  vH = aH;",
   "  vDir = normalize(position);",
+  "  vNObj = normalize(normal);",
   "  vWN = normalize(mat3(modelMatrix) * normal);",
   "  vWDir = normalize(mat3(modelMatrix) * position);",
+  "  vec4 wp = modelMatrix * vec4(position, 1.0);",
+  "  vWP = wp.xyz;",
   "  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);",
   "}"
 ].join("\n");
 
+/* 四级细节噪声的频率（每弧度）：波长 3.0° / 1.06° / 0.40° / 0.15°。
+ * 前两级进高程（几何 N=64 表达不了），后两级进反照率与法线（近景真正的「质感」）。 */
+var FS_F1 = 120, FS_F2 = 340, FS_F3 = 900, FS_F4 = 2400;
+
 var FOCUS_FS = [
   "uniform sampler2D uRamp;",
   "uniform vec3 uSunDir; uniform vec3 uSunCol; uniform vec3 uAmb;",
+  "uniform mat3 uModel3;",       /* 物体 → 世界（只取旋转部分）：把细节法线转回去受光 */
   "uniform float uSea; uniform float uSnowH; uniform float uCapFrac; uniform float uLava;",
-  "varying float vH; varying vec3 vWN; varying vec3 vWDir; varying vec3 vDir;",
+  "uniform float uHasSea; uniform float uDetailK; uniform float uMottK;",
+  "uniform float uBumpK; uniform float uWaveK; uniform float uSpecK; uniform float uFresK;",
+  "varying float vH;",
+  "varying vec3 vWN; varying vec3 vWDir; varying vec3 vDir; varying vec3 vNObj; varying vec3 vWP;",
+  "",
+  "/* ★ v0.18：逐像素细节。h31/vn3 与 CPU 侧 _ch31/_cvn3 同族（同一套哈希常数与",
+  "   平滑插值）；它只吃坐标，**零随机流** —— 主序列一格不碰。 */",
+  "float h31(vec3 p) {",
+  "  vec3 q = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3)) * 17.0;",
+  "  return fract(q.x * q.y * q.z * (q.x + q.y + q.z));",
+  "}",
+  "float vn3(vec3 x) {",
+  "  vec3 i = floor(x), f = x - i;",
+  "  f = f * f * (3.0 - 2.0 * f);",
+  "  return mix(mix(mix(h31(i), h31(i + vec3(1.0, 0.0, 0.0)), f.x),",
+  "                 mix(h31(i + vec3(0.0, 1.0, 0.0)), h31(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),",
+  "             mix(mix(h31(i + vec3(0.0, 0.0, 1.0)), h31(i + vec3(1.0, 0.0, 1.0)), f.x),",
+  "                 mix(h31(i + vec3(0.0, 1.0, 1.0)), h31(i + vec3(1.0, 1.0, 1.0)), f.x), f.y), f.z);",
+  "}",
+  "/* 带限：某一级的波长缩到接近一个像素时把它收掉 —— 贴图有 mipmap，程序化噪声",
+  "   只能自己算 LOD。没有这一步，拉远之后高频细节就是一片闪烁的噪点。 */",
+  "float bandAA(float f, float fd) {",
+  "  return clamp((6.2831853 / f / max(fd, 1e-6) - 1.6) / 1.6, 0.0, 1.0);",
+  "}",
+  "",
   "void main() {",
-  "  /* 色带：与贴图同一条（先 S 曲线拉伸，与 buildTerrainMaps 的取色口径一致） */",
-  "  float hc = clamp(0.5 + (clamp(vH, 0.0, 1.0) - 0.5) * 1.55, 0.0, 1.0);",
+  "  vec3 d = normalize(vDir);",
+  "  vec3 nO = normalize(vNObj);",
+  "  vec3 wn = normalize(vWN);",
+  "  vec3 V = normalize(cameraPosition - vWP);",
+  "",
+  "  /* ① 像素在方向上的足迹 → 四级细节（每级各自带限） */",
+  "  float fd = max(length(dFdx(d)), length(dFdy(d)));",
+  "  vec3 o1 = vec3(2.7, 8.1, 4.3), o2 = vec3(6.1, 1.7, 9.7);",
+  "  vec3 o3 = vec3(3.3, 5.9, 1.1), o4 = vec3(8.7, 2.3, 6.5);",
+  "  float a1 = bandAA(120.0, fd), a2 = bandAA(340.0, fd);",
+  "  float a3 = bandAA(900.0, fd), a4 = bandAA(2400.0, fd);",
+  "  float n1 = vn3(d * 120.0 + o1), n2 = vn3(d * 340.0 + o2);",
+  "  float n3 = vn3(d * 900.0 + o3), n4 = vn3(d * 2400.0 + o4);",
+  "",
+  "  /* ② 高程细节：只让低频两级参与（动的是等高线的位置）。贴岸处压到 35% ——",
+  "     细节不能把海陆判据挪走几像素，否则「白环说可建、点下去说海面」会回来。 */",
+  "  float coastGuard = uHasSea * (1.0 - smoothstep(0.02, 0.10, abs(vH - uSea)));",
+  "  float hDet = uDetailK * (a1 * 0.62 * (n1 - 0.5) + a2 * 0.38 * (n2 - 0.5));",
+  "  hDet *= 1.0 - 0.65 * coastGuard;",
+  "  float hF = clamp(vH + hDet, 0.0, 1.0);",
+  "",
+  "  /* ③ 水陆分界：连续量等值线 + 像素宽过渡（下限 1e-5 是 C 路线契约③） */",
+  "  float fw = max(fwidth(hF) * 1.2, 1e-5);",
+  "  float wMask = uHasSea * (1.0 - smoothstep(uSea - fw, uSea + fw, hF));",
+  "  float wDepth = 0.0;",
+  "",
+  "  /* ④ 色带（与贴图管线同一张表、同一 S 曲线） */",
+  "  float hc = clamp(0.5 + (hF - 0.5) * 1.55, 0.0, 1.0);",
   "  vec3 base = texture2D(uRamp, vec2(hc, 0.5)).rgb;",
-  "  /* 水下吸收（与贴图同一公式）—— 浅海亮、深海暗 */",
-  "  if (uSea > 0.0 && vH < uSea) {",
-  "    float dep = clamp((uSea - vH) / 0.30, 0.0, 1.0);",
-  "    base *= vec3(1.0 - 0.35 * dep, 1.0 - 0.22 * dep, 1.0 - 0.05 * dep);",
+  "",
+  "  /* ⑤ 海洋：与 42-terrain v0.17 逐项同口径（拍岸浅滩 / 陆架 / 深海吸收）。",
+  "     ★ v0.17 那轮只修了贴图管线，聚焦档一直还是旧公式 (uSea−h)/0.30 ——",
+  "     在 0.30 水深就饱和，整片海是一块死蓝。 */",
+  "  if (wMask > 0.002) {",
+  "    wDepth = max(uSea - hF, 0.0);",
+  "    float sh = 1.0 - smoothstep(0.0, 0.055, wDepth);",
+  "    float dp = sqrt(clamp(wDepth / 0.45, 0.0, 1.0));",
+  "    base *= vec3(1.0 - 0.46 * dp, 1.0 - 0.30 * dp, 1.0 - 0.08 * dp);",
+  "    base += (vec3(0.345, 0.698, 0.675) - base) * (sh * sh * 0.55 * wMask);",
   "  }",
-  "  /* 雪线 + 极冠（与贴图同一公式；边界取自连续高度/纬度，天然抗锯齿） */",
+  "",
+  "  /* ⑥ 雪线 + 极冠（同一公式；用 hF ⇒ 边界比顶点插值锐一档） */",
   "  if (uSnowH < 1.0) {",
-  "    float t = clamp((vH - uSnowH) / max(0.06, 1.0 - uSnowH), 0.0, 1.0);",
+  "    float t = clamp((hF - uSnowH) / max(0.06, 1.0 - uSnowH), 0.0, 1.0);",
   "    base = mix(base, vec3(0.96, 0.97, 0.99), t * 0.9);",
   "  }",
   "  if (uCapFrac > 0.0) {",
-  "    float latL = abs(asin(clamp(vDir.y, -1.0, 1.0))) / 1.5707963;",
+  "    float latL = abs(asin(clamp(d.y, -1.0, 1.0))) / 1.5707963;",
   "    float w = clamp((latL - (1.0 - uCapFrac)) / max(0.06, uCapFrac * 0.55), 0.0, 1.0);",
   "    base = mix(base, vec3(0.99, 0.99, 1.0), w * w);",
   "  }",
-  "  /* 坡度暗化：地形可读性（潮汐锁定行星日照面几乎无影，纯光照会「看起来是平的」） */",
-  "  vec3 wn = normalize(vWN);",
+  "",
+  "  /* ⑦ 反照率斑驳：细两级直接乘在颜色上（色带对 h 的响应太弱，走色带看不见）。",
+  "     水面只要一点点 —— 平的水面长出颗粒感会显脏。 */",
+  "  float mott = a3 * (n3 - 0.5) * 1.32 + a4 * (n4 - 0.5) * 0.68;",
+  "  base *= 1.0 + uMottK * mott * (1.0 - 0.72 * wMask);",
+  "",
+  "  /* ⑧ 细节法线：物体空间求切向梯度，再用 uModel3 转回世界 ——",
+  "     山脊与波纹因此由**真实光照**塑形（立体感的主力），而不是烘死在颜色里。",
+  "     水面上同一份梯度当波纹用（幅度大得多），海面才有碎浪与耀斑。 */",
+  "  vec3 tO = normalize(cross(nO, vec3(0.0, 1.0, 0.0)) + vec3(1e-4, 0.0, 0.0));",
+  "  vec3 bO = cross(nO, tO);",
+  "  float e = 0.55 / 900.0;",
+  "  float g1 = vn3((d + tO * e) * 900.0 + o3) - vn3((d - tO * e) * 900.0 + o3);",
+  "  float g2 = vn3((d + bO * e) * 900.0 + o3) - vn3((d - bO * e) * 900.0 + o3);",
+  "  nO = normalize(nO - (tO * g1 + bO * g2) * (uBumpK + uWaveK * wMask) * a3);",
+  "  wn = normalize(uModel3 * nO);",
+  "",
+  "  /* ⑨ 坡度暗化：地形可读性（潮汐锁定行星日照面几乎无影，纯光照会「看起来是平的」） */",
   "  float slope = 1.0 - max(dot(wn, normalize(vWDir)), 0.0);",
   "  base *= 1.0 - clamp(slope * 1.6, 0.0, 0.28);",
-  "  /* 光照：真实恒星方向（受光量 = 物理量） */",
-  "  float d1 = max(dot(wn, uSunDir), 0.0);",
-  "  vec3 col = base * (uAmb + uSunCol * d1);",
-  "  /* 熔岩自发光：只在最高处透出来（裂缝），与贴图 emissiveMap 同一口径 */",
+  "",
+  "  /* ⑩ 光照：真实恒星方向（受光量 = 物理量） */",
+  "  vec3 L = normalize(uSunDir);",
+  "  float dl = max(dot(wn, L), 0.0);",
+  "  vec3 col = base * (uAmb + uSunCol * dl);",
+  "",
+  "  /* ⑪ 海洋的「水感」：太阳耀斑 + 掠射菲涅尔。这两步才是「像不像水」的关键 ——",
+  "     没有高光通道的水面（Lambert 时代）永远是一片哑光蓝。 */",
+  "  if (wMask > 0.002) {",
+  "    vec3 Hv = normalize(L + V);",
+  "    float sp = pow(max(dot(wn, Hv), 0.0), 110.0);",
+  "    float fres = pow(1.0 - max(dot(wn, V), 0.0), 5.0);",
+  "    col += uSunCol * (sp * uSpecK * wMask);",
+  "    col = mix(col, uSunCol * 0.40 + uAmb * 0.85,",
+  "      clamp(fres * uFresK, 0.0, 0.80) * wMask * (1.0 - 0.5 * clamp(wDepth / 0.45, 0.0, 1.0)));",
+  "  }",
+  "",
+  "  /* ⑫ 熔岩自发光：只在最高处透出来（裂缝），与贴图 emissiveMap 同一口径 */",
   "  if (uLava > 0.5) {",
-  "    float lit = clamp((vH - 0.80) / 0.20, 0.0, 1.0);",
+  "    float lit = clamp((hF - 0.80) / 0.20, 0.0, 1.0);",
   "    col += vec3(1.0, 0.62, 0.26) * lit * lit * 0.85;",
   "  }",
+  "",
   "  gl_FragColor = vec4(col, 1.0);",
   "}"
 ].join("\n");
@@ -393,21 +494,81 @@ function planetCloudy(p) {
   return p.atmo >= 0.40 && p.bulk === "rock" && p.tempSurf < 700 && p.tempSurf > 150;
 }
 
+/* ★ v0.18 细节强度（全部按 relief 缩放：被大气磨平的世界不该有刀劈一般的颗粒）。
+ * 参考值：relief 0.70（薄曙 III）→ 高程细节 ±0.021、斑驳 ±14%、法线切向 ~0.19。 */
+var FS_DETAIL_K = 0.042;      /* 高程细节幅度（h 单位） */
+var FS_MOTT_K = 0.20;         /* 反照率斑驳幅度 */
+var FS_BUMP_K = 0.62;         /* 陆地细节法线的切向斜率 */
+var FS_WAVE_K = 1.05;         /* 水面波纹法线（同一份梯度，幅度大得多） */
+var FS_SPEC_K = 1.30;         /* 太阳耀斑强度 */
+var FS_FRES_K = 1.15;         /* 掠射菲涅尔强度 */
+
+/* 聚焦档云壳的不透明度。★ 全景档的云在聚焦时会淡到 0.30（50-scene 的
+ * 「聚焦 = 沉浸观察地表」），但这层云壳是 v0.12.3 才加的，当时漏了同一处理 ——
+ * uOpacity 一直挂在 0.72，等于拿一层半透明白雾糊在要看的表面上。对齐到同一档。 */
+var FOCUS_CLOUD_OP = 0.27;
+
+/* ★ v0.18：聚焦网格的方案。默认 HEALPix（等面积采样 + 分层 LOD，见 47）；
+ * 保留立方球以便 A/B 对照（__game.setFocusMesh("cube" | "healpix")）。 */
+var FOCUS_MESH_KIND = "healpix";
+var FOCUS_LOD_HOLD_MS = 500;      /* 换档的最小间隔：贴着阈值来回缩会一直重建 */
+
+/* 屏幕「每弧度多少像素」—— LOD 选档的输入（相机到最近表面点的距离） */
+function focusPxPerRad(p) {
+  var d = Math.max(0.05, orbit.radius - p.size);
+  return (window.innerHeight / 2) / (Math.tan(camera.fov * Math.PI / 360) * d);
+}
+function focusNsideFor(p) {
+  return FOCUS_MESH_KIND === "healpix" ? hpPickNside(focusPxPerRad(p)) : FOCUS_N;
+}
+function focusBuildGeom(p, pr, nside) {
+  return FOCUS_MESH_KIND === "healpix"
+    ? buildHealpixGeometry(p, pr, nside)
+    : buildFocusGeometry(p, pr, FOCUS_N);
+}
+/* 只换几何（档位变了）：材质 / 云壳 / 城市都留着 —— 城市数据是唯一真值源 */
+function rebuildFocusGeom(p) {
+  var cs = p._cs;
+  if (!cs) return null;
+  var pr = terrainParams(p);
+  var g = focusBuildGeom(p, pr, focusNsideFor(p));
+  if (cs.mesh.geometry) cs.mesh.geometry.dispose();
+  cs.mesh.geometry = g.geo;
+  cs.nside = g.nside; cs.N = g.N; cs.verts = g.verts; cs.tris = g.tris;
+  cs.ms = g.ms; cs.seaFrac = g.seaFrac; cs.sig = g.sig;
+  cs.field = g.field; cs.amp = g.amp; cs.sea = pr.sea ? 0.5 : -1;
+  cs.switchedAt = performance.now();
+  syncCityMeshes(p);
+  return cs;
+}
+
 function ensureFocusSurface(p) {
   if (!p || p._cs || !isSolidPlanet(p)) return p ? p._cs || null : null;
   var pr = terrainParams(p);
-  var g = buildFocusGeometry(p, pr, FOCUS_N);
+  var g = focusBuildGeom(p, pr, focusNsideFor(p));
+  var rel = clamp(pr.relief, 0.3, 1.5);
   var mat = new THREE.ShaderMaterial({
     uniforms: {
       uRamp: { value: focusRampTex(pr.prof) },
       uSunDir: { value: new THREE.Vector3(1, 0, 0) },
       uSunCol: { value: new THREE.Vector3(1, 1, 1) },
       uAmb: { value: new THREE.Vector3(0.34, 0.38, 0.46) },
+      uModel3: { value: new THREE.Matrix3() },
       uSea: { value: pr.sea ? 0.5 : -1 },
+      uHasSea: { value: pr.sea ? 1 : 0 },
       uSnowH: { value: pr.snowH },
       uCapFrac: { value: pr.capFrac },
-      uLava: { value: pr.lava ? 1 : 0 }
+      uLava: { value: pr.lava ? 1 : 0 },
+      uDetailK: { value: FS_DETAIL_K * rel },
+      uMottK: { value: FS_MOTT_K * clamp(rel, 0.45, 1.4) },
+      uBumpK: { value: FS_BUMP_K * rel },
+      uWaveK: { value: FS_WAVE_K * clamp(rel, 0.5, 1.2) },
+      uSpecK: { value: FS_SPEC_K },
+      uFresK: { value: FS_FRES_K }
     },
+    /* 片元里 dFdx/fwidth 求像素足迹（细节带限 + 等值线抗锯齿）。
+     * WebGL2 里导数是核心功能，WebGL1 下 three 会按这个开关插扩展声明。 */
+    extensions: { derivatives: true },
     vertexShader: FOCUS_VS,
     fragmentShader: FOCUS_FS
   });
@@ -423,7 +584,7 @@ function ensureFocusSurface(p) {
         uSunCol: { value: new THREE.Vector3(1, 1, 1) },
         uTint: { value: rawColor(p.type.color).lerp(new THREE.Color(1, 1, 1), 0.82) },
         uCover: { value: clamp(0.82 - 0.22 * clamp(p.atmo, 0, 1), 0.54, 0.82) },
-        uOpacity: { value: 0.72 }
+        uOpacity: { value: FOCUS_CLOUD_OP }
       },
       vertexShader: FOCUS_CLOUD_VS,
       fragmentShader: FOCUS_CLOUD_FS,
@@ -439,9 +600,11 @@ function ensureFocusSurface(p) {
   p._group.add(group);
   p._cs = {
     group: group, mesh: mesh, mat: mat, cloud: cloud, cloudMat: cloudMat,
+    kind: FOCUS_MESH_KIND, nside: g.nside || 0,
     N: g.N, verts: g.verts, tris: g.tris, ms: g.ms, seaFrac: g.seaFrac, sig: g.sig,
     /* ★ v0.13：连续场 + 位移幅度 + 海平面 —— 聚落系统（46）的就地查询口 */
-    field: g.field, amp: g.amp, sea: pr.sea ? 0.5 : -1
+    field: g.field, amp: g.amp, sea: pr.sea ? 0.5 : -1,
+    switchedAt: 0
   };
   /* ★ v0.13：重建后城市网格自愈（城市数据是唯一真值源，几何是派生） */
   syncCityMeshes(p);
@@ -452,6 +615,8 @@ function ensureFocusSurface(p) {
 var CS_SUN_K = 1.02;
 var _csWhite = new THREE.Color(1, 1, 1);
 var _csSun = new THREE.Color();
+var _csM4 = new THREE.Matrix4();               /* ★ v0.18：物体→世界（取旋转部分） */
+var _csM3 = new THREE.Matrix3();
 
 /* 每帧一处裁决：聚焦谁，谁换连续地表。三件事：
  *   ① 首次聚焦 → 现场构建（缓存，第二次进入零延迟）
@@ -477,6 +642,24 @@ function syncFocusSurface() {
     var L = Math.sqrt(gp.x * gp.x + gp.y * gp.y + gp.z * gp.z) || 1;
     var ux = -gp.x / L, uy = -gp.y / L, uz = -gp.z / L;
     cs.mat.uniforms.uSunDir.value.set(ux, uy, uz);
+    /* ★ v0.18：细节法线在**物体空间**求（零 RNG 的噪声锚在地表上，不随世界转），
+     * 再乘这一份「物体 → 世界」的旋转回去受光。用 matrixWorld 的旋转部分，
+     * 与几何用的是同一份变换 —— 不会出现受光方向与地表错开一帧。 */
+    p._group.updateMatrixWorld();
+    _csM4.copy(p._group.matrixWorld);
+    _csM3.setFromMatrix4(_csM4);
+    cs.mat.uniforms.uModel3.value.copy(_csM3);
+
+    /* ★ v0.18 LOD：HEALPix 的层级第一次真正派上用场 —— 相机拉近（或拉远）跨过
+     * 档位阈值就换 nside 重建，单元的屏幕尺寸因此始终压在 ~9px 上下，不会像
+     * 固定 N 那样「拉得越近越糊」。两道闸门：档位真的变了 + 距上次换档 > 500ms
+     * （否则缩放在阈值附近抖一下就会一直重建 —— 重建是同步的，会卡）。 */
+    if (FOCUS_MESH_KIND === "healpix" && cs.nside) {
+      var wantN = hpPickNside(focusPxPerRad(p));
+      if (wantN !== cs.nside && (performance.now() - (cs.switchedAt || 0)) > FOCUS_LOD_HOLD_MS) {
+        rebuildFocusGeom(p);
+      }
+    }
     /* 无分配：setHex 会走色彩管理，convertLinearToSRGB 还原成「raw sRGB」
      * —— 与 40-textures.rawColor 同一口径（纯 ShaderMaterial 直写输出） */
     _csSun.setHex(st.color).convertLinearToSRGB().lerp(_csWhite, 0.55).multiplyScalar(CS_SUN_K);
