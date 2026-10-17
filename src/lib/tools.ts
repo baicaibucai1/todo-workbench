@@ -255,6 +255,21 @@ const BUILTIN_TOOLS: ToolManifest[] = [
   // 所以它搬去了 tests/fixtures/gomoku/（2026-09-24）：不进工具包、不进设置页，
   // 但契约测试照跑（npm run gomoku:test，59 项断言把标准逐条钉死）。
   // 标准写在文档里会漂，钉在测试上才不会 —— 只是那份测试现在明确指向夹具目录。
+  {
+    // 读、改、存回 WPS 里的一份表格 / 文档。与「异常单号登记」那套台账推送
+    // 是两条路：那边是固定的台账整表替换，这边是任意绑定文件按格编辑。
+    id: "wpslink",
+    name: "WPS 绑定文件",
+    version: "0.3.0",
+    description:
+      "直连一张云端表格：粘贴表格链接 + AirScript 的 webhook / 脚本令牌，之后就在这里读、改、存回那张原表 —— 不复制、不经过知识库、不产生副本。表格按格编辑（可加行加列、删行），Ctrl+S 写回。也能绑定知识库里的表格或文档（那条路要账号登录态，保存走「新建 → 删旧 → 改名」）。",
+    icon: "file",
+    entry: "index.html",
+    dbVersion: 1,
+    author: "内置",
+    // 读写都会借用户的账号动知识库，所以必须声明（见 toolBridge 的 wps.* 一族）
+    capabilities: ["wps"],
+  },
 ];
 
 /** 内存中的已注册工具 */

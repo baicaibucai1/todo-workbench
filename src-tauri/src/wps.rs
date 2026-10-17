@@ -53,6 +53,7 @@ use zip::write::FileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 use crate::attachments::b64_decode;
+use crate::wps_cloud_plan::{cell_text, cloud_grid, plan_cloud_write, COLUMNS};
 
 const BASE_URL: &str = "https://zhishi.wps.cn";
 const API_PREFIX: &str = "/kwiki/api/v1/skills_hub";
@@ -60,28 +61,6 @@ const API_PREFIX: &str = "/kwiki/api/v1/skills_hub";
 const CLI_VER: &str = "2.0.1";
 const TIMEOUT: Duration = Duration::from_secs(120);
 
-/// 台账列：左边是 SQLite 列名，右边是在线表格里的表头（顺序即列顺序）。
-///
-/// ⚠️ 与 `src/lib/kwiki.ts` 的 COLUMNS 是**同一份约定的两个拷贝** ——
-/// 改一处必须改另一处，否则推上去的表头和拉回来的映射会对不上。
-/// 之所以容忍这份重复：Rust 侧不该去 import 前端，而两侧的解析逻辑
-/// （状态派生、键值比对）又必须完全一致。
-const COLUMNS: &[(&str, &str)] = &[
-    ("order_sn", "订单号"),
-    ("tracking_no", "快递单号"),
-    ("courier", "快递公司"),
-    ("shipped_at", "发货时间"),
-    ("store", "店铺"),
-    ("category", "情况"),
-    ("title", "详细描述"),
-    ("handling", "处理方式"),
-    ("result", "结果"),
-    ("settled", "结账"),
-    ("_status", "当前状态"),
-    ("note", "处理情况"),
-    ("created_at", "登记时间"),
-    ("updated_at", "更新时间"),
-];
 
 /* ------------------------------------------------------------------ */
 /* 命令的出入参                                                        */
@@ -435,6 +414,39 @@ async fn rename(token: &str, kuid: &str, title: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 改名，失败时重试几次。
+///
+/// 为什么要重试：**删除只是进回收站，名字的释放有延迟**。实测「上传同名 →
+/// 删旧 → 立刻改回原名」偶尔会回 `400408003 文件名冲突`（2026-10-17 用户现场），
+/// 隔一秒再改就成功了。重试比"先 sleep 固定时间"稳：多数情况第一次就过。
+async fn rename_retry(token: &str, kuid: &str, title: &str, tries: usize) -> Result<(), String> {
+    let mut last = String::new();
+    for i in 0..tries.max(1) {
+        if i > 0 {
+            let _ = tauri::async_runtime::spawn_blocking(|| {
+                std::thread::sleep(Duration::from_millis(600))
+            })
+            .await;
+        }
+        match rename(token, kuid, title).await {
+            Ok(()) => return Ok(()),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
+/// 给"编辑保存"用的唯一后缀：上传不能覆盖，也不该跟线上那份同名
+/// （同名会被服务端改成 `xxx(1)`，后面改名就多一层不确定性）。
+fn edit_stamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{ms:x}")
+}
+
 /* ------------------------------------------------------------------ */
 /* 推送：工作台 → 在线表格                                             */
 /* ------------------------------------------------------------------ */
@@ -462,7 +474,7 @@ pub async fn wps_push(
             "新表已上传，但旧表没能删掉（{e}）—— 知识库里现在有两份表，请手动删掉旧的那份「{title}」"
         ));
     }
-    if let Err(e) = rename(&token, &new_kuid, &title).await {
+    if let Err(e) = rename_retry(&token, &new_kuid, &title, 3).await {
         return Err(format!(
             "新表已上传、旧表已删，但改名没成（{e}）—— 它在知识库里叫「{title}.xlsx」，手动改回来即可"
         ));
@@ -517,6 +529,37 @@ pub async fn wps_pull(token: String, space_kuid: String, title: String) -> Resul
 /// ⚠️ **一整行要一个 `<row>` 包住这一行所有 `<c>`**。第一版命令行脚本就是
 /// 给每个单元格各开一行写的，表被拉成对角线（A1 在 row1、B2 在 row2……）。
 fn build_xlsx(template: &[u8], rows: &[JsonMap<String, Json>]) -> Result<Vec<u8>, String> {
+    // 台账的表头就是 COLUMNS 的中文名 —— 转成"通用表格"的形状后走同一条重写逻辑
+    let header: Vec<String> = COLUMNS.iter().map(|(_, h)| (*h).to_string()).collect();
+    let grid: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            COLUMNS
+                .iter()
+                .map(|(c, _)| r.get(*c).map(cell_text).unwrap_or_default())
+                .collect()
+        })
+        .collect();
+    rewrite_sheet(template, &header, &grid)
+}
+
+/// 把任意表头 + 数据行写进模板的 sheetData（inlineStr，不依赖 sharedStrings）。
+///
+/// 这是 `wpslink` 用的那条：表头来自用户绑定的那张表本身，不是台账的 COLUMNS。
+/// 包结构仍然复用模板 —— 理由与 `build_xlsx` 相同（自己拼的包 WPS 打不开）。
+fn build_sheet(
+    template: &[u8],
+    header: &[String],
+    rows: &[Vec<String>],
+) -> Result<Vec<u8>, String> {
+    rewrite_sheet(template, header, rows)
+}
+
+fn rewrite_sheet(
+    template: &[u8],
+    header: &[String],
+    rows: &[Vec<String>],
+) -> Result<Vec<u8>, String> {
     let mut zin = ZipArchive::new(Cursor::new(template))
         .map_err(|e| format!("模板不是合格的 xlsx（{e}）"))?;
     let target = (0..zin.len())
@@ -537,20 +580,20 @@ fn build_xlsx(template: &[u8], rows: &[JsonMap<String, Json>]) -> Result<Vec<u8>
     let mut body = String::new();
     // ⚠️ 单元格引用是**列字母 + 行号**（A1、B2……），只给列字母的话
     // r_attr_re（要求字母后跟数字）一个都匹配不上，整张表会被解析成空的。
-    let head: String = COLUMNS
+    let head: String = header
         .iter()
         .enumerate()
-        .map(|(j, (_, h))| cell(&format!("{}1", col_name(j)), h))
+        .map(|(j, h)| cell(&format!("{}1", col_name(j)), h))
         .collect();
     body.push_str(&format!("<row r=\"1\">{head}</row>"));
     for (i, row) in rows.iter().enumerate() {
         let r = i + 2;
-        let cells: String = COLUMNS
+        let cells: String = header
             .iter()
             .enumerate()
-            .map(|(j, (c, _))| {
-                let v = row.get(*c).map(cell_text).unwrap_or_default();
-                cell(&format!("{}{}", col_name(j), r), &v)
+            .map(|(j, _)| {
+                let v = row.get(j).map(String::as_str).unwrap_or("");
+                cell(&format!("{}{}", col_name(j), r), v)
             })
             .collect();
         body.push_str(&format!("<row r=\"{r}\">{cells}</row>"));
@@ -608,20 +651,6 @@ fn cell(reference: &str, value: &str) -> String {
     )
 }
 
-fn cell_text(v: &Json) -> String {
-    match v {
-        Json::String(s) => s.clone(),
-        Json::Number(n) => n.to_string(),
-        Json::Bool(b) => {
-            if *b {
-                "1".into()
-            } else {
-                String::new()
-            }
-        }
-        _ => String::new(),
-    }
-}
 
 /// 0 → "A"，25 → "Z"，26 → "AA"（与 Python 脚本的 col_name 同一套）。
 fn col_name(mut i: usize) -> String {
@@ -882,6 +911,885 @@ fn t_attr_re() -> &'static Regex {
 }
 
 /* ------------------------------------------------------------------ */
+/* 共享链接：kdocs 链接 → 文件 → 内容（只读）                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 这个分区的由来（2026-10-17）：用户丢来一条 `https://www.kdocs.cn/l/xxx`
+ * 的共享链接，问「能不能接进程序」。
+ *
+ * 摸出来的两条路，各走一半，拼起来才通：
+ *   1. **按链接取元数据**：`GET /api/v3/office/file/<link_id>` 匿名可读
+ *      （要带浏览器 UA，否则 403 userNotLogin）。返回 id / 名字 / 分享者 /
+ *      权限，**不是** skills_hub 那套 `{code,msg,data}` 信封，别拿 send() 解。
+ *   2. **取内容**：kdocs 的 `/download` 要 `wps_sid` 会话（浏览器登录态），
+ *      kwiki 令牌打不通；但 skills_hub 的 `file/import` 支持把**云文档
+ *      （含 sharefile）复制进知识库**，之后 download / content 都能用。
+ *
+ * 所以读取 = 复制进知识库 → 读 → 删临时副本。三步都不能省：
+ *   · 不复制就没法读（没有第二条不借浏览器的路）；
+ *   · 不删就在用户的知识库里堆垃圾（删除是进回收站，7 天可恢复）。
+ */
+
+/// kdocs 的「按 id 取文件信息」接口。`<id>` 既认分享 id 也认文件 id。
+const KDOCS_FILE_URL: &str = "https://www.kdocs.cn/api/v3/office/file";
+/// 匿名访问必须像浏览器。少了 UA 服务端当爬虫，直接回 403 userNotLogin
+/// （同一个链接带 UA 就 200 —— 这不是鉴权，是风控）。
+const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+/// 预览体积上限。再大就别塞进设置页了 —— base64 过 IPC 会明显卡，而且
+/// 表格预览本来也只显示前几百行。
+const LINK_MAX_BYTES: i64 = 32 * 1024 * 1024;
+
+#[derive(Debug, Serialize)]
+pub struct WpsLink {
+    /// 分享链接末尾那一段（`crkFlwR2In6z`）
+    pub link_id: String,
+    /// 文件 id（`574645831599`）。导入知识库时用它
+    pub file_id: String,
+    pub name: String,
+    /// sheet = 表格 / doc = 文档 / other = 认不出（不预览）
+    pub kind: String,
+    pub size: i64,
+    /// 分享者昵称
+    pub owner: String,
+    /// 链接给来访者的权限（read / write），服务端原话
+    pub permission: String,
+    /// 归属空间名（「我的云文档」这类）—— 让用户确认拿到的是哪一份
+    pub group_name: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WpsLinkContent {
+    pub name: String,
+    pub kind: String,
+    /// 表格：表头 + 数据行（与 parse_sheet 同一套解析）
+    pub header: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    /// 文档：抽出来的纯文本
+    pub text: String,
+    /// 过程说明（临时副本怎么处理的），直接显示给用户
+    pub note: String,
+}
+
+/// 从链接（或裸 id）里抠出分享 id。
+///
+/// 只认 ASCII 字母数字：kdocs 的分享 id 长这样；把 `/wiki/l/0s_320...`
+/// 这种知识库 kuid 混进来的话，宁可在这里报错，也别拿去请求后拿到
+/// 一句看不懂的 "参数不支持"。
+fn link_id_of(input: &str) -> Result<String, String> {
+    let raw = input.trim();
+    if raw.is_empty() {
+        return Err("先粘贴一个金山文档的分享链接（形如 https://www.kdocs.cn/l/xxxx）".into());
+    }
+    let path = raw.split(['?', '#']).next().unwrap_or(raw);
+    let seg = path
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .trim();
+    let ok = seg.len() >= 6 && seg.chars().all(|c| c.is_ascii_alphanumeric());
+    if !ok {
+        return Err(format!(
+            "从链接里看不出分享 id：「{}」—— 应该是 https://www.kdocs.cn/l/xxxx 这种",
+            clip(seg, 40)
+        ));
+    }
+    Ok(seg.to_string())
+}
+
+/// 按扩展名判定能不能预览。WPS 云文档的 "ksheet" / "otl" 是它自家的
+/// 后缀，xlsx / docx 是导出后的常见形态 —— 三种都认。
+fn kind_of(name: &str) -> &'static str {
+    let n = name.to_ascii_lowercase();
+    const SHEET: [&str; 5] = [".ksheet", ".xlsx", ".xls", ".et", ".ett"];
+    const DOC: [&str; 6] = [".otl", ".docx", ".doc", ".wps", ".wpt", ".md"];
+    if SHEET.iter().any(|e| n.ends_with(e)) {
+        "sheet"
+    } else if DOC.iter().any(|e| n.ends_with(e)) {
+        "doc"
+    } else {
+        "other"
+    }
+}
+
+/// 匿名取 kdocs 的 JSON。**没有信封**，HTTP 200 就是成功。
+async fn kdocs_file_json(link_id: &str) -> Result<Json, String> {
+    let url = format!("{KDOCS_FILE_URL}/{link_id}");
+    let resp = http()?
+        .get(&url)
+        .header("User-Agent", BROWSER_UA)
+        .header("Referer", format!("https://www.kdocs.cn/l/{link_id}"))
+        .send()
+        .await
+        .map_err(|e| format!("连不上金山文档：{e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| format!("读返回失败：{e}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "金山文档返回 {status}：{} —— 确认链接还在有效期内、没被取消分享",
+            clip(&text, 200)
+        ));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("返回不是 JSON（{e}）：{}", clip(&text, 200)))
+}
+
+/// 解析共享链接。**不需要登录** —— 这一步只读元数据，拿来先给用户看
+/// 「这条链接指向什么」。
+#[tauri::command]
+pub async fn wps_link_info(link: String) -> Result<WpsLink, String> {
+    let link_id = link_id_of(&link)?;
+    let v = kdocs_file_json(&link_id).await?;
+    let file = v
+        .get("file")
+        .ok_or("这个链接没解析出文件 —— 确认它还有效（没被取消分享）")?;
+    let name = str_field(file, "name").unwrap_or_else(|| "（没有名字）".into());
+    Ok(WpsLink {
+        link_id,
+        file_id: str_field(file, "id").unwrap_or_default(),
+        kind: kind_of(&name).to_string(),
+        name,
+        size: file.get("size").and_then(Json::as_i64).unwrap_or(0),
+        owner: file
+            .get("creator")
+            .and_then(|c| c.get("name"))
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_string(),
+        permission: v
+            .get("user")
+            .and_then(|u| u.get("permission"))
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_string(),
+        group_name: file
+            .get("attrs")
+            .and_then(|a| a.get("group_name"))
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_string(),
+    })
+}
+
+/// 读共享链接里的内容：复制进知识库 → 读 → 删临时副本。
+///
+/// `space_kuid` 只是**临时落点**，读完就删；不是让用户把文件搬进知识库。
+#[tauri::command]
+pub async fn wps_link_read(
+    token: String,
+    space_kuid: String,
+    link: String,
+) -> Result<WpsLinkContent, String> {
+    let info = wps_link_info(link).await?;
+    if info.file_id.is_empty() {
+        return Err("链接没解析出文件 id —— 这份分享可能只给了「查看网页」的权限".into());
+    }
+    if info.kind == "other" {
+        return Err(format!(
+            "「{}」既不是表格也不是文档，设置页里暂不预览这种文件",
+            info.name
+        ));
+    }
+    if info.size > LINK_MAX_BYTES {
+        return Err(format!(
+            "「{}」有 {} MB，超过预览上限（{} MB）—— 在 WPS 里直接看吧",
+            info.name,
+            info.size / 1024 / 1024,
+            LINK_MAX_BYTES / 1024 / 1024
+        ));
+    }
+
+    let temp = import_copy(&token, &space_kuid, &info.file_id).await?;
+
+    let mut note = String::new();
+    let outcome = read_temp(&token, &temp).await;
+    // 读失败也要删：留着它就是给用户的知识库添乱
+    match delete(&token, &temp.kuid).await {
+        Ok(_) => note.push_str("临时副本已删除（进知识库回收站，7 天内可恢复）"),
+        Err(e) => note.push_str(&format!(
+            "⚠️ 临时副本没删掉（{e}）—— 知识库里多了一份「{}」，请手动删",
+            temp.title
+        )),
+    }
+
+    let (header, rows, text) = outcome?;
+    Ok(WpsLinkContent {
+        name: info.name,
+        kind: info.kind,
+        header,
+        rows,
+        text,
+        note,
+    })
+}
+
+/// 读临时副本。优先走 `file/content`（智能文档只能这么读），
+/// 拿不到正文再下载原始包按 zip 条目分流。
+async fn read_temp(
+    token: &str,
+    file: &WpsFile,
+) -> Result<(Vec<String>, Vec<Vec<String>>, String), String> {
+    if let Ok(data) = get(token, "/skill/file/content", &[("kuid", file.kuid.as_str())]).await {
+        let text = data.get("content").and_then(Json::as_str).unwrap_or("");
+        if !text.trim().is_empty() {
+            return Ok((Vec::new(), Vec::new(), text.to_string()));
+        }
+    }
+
+    let raw = download(token, &file.kuid).await.map_err(|e| {
+        format!("{e} —— 智能文档（.otl）只能抽正文，正文还没同步好时请过一会儿再试")
+    })?;
+
+    if raw.starts_with(b"PK") {
+        if has_zip_entry(&raw, "xl/workbook.xml") {
+            let (header, rows) = parse_sheet(&raw)?;
+            return Ok((header, rows, String::new()));
+        }
+        if has_zip_entry(&raw, "word/document.xml") {
+            return Ok((Vec::new(), Vec::new(), docx_text(&raw)?));
+        }
+    }
+    Err("这个文件既不是 xlsx 也不是 docx —— 暂不支持在设置页里预览".into())
+}
+
+fn has_zip_entry(raw: &[u8], name: &str) -> bool {
+    ZipArchive::new(Cursor::new(raw))
+        .map(|z| z.file_names().any(|n| n == name))
+        .unwrap_or(false)
+}
+
+/// docx → 纯文本。只认 `<w:p>` 段落 + `<w:t>` 文本段，够「看内容」用。
+///
+/// 不解析表格/图片：设置页只是个预览窗口，正式编辑在 WPS 里做。
+fn docx_text(raw: &[u8]) -> Result<String, String> {
+    let mut z = ZipArchive::new(Cursor::new(raw)).map_err(|e| format!("docx 包坏了（{e}）"))?;
+    let mut xml = String::new();
+    z.by_name("word/document.xml")
+        .map_err(|e| format!("docx 里没有正文（{e}）"))?
+        .read_to_string(&mut xml)
+        .map_err(|e| format!("正文读不出来（{e}）"))?;
+
+    let mut out = String::new();
+    for para in xml.split("</w:p>") {
+        let mut line = String::new();
+        let mut rest = para;
+        while let Some(start) = rest.find("<w:t") {
+            let after = &rest[start..];
+            let Some(gt) = after.find('>') else { break };
+            let body = &after[gt + 1..];
+            if body.starts_with("/>") {
+                rest = &body[2..];
+                continue;
+            }
+            let Some(end) = body.find("</w:t>") else { break };
+            line.push_str(&xml_unescape(&body[..end]));
+            rest = &body[end + 6..];
+        }
+        let line = line.trim_end();
+        if !line.trim().is_empty() {
+            out.push_str(line);
+            out.push('\n');
+        }
+        if out.len() > 200_000 {
+            out.push_str("…（正文太长，只取前 20 万字）\n");
+            break;
+        }
+    }
+    if out.trim().is_empty() {
+        return Err("docx 里没抽到文字（可能是空文档，或正文都在图片里）".into());
+    }
+    Ok(out)
+}
+
+/* ------------------------------------------------------------------ */
+/* 云端表格直连（AirScript webhook）                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 为什么不走下载/上传，而走 AirScript。
+ *
+ * 用户要的是「直接对着自己那张云表格读写」—— 不是往知识库里再放一份。
+ * 但 WPS 对个人账号**没有**任何直接写云文档的开放接口（金山文档开放平台
+ * developer.kdocs.cn 只对企业资质开放，2026-10-13 查证）。个人号能用的
+ * 唯一一条路是 **AirScript 脚本令牌**：
+ *
+ *   表格里建一个脚本 → 脚本暴露 webhook → 外部 POST `{Context:{argv:…}}`
+ *   → 脚本在**那张表里**执行，读写它自己的单元格。
+ *
+ * 于是：
+ *   · 令牌/脚本都在用户自己手里，程序不碰账号密码；
+ *   · 不需要登录、不需要知识库、不产生任何副本；
+ *   · 代价是**一次性**在表里建个脚本（设置页给出现成代码，复制粘贴）。
+ *
+ * 协议（与设置页展示的脚本严格对应，改一边必须改另一边）：
+ *   ping      → {ok, sheet, sheets, rows, cols, header}
+ *   read      → {ok, rows: [[...]]}            整张表（A1 到最后有内容的格子）
+ *   write     → {ok}     argv.cols=[{col,values}], argv.clear=[{col,from,to}]
+ *   writeGrid → {ok, rows}              argv.rows 整张表覆盖（WPS 绑定文件用）
+ */
+const AIRSCRIPT_TIMEOUT: Duration = Duration::from_secs(90);
+
+#[derive(Debug, Serialize)]
+pub struct WpsCloudInfo {
+    /// 当前工作表名。推送/拉取时原样带回去，免得用户切了 sheet 就写错地方
+    pub sheet: String,
+    pub sheets: usize,
+    pub rows: usize,
+    pub cols: usize,
+    /// 第一行（表头），原样给界面看
+    pub header: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WpsCloudPush {
+    pub count: usize,
+    /// 写了几列（含补在末尾的新列）
+    pub columns: usize,
+    /// 末尾补了几列（表里原来没有的台账列）
+    pub appended: usize,
+    pub file_kuid: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WpsCloudSheet {
+    pub sheet: String,
+    pub header: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+}
+
+/// 把用户填的 webhook / 令牌先挡一道 —— 错了在这里说清楚，别等服务端回一句
+/// `404 page not found` 让人猜。
+fn cloud_args(webhook: &str, token: &str) -> Result<(String, String), String> {
+    let url = webhook.trim().to_string();
+    if !url.starts_with("https://") {
+        return Err("Webhook 要以 https:// 开头".into());
+    }
+    if !url.contains("kdocs.cn/api/v3/ide/file/") || !url.contains("/script/") {
+        return Err(
+            "Webhook 地址不对 —— 它长这样：https://www.kdocs.cn/api/v3/ide/file/<文件id>/script/<脚本id>/sync_task"
+                .into(),
+        );
+    }
+    if !url.ends_with("/sync_task") {
+        return Err("Webhook 要以 /sync_task 结尾 —— 在脚本的「更多」菜单里复制「脚本 webhook」".into());
+    }
+    let t = token.trim().to_string();
+    if t.is_empty() {
+        return Err("还没填 AirScript 令牌 —— 在脚本编辑器里点「脚本令牌」创建".into());
+    }
+    Ok((url, t))
+}
+
+/// POST 一次脚本。返回脚本里 `return` 出来的对象。
+async fn airscript_call(webhook: &str, token: &str, argv: Json) -> Result<Json, String> {
+    let (url, tok) = cloud_args(webhook, token)?;
+    let client = reqwest::Client::builder()
+        .timeout(AIRSCRIPT_TIMEOUT)
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+    let resp = client
+        .post(&url)
+        .header("AirScript-Token", tok)
+        .json(&json!({ "Context": { "argv": argv } }))
+        .send()
+        .await
+        .map_err(|e| format!("连不上金山文档：{e} —— 检查网络/代理"))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| format!("读返回失败：{e}"))?;
+    if !status.is_success() {
+        let hint = match status.as_u16() {
+            401 | 403 => "（令牌不对或过期了 —— 重新建一个脚本令牌再填进来）",
+            404 => "（webhook 找不到这个脚本 —— 脚本可能被删了，或者链接复制少了一段）",
+            _ => "",
+        };
+        return Err(format!("AirScript 返回 {status}：{}{}", clip(&text, 300), hint));
+    }
+    let v: Json = serde_json::from_str(&text)
+        .map_err(|e| format!("AirScript 返回的不是 JSON（{e}）：{}", clip(&text, 300)))?;
+    if let Some(err) = v.get("error").and_then(Json::as_str) {
+        if !err.trim().is_empty() {
+            return Err(format!("脚本报错：{err}"));
+        }
+    }
+    let mut result = v
+        .get("data")
+        .and_then(|d| d.get("result"))
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "脚本没返回结果 —— 确认脚本最后有 return，且没有语法错误：{}",
+                clip(&text, 300)
+            )
+        })?;
+    // 兼容用户把返回值 JSON.stringify 了的情况（网上教程常这么写）
+    if let Json::String(s) = &result {
+        if s.trim_start().starts_with('{') {
+            if let Ok(parsed) = serde_json::from_str::<Json>(s) {
+                result = parsed;
+            }
+        }
+    }
+    if result.get("ok").and_then(Json::as_bool) == Some(false) {
+        return Err(format!(
+            "脚本说：{}",
+            result
+                .get("error")
+                .and_then(Json::as_str)
+                .unwrap_or("执行失败（脚本没给原因）")
+        ));
+    }
+    Ok(result)
+}
+
+
+fn cloud_str_array(v: Option<&Json>) -> Vec<String> {
+    v.and_then(Json::as_array)
+        .map(|a| a.iter().map(cell_text).collect())
+        .unwrap_or_default()
+}
+
+/// 试一下：脚本通不通、是哪张 sheet、表头长什么样。
+#[tauri::command]
+pub async fn wps_cloud_probe(webhook: String, token: String) -> Result<WpsCloudInfo, String> {
+    let r = airscript_call(&webhook, &token, json!({ "op": "ping" })).await?;
+    Ok(WpsCloudInfo {
+        sheet: str_field(&r, "sheet").unwrap_or_default(),
+        sheets: r.get("sheets").and_then(Json::as_u64).unwrap_or(1) as usize,
+        rows: r.get("rows").and_then(Json::as_u64).unwrap_or(0) as usize,
+        cols: r.get("cols").and_then(Json::as_u64).unwrap_or(0) as usize,
+        header: cloud_str_array(r.get("header")),
+    })
+}
+
+/// 整表读一遍（原样二维数组，不认列名）—— 「WPS 绑定文件」用。
+#[tauri::command]
+pub async fn wps_cloud_sheet_read(
+    webhook: String,
+    token: String,
+    sheet: Option<String>,
+) -> Result<WpsCloudSheet, String> {
+    let argv = json!({ "op": "read", "sheet": sheet.unwrap_or_default() });
+    let r = airscript_call(&webhook, &token, argv).await?;
+    let grid = cloud_grid(&r);
+    let header = grid.first().cloned().unwrap_or_default();
+    let rows = if grid.len() > 1 { grid[1..].to_vec() } else { Vec::new() };
+    Ok(WpsCloudSheet {
+        sheet: str_field(&r, "sheet").unwrap_or_default(),
+        header,
+        rows,
+    })
+}
+
+/// 整表覆盖写（保留格式，只改值）—— 「WPS 绑定文件」用。
+///
+/// 这是**用户显式编辑整张表**的入口：表格编辑器里看到什么就写什么。
+/// 台账同步不走这里（它只写自己那几列，见 `wps_cloud_push`）。
+#[tauri::command]
+pub async fn wps_cloud_sheet_write(
+    webhook: String,
+    token: String,
+    sheet: Option<String>,
+    header: Vec<String>,
+    rows: Vec<Vec<String>>,
+) -> Result<usize, String> {
+    let mut grid: Vec<Json> = Vec::with_capacity(rows.len() + 1);
+    grid.push(Json::Array(
+        header.iter().map(|h| Json::String(h.clone())).collect(),
+    ));
+    for r in &rows {
+        grid.push(Json::Array(
+            r.iter().map(|c| Json::String(c.clone())).collect(),
+        ));
+    }
+    let argv = json!({
+        "op": "writeGrid",
+        "sheet": sheet.unwrap_or_default(),
+        "rows": Json::Array(grid),
+    });
+    airscript_call(&webhook, &token, argv).await?;
+    Ok(rows.len())
+}
+
+/// 拉取台账：整表读回来，按表头换成 SQLite 列名（与 `wps_pull` 同一套映射）。
+#[tauri::command]
+pub async fn wps_cloud_pull(
+    webhook: String,
+    token: String,
+    sheet: Option<String>,
+) -> Result<WpsPull, String> {
+    let argv = json!({ "op": "read", "sheet": sheet.unwrap_or_default() });
+    let r = airscript_call(&webhook, &token, argv).await?;
+    let grid = cloud_grid(&r);
+    if grid.is_empty() {
+        return Ok(WpsPull {
+            file_kuid: "cloud".into(),
+            header: Vec::new(),
+            rows: Vec::new(),
+        });
+    }
+    let header = grid[0].clone();
+    let colmap: std::collections::HashMap<&str, &str> =
+        COLUMNS.iter().map(|(c, h)| (*h, *c)).collect();
+    let mut rows = Vec::with_capacity(grid.len().saturating_sub(1));
+    for line in grid.iter().skip(1) {
+        // 整行全空的行直接跳过：表格底部常有一堆"看着空、其实有格式"的行
+        if line.iter().all(|c| c.trim().is_empty()) {
+            continue;
+        }
+        let mut m = JsonMap::new();
+        for (j, h) in header.iter().enumerate() {
+            if let Some(col) = colmap.get(h.trim()) {
+                m.insert(
+                    (*col).to_string(),
+                    Json::String(line.get(j).cloned().unwrap_or_default()),
+                );
+            }
+        }
+        rows.push(m);
+    }
+    Ok(WpsPull {
+        file_kuid: "cloud".into(),
+        header,
+        rows,
+    })
+}
+
+
+/// 推送台账：**只写台账那几列**，表里其它列（用户自己的备注/公式）不动。
+///
+/// 步骤：读一遍表头 → 按中文列名找列号 → 没有的列补在末尾 → 按列写值
+/// → 比新数据多的旧行清空。全程只碰这 14 列。
+#[tauri::command]
+pub async fn wps_cloud_push(
+    webhook: String,
+    token: String,
+    sheet: Option<String>,
+    rows: Vec<JsonMap<String, Json>>,
+) -> Result<WpsCloudPush, String> {
+    // 两次调用都要带 sheet，先收成一个 String 再 clone
+    let sheet = sheet.unwrap_or_default();
+    let argv = json!({ "op": "read", "sheet": sheet.clone() });
+    let r = airscript_call(&webhook, &token, argv).await?;
+    let grid = cloud_grid(&r);
+    let header: Vec<String> = grid.first().cloned().unwrap_or_default();
+    let old_rows = if grid.len() > 1 { grid.len() - 1 } else { 0 };
+
+    let (cols, clear, appended) = plan_cloud_write(&header, old_rows, &rows)?;
+
+    let argv = json!({
+        "op": "write",
+        "sheet": sheet,
+        "cols": cols,
+        "clear": clear,
+    });
+    airscript_call(&webhook, &token, argv).await?;
+    Ok(WpsCloudPush {
+        count: rows.len(),
+        columns: COLUMNS.len(),
+        appended,
+        file_kuid: "cloud".into(),
+    })
+}
+
+/* ------------------------------------------------------------------ */
+/* 绑定文件：读、改、存回知识库                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 复制一份云文档（含分享文件）进知识库，返回**新节点**。
+ *
+ * 导入接口只回知识库地址、不回 kuid，所以只能靠"导入前后 `file/list` 差集"
+ * 认人；列表有索引延迟，认不出来时重试几次。重试失败会留下没人认领的副本
+ * —— 错误文案里必须让用户去知识库看一眼。
+ */
+async fn import_copy(token: &str, space_kuid: &str, file_id: &str) -> Result<WpsFile, String> {
+    let before: Vec<String> = files_inner(token, space_kuid)
+        .await?
+        .into_iter()
+        .map(|f| f.kuid)
+        .collect();
+
+    post_json(
+        Some(token),
+        "/skill/file/import",
+        json!({
+            "kuid": space_kuid,
+            "action": "copy",
+            "file_ids": [file_id],
+        }),
+    )
+    .await
+    .map_err(|e| format!("复制到知识库失败：{e} —— 链接给的是只读权限时也要能复制，失败多为空间不对"))?;
+
+    let mut temp = files_inner(token, space_kuid)
+        .await?
+        .into_iter()
+        .find(|f| !before.contains(&f.kuid));
+    for _ in 0..5 {
+        if temp.is_some() {
+            break;
+        }
+        let _ = tauri::async_runtime::spawn_blocking(|| {
+            std::thread::sleep(std::time::Duration::from_millis(400))
+        })
+        .await;
+        temp = files_inner(token, space_kuid)
+            .await?
+            .into_iter()
+            .find(|f| !before.contains(&f.kuid));
+    }
+    temp.ok_or_else(|| {
+        "复制进知识库后没找到那份副本 —— 去知识库里看看是不是同名文件堆了一层".to_string()
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct WpsBinding {
+    pub kuid: String,
+    pub title: String,
+    /// 原始 doc_type（s / ksheet / w / o …）。保存时要靠它决定怎么写回
+    pub doc_type: String,
+    /// sheet / doc
+    pub kind: String,
+    /// 给界面看的说明（"这是副本，原文件不会变"）
+    pub note: String,
+}
+
+/// 把一条分享链接**导入知识库并返回可编辑的节点**（与只读预览不同：不删副本）。
+#[tauri::command]
+pub async fn wps_link_import(
+    token: String,
+    space_kuid: String,
+    link: String,
+) -> Result<WpsBinding, String> {
+    let info = wps_link_info(link).await?;
+    if info.file_id.is_empty() {
+        return Err("链接没解析出文件 id —— 这份分享可能只给了「查看网页」的权限".into());
+    }
+    if info.kind == "other" {
+        return Err(format!("「{}」既不是表格也不是文档，绑定不了", info.name));
+    }
+    let f = import_copy(&token, &space_kuid, &info.file_id).await?;
+    Ok(WpsBinding {
+        kind: kind_of_doc_type(&f.doc_type, &f.title).to_string(),
+        kuid: f.kuid,
+        title: f.title,
+        doc_type: f.doc_type,
+        note: format!(
+            "已把「{}」复制进知识库，之后编辑的是这份副本；原文件不会跟着变",
+            info.name
+        ),
+    })
+}
+
+/// 清单里的 doc_type 比扩展名可靠（`ksheet` / `otl` 这些没有扩展名）。
+fn kind_of_doc_type(doc_type: &str, title: &str) -> &'static str {
+    match doc_type {
+        "s" | "ksheet" | "xlsx" | "et" => "sheet",
+        "w" | "o" | "docx" | "otl" => "doc",
+        _ => kind_of(title),
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct WpsFileDoc {
+    pub kuid: String,
+    pub title: String,
+    pub kind: String,
+    pub doc_type: String,
+    /// 表格：表头 + 数据行
+    pub header: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    /// 文档：正文纯文本
+    pub text: String,
+}
+
+/// 读一份知识库文件（表格给表头 + 行，文档给正文）。
+#[tauri::command]
+pub async fn wps_file_read(
+    token: String,
+    kuid: String,
+    title: String,
+    doc_type: String,
+) -> Result<WpsFileDoc, String> {
+    let kind = kind_of_doc_type(&doc_type, &title);
+    if kind == "sheet" {
+        let raw = download(&token, &kuid).await?;
+        let (header, rows) = parse_sheet(&raw)?;
+        Ok(WpsFileDoc {
+            kuid,
+            title,
+            kind: kind.to_string(),
+            doc_type,
+            header,
+            rows,
+            text: String::new(),
+        })
+    } else {
+        let text = read_doc_text(&token, &kuid).await?;
+        Ok(WpsFileDoc {
+            kuid,
+            title,
+            kind: kind.to_string(),
+            doc_type,
+            header: Vec::new(),
+            rows: Vec::new(),
+            text,
+        })
+    }
+}
+
+/// 文档正文：优先 `file/content`（.otl 只能这么读），拿不到再按 docx 抽。
+async fn read_doc_text(token: &str, kuid: &str) -> Result<String, String> {
+    if let Ok(data) = get(token, "/skill/file/content", &[("kuid", kuid)]).await {
+        let text = data.get("content").and_then(Json::as_str).unwrap_or("");
+        if !text.trim().is_empty() {
+            return Ok(text.to_string());
+        }
+    }
+    let raw = download(token, kuid).await.map_err(|e| {
+        format!("{e} —— 智能文档（.otl）只能抽正文，正文还没同步好时请过一会儿再试")
+    })?;
+    if raw.starts_with(b"PK") && has_zip_entry(&raw, "word/document.xml") {
+        return docx_text(&raw);
+    }
+    Err("这份文档既不是 .docx 也不是 .otl，暂不支持编辑".into())
+}
+
+#[derive(Debug, Serialize)]
+pub struct WpsWriteResult {
+    /// 保存后节点 id **一定变了**（上传/转换都是新建），界面要拿它更新绑定
+    pub kuid: String,
+    pub title: String,
+    pub note: String,
+}
+
+/// 把编辑后的内容写回知识库：**新建 → 删旧 → 改名**（与推送同一套顺序）。
+///
+/// 三种文件三条路：
+///   · 表格：下载原表当模板，重写 sheetData（保留包结构），上传 .xlsx
+///   · docx：按纯文本拼一个最小 docx 包上传
+///   · .otl：`file/convert`（md → otl）新建，再删旧改名 —— 智能文档不能下载，
+///     也就没法原地改，只能用"重新生成一份"的方式替换
+#[tauri::command]
+pub async fn wps_file_write(
+    token: String,
+    space_kuid: String,
+    drive_id: String,
+    kuid: String,
+    title: String,
+    doc_type: String,
+    header: Vec<String>,
+    rows: Vec<Vec<String>>,
+    text: String,
+) -> Result<WpsWriteResult, String> {
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err("这份文件没有标题 —— 保存会把名字弄丢，先去 WPS 里改个名".into());
+    }
+    let kind = kind_of_doc_type(&doc_type, &title);
+
+    // 临时名：上传不能覆盖，同名还会被服务端加 (1)；用它避开这两层不确定性。
+    // 删旧 → 改名之间可能有个短暂的名字释放延迟（见 rename_retry 的注释）。
+    let tmp_title = format!("{title}__wbedit_{}", edit_stamp());
+
+    let (new_kuid, kind_note) = if kind == "sheet" {
+        let template = download(&token, &kuid).await?;
+        let xlsx = build_sheet(&template, &header, &rows)?;
+        let new = upload(&token, &drive_id, &format!("{tmp_title}.xlsx"), &xlsx).await?;
+        (new, String::new())
+    } else if doc_type == "o" || doc_type == "otl" {
+        let data = post_json(
+            Some(&token),
+            "/skill/file/convert",
+            json!({
+                "kuid": space_kuid,
+                "title": tmp_title.clone(),
+                "content": text,
+                "from": "md",
+                "to": "otl",
+            }),
+        )
+        .await?;
+        let new = data
+            .get("file_kuid")
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_string();
+        if new.is_empty() {
+            return Err(format!(
+                "转换接口没回新的节点 id：{}",
+                clip(&data.to_string(), 200)
+            ));
+        }
+        (new, "智能文档的正文要 1–2 分钟才同步完，WPS 里看到空白别急着再存一次".to_string())
+    } else {
+        let bytes = build_docx(&text)?;
+        let new = upload(&token, &drive_id, &format!("{tmp_title}.docx"), &bytes).await?;
+        (new, String::new())
+    };
+
+    // ★ 从这里开始**不再抛错**：内容已经在新节点上了，报错只会让界面
+    // 继续用旧 kuid（那份已经在回收站里）—— 越报越难收拾。失败降级成 note。
+    let mut notes: Vec<String> = Vec::new();
+    if let Err(e) = delete(&token, &kuid).await {
+        notes.push(format!(
+            "旧文件没删掉（{e}）—— 知识库里有新旧两份，请手动删旧的那份"
+        ));
+    }
+
+    let mut final_title = tmp_title.clone();
+    match rename_retry(&token, &new_kuid, &title, 5).await {
+        Ok(()) => final_title = title.clone(),
+        Err(e) => notes.push(format!(
+            "名字没能改回「{title}」（{e}）—— 它现在叫「{tmp_title}」，在 WPS 里手动改一下即可"
+        )),
+    }
+    if !kind_note.is_empty() {
+        notes.push(kind_note);
+    }
+    Ok(WpsWriteResult {
+        kuid: new_kuid,
+        title: final_title,
+        note: notes.join("；"),
+    })
+}
+
+/// 纯文本 → 最小 docx 包。只写正文段落，够"把文字存回去"用。
+fn build_docx(text: &str) -> Result<Vec<u8>, String> {
+    const CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    const RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+
+    let mut body = String::new();
+    for line in text.split('\n') {
+        body.push_str(&format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">{}</w:t></w:r></w:p>"#,
+            xml_escape(line)
+        ));
+    }
+    let doc = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>"#
+    );
+
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut z = ZipWriter::new(Cursor::new(&mut buf));
+        for (name, content) in [
+            ("[Content_Types].xml", CONTENT_TYPES),
+            ("_rels/.rels", RELS),
+            ("word/document.xml", doc.as_str()),
+        ] {
+            z.start_file(name, FileOptions::<()>::default())
+                .map_err(|e| format!("拼 docx 失败（{e}）"))?;
+            z.write_all(content.as_bytes())
+                .map_err(|e| format!("拼 docx 失败（{e}）"))?;
+        }
+        z.finish().map_err(|e| format!("封 docx 包失败（{e}）"))?;
+    }
+    Ok(buf)
+}
+
+/* ------------------------------------------------------------------ */
 /* 测试                                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -1058,5 +1966,101 @@ mod tests {
     fn cell_skips_empty_values() {
         assert_eq!(cell("A1", ""), "");
         assert!(cell("A1", "x").contains("t=\"inlineStr\""));
+    }
+
+    /* ---------------- 共享链接 ---------------- */
+
+    #[test]
+    fn link_id_accepts_common_forms() {
+        let want = "crkFlwR2In6z";
+        for input in [
+            "https://www.kdocs.cn/l/crkFlwR2In6z",
+            "https://www.kdocs.cn/l/crkFlwR2In6z/",
+            "https://www.kdocs.cn/l/crkFlwR2In6z?f=1",
+            "https://www.kdocs.cn/l/crkFlwR2In6z#anchor",
+            "  crkFlwR2In6z  ",
+        ] {
+            assert_eq!(link_id_of(input).unwrap(), want, "输入 {input}");
+        }
+    }
+
+    #[test]
+    fn link_id_rejects_junk() {
+        // 空、纯域名、中文 id 都要在本地拦下 —— 拿去做请求只会换回
+        // 一句看不懂的服务端错误
+        assert!(link_id_of("").is_err());
+        assert!(link_id_of("   ").is_err());
+        assert!(link_id_of("https://www.kdocs.cn/l/").is_err());
+        assert!(link_id_of("https://www.kdocs.cn/l/中文链接").is_err());
+        // 知识库 kuid（0s_3205413880）不是分享 id：带下划线，且长度不合法
+        assert!(link_id_of("https://www.kdocs.cn/wiki/l/0s_3205413880").is_err());
+    }
+
+    #[test]
+    fn kind_follows_extension() {
+        assert_eq!(kind_of("测试表格.ksheet"), "sheet");
+        assert_eq!(kind_of("台账.XLSX"), "sheet");
+        assert_eq!(kind_of("方案.otl"), "doc");
+        assert_eq!(kind_of("说明.docx"), "doc");
+        assert_eq!(kind_of("压缩包.zip"), "other");
+        assert_eq!(kind_of("没有扩展名"), "other");
+    }
+
+    /// 造一个只有正文的最小 docx（与真实包同构：word/document.xml + 文本段）
+    fn tiny_docx(paras: &[&str]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut z = ZipWriter::new(Cursor::new(&mut buf));
+            z.start_file("word/document.xml", FileOptions::<()>::default()).unwrap();
+            let body: String = paras
+                .iter()
+                .map(|t| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>"))
+                .collect();
+            z.write_all(
+                format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>"#
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+            z.finish().unwrap();
+        }
+        buf
+    }
+
+    #[test]
+    fn docx_text_reads_paragraphs_and_entities() {
+        // 段落之间要换行；实体要解回原样（&amp; → &）
+        let raw = tiny_docx(&["第一段 &amp; 实体", "第二段"]);
+        assert!(has_zip_entry(&raw, "word/document.xml"));
+        let text = docx_text(&raw).unwrap();
+        assert_eq!(text, "第一段 & 实体\n第二段\n");
+    }
+
+    #[test]
+    fn docx_text_rejects_packages_without_body() {
+        // xlsx 也是 zip：不能把表格包当文档读，得报清楚
+        assert!(docx_text(TEMPLATE).is_err());
+    }
+
+    /* ---------------- 绑定文件：读改写 ---------------- */
+
+    #[test]
+    fn build_sheet_roundtrips_arbitrary_header() {
+        // 表头来自绑定文件本身，不是台账的 COLUMNS —— 用它自带的列名写回去
+        let header = ["订单号".to_string(), "备注".to_string()];
+        let rows = vec![vec!["A-1".to_string(), "x & y".to_string()]];
+        let built = build_sheet(TEMPLATE, &header, &rows).unwrap();
+        let (h, body) = parse_sheet(&built).unwrap();
+        assert_eq!(h, vec!["订单号", "备注"]);
+        assert_eq!(body[0][0], "A-1");
+        assert_eq!(body[0][1], "x & y");
+    }
+
+    #[test]
+    fn build_docx_roundtrips_text_and_entities() {
+        let raw = build_docx("第一段 & <x>\n第二段").unwrap();
+        assert!(has_zip_entry(&raw, "word/document.xml"));
+        assert_eq!(docx_text(&raw).unwrap(), "第一段 & <x>\n第二段\n");
     }
 }

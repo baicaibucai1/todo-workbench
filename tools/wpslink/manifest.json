@@ -1,0 +1,11 @@
+{
+  "id": "wpslink",
+  "name": "WPS 绑定文件",
+  "version": "0.3.0",
+  "description": "直连一张云端表格：粘贴表格链接 + AirScript 的 webhook / 脚本令牌，之后就在这里读、改、存回**那张原表** —— 不复制、不经过知识库、不产生副本。表格按格编辑（可加行加列、删行），Ctrl+S 写回。也能绑定知识库里的表格或文档（那条路要账号登录态，保存走「新建 → 删旧 → 改名」）。",
+  "icon": "file",
+  "entry": "index.html",
+  "dbVersion": 1,
+  "author": "内置",
+  "capabilities": ["wps"]
+}

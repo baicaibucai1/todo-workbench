@@ -121,8 +121,18 @@ import {
 } from "./repo";
 import type { ImagebedItem, ImagebedKind, ImagebedOrigin } from "../types";
 import { capabilityError, capabilityState } from "./extensions/registry";
+import { AIRSCRIPT_SNIPPET } from "./wpsCloud";
 import type { ToolInjectKind } from "./extensions/types";
-
+import {
+  bindByLink,
+  bindCloudLink,
+  listBindable,
+  readBoundFile,
+  readCloudBound,
+  writeBoundFile,
+  writeCloudBound,
+  type CloudBinding,
+} from "./wpsLink";
 /** 协议标记，避免和页面里其他 postMessage 流量串台 */
 export const TOOL_SOURCE = "workbench-tool";
 export const HOST_SOURCE = "workbench-host";
@@ -155,7 +165,30 @@ export type ToolOp =
    * 工具替用户订一条提醒（在待办里落一条带来源标记的待办）。
    * 见文件头「task.remind —— 工具代订提醒」与 handler 处的说明。
    */
-  | "task.remind";
+  | "task.remind"
+  /**
+   * 绑定一份 WPS 知识库文件并读写它。
+   *
+   * 四个 op 共用一道 `wps` 能力门：list 列可绑定的文件、bindLink 把分享链接
+   * 复制进知识库、fileRead 读内容、fileWrite 写回（新建→删旧→改名）。
+   * 令牌不出宿主；但每次写都会借用户的账号动知识库，所以能力要在 manifest 里明说。
+   */
+  | "wps.files"
+  | "wps.bindLink"
+  | "wps.fileRead"
+  | "wps.fileWrite"
+  /**
+   * 直连云表格（AirScript）：不复制、不登录，直接读写用户自己那张表。
+   *
+   * cloudBind 只做"确认链接是表格 + 探表头"；cloudRead / cloudWrite 转发
+   * webhook 调用。webhook 与脚本令牌都由用户填、随绑定一起存在工具自己的
+   * KV 里（它们是**那张表**的凭证，不是账号令牌，所以可以随工具走）。
+   */
+  | "wps.cloudBind"
+  | "wps.cloudRead"
+  | "wps.cloudWrite"
+  /** 把 AirScript 脚本原文取回去（一键复制；只读，不碰任何账号） */
+  | "wps.cloudScript";
 
 /**
  * 工具私有 KV 的键名约束。
@@ -188,6 +221,50 @@ const GALLERY_READ_MAX = 10 * 1024 * 1024;
 const GALLERY_LIST_MAX = 200;
 /** gallery.list 一次默认返回多少条 */
 const GALLERY_LIST_DEFAULT = 60;
+
+/**
+ * wps.fileWrite 的上限。
+ *
+ * 桥是 postMessage 通道：一张几万行的表在两边各序列化一遍，桌面端会明显卡。
+ * 2000 行 × 几十列已经远超"在工具里手改"的合理范围；真有大表，应该回 WPS 里改。
+ */
+const WPS_WRITE_MAX_ROWS = 2000;
+/** 文档正文上限（字符）。50 万字足够长文，再长就不该塞进 iframe 编辑了 */
+const WPS_WRITE_MAX_TEXT = 500_000;
+
+/** 把工具传来的任意值收成 string[]（非数组一律当空） */
+function stringList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((x) => (x == null ? "" : String(x)));
+}
+
+/** 二维表格：逐行收成 string[]；非数组的行当空行 */
+function stringGrid(v: unknown): string[][] {
+  if (!Array.isArray(v)) return [];
+  return v.map((row) => stringList(row));
+}
+
+/**
+ * 收一个直连绑定的形状。工具是外部输入，**三样缺一不可**：
+ * 少了 webhook/token 就调不动脚本，少了 link 就没法给人看"绑的是哪张表"。
+ */
+function cloudBindingOf(v: unknown): CloudBinding {
+  const o = (v ?? {}) as Record<string, unknown>;
+  const link = typeof o.link === "string" ? o.link.trim() : "";
+  const webhook = typeof o.webhook === "string" ? o.webhook.trim() : "";
+  const token = typeof o.token === "string" ? o.token.trim() : "";
+  if (!link || !webhook || !token) {
+    throw new Error("云表格绑定不完整（缺链接 / webhook / 令牌）—— 回到绑定区重新连一次");
+  }
+  return {
+    kind: "cloud",
+    link,
+    name: typeof o.name === "string" ? o.name : "",
+    sheet: typeof o.sheet === "string" ? o.sheet : "",
+    webhook,
+    token,
+  };
+}
 
 interface ToolRequest {
   source?: string;
@@ -241,6 +318,25 @@ interface ToolRequest {
     ref?: string;
     /** cancel：要取消的那条待办 id（book 的返回值） */
     taskId?: string;
+    /* wps.* —— 绑定文件读写 */
+    /** 金山文档分享链接（`https://www.kdocs.cn/l/xxx`），也接受裸 id */
+    link?: string;
+    /** 绑定文件的节点 id（保存后一定会变，界面要拿返回值更新） */
+    kuid?: string;
+    /** 原始 doc_type（s / ksheet / w / o）—— 决定写回走哪条路 */
+    docType?: string;
+    /** 表格：表头 + 数据行（写回时一并发给宿主） */
+    header?: string[];
+    rows?: string[][];
+    /* wps.cloud* —— 直连云表格（AirScript） */
+    /** AirScript 脚本 webhook（用户从表格的脚本编辑器里复制） */
+    webhook?: string;
+    /** AirScript 脚本令牌 */
+    token?: string;
+    /** 直连绑定对象：{cloud:true, link, name, sheet, webhook, token} */
+    binding?: unknown;
+    /** 文档：正文纯文本 */
+    text?: string;
   };
 }
 
@@ -1153,6 +1249,87 @@ export function createToolBridge(
         // 图床界面若正开着，让它自己刷新（见 lib/imagebed.ts 的 IMAGEBED_CHANGED）
         notifyImagebedChanged();
         return reply(id, true, await toToolItem(item));
+      }
+
+      /* ------------------------------ WPS 绑定文件 ------------------------------
+       * 工具只传 kuid / 标题 / 内容：令牌和知识库都从宿主设置里现取
+       * （见 lib/wpsLink.ts），工具永远碰不到 kwiki.token。
+       * 能力门是必须的 —— 写回会借用户的账号在知识库里"新建 → 删旧 → 改名"。 */
+      if (
+        op === "wps.files" ||
+        op === "wps.bindLink" ||
+        op === "wps.fileRead" ||
+        op === "wps.fileWrite" ||
+        op === "wps.cloudBind" ||
+        op === "wps.cloudRead" ||
+        op === "wps.cloudWrite" ||
+        op === "wps.cloudScript"
+      ) {
+        const state = capabilityState(currentSettings(), toolId, "wps");
+        if (state !== "on") {
+          return reply(id, false, `WPS 读写不可用：${capabilityError(state, "wps")}`);
+        }
+        const settings = currentSettings();
+
+        if (op === "wps.files") {
+          return reply(id, true, { files: await listBindable(settings) });
+        }
+        if (op === "wps.bindLink") {
+          const link = typeof payload?.link === "string" ? payload.link : "";
+          return reply(id, true, { binding: await bindByLink(link, settings) });
+        }
+        if (op === "wps.cloudScript") {
+          return reply(id, true, { script: AIRSCRIPT_SNIPPET });
+        }
+        if (op === "wps.cloudBind") {
+          const link = typeof payload?.link === "string" ? payload.link : "";
+          const webhook = typeof payload?.webhook === "string" ? payload.webhook : "";
+          const token = typeof payload?.token === "string" ? payload.token : "";
+          return reply(id, true, { binding: await bindCloudLink(link, webhook, token) });
+        }
+        if (op === "wps.cloudRead") {
+          return reply(id, true, { doc: await readCloudBound(cloudBindingOf(payload?.binding)) });
+        }
+        if (op === "wps.cloudWrite") {
+          const header = stringList(payload?.header);
+          const rows = stringGrid(payload?.rows);
+          if (rows.length > WPS_WRITE_MAX_ROWS) {
+            return reply(id, false, `行数超过上限（最多 ${WPS_WRITE_MAX_ROWS} 行）`);
+          }
+          if (!header.length) return reply(id, false, "没有表头 —— 不知道写到哪些列");
+          return reply(id, true, {
+            result: await writeCloudBound(cloudBindingOf(payload?.binding), {
+              header,
+              rows,
+              text: "",
+            }),
+          });
+        }
+
+        const kuid = typeof payload?.kuid === "string" ? payload.kuid.trim() : "";
+        const title = typeof payload?.title === "string" ? payload.title : "";
+        const docType = typeof payload?.docType === "string" ? payload.docType : "";
+        if (!kuid) return reply(id, false, "缺少 kuid（要读写哪份文件）");
+        const binding = { kuid, title, doc_type: docType, kind: "" };
+
+        if (op === "wps.fileRead") {
+          return reply(id, true, { doc: await readBoundFile(binding, settings) });
+        }
+
+        // 写回：工具是外部输入，先把形状与体积卡住，别让它把宿主撑爆
+        const header = stringList(payload?.header);
+        const rows = stringGrid(payload?.rows);
+        const text = typeof payload?.text === "string" ? payload.text : "";
+        if (!header.length && !text) {
+          return reply(id, false, "没有要保存的内容（表头 / 正文都是空的）");
+        }
+        if (rows.length > WPS_WRITE_MAX_ROWS) {
+          return reply(id, false, `行数超过上限（最多 ${WPS_WRITE_MAX_ROWS} 行）`);
+        }
+        if (text.length > WPS_WRITE_MAX_TEXT) {
+          return reply(id, false, `正文超过上限（最多 ${WPS_WRITE_MAX_TEXT} 字）`);
+        }
+        return reply(id, true, { result: await writeBoundFile(binding, { header, rows, text }, settings) });
       }
 
       reply(id, false, `不支持的操作：${String(op)}`);

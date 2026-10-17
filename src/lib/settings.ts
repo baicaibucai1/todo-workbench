@@ -252,6 +252,37 @@ export const SETTINGS = {
   kwikiLastAt: "kwiki.lastAt",
   kwikiLastSummary: "kwiki.lastSummary",
 
+  /* -------------------- 云端表格直连（AirScript webhook） -------------------- */
+
+  /**
+   * 用户那张云表格的链接（`https://www.kdocs.cn/l/xxx`）。
+   *
+   * 只存链接不存 file_id：链接是用户能认出来的东西（换一份表就是换一条链接），
+   * file_id 由程序每次从链接里现抠（见 Rust 的 link_id_of）。
+   */
+  wpsCloudLink: "wps.cloud.link",
+  /** 关联出来给人看的表名（解析链接时顺手存下，失效了也不影响同步） */
+  wpsCloudName: "wps.cloud.name",
+  /**
+   * AirScript 脚本的 webhook 地址。
+   *
+   * 形如 `https://www.kdocs.cn/api/v3/ide/file/<文件id>/script/<脚本id>/sync_task`。
+   * 它是"这张表里的这个脚本"的地址 —— 换表就要换一条。
+   */
+  wpsCloudWebhook: "wps.cloud.webhook",
+  /**
+   * AirScript 脚本令牌（脚本编辑器 → 脚本令牌）。
+   *
+   * ⚠️ 与 kwikiToken 同一个待遇：**明文存在本机 SQLite 里**。
+   * 它只能跑用户自己文档里的脚本，泄露了等于把那张表交出去 ——
+   * 界面上要写清楚，别在公用电脑上填。
+   */
+  wpsCloudToken: "wps.cloud.token",
+  /** 测试连接时识别到的表头（展示用；推送时仍会每次现读，别拿它当缓存） */
+  wpsCloudHeader: "wps.cloud.header",
+  /** 测到的工作表名。推送/拉取时带回去，免得用户切了 sheet 就写错地方 */
+  wpsCloudSheet: "wps.cloud.sheet",
+
   /* ---------------------------- AI 助手 ---------------------------- */
 
   /**
@@ -459,6 +490,13 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.kwikiTableTitle]: "异常台账",
   [SETTINGS.kwikiLastAt]: "",
   [SETTINGS.kwikiLastSummary]: "",
+  // 云端表格直连：默认空。没配就走不了直连 —— 界面会自动停在"待配置"上
+  [SETTINGS.wpsCloudLink]: "",
+  [SETTINGS.wpsCloudName]: "",
+  [SETTINGS.wpsCloudWebhook]: "",
+  [SETTINGS.wpsCloudToken]: "",
+  [SETTINGS.wpsCloudHeader]: "",
+  [SETTINGS.wpsCloudSheet]: "",
   // 助手默认指向 Agnes（工作台里已经接入的那家），模型选 Agent 向的那个；
   // Key 留空 → 界面停在"还没配好"的状态里，明确告诉用户缺什么
   [SETTINGS.agentProvider]: "agnes",

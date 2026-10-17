@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WPS 绑定文件</title>
+<!-- 内联 favicon：不写的话浏览器会去要 /favicon.ico，控制台留一条 404 红字。 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='7' fill='%23378add'/%3E%3Cpath d='M10 9h9l4 4v10H10z' stroke='%23fff' stroke-width='2.2' fill='none' stroke-linejoin='round'/%3E%3Cpath d='M13 17h7M13 20h5' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E" />
+<style>
+  /* color-scheme 不能省：少了它，input / textarea / 原生滚动条在深色下仍是浅色一坨 */
+  html { color-scheme: light; }
+  html[data-theme="dark"] { color-scheme: dark; }
+
+  :root {
+    --bg: #ffffff; --fg: #2c2c2a; --fg2: #5f5e5b; --dim: #918f89;
+    --line: #e6e4dd; --chip: #f2f0ea; --accent: #378add; --danger: #a32d2d;
+    --ok: #2f9e63; --warn: #8a6d1f;
+  }
+  /* 边框色必须手工按用途定：浅色里边框比面板暗，深色里必须比面板亮 */
+  html[data-theme="dark"] {
+    --bg: #1c1c1a; --fg: #e8e6e0; --fg2: #b3b0a8; --dim: #8a8780;
+    --line: #3a3934; --chip: #2a2925; --accent: #5b9de8; --danger: #e07272;
+    --ok: #4ec78a; --warn: #d8b45a;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 18px 24px; min-height: 100vh;
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+
+  /* ★ [hidden] 打不过作者样式：display:flex 会盖掉浏览器默认的 display:none。
+     这条只对 data-host-only 用；其余要藏的元素别给它们设 display。 */
+  body:not([data-bind-state="bound"]) [data-host-only] { display: none !important; }
+
+  .top { margin-bottom: 12px; }
+  .top .title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .top .sub { color: var(--dim); font-size: 12px; margin-top: 2px; }
+  .dot {
+    font-size: 11.5px; font-weight: 400; color: var(--dim);
+    border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px;
+  }
+  .dot.ok { color: var(--ok); }
+  .dot.warn { color: var(--danger); }
+
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; }
+  .sect { font-size: 12px; color: var(--dim); margin-bottom: 8px; }
+
+  input, button, select, textarea {
+    font: inherit; color: var(--fg);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 9px;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--dim); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: transparent; }
+  #fileSelect { flex: 1; min-width: 200px; }
+  #link { flex: 1; min-width: 200px; }
+
+  .hint { color: var(--dim); font-size: 11.5px; line-height: 1.6; margin: 8px 0 0; }
+  .chip {
+    font-size: 11.5px; color: var(--fg2); background: var(--chip);
+    border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px;
+  }
+  .chip.dirty { color: var(--warn); border-color: var(--warn); background: transparent; }
+
+  #fileName { font-size: 13.5px; font-weight: 600; }
+  #boundNote { color: var(--warn); }
+
+  .notice {
+    margin: 8px 0; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--chip);
+    font-size: 12.5px; color: var(--fg2); line-height: 1.55;
+  }
+  .notice.err { border-color: var(--danger); color: var(--danger); }
+  .notice.warn { border-color: var(--warn); color: var(--warn); }
+  .notice.ok { color: var(--ok); }
+
+  .toolbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    font-size: 12px; color: var(--dim); margin: 10px 0 6px;
+  }
+  .toolbar button { padding: 4px 9px; font-size: 12px; }
+
+  .tablewrap { max-height: 62vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  thead th {
+    position: sticky; top: 0; z-index: 1;
+    background: var(--chip); text-align: left; font-weight: 500;
+    color: var(--fg2); white-space: nowrap; padding: 4px 6px;
+    border-bottom: 1px solid var(--line);
+  }
+  tbody td { padding: 2px 4px; border-bottom: 1px solid var(--line); }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num, th.num { width: 44px; color: var(--dim); text-align: right; font-size: 11.5px; padding-right: 6px; }
+  th input, td input {
+    width: 100%; min-width: 90px; border: 0; background: transparent;
+    padding: 4px 5px; border-radius: 4px; font-size: 12.5px; color: var(--fg2);
+  }
+  th input { color: var(--fg2); font-weight: 500; }
+  th input:focus, td input:focus { background: var(--chip); outline: 1px solid var(--accent); }
+  td.del { width: 34px; text-align: center; }
+  td.del button {
+    border: 0; background: transparent; color: var(--dim); padding: 2px 6px;
+    font-size: 13px; line-height: 1;
+  }
+  td.del button:hover { color: var(--danger); }
+
+  textarea#docText {
+    width: 100%; min-height: 52vh; resize: vertical;
+    padding: 10px 12px; font-size: 13px; line-height: 1.75;
+    white-space: pre-wrap;
+  }
+
+  details { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
+  details summary { cursor: pointer; font-size: 12.5px; color: var(--fg2); }
+  details summary:hover { color: var(--fg); }
+  details .steps { margin: 8px 0 0; padding-left: 20px; font-size: 11.5px; line-height: 1.9; color: var(--dim); }
+  #scriptBox { width: 100%; height: 150px; margin-top: 8px; resize: vertical; font: 11px/1.6 var(--mono, ui-monospace, Consolas, monospace);
+    color: var(--fg2); background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .foot { margin-top: 16px; font-size: 11.5px; color: var(--dim); line-height: 1.7; }
+  .foot code { background: var(--chip); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body data-bind-state="booting">
+
+<div class="top">
+  <div class="title">
+    WPS 绑定文件
+    <span class="dot" id="hostState">连接中…</span>
+  </div>
+  <div class="sub">直连你那张云端表格：读、改、存回原表 —— 不复制、不经知识库</div>
+</div>
+
+<!-- 未绑定：绑定面板 -->
+<section id="bindPanel" class="card">
+  <div class="sect">直连云端表格</div>
+  <div class="row">
+    <input id="link" placeholder="云端表格链接 https://www.kdocs.cn/l/xxxx" autocomplete="off" spellcheck="false" />
+  </div>
+  <div class="row" style="margin-top:8px">
+    <input id="hook" placeholder="AirScript webhook（脚本「更多」菜单里复制）" autocomplete="off" spellcheck="false" />
+  </div>
+  <div class="row" style="margin-top:8px">
+    <input id="token" type="password" placeholder="AirScript 脚本令牌" autocomplete="off" spellcheck="false" />
+    <button class="primary" id="bindCloud" data-host-only>直连绑定</button>
+    <button class="ghost" id="copyScript" data-host-only>复制脚本</button>
+  </div>
+  <p class="hint">
+    直连 = 直接读写你那张<strong>原表</strong>：不复制、不经过知识库、不产生副本。
+    第一次用要先在表格里建一个 AirScript（点「复制脚本」，步骤见下）。
+  </p>
+  <details id="howto">
+    <summary>第一次用？两分钟建脚本</summary>
+    <ol class="steps">
+      <li>在 WPS 里打开那张表格，点顶部「效率 → 高级开发 → AirScript 脚本编辑器」。</li>
+      <li>新建脚本，把「复制脚本」拿到的代码整段粘进去，保存。</li>
+      <li>点工具栏「脚本令牌」创建并复制令牌（需实名认证；一个账号只有一个）。</li>
+      <li>在脚本「更多」菜单里复制「脚本 webhook」，连同令牌一起填到上面。</li>
+      <li>点「直连绑定」——读出表名和表头就通了。</li>
+    </ol>
+    <textarea id="scriptBox" readonly spellcheck="false" placeholder="点上面的「复制脚本」"></textarea>
+  </details>
+  <details>
+    <summary>或者：绑定知识库里的文件（文档也能编辑）</summary>
+    <div class="row" style="margin-top:8px">
+      <select id="fileSelect">
+        <option value="">（正在读取知识库…）</option>
+      </select>
+      <button id="bindPick" data-host-only>绑定</button>
+      <button class="ghost" id="reloadList" data-host-only>刷新列表</button>
+    </div>
+    <p class="hint">
+      这条路要账号登录态：先在 <code>设置 → WPS 在线表格联动</code> 里登录并选好知识库。
+      保存走「新建 → 删旧 → 改名」，旧版本进回收站 7 天。
+    </p>
+  </details>
+</section>
+
+<!-- 已绑定：文件头 -->
+<section id="fileHead" class="card" hidden>
+  <div class="row">
+    <span id="fileName"></span>
+    <span class="chip" id="fileKind"></span>
+    <span class="chip dirty" id="dirtyChip" hidden>未保存</span>
+    <span class="grow"></span>
+    <button class="ghost" id="reloadBtn" data-host-only>重新读取</button>
+    <button class="primary" id="saveBtn" data-host-only disabled>保存到 WPS</button>
+    <button class="ghost" id="openBtn">在 WPS 打开</button>
+    <button class="ghost" id="unbindBtn" data-host-only>换一份</button>
+  </div>
+  <p class="hint" id="boundNote" hidden></p>
+</section>
+
+<div id="notice" class="notice" hidden></div>
+
+<!-- 表格编辑器 -->
+<div id="sheetPane" hidden>
+  <div class="toolbar">
+    <span id="sheetInfo"></span>
+    <span class="grow"></span>
+    <button class="ghost" id="addRow">加一行</button>
+    <button class="ghost" id="addCol">加一列</button>
+    <button class="ghost" id="copySheet">复制表格</button>
+  </div>
+  <div class="tablewrap"><table id="grid"></table></div>
+  <p class="hint" id="sheetHint" hidden></p>
+</div>
+
+<!-- 文档编辑器 -->
+<div id="docPane" hidden>
+  <div class="toolbar">
+    <span>正文（纯文本）</span>
+    <span class="grow"></span>
+    <button class="ghost" id="copyDoc">复制正文</button>
+  </div>
+  <textarea id="docText" spellcheck="false" placeholder="这里显示文档正文…"></textarea>
+  <p class="hint" id="docHint" hidden></p>
+</div>
+
+<div class="foot">
+  <b>直连模式</b>：保存把编辑器里的内容整表写回原表 —— 脚本只改单元格的值，格式保留；
+  但公式列会被当前显示值覆盖，改前先想清楚。脚本在表格里跑，凭证（webhook + 脚本令牌）
+  也只属于那张表。<br />
+  <b>知识库模式</b>：保存走 新建 → 删旧 → 改名（上传只能新建），旧版本进回收站 7 天；
+  表格只写第一个工作表，文档只写纯文本。两种模式都存在本机，不经过第三方。
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOOL_ID = "wpslink";
+  var TOOL_SOURCE = "workbench-tool";
+  var HOST_SOURCE = "workbench-host";
+  var KV_BINDING = "binding";
+  var ROWS_SHOW_MAX = 300;      // 一屏铺不下的表只渲染前 300 行（保存仍写全部）
+  var CALL_TIMEOUT = 15000;
+  var WRITE_TIMEOUT = 120000;   // 上传 / 转换 / 删旧 / 改名，慢的时候要一分多钟
+
+  var seq = 0;
+  var waiting = new Map();
+  var state = "booting";
+  var binding = null;           // {kuid,title,doc_type,kind}
+  var model = null;             // {header:[], rows:[[]], text:""}
+  var dirty = false;
+  var busy = false;
+  var files = [];
+  var rebinding = false;
+
+  /* ==================================================================
+   * 一、宿主状态机
+   * ------------------------------------------------------------------
+   *   booting 开机 / bound 在工作台里 / standalone 独立打开 / error 桥没接上
+   * ================================================================== */
+  var LABEL = { booting: "连接中…", bound: "已连工作台", standalone: "独立运行", error: "未连接宿主" };
+  function setState(next) {
+    state = next;
+    document.body.dataset.bindState = next;
+    var dot = document.getElementById("hostState");
+    dot.textContent = LABEL[next] || next;
+    dot.className = "dot" + (next === "bound" ? " ok" : next === "booting" ? "" : " warn");
+  }
+  function bound() { return state === "bound"; }
+
+  /* ================= 与宿主通信 ================= */
+
+  function call(op, payload, timeout) {
+    if (!bound()) return Promise.reject(new Error("没有连上工作台"));
+    var id = "r" + ++seq;
+    return new Promise(function (resolve, reject) {
+      waiting.set(id, { resolve: resolve, reject: reject });
+      parent.postMessage({ source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} }, "*");
+      setTimeout(function () {
+        if (waiting.delete(id)) reject(new Error("宿主没有回应（" + op + "）"));
+      }, timeout || CALL_TIMEOUT);
+    }).then(function (res) {
+      if (!res.ok) throw new Error(String(res.error || "宿主拒绝了这次请求"));
+      return res.data;
+    });
+  }
+
+  window.addEventListener("message", function (e) {
+    var m = e.data;
+    if (!m || m.source !== HOST_SOURCE) return;
+    if (m.type === "tool:response") {
+      var w = waiting.get(m.id);
+      if (w) { waiting.delete(m.id); w.resolve({ ok: m.ok, data: m.data, error: m.error }); }
+      return;
+    }
+    if (m.type === "tool:context") {
+      var ctx = m.data || {};
+      if (ctx.theme) document.documentElement.dataset.theme = ctx.theme;
+      setState("bound");
+      void boot();
+      return;
+    }
+  });
+
+  /* ================= 小工具 ================= */
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = String(text);
+    return n;
+  }
+  function gridText(header, rows) {
+    var lines = [header.join("\t")];
+    rows.forEach(function (r) {
+      lines.push(header.map(function (_, i) { return r[i] == null ? "" : r[i]; }).join("\t"));
+    });
+    return lines.join("\n");
+  }
+  function copyText(text) {
+    if (!text) return;
+    var done = function () { notice("已复制到剪贴板", "ok"); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(function () { fallbackCopy(text, done); });
+    } else { fallbackCopy(text, done); }
+  }
+  function fallbackCopy(text, done) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); done(); } catch (_) {}
+    document.body.removeChild(ta);
+  }
+
+  var noticeEl = document.getElementById("notice");
+  function notice(text, tone) {
+    if (!text) { noticeEl.hidden = true; noticeEl.textContent = ""; return; }
+    noticeEl.hidden = false;
+    noticeEl.className = "notice" + (tone ? " " + tone : "");
+    noticeEl.textContent = text;
+  }
+
+  function markDirty(on) {
+    dirty = !!on;
+    document.getElementById("dirtyChip").hidden = !dirty;
+    var save = document.getElementById("saveBtn");
+    save.disabled = !dirty || busy;
+    save.textContent = busy ? "保存中…" : "保存到 WPS";
+  }
+
+  /* ================= 绑定 ================= */
+
+  function loadBinding() {
+    if (!bound()) return Promise.resolve(null);
+    return call("kv.get", { key: KV_BINDING }).then(function (r) {
+      try { return r.value ? JSON.parse(r.value) : null; } catch (_) { return null; }
+    }).catch(function () { return null; });
+  }
+  function saveBinding(b) {
+    if (!bound()) return;
+    var val = b ? JSON.stringify(b) : "";
+    call("kv.set", { key: KV_BINDING, value: val }).catch(function () {});
+  }
+
+  function boot() {
+    loadBinding().then(function (b) {
+      if (b && (b.cloud || b.kuid)) {
+        binding = b;
+        if (b.cloud && !b.title) b.title = b.name || "云端表格";
+        showHead();
+        return readBinding();
+      }
+      showBindPanel();
+      return loadFiles();
+    }).catch(function (err) {
+      notice(String(err && err.message ? err.message : err), "err");
+    });
+  }
+
+  function loadFiles() {
+    if (!bound()) return Promise.resolve();
+    var sel = document.getElementById("fileSelect");
+    return call("wps.files").then(function (r) {
+      files = (r && r.files) || [];
+      sel.textContent = "";
+      if (!files.length) {
+        sel.appendChild(new Option("（知识库里没有可绑定的表格或文档）", ""));
+        return;
+      }
+      sel.appendChild(new Option("选择一份文件…", ""));
+      files.forEach(function (f) {
+        sel.appendChild(new Option(f.title + (f.kind === "sheet" ? "（表格）" : "（文档）"), f.kuid));
+      });
+    }).catch(function (err) {
+      sel.textContent = "";
+      sel.appendChild(new Option("（读取失败）", ""));
+      notice(String(err && err.message ? err.message : err), "err");
+    });
+  }
+
+  function showBindPanel() {
+    document.getElementById("bindPanel").hidden = false;
+    document.getElementById("fileHead").hidden = true;
+    document.getElementById("sheetPane").hidden = true;
+    document.getElementById("docPane").hidden = true;
+    document.getElementById("boundNote").hidden = true;
+  }
+
+  function showHead() {
+    document.getElementById("bindPanel").hidden = true;
+    document.getElementById("fileHead").hidden = false;
+    document.getElementById("fileName").textContent = binding.title;
+    document.getElementById("fileKind").textContent = binding.cloud
+      ? "直连表格"
+      : binding.kind === "sheet" ? "表格" : "文档";
+    var note = document.getElementById("boundNote");
+    if (binding.cloud) {
+      note.hidden = false;
+      note.textContent = "直连「" + (binding.name || binding.title) + "」" +
+        (binding.sheet ? " · 工作表 " + binding.sheet : "") +
+        " —— 读写的就是这张原表（没有副本，也不经知识库）";
+    }
+    markDirty(false);
+  }
+
+  function bindTo(file) {
+    binding = { kuid: file.kuid, title: file.title, doc_type: file.doc_type, kind: file.kind };
+    saveBinding(binding);
+    showHead();
+    return readBinding();
+  }
+
+  function readBinding() {
+    notice("");
+    var req = binding.cloud
+      ? call("wps.cloudRead", { binding: binding }, 60000)
+      : call("wps.fileRead", {
+          kuid: binding.kuid,
+          title: binding.title,
+          docType: binding.doc_type,
+        }, 60000);
+    return req.then(function (r) {
+      var doc = r.doc || {};
+      model = {
+        header: doc.header || [],
+        rows: doc.rows || [],
+        text: doc.text || "",
+      };
+      if (doc.kind) binding.kind = doc.kind;
+      render();
+      markDirty(false);
+    }).catch(function (err) {
+      var msg = String(err && err.message ? err.message : err);
+      // 绑定失效最常见的原因：保存后节点换了（旧的在回收站），或者被人在 WPS 里删了。
+      // 知识库里若恰好只有一份同名文件，直接改绑过去 —— 省得人再点一遍。
+      if (!binding.cloud && !rebinding && binding && binding.title) {
+        rebinding = true;
+        call("wps.files").then(function (r) {
+          var same = ((r && r.files) || []).filter(function (f) { return f.title === binding.title; });
+          rebinding = false;
+          if (same.length === 1) {
+            binding.kuid = same[0].kuid;
+            binding.doc_type = same[0].doc_type;
+            binding.kind = same[0].kind;
+            saveBinding(binding);
+            // readBinding 一进来会清提示，所以这句话要等它读完再挂上去
+            return readBinding().then(function () {
+              notice("原节点不在了（每次保存都会换一个），已自动改绑到同名的「" + same[0].title + "」", "warn");
+            });
+          }
+          notice(msg + " —— 知识库里有 " + same.length + " 份同名的，点「换一份」挑一份", "err");
+        }).catch(function () {
+          rebinding = false;
+          notice(msg + " —— 可能被删了、或者换过知识库；点「换一份」重新绑定", "err");
+        });
+        return;
+      }
+      notice(msg + " —— 可能被删了、或者换过知识库；点「换一份」重新绑定", "err");
+    });
+  }
+
+  /* ================= 渲染 ================= */
+
+  function render() {
+    if (!binding || !model) return;
+    showHead();
+    var isSheet = binding.kind === "sheet";
+    document.getElementById("sheetPane").hidden = !isSheet;
+    document.getElementById("docPane").hidden = isSheet;
+    if (isSheet) renderSheet(); else renderDoc();
+  }
+
+  function renderSheet() {
+    var grid = document.getElementById("grid");
+    grid.textContent = "";
+    var header = model.header, rows = model.rows;
+
+    var thead = el("thead");
+    var htr = el("tr");
+    htr.appendChild(el("th", "num", "#"));
+    header.forEach(function (h, i) {
+      var th = el("th");
+      var inp = el("input");
+      inp.value = h == null ? "" : h;
+      inp.dataset.h = String(i);
+      inp.placeholder = "第 " + (i + 1) + " 列";
+      th.appendChild(inp);
+      htr.appendChild(th);
+    });
+    htr.appendChild(el("th", "num", ""));
+    thead.appendChild(htr);
+    grid.appendChild(thead);
+
+    var tbody = el("tbody");
+    var show = Math.min(rows.length, ROWS_SHOW_MAX);
+    for (var r = 0; r < show; r++) {
+      var tr = el("tr");
+      tr.appendChild(el("td", "num", r + 1));
+      for (var c = 0; c < header.length; c++) {
+        var td = el("td");
+        var inp2 = el("input");
+        inp2.value = rows[r][c] == null ? "" : rows[r][c];
+        inp2.dataset.r = String(r);
+        inp2.dataset.c = String(c);
+        td.appendChild(inp2);
+        tr.appendChild(td);
+      }
+      var del = el("td", "del");
+      var btn = el("button", null, "×");
+      btn.title = "删掉这一行";
+      btn.dataset.del = String(r);
+      del.appendChild(btn);
+      tr.appendChild(del);
+      tbody.appendChild(tr);
+    }
+    grid.appendChild(tbody);
+
+    document.getElementById("sheetInfo").textContent =
+      "共 " + rows.length + " 行 · " + header.length + " 列";
+    var hint = document.getElementById("sheetHint");
+    if (rows.length > ROWS_SHOW_MAX) {
+      hint.hidden = false;
+      hint.textContent = "只显示前 " + ROWS_SHOW_MAX + " 行（保存时仍会写入全部 " + rows.length + " 行）";
+    } else {
+      hint.hidden = true;
+    }
+  }
+
+  function renderDoc() {
+    var ta = document.getElementById("docText");
+    ta.value = model.text || "";
+    var hint = document.getElementById("docHint");
+    if (binding.doc_type === "o" || binding.doc_type === "otl") {
+      hint.hidden = false;
+      hint.textContent = "智能文档保存后正文要 1–2 分钟才同步；这里只编辑纯文本，原有排版会按 Markdown 重新生成";
+    } else {
+      hint.hidden = true;
+    }
+  }
+
+  /* ================= 编辑 ================= */
+
+  document.getElementById("grid").addEventListener("input", function (e) {
+    var t = e.target;
+    if (!t || t.tagName !== "INPUT" || !model) return;
+    if (t.dataset.h !== undefined) {
+      model.header[Number(t.dataset.h)] = t.value;
+    } else if (t.dataset.r !== undefined) {
+      var r = Number(t.dataset.r), c = Number(t.dataset.c);
+      if (model.rows[r]) model.rows[r][c] = t.value;
+    } else {
+      return;
+    }
+    markDirty(true);
+  });
+
+  document.getElementById("grid").addEventListener("click", function (e) {
+    var t = e.target;
+    if (!t || t.dataset.del === undefined || !model) return;
+    model.rows.splice(Number(t.dataset.del), 1);
+    renderSheet();
+    markDirty(true);
+  });
+
+  document.getElementById("docText").addEventListener("input", function (e) {
+    if (!model) return;
+    model.text = e.target.value;
+    markDirty(true);
+  });
+
+  document.getElementById("addRow").onclick = function () {
+    if (!model) return;
+    model.rows.push(new Array(model.header.length).fill(""));
+    renderSheet();
+    markDirty(true);
+    var wrap = document.querySelector(".tablewrap");
+    if (wrap) wrap.scrollTop = wrap.scrollHeight;
+  };
+
+  document.getElementById("addCol").onclick = function () {
+    if (!model) return;
+    model.header.push("第 " + (model.header.length + 1) + " 列");
+    model.rows.forEach(function (r) { r.push(""); });
+    renderSheet();
+    markDirty(true);
+  };
+
+  document.getElementById("copySheet").onclick = function () {
+    if (model) copyText(gridText(model.header, model.rows));
+  };
+  document.getElementById("copyDoc").onclick = function () {
+    if (model) copyText(model.text);
+  };
+
+  /* ================= 读 / 存 ================= */
+
+  function doSave() {
+    if (!binding || !model || busy) return;
+    if (!dirty) { notice("没有改动要保存", "warn"); return; }
+    busy = true;
+    markDirty(true);
+    notice("");
+    var req = binding.cloud
+      ? call("wps.cloudWrite", {
+          binding: binding,
+          header: model.header,
+          rows: model.rows,
+        }, WRITE_TIMEOUT)
+      : call("wps.fileWrite", {
+          kuid: binding.kuid,
+          title: binding.title,
+          docType: binding.doc_type,
+          header: model.header,
+          rows: model.rows,
+          text: model.text,
+        }, WRITE_TIMEOUT);
+    req.then(function (r) {
+      var res = r.result || {};
+      // ★ 节点 id 一定变了：旧的那份已经进回收站，继续用旧 kuid 会读不到
+      if (!binding.cloud && res.kuid) binding.kuid = res.kuid;
+      if (res.title) binding.title = res.title;
+      saveBinding(binding);
+      markDirty(false);
+      var msg = "已保存到 WPS";
+      if (res.note) msg += " —— " + res.note;
+      // 内容已经存上去了；只有"名字没改回 / 旧文件没删掉"这类残留时要换个颜色
+      notice(msg, res.note && /没能|没删掉/.test(res.note) ? "warn" : "ok");
+    }).catch(function (err) {
+      notice(String(err && err.message ? err.message : err), "err");
+    }).then(function () {
+      busy = false;
+      markDirty(dirty);
+    });
+  }
+
+  document.getElementById("saveBtn").onclick = doSave;
+  document.getElementById("reloadBtn").onclick = function () {
+    if (dirty && !confirm("有未保存的改动，重新读取会丢掉它们。继续？")) return;
+    readBinding();
+  };
+  document.getElementById("unbindBtn").onclick = function () {
+    if (dirty && !confirm("有未保存的改动，换一份会丢掉它们。继续？")) return;
+    binding = null; model = null;
+    saveBinding(null);
+    notice("");
+    showBindPanel();
+    loadFiles();
+  };
+  document.getElementById("openBtn").onclick = function () {
+    if (!binding) return;
+    var a = document.createElement("a");
+    a.href = binding.cloud
+      ? binding.link
+      : "https://www.kdocs.cn/wiki/l/" + encodeURIComponent(binding.kuid);
+    a.target = "_blank";
+    a.rel = "noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  document.getElementById("bindPick").onclick = function () {
+    var kuid = document.getElementById("fileSelect").value;
+    if (!kuid) { notice("先在下拉里选一份文件", "warn"); return; }
+    var f = files.filter(function (x) { return x.kuid === kuid; })[0];
+    if (!f) { notice("列表里找不到这份文件，刷新一下", "err"); return; }
+    bindTo(f);
+  };
+
+  document.getElementById("bindCloud").onclick = function () {
+    var link = document.getElementById("link").value.trim();
+    var webhook = document.getElementById("hook").value.trim();
+    var token = document.getElementById("token").value.trim();
+    if (!link || !webhook || !token) {
+      notice("链接、webhook、脚本令牌 —— 三样都要填", "warn");
+      return;
+    }
+    if (busy) return;
+    busy = true;
+    notice("正在连那张表…");
+    call("wps.cloudBind", { link: link, webhook: webhook, token: token }, WRITE_TIMEOUT).then(function (r) {
+      var b = r.binding || {};
+      binding = {
+        cloud: true,
+        kind: "sheet",
+        doc_type: "s",
+        link: b.link,
+        name: b.name,
+        title: b.name || "云端表格",
+        sheet: b.sheet || "",
+        webhook: b.webhook,
+        token: b.token,
+      };
+      saveBinding(binding);
+      showHead();
+      document.getElementById("link").value = "";
+      document.getElementById("hook").value = "";
+      document.getElementById("token").value = "";
+      return readBinding();
+    }).catch(function (err) {
+      notice(String(err && err.message ? err.message : err), "err");
+    }).then(function () { busy = false; });
+  };
+
+  document.getElementById("copyScript").onclick = function () {
+    call("wps.cloudScript").then(function (r) {
+      var script = (r && r.script) || "";
+      document.getElementById("scriptBox").value = script;
+      document.getElementById("howto").open = true;
+      copyText(script);
+    }).catch(function (err) {
+      notice(String(err && err.message ? err.message : err), "err");
+    });
+  };
+
+  document.getElementById("reloadList").onclick = function () { loadFiles(); };
+
+  // Ctrl/Cmd + S 保存
+  window.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      doSave();
+    }
+  });
+
+  /* ==================================================================
+   * 三、收尾：主题兜底与超时判定
+   * ================================================================== */
+
+  if (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) {
+    document.documentElement.dataset.theme = "dark";
+  }
+
+  setTimeout(function () {
+    if (state !== "booting") return;
+    setState(window.parent === window ? "standalone" : "error");
+    if (!bound()) {
+      notice("独立打开：绑定与读写都要走工作台的 WPS 登录态，这里用不了", "warn");
+    }
+  }, 1200);
+})();
+</script>
+</body>
+</html>

@@ -1,44 +1,59 @@
 import { SectionTitle, Card, TextField, ActionButton } from "./parts";
 import type { Flash } from "./parts";
 import { useEffect, useRef, useState } from "react";
-import { Download, ExternalLink, KeyRound, LogOut, RefreshCw, Table2, Upload } from "lucide-react";
+import {
+  Copy,
+  Download,
+  ExternalLink,
+  KeyRound,
+  Link2,
+  LogOut,
+  PlugZap,
+  RefreshCw,
+  Table2,
+  Upload,
+} from "lucide-react";
 import { SETTINGS } from "../../lib/settings";
 import { isTauri } from "../../lib/db";
 import {
   COLUMNS,
   accountInfo,
   applyPull,
-  listFiles,
+  linkInfo,
   listSpaces,
   loginPoll,
   loginStart,
   planPull,
-  pullLedger,
-  pushLedger,
   readKwikiConfig,
   readLedger,
   type LedgerRow,
   type PullPlan,
-  type WpsFile,
   type WpsPull,
-  type WpsSpace,
 } from "../../lib/kwiki";
+import {
+  AIRSCRIPT_SNIPPET,
+  cloudProbe,
+  cloudPull,
+  cloudPush,
+  cloudReady,
+  readCloudConfig,
+  type CloudConfig,
+  type CloudInfo,
+} from "../../lib/wpsCloud";
 
 /* ---------------------------- 分区：WPS 在线表格联动 ---------------------------- */
 
 /**
- * 把异常单台账接到 **WPS 知识库的在线表格**上，推拉都全自动。
+ * 两条路，界面上一前一后摆清楚：
  *
- * 走的是 WPS 自家的 kwiki 接口（设备码登录，个人账号就能用）—— 金山文档
- * 开放平台那套要企业资质，个人认证不开放，见 lib/kwiki.ts 顶部。
- * 传输层在 Rust（src-tauri/src/wps.rs），浏览器跨不过 CORS，所以整个分区
- * **只属于桌面版**，网页端进来只看到一句说明。
+ *  1. **云端表格（直连）** —— 用户贴自己那张表的链接 + AirScript 的 webhook/令牌，
+ *     程序直接读写原表。不登录、不选知识库、不产生副本。这是默认走法。
+ *  2. **WPS 登录（知识库）** —— 只留给「WPS 绑定文件」工具读知识库里的文档用。
+ *     台账同步**不再**走这条路，所以它被放在最下面，且写明用途。
  *
- * 三件事必须摆在界面上（不藏在 tooltip 里）：
- *   1. 令牌**明文存在本机数据库**，和同步密码一个待遇；
- *   2. 推送是「传新 → 删旧 → 改名」—— 线上旧的那份进回收站（7 天可恢复），
- *      不是原地覆盖；
- *   3. 每次推送都**按标题找表**（推送后表的节点 id 必然变，存死它会删错）。
+ * 为什么直连要建脚本：WPS 对个人账号没有直接写云文档的开放接口（开放平台
+ * 只对企业资质开放，2026-10-13 查证）。AirScript 是个人号唯一能"程序改原表"
+ * 的路 —— 脚本跑在表格里，读写它自己的单元格。代价是一次性建脚本。
  */
 
 /** 轮询间隔。2 秒：服务端 pending 时返回的是 code=0 的正常应答，刷太快没意义 */
@@ -46,7 +61,7 @@ const POLL_MS = 2000;
 /** 轮询上限（次）。2s × 90 ≈ 3 分钟，够用户去浏览器里点同意的了 */
 const POLL_MAX = 90;
 
-type Busy = "login" | "refresh" | "push" | "pull" | "apply" | null;
+type Busy = "login" | "refresh" | "push" | "pull" | "apply" | "probe" | "link" | null;
 
 type Preview = {
   pull: WpsPull;
@@ -63,13 +78,16 @@ export function WpsSection({
   say: (text: string, tone?: Flash["tone"]) => void;
 }) {
   const cfg = readKwikiConfig(settings);
+  const cloud: CloudConfig = readCloudConfig(settings);
   const desktop = isTauri();
   const [login, setLogin] = useState<{ deviceCode: string; loginUrl: string } | null>(null);
   const [waiting, setWaiting] = useState(false);
-  const [spaces, setSpaces] = useState<WpsSpace[]>([]);
-  const [files, setFiles] = useState<WpsFile[]>([]);
+  const [spaces, setSpaces] = useState<WpsSpaceLite[]>([]);
   const [busy, setBusy] = useState<Busy>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [probe, setProbe] = useState<CloudInfo | null>(null);
+  const [showSetup, setShowSetup] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
   const timer = useRef<number | null>(null);
 
   const stopPolling = () => {
@@ -95,7 +113,7 @@ export function WpsSection({
       // 账号接口不给昵称，只给"是不是个人账号"—— 就显示这个，别编一个名字
       [SETTINGS.kwikiAccount]: acc.is_personal ? "个人账号" : "企业账号",
     });
-    say("WPS 已连接");
+    say("WPS 已连接 —— 「WPS 绑定文件」工具现在可以读知识库里的文件了");
     await refreshSpaces(acc.token);
   }
 
@@ -155,8 +173,6 @@ export function WpsSection({
     stopPolling();
     setLogin(null);
     setSpaces([]);
-    setFiles([]);
-    setPreview(null);
     void saveSettings({
       [SETTINGS.kwikiToken]: "",
       [SETTINGS.kwikiTokenExpiry]: "",
@@ -169,21 +185,15 @@ export function WpsSection({
 
   /* ---------------------------- 列表刷新 ---------------------------- */
 
-  async function refreshFiles(token: string, spaceKuid: string) {
-    const list = await listFiles(token, spaceKuid);
-    setFiles(list);
-  }
-
   async function refreshSpaces(token: string) {
     const list = await listSpaces(token);
     setSpaces(list);
     if (!list.length) {
-      setFiles([]);
       say("这个 WPS 账号下还没有知识库 —— 去 WPS 建一个再回来", "err");
       return;
     }
     // 已选的那个不在列表里（被删/改名了）就落到第一个：总比留一个
-    // 指向空气的选项强 —— 那种情况下推送会报"找不到表"，用户看不出原因
+    // 指向空气的选项强
     const keep = list.find((s) => s.kuid === cfg.spaceKuid) ?? list[0];
     if (keep.kuid !== cfg.spaceKuid || keep.drive_id !== cfg.driveId) {
       await saveSettings({
@@ -191,7 +201,6 @@ export function WpsSection({
         [SETTINGS.kwikiDriveId]: keep.drive_id,
       });
     }
-    await refreshFiles(token, keep.kuid);
   }
 
   async function refreshAll() {
@@ -206,11 +215,10 @@ export function WpsSection({
     }
   }
 
-  // 挂载时把知识库列表拉一次。只在 desktop + 已登录时做；
-  // token 失效时这里会报错，让用户点「刷新」再试（不自动重试，
-  // 免得界面上一进场就弹一片红）
+  // 挂载时把知识库列表拉一次。只在 desktop + 已登录 + 展开登录区时做；
+  // token 失效时这里会报错，让用户点「刷新」再试（不自动重试）
   useEffect(() => {
-    if (!desktop || !cfg.token) return;
+    if (!desktop || !cfg.token || !showLogin) return;
     setBusy("refresh");
     void (async () => {
       try {
@@ -222,27 +230,71 @@ export function WpsSection({
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [desktop]);
+  }, [desktop, showLogin]);
 
-  /* ------------------------------ 推送 ------------------------------ */
+  /* --------------------------- 云端表格直连 --------------------------- */
+
+  async function resolveLink() {
+    setBusy("link");
+    try {
+      const info = await linkInfo(cloud.link);
+      if (info.kind !== "sheet") {
+        say(`这条链接指向的是「${info.name}」，不是表格（表格才是能推拉的）`, "err");
+        return;
+      }
+      await saveSettings({ [SETTINGS.wpsCloudName]: info.name });
+      say(`链接指向「${info.name}」${info.owner ? `（${info.owner}）` : ""}`);
+    } catch (err) {
+      say(`解析链接失败：${(err as Error).message}`, "err");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function testCloud() {
+    setBusy("probe");
+    try {
+      const info = await cloudProbe(cloud.webhook, cloud.token);
+      setProbe(info);
+      await saveSettings({
+        [SETTINGS.wpsCloudSheet]: info.sheet,
+        [SETTINGS.wpsCloudHeader]: info.header.filter((h) => h.trim()).join(" / "),
+      });
+      say(`连通了：工作表「${info.sheet}」· ${info.rows} 行 × ${info.cols} 列`);
+    } catch (err) {
+      say(`连不上：${(err as Error).message}`, "err");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function copyScript() {
+    try {
+      await navigator.clipboard.writeText(AIRSCRIPT_SNIPPET);
+      say("脚本已复制 —— 粘到 AirScript 编辑器里，保存后建脚本令牌");
+    } catch {
+      say("剪贴板被系统拦了 —— 展开下面的代码手动全选复制", "err");
+    }
+  }
 
   async function doPush() {
     setBusy("push");
     try {
-      // 先读一遍：一条都没有就别推了 —— 空表推送会把线上那份移进回收站，
-      // 换回来的只有一张光表头的表，得不偿失
+      // 先读一遍：一条都没有就别推了 —— 别把线上那张表清成光表头
       const rows = await readLedger();
       if (!rows.length) {
         say("本地一条异常单都没有 —— 先登记几例再推", "err");
         return;
       }
-      const r = await pushLedger(cfg.token, spaceKuid, driveId, cfg.tableTitle, rows);
+      const r = await cloudPush(cloud.webhook, cloud.token, cloud.sheet, rows);
       await saveSettings({
         [SETTINGS.kwikiLastAt]: String(Date.now()),
-        [SETTINGS.kwikiLastSummary]: `推送 ${r.count} 条`,
+        [SETTINGS.kwikiLastSummary]: `直连推送 ${r.count} 条`,
       });
-      say(`已推送 ${r.count} 条到「${cfg.tableTitle}」`);
-      await refreshFiles(cfg.token, spaceKuid);
+      say(
+        `已推送 ${r.count} 条到「${settings[SETTINGS.wpsCloudName] || "云端表格"}」` +
+          (r.appended ? `（末尾补了 ${r.appended} 列台账表头）` : ""),
+      );
     } catch (err) {
       say(`推送失败：${(err as Error).message}`, "err");
     } finally {
@@ -250,12 +302,10 @@ export function WpsSection({
     }
   }
 
-  /* ------------------------------ 拉取 ------------------------------ */
-
   async function doPull() {
     setBusy("pull");
     try {
-      const res = await pullLedger(cfg.token, spaceKuid, cfg.tableTitle);
+      const res = await cloudPull(cloud.webhook, cloud.token, cloud.sheet);
       const local = await readLedger();
       const plan = planPull(res.rows, local);
       setPreview({ pull: res, plan });
@@ -289,12 +339,9 @@ export function WpsSection({
 
   /* ------------------------------ 渲染 ------------------------------ */
 
-  // 已选的库不在列表里时（设置是旧的、库被删了）退回第一个，
-  // 与 refreshSpaces 里的兜底同一个方向
-  const spaceKuid = cfg.spaceKuid || spaces[0]?.kuid || "";
-  const driveId = cfg.driveId || spaces.find((s) => s.kuid === spaceKuid)?.drive_id || "";
-  const theTable = files.find((f) => f.title === cfg.tableTitle);
-  const ready = !!cfg.token && !!spaceKuid && !!driveId;
+  const ready = cloudReady(cloud);
+  const linkName = settings[SETTINGS.wpsCloudName] || "";
+  const headerText = settings[SETTINGS.wpsCloudHeader] || "";
 
   const commit = (key: string) => (v: string) => {
     void saveSettings({ [key]: v });
@@ -310,7 +357,7 @@ export function WpsSection({
     <div className="space-y-3">
       <SectionTitle
         title="WPS 在线表格联动"
-        desc="把异常单台账接到 WPS 知识库的在线表格上。登录一次，之后推送、拉取都是点一下的事 —— 找表、下载、拼表、上传、删旧、改名全由程序自己做。"
+        desc="把异常单台账直接接到你自己那张云端表格上：贴链接 + 一次性的脚本令牌，之后推送、拉取都直接改原表 —— 不登录、不经过知识库、不产生任何副本。"
       />
 
       {!desktop ? (
@@ -320,237 +367,333 @@ export function WpsSection({
             网页端用不了这条路
           </div>
           <p className="text-[11.5px] leading-relaxed text-fg-dim">
-            同步 WPS 在线表格要直连 <code>zhishi.wps.cn</code>，浏览器过不去它的跨域限制 ——
+            直连云表格要 POST 到 <code>kdocs.cn</code> 的脚本地址，浏览器过不去它的跨域限制 ——
             这是那条服务器的规矩，不是我们没做。整个联动只在<strong>桌面版</strong>里可用
             （打包出来的那个）。网页版里可以正常登记、查看异常单，数据都在本机。
           </p>
         </Card>
       ) : (
         <>
-          {/* ------------------------------ 登录 ------------------------------ */}
+          {/* --------------------------- 云端表格 --------------------------- */}
           <Card>
             <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[12.5px] text-fg-2">
-              <KeyRound size={14} />
-              登录 WPS
-              {cfg.token && (
-                <span className="ml-1 text-[12px] text-fg-dim">
-                  已连接（{cfg.account || "WPS 账号"}）
-                  {cfg.expiry
-                    ? ` · 令牌约用到 ${new Date(cfg.expiry).toLocaleDateString("zh-CN")}`
-                    : ""}
+              <Link2 size={14} />
+              云端表格（直连）
+              {ready ? (
+                <span className="ml-1 rounded-full bg-chip px-2 py-0.5 text-[11.5px] text-fg-dim">
+                  已配置
+                </span>
+              ) : (
+                <span className="ml-1 rounded-full bg-chip px-2 py-0.5 text-[11.5px] text-fg-dim">
+                  待配置
                 </span>
               )}
+              {lastText && <span className="ml-1 text-[12px] text-fg-dim">上次：{lastText}</span>}
             </div>
 
-            {cfg.token ? (
-              <div className="flex flex-wrap gap-2">
+            <div className="grid gap-2.5 sm:grid-cols-[1fr_auto]">
+              <TextField
+                label="表格链接"
+                value={cloud.link}
+                onCommit={commit(SETTINGS.wpsCloudLink)}
+                placeholder="https://www.kdocs.cn/l/xxxx"
+                hint="你那张台账的分享链接。链接只用来确认是哪张表；真正同步靠下面的 webhook。"
+              />
+              <div className="flex items-end gap-2 pb-0.5">
                 <ActionButton
-                  icon={<RefreshCw size={14} />}
-                  label={busy === "refresh" ? "刷新中…" : "刷新知识库列表"}
-                  onClick={() => void refreshAll()}
-                  disabled={busy === "refresh"}
+                  icon={<PlugZap size={14} />}
+                  label={busy === "link" ? "解析中…" : "解析链接"}
+                  onClick={() => void resolveLink()}
+                  disabled={!cloud.link.trim() || busy === "link"}
                 />
-                <ActionButton icon={<LogOut size={14} />} label="退出登录" onClick={logout} />
-              </div>
-            ) : (
-              <>
-                <ActionButton
-                  icon={<KeyRound size={14} />}
-                  label={busy === "login" ? "正在取授权页…" : "登录 WPS"}
-                  onClick={() => void startLogin()}
-                  disabled={busy === "login"}
-                />
-                {login && (
-                  <div className="mt-2.5 space-y-1.5 rounded-lg border border-line bg-card p-2.5">
-                    <div className="text-[12.5px] text-fg-2">
-                      {waiting ? "等着你点同意…" : "授权页已打开"}（设备码{" "}
-                      <code className="text-[12px]">{login.deviceCode}</code>）
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <a
-                        href={login.loginUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 break-all text-[12.5px] text-primary underline"
-                      >
-                        <ExternalLink size={12} />
-                        {login.loginUrl}
-                      </a>
-                    </div>
-                    <p className="text-[11.5px] leading-relaxed text-fg-dim">
-                      要在<strong>已经登录了 WPS 的浏览器</strong>里打开这个网址，点「同意」。
-                      窗口没自动跳出来就把上面这条链接复制过去。令牌管一年左右，
-                      到期再来这一趟。
-                    </p>
-                  </div>
+                {!!cloud.link.trim() && (
+                  <ActionButton
+                    icon={<ExternalLink size={14} />}
+                    label="在 WPS 打开"
+                    onClick={() => globalThis.open(cloud.link, "_blank", "noopener,noreferrer")}
+                  />
                 )}
-                <p className="mt-2 text-[11.5px] leading-relaxed text-fg-dim">
-                  ⚠️ 令牌<strong>明文存在本机数据库</strong>里，没有加密 ——
-                  和同步密码、网盘令牌一个待遇（密钥也得存本机才能自动同步）。
-                  别在公用电脑上登。
-                </p>
-              </>
+              </div>
+            </div>
+
+            {!!linkName && (
+              <p className="mt-1.5 text-[11.5px] leading-relaxed text-fg-dim">
+                链接指向「<b className="text-fg-2">{linkName}</b>」
+                {cloud.sheet ? ` · 工作表「${cloud.sheet}」` : ""}
+                {headerText ? ` · 上次读到的表头：${headerText}` : ""}
+              </p>
+            )}
+
+            <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+              <TextField
+                label="AirScript Webhook"
+                value={cloud.webhook}
+                onCommit={commit(SETTINGS.wpsCloudWebhook)}
+                placeholder="https://www.kdocs.cn/api/v3/ide/file/…/sync_task"
+                hint="在表格的 AirScript 编辑器里，脚本「更多」菜单 →「复制脚本 webhook」。"
+              />
+              <TextField
+                label="AirScript 脚本令牌"
+                value={cloud.token}
+                type="password"
+                onCommit={commit(SETTINGS.wpsCloudToken)}
+                placeholder="点「脚本令牌」创建后复制"
+                hint="⚠️ 明文存在本机数据库（与同步密码同等待遇）。别在公用电脑上填。"
+              />
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <ActionButton
+                icon={<PlugZap size={14} />}
+                label={busy === "probe" ? "连接中…" : "测试连接"}
+                onClick={() => void testCloud()}
+                disabled={!ready || busy === "probe"}
+              />
+              <button
+                type="button"
+                onClick={() => setShowSetup((v) => !v)}
+                className="text-[12px] text-primary underline-offset-2 hover:underline"
+              >
+                {showSetup ? "收起「怎么拿到 webhook 和令牌」" : "怎么拿到 webhook 和令牌？"}
+              </button>
+            </div>
+
+            {probe && (
+              <div className="mt-2 rounded-lg border border-line bg-card p-2.5 text-[11.5px] leading-relaxed text-fg-dim">
+                连上了：工作表「<b className="text-fg-2">{probe.sheet}</b>」（共 {probe.sheets} 张
+                sheet）· {probe.rows} 行 × {probe.cols} 列
+                {probe.header.filter((h) => h.trim()).length ? (
+                  <>
+                    <br />
+                    表头：{probe.header.filter((h) => h.trim()).join(" / ")}
+                  </>
+                ) : (
+                  <>
+                    <br />
+                    第一行还是空的 —— 第一次推送会把台账表头写进去。
+                  </>
+                )}
+              </div>
+            )}
+
+            {showSetup && (
+              <div className="mt-2.5 space-y-2 rounded-lg border border-line bg-card p-3">
+                <div className="text-[12.5px] text-fg-2">一次性设置（约 2 分钟）</div>
+                <ol className="list-decimal space-y-1 pl-4 text-[11.5px] leading-relaxed text-fg-dim">
+                  <li>在 WPS 里打开那张台账表格，点顶部「效率 → 高级开发 → AirScript 脚本编辑器」。</li>
+                  <li>新建一个脚本，把下面这段代码整段粘进去，保存。</li>
+                  <li>点工具栏「脚本令牌」，创建并复制令牌（需实名认证；一个账号只有一个令牌）。</li>
+                  <li>在脚本的「更多」菜单里复制「脚本 webhook」，连同令牌一起填到上面两格。</li>
+                  <li>点「测试连接」——能读出工作表名和表头就通了。</li>
+                </ol>
+                <div className="flex flex-wrap items-center gap-2">
+                  <ActionButton icon={<Copy size={14} />} label="复制脚本" onClick={() => void copyScript()} />
+                  <span className="text-[11px] text-fg-dim">
+                    脚本只读写它所在的那张表，不联网、不碰别处。
+                  </span>
+                </div>
+                <textarea
+                  readOnly
+                  value={AIRSCRIPT_SNIPPET}
+                  spellCheck={false}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="h-40 w-full resize-y rounded-lg border border-line bg-app px-2.5 py-2 font-mono text-[11px] leading-relaxed text-fg-2 outline-none"
+                />
+              </div>
             )}
           </Card>
 
-          {/* ---------------------------- 表格在哪 ---------------------------- */}
-          {cfg.token && (
-            <Card>
-              <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[12.5px] text-fg-2">
-                <Table2 size={14} />
-                表格在哪
-                {lastText && <span className="ml-1 text-[12px] text-fg-dim">上次：{lastText}</span>}
-              </div>
-              <div className="grid gap-2.5 sm:grid-cols-2">
-                <label className="block">
-                  <span className="mb-1 block text-[12px] text-fg-dim">知识库</span>
-                  <select
-                    value={spaceKuid}
-                    onChange={(e) => {
-                      const s = spaces.find((x) => x.kuid === e.target.value);
-                      if (s) {
-                        void saveSettings({
-                          [SETTINGS.kwikiSpaceKuid]: s.kuid,
-                          [SETTINGS.kwikiDriveId]: s.drive_id,
-                        });
-                        void refreshFiles(cfg.token, s.kuid);
-                      }
-                    }}
-                    className="w-full rounded-lg border border-line bg-card px-3 py-2 text-[13px] text-fg-2 outline-none focus:border-primary"
-                  >
-                    {!spaces.length && <option value="">（还没拉到知识库）</option>}
-                    {spaces.map((s) => (
-                      <option key={s.kuid} value={s.kuid}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <TextField
-                  label="表格标题"
-                  value={cfg.tableTitle}
-                  onCommit={commit(SETTINGS.kwikiTableTitle)}
-                  placeholder="异常台账"
-                  hint="要和知识库里的文件名一模一样。推送时按这个标题找表 —— 推送后节点 id 会变，存死它会删错。"
-                />
-              </div>
-              {!!files.length && (
-                <p className="mt-2 text-[11.5px] leading-relaxed text-fg-dim">
-                  {theTable ? (
-                    <>
-                      这个库里有「{theTable.title}」（{Math.round(theTable.size / 1024)} KB）
-                      —— 推送会替换它，拉取会读它。
-                    </>
-                  ) : (
-                    <>
-                      这个库里还没有叫「{cfg.tableTitle}」的表。第一次推送会按在线表格的
-                      包结构新建一份；想先有一张，去 WPS 里建一个同名空表再推送也行。
-                    </>
-                  )}
-                </p>
-              )}
-            </Card>
-          )}
-
           {/* ------------------------------ 推送 ------------------------------ */}
-          {cfg.token && (
-            <Card>
-              <div className="mb-2 flex items-center gap-1.5 text-[12.5px] text-fg-2">
-                <Upload size={14} />
-                推送到在线表格
-              </div>
-              <ActionButton
-                icon={<Upload size={14} />}
-                label={busy === "push" ? "推送中…" : "推送"}
-                onClick={() => void doPush()}
-                disabled={!ready || busy === "push"}
-              />
-              <p className="mt-2 text-[11.5px] leading-relaxed text-fg-dim">
-                整表替换：程序先下载线上那份当模板，把本地台账拼进去，再
-                <strong>上传新表 → 旧表移入回收站 → 新表改回原名</strong>
-                （上传是新建不是覆盖，这是服务端的规矩）。回收站里躺 7 天，
-                推错了能捞回来。
-              </p>
-            </Card>
-          )}
+          <Card>
+            <div className="mb-2 flex items-center gap-1.5 text-[12.5px] text-fg-2">
+              <Upload size={14} />
+              推送到云端表格
+            </div>
+            <ActionButton
+              icon={<Upload size={14} />}
+              label={busy === "push" ? "推送中…" : "推送"}
+              onClick={() => void doPush()}
+              disabled={!ready || busy === "push"}
+            />
+            <p className="mt-2 text-[11.5px] leading-relaxed text-fg-dim">
+              <strong>只写台账那 14 列</strong>：按中文表头找到对应的列，你在这张表里自己加的
+              备注列 / 公式列一律不动；表里还没有的列会补在末尾。比新数据多的旧行会被清空，
+              但只清台账这几列。
+            </p>
+          </Card>
 
           {/* ------------------------------ 拉取 ------------------------------ */}
-          {cfg.token && (
-            <Card>
-              <div className="mb-2 flex items-center gap-1.5 text-[12.5px] text-fg-2">
-                <Download size={14} />
-                在线表格 · 查看与拉取
-              </div>
-              <ActionButton
-                icon={<Download size={14} />}
-                label={busy === "pull" ? "拉取中…" : "拉取并预览"}
-                onClick={() => void doPull()}
-                disabled={!ready || busy === "pull"}
-              />
-              <p className="mt-2 text-[11.5px] leading-relaxed text-fg-dim">
-                拉下来先算一遍差异给你看，<strong>确认了才写库</strong>。
-                按订单号认人（没有订单号就用快递单号）；本地已有的行只补空格、
-                不改已有的值，也不动流程和提醒。
-              </p>
+          <Card>
+            <div className="mb-2 flex items-center gap-1.5 text-[12.5px] text-fg-2">
+              <Download size={14} />
+              云端表格 · 查看与拉取
+            </div>
+            <ActionButton
+              icon={<Download size={14} />}
+              label={busy === "pull" ? "拉取中…" : "拉取并预览"}
+              onClick={() => void doPull()}
+              disabled={!ready || busy === "pull"}
+            />
+            <p className="mt-2 text-[11.5px] leading-relaxed text-fg-dim">
+              拉下来先算一遍差异给你看，<strong>确认了才写库</strong>。
+              按订单号认人（没有订单号就用快递单号）；本地已有的行只补空格、
+              不改已有的值，也不动流程和提醒。
+            </p>
 
-              {preview && (
-                <div className="mt-3 space-y-2 rounded-lg border border-line bg-card p-2.5">
-                  <div className="text-[12.5px] text-fg-2">
-                    将新增 <b>{preview.plan.adds.length}</b> 条，将更新{" "}
-                    <b>{preview.plan.updates.length}</b> 条
-                    <span className="ml-1 text-fg-dim">
-                      （表头 {preview.pull.header.length} 列，认不出的列会被忽略）
-                    </span>
-                  </div>
-                  {!!preview.plan.adds.length && (
-                    <div className="space-y-0.5 text-[11.5px] leading-relaxed text-fg-dim">
-                      {preview.plan.adds.slice(0, 8).map((r: LedgerRow, i: number) => (
-                        <div key={i}>
-                          + {r.order_sn || r.tracking_no}
-                          {r.store ? ` · ${r.store}` : ""}
-                          {r.category ? ` · ${r.category}` : ""}
-                        </div>
-                      ))}
-                      {preview.plan.adds.length > 8 && (
-                        <div>… 还有 {preview.plan.adds.length - 8} 条新增</div>
-                      )}
-                    </div>
-                  )}
-                  {!!preview.plan.updates.length && (
-                    <div className="space-y-0.5 text-[11.5px] leading-relaxed text-fg-dim">
-                      {preview.plan.updates.slice(0, 8).map((u, i) => (
-                        <div key={i}>
-                          ~ {u.row.order_sn || u.row.tracking_no}：
-                          {Object.entries(u.patch)
-                            .map(([k, v]) => `${k} ${u.row[k] || "（空）"} → ${v}`)
-                            .join("；")}
-                        </div>
-                      ))}
-                      {preview.plan.updates.length > 8 && (
-                        <div>… 还有 {preview.plan.updates.length - 8} 条更新</div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* 这就是「在程序里看见那张在线表」：拉下来的原始内容，只读 */}
-                  <OnlineTable pull={preview.pull} />
-
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    <ActionButton
-                      icon={<Download size={14} />}
-                      label={busy === "apply" ? "写库中…" : "确认写库"}
-                      onClick={() => void doApply()}
-                      disabled={
-                        busy === "apply" ||
-                        (!preview.plan.adds.length && !preview.plan.updates.length)
-                      }
-                    />
-                    <ActionButton label="取消" icon={<></>} onClick={() => setPreview(null)} />
-                  </div>
+            {preview && (
+              <div className="mt-3 space-y-2 rounded-lg border border-line bg-card p-2.5">
+                <div className="text-[12.5px] text-fg-2">
+                  将新增 <b>{preview.plan.adds.length}</b> 条，将更新{" "}
+                  <b>{preview.plan.updates.length}</b> 条
+                  <span className="ml-1 text-fg-dim">
+                    （表头 {preview.pull.header.length} 列，认不出的列会被忽略）
+                  </span>
                 </div>
-              )}
-            </Card>
-          )}
+                {!!preview.plan.adds.length && (
+                  <div className="space-y-0.5 text-[11.5px] leading-relaxed text-fg-dim">
+                    {preview.plan.adds.slice(0, 8).map((r: LedgerRow, i: number) => (
+                      <div key={i}>
+                        + {r.order_sn || r.tracking_no}
+                        {r.store ? ` · ${r.store}` : ""}
+                        {r.category ? ` · ${r.category}` : ""}
+                      </div>
+                    ))}
+                    {preview.plan.adds.length > 8 && (
+                      <div>… 还有 {preview.plan.adds.length - 8} 条新增</div>
+                    )}
+                  </div>
+                )}
+                {!!preview.plan.updates.length && (
+                  <div className="space-y-0.5 text-[11.5px] leading-relaxed text-fg-dim">
+                    {preview.plan.updates.slice(0, 8).map((u, i) => (
+                      <div key={i}>
+                        ~ {u.row.order_sn || u.row.tracking_no}：
+                        {Object.entries(u.patch)
+                          .map(([k, v]) => `${k} ${u.row[k] || "（空）"} → ${v}`)
+                          .join("；")}
+                      </div>
+                    ))}
+                    {preview.plan.updates.length > 8 && (
+                      <div>… 还有 {preview.plan.updates.length - 8} 条更新</div>
+                    )}
+                  </div>
+                )}
+
+                {/* 「在程序里看见那张表」：拉下来的原始内容，只读 */}
+                <OnlineTable pull={preview.pull} />
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <ActionButton
+                    icon={<Download size={14} />}
+                    label={busy === "apply" ? "写库中…" : "确认写库"}
+                    onClick={() => void doApply()}
+                    disabled={
+                      busy === "apply" ||
+                      (!preview.plan.adds.length && !preview.plan.updates.length)
+                    }
+                  />
+                  <ActionButton label="取消" icon={<></>} onClick={() => setPreview(null)} />
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {/* ------------------------ WPS 登录（知识库） ------------------------ */}
+          <Card>
+            <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[12.5px] text-fg-2">
+              <KeyRound size={14} />
+              WPS 登录（只给「WPS 绑定文件」工具用）
+              <button
+                type="button"
+                onClick={() => setShowLogin((v) => !v)}
+                className="ml-auto text-[12px] text-primary underline-offset-2 hover:underline"
+              >
+                {showLogin ? "收起" : "展开"}
+              </button>
+            </div>
+            <p className="text-[11.5px] leading-relaxed text-fg-dim">
+              台账直连<strong>不需要登录</strong>。这一块只在你要用「WPS 绑定文件」工具
+              读写知识库里的表格 / 文档时才需要 —— 它没有 webhook，只能走账号。
+            </p>
+
+            {showLogin && (
+              <div className="mt-2.5 space-y-2">
+                {cfg.token ? (
+                  <>
+                    <div className="text-[12px] text-fg-dim">
+                      已连接（{cfg.account || "WPS 账号"}）
+                      {cfg.expiry
+                        ? ` · 令牌约用到 ${new Date(cfg.expiry).toLocaleDateString("zh-CN")}`
+                        : ""}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <ActionButton
+                        icon={<RefreshCw size={14} />}
+                        label={busy === "refresh" ? "刷新中…" : "刷新知识库列表"}
+                        onClick={() => void refreshAll()}
+                        disabled={busy === "refresh"}
+                      />
+                      <ActionButton icon={<LogOut size={14} />} label="退出登录" onClick={logout} />
+                    </div>
+                    <label className="block">
+                      <span className="mb-1 block text-[12px] text-fg-dim">
+                        「WPS 绑定文件」默认用哪个知识库
+                      </span>
+                      <select
+                        value={cfg.spaceKuid || spaces[0]?.kuid || ""}
+                        onChange={(e) => {
+                          const s = spaces.find((x) => x.kuid === e.target.value);
+                          if (s) {
+                            void saveSettings({
+                              [SETTINGS.kwikiSpaceKuid]: s.kuid,
+                              [SETTINGS.kwikiDriveId]: s.drive_id,
+                            });
+                          }
+                        }}
+                        className="w-full rounded-lg border border-line bg-card px-3 py-2 text-[13px] text-fg-2 outline-none focus:border-primary"
+                      >
+                        {!spaces.length && <option value="">（还没拉到知识库）</option>}
+                        {spaces.map((s) => (
+                          <option key={s.kuid} value={s.kuid}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <ActionButton
+                      icon={<KeyRound size={14} />}
+                      label={busy === "login" ? "正在取授权页…" : "登录 WPS"}
+                      onClick={() => void startLogin()}
+                      disabled={busy === "login"}
+                    />
+                    {login && (
+                      <div className="space-y-1.5 rounded-lg border border-line bg-card p-2.5">
+                        <div className="text-[12.5px] text-fg-2">
+                          {waiting ? "等着你点同意…" : "授权页已打开"}（设备码{" "}
+                          <code className="text-[12px]">{login.deviceCode}</code>）
+                        </div>
+                        <a
+                          href={login.loginUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 break-all text-[12.5px] text-primary underline"
+                        >
+                          <ExternalLink size={12} />
+                          {login.loginUrl}
+                        </a>
+                        <p className="text-[11.5px] leading-relaxed text-fg-dim">
+                          要在<strong>已经登录了 WPS 的浏览器</strong>里打开这个网址，点「同意」。
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </Card>
         </>
       )}
     </div>
@@ -639,3 +782,6 @@ function OnlineTable({ pull }: { pull: WpsPull }) {
     </div>
   );
 }
+
+/* 登录区里只用到知识库的三个字段 —— 不为此把 kwiki 的整组类型都 import 进来 */
+type WpsSpaceLite = { kuid: string; drive_id: string; name: string };

@@ -40,6 +40,7 @@ export const ALL_TOOL_IDS = [
   "ai-gen",
   "abnormal-ticket",
   "scratchpad",
+  "wpslink",
 ];
 
 /**
@@ -54,6 +55,7 @@ export const ENABLED_TOOL_IDS = [
   "notes",
   "ai-gen",
   "abnormal-ticket",
+  "wpslink",
 ];
 
 /**
@@ -68,6 +70,7 @@ export const THEME_TOOLS = [
   ["ai-gen", "AI 生成"],
   ["abnormal-ticket", "异常单号"],
   ["scratchpad", "模板"],
+  ["wpslink", "WPS 绑定文件"],
 ];
 
 /** 给断言用的期望值：侧栏工具数 / 设置页工具行数 */
