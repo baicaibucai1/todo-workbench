@@ -404,6 +404,40 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
     detail.hasHandling === true && detail.hasResult === true && detail.hasSettled === true &&
       detail.hasAdvance === false, JSON.stringify(detail));
 
+  /* ---------- 表格页：整本台账铺开（0.8.4） ----------
+   * 列序 = 推给 WPS 在线表格的 COLUMNS（lib/kwiki.ts），两边必须能一一对上；
+   * 只读 —— 点一行回「查看」页那条的详情，改仍在详情里改。 */
+  await page.click("#tab-table");
+  await page.waitForTimeout(250);
+  const tbl = await page.evaluate(() => {
+    const heads = Array.from(document.querySelectorAll("#tableHead th")).map((th) => th.textContent);
+    const rows = document.querySelectorAll("#tableBody tr[data-id]");
+    return {
+      visible: !document.getElementById("view-table").hidden,
+      heads: heads.join(","),
+      cols: document.querySelectorAll("#tableCols col").length,
+      count: rows.length,
+      first: rows[0] ? (rows[0].innerText || "").replace(/\s+/g, " ").trim() : "",
+    };
+  });
+  check("异常单：表格页能打开", tbl.visible === true, String(tbl.visible));
+  check("异常单：表格 14 列，列序与 WPS 台账一致",
+    tbl.cols === 14 && tbl.heads ===
+      "订单号,快递单号,快递公司,发货时间,店铺,情况,详细描述,处理方式,结果,结账,当前状态,处理情况,登记时间,更新时间",
+    tbl.heads);
+  check("异常单：表格里能看到刚登记的那条",
+    tbl.count === 1 && /261011-442394294633154/.test(tbl.first),
+    `count=${tbl.count} first=${tbl.first}`);
+
+  await page.click("#tableBody tr[data-id]");
+  await page.waitForTimeout(250);
+  const tblJump = await page.evaluate(() => ({
+    browse: !document.getElementById("view-browse").hidden,
+    code: (document.querySelector("#detail .d-code") || {}).textContent || "",
+  }));
+  check("异常单：点表格一行 → 跳回「查看」并选中它",
+    tblJump.browse === true && tblJump.code === "261011-442394294633154", JSON.stringify(tblJump));
+
   /* ---------- 订单号 + 呼起本地客户端 ----------
    * 这块的核心是**链接拼得对不对**：少一个参数、拼接顺序错了，
    * 客户端那边就是"什么都没发生"，而那是最难查的症状。

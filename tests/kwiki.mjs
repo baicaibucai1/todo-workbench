@@ -158,9 +158,9 @@ section("2. COLUMNS 与 Rust 侧逐条一致");
     /m\.event === "kwiki:pulled"[\s\S]{0,200}load\(\)/.test(html),
   );
   check(
-    "manifest 与 BUILTIN_TOOLS 都到了 0.8.3",
-    JSON.parse(read("tools/abnormal-ticket/manifest.json")).version === "0.8.3" &&
-      /id: "abnormal-ticket",\s*\n\s*name: "异常单号登记",\s*\n\s*version: "0\.8\.3"/.test(
+    "manifest 与 BUILTIN_TOOLS 都到了 0.8.4",
+    JSON.parse(read("tools/abnormal-ticket/manifest.json")).version === "0.8.4" &&
+      /id: "abnormal-ticket",\s*\n\s*name: "异常单号登记",\s*\n\s*version: "0\.8\.4"/.test(
         read("src/lib/tools.ts"),
       ),
   );

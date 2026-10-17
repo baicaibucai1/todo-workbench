@@ -9,9 +9,12 @@
 <!--
   异常单号登记。
 
-  界面分两块，靠顶部两个页签切：
+  界面分四块，靠顶部页签切：
     · 登记 —— 只干一件事：把一条异常快速录进去（连续录入不被别的东西打断）
     · 查看 —— 左右分栏：左边是单号列表（找），右边是选中那条的详情 + 处理区（办）
+    · 表格 —— 整本台账一屏铺开（只读）：列与推给 WPS 的那张在线表格同序同列，
+              点一行跳回「查看」页那条的详情
+    · 设置 —— 店铺表 / 客服 ID / 下拉选项
 
   为什么把「看」和「办」放在同一屏：异常单的日常动作是"对着一条单子看情况、改状态、
   写处理备注"，来回跳页面是最烦的。列表只负责"找到它"，其余都在右栏完成。
@@ -280,6 +283,35 @@
   .empty { color: var(--dim); font-size: 13px; text-align: center; margin: auto 0; padding: 0 10px; }
   .empty code { font-family: var(--mono); color: var(--fg2); }
 
+  /* ---- 表格页：整本台账一屏铺开 ----
+     列的顺序与「推给 WPS 的那张表」逐列一致（lib/kwiki.ts 的 COLUMNS）——
+     程序里看到哪一列，在线表格里就是哪一列，不用在两种摆法之间换算。
+     只读：点一行跳回「查看」页那条的详情，改仍然只在详情里改。 */
+  /* ★ min-width:0 不能省：.view 是 .body（row flex）的子项，默认 min-width:auto
+     会让它拒绝缩到内容宽度以下 —— 14 列的定宽表（1556px）会把整页顶宽，
+     而 body 是 overflow:hidden，超出的列**看得见却滚不到**。
+     给了 0，超宽的部分才会落在 .tblscroll 自己的横向滚动条里。 */
+  #view-table { flex-direction: column; min-height: 0; min-width: 0; }
+  .tblbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  #tableSearch { flex: 1 1 260px; min-width: 0; }
+  .tblbar .stats { margin: 0; }
+  .tblscroll { flex: 1; min-height: 0; min-width: 0; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+  /* table-layout: fixed + colgroup 的定宽是「省略号截断」能生效的前提（auto 布局下
+     td 的 max-width 不可靠）；列宽之和 ≈ min-width，窄了横向滚，宽了按比例铺满 */
+  table.ledger { table-layout: fixed; width: 100%; min-width: 1556px;
+    border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
+  table.ledger th, table.ledger td { padding: 6px 9px; border-bottom: 1px solid var(--line); text-align: left; }
+  table.ledger thead th { position: sticky; top: 0; z-index: 1; background: var(--chip); color: var(--fg2);
+    font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+  table.ledger tbody tr { cursor: pointer; }
+  table.ledger tbody tr:hover { background: var(--chip); }
+  table.ledger td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  table.ledger td.mono { font-family: var(--mono); font-size: 12px; }
+  table.ledger td .nil { color: var(--dim); }
+  table.ledger td .settle-ok { color: var(--ok); }
+  table.ledger tr.empty-row td { cursor: default; color: var(--dim); text-align: center; padding: 30px 10px; }
+  table.ledger tr.empty-row:hover { background: transparent; }
+
   /* 窄一点就上下堆叠：左栏列表给固定高度，右栏接着往下 */
   @media (max-width: 720px) {
     #view-browse { flex-direction: column; }
@@ -307,6 +339,7 @@
   <div class="tabs" role="tablist">
     <button id="tab-create" data-tab="create" role="tab" aria-selected="true">登记</button>
     <button id="tab-browse" data-tab="browse" role="tab" aria-selected="false">查看</button>
+    <button id="tab-table" data-tab="table" role="tab" aria-selected="false">表格</button>
     <button id="tab-settings" data-tab="settings" role="tab" aria-selected="false">设置</button>
   </div>
 </div>
@@ -384,7 +417,24 @@
     </div>
   </section>
 
-  <!-- ============ 三、设置：店铺与客服 ID ============ -->
+  <!-- ============ 三、表格：整本台账一屏铺开（只读） ============ -->
+  <!-- 列头与列宽都从 TABLE_COLS 生成（JS），不在这里写死 —— 避免"表头改了、
+       单元格没改"这种最难查的错位。 -->
+  <section class="view" id="view-table" hidden>
+    <div class="tblbar">
+      <input id="tableSearch" placeholder="搜订单号 / 快递单号 / 店铺 / 描述 / 处理" />
+      <span class="stats" id="tableStats"></span>
+    </div>
+    <div class="tblscroll">
+      <table class="ledger">
+        <colgroup id="tableCols"></colgroup>
+        <thead id="tableHead"></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 四、设置：店铺与客服 ID ============ -->
   <section class="view" id="view-settings" hidden>
     <!-- 传一条链接 → 认出客服 ID → 绑到某个店铺 -->
     <div class="card" style="max-width:720px">
@@ -1266,6 +1316,93 @@
       "</b> · 处理中 <b>" + n("处理中") + "</b> · 已关闭 <b>" + n("已关闭") + "</b>";
   }
 
+  /* ---------------- 渲染：表格页（只读） ----------------
+     列 = lib/kwiki.ts 的 COLUMNS，顺序也一样 —— 那张表就是这套联动的
+     「线上那一份」，程序里这一份要能一一对上（列名、列序、派生状态的口径）。
+     改这里时务必同步 kwiki.ts / wps.rs / sync-ledger.py 三处的列定义。 */
+  var TABLE_COLS = [
+    { key: "order_sn", label: "订单号", w: 160, mono: true },
+    { key: "tracking_no", label: "快递单号", w: 132, mono: true },
+    { key: "courier", label: "快递公司", w: 84 },
+    { key: "shipped_at", label: "发货时间", w: 96, mono: true },
+    { key: "store", label: "店铺", w: 82 },
+    { key: "category", label: "情况", w: 84 },
+    { key: "title", label: "详细描述", w: 200 },
+    { key: "handling", label: "处理方式", w: 100 },
+    { key: "result", label: "结果", w: 100 },
+    { key: "settled", label: "结账", w: 58 },
+    { key: "_status", label: "当前状态", w: 92 },
+    { key: "note", label: "处理情况", w: 160 },
+    { key: "created_at", label: "登记时间", w: 104, mono: true, time: true },
+    { key: "updated_at", label: "更新时间", w: 104, mono: true, time: true },
+  ];
+
+  /** 列头与 colgroup 只建一次（列宽/列名都从 TABLE_COLS 来，表头不会和单元格错位） */
+  function buildTableHead() {
+    document.getElementById("tableCols").innerHTML = TABLE_COLS.map(function (c) {
+      return '<col style="width:' + c.w + 'px">';
+    }).join("");
+    document.getElementById("tableHead").innerHTML = "<tr>" + TABLE_COLS.map(function (c) {
+      return "<th>" + esc(c.label) + "</th>";
+    }).join("") + "</tr>";
+  }
+
+  /** 表格页的搜索：与「查看」页那个搜索同样的覆盖范围（外加店铺） */
+  function tableVisibleRows() {
+    var q = document.getElementById("tableSearch").value.trim().toLowerCase();
+    if (!q) return allRows;
+    return allRows.filter(function (r) {
+      return [r.order_sn, r.tracking_no, r.courier, r.store, r.category, r.title,
+        r.handling, r.result, r.note].some(function (v) {
+        return String(v || "").toLowerCase().indexOf(q) >= 0;
+      });
+    });
+  }
+
+  function renderTable() {
+    var body = document.getElementById("tableBody");
+    var stats = document.getElementById("tableStats");
+    var rows = tableVisibleRows();
+    if (!allRows.length) {
+      body.innerHTML = '<tr class="empty-row"><td colspan="' + TABLE_COLS.length +
+        '">还没有登记过异常单。</td></tr>';
+      stats.textContent = "";
+      return;
+    }
+    if (!rows.length) {
+      body.innerHTML = '<tr class="empty-row"><td colspan="' + TABLE_COLS.length +
+        '">没有符合条件的单号。</td></tr>';
+    } else {
+      body.innerHTML = rows.map(function (r) {
+        return '<tr data-id="' + esc(r.id) + '">' + TABLE_COLS.map(function (c) {
+          var raw = String(r[c.key] == null ? "" : r[c.key]).trim();
+          var html, tip = "";
+          if (c.key === "_status") {
+            var st = statusOf(r);
+            html = badgeOf(st);
+            tip = st;
+          } else if (c.key === "settled") {
+            html = raw === "1" ? '<span class="settle-ok">已结</span>' : '<span class="nil">—</span>';
+            tip = raw === "1" ? "已结账" : "未结账";
+          } else if (!raw) {
+            html = '<span class="nil">—</span>';
+          } else if (c.time) {
+            html = esc(fullTime(raw));
+            tip = raw;
+          } else {
+            html = esc(raw);
+            tip = raw;
+          }
+          return '<td' + (c.mono ? ' class="mono"' : "") +
+            (tip ? ' title="' + esc(tip) + '"' : "") + ">" + html + "</td>";
+        }).join("") + "</tr>";
+      }).join("");
+    }
+    stats.innerHTML = "共 <b>" + rows.length + "</b> 条" +
+      (rows.length === allRows.length ? "" : "（全部 " + allRows.length + " 条）") +
+      " · 点一行打开详情";
+  }
+
   /* ---------------- 呼起本地客户端 ---------------- */
 
   /**
@@ -1837,6 +1974,7 @@
       fillBrowseFilters();     // 单子上出现过的店/情况可能变了，筛选项跟上
       repaint();
       renderDetail();
+      renderTable();           // 表格页是只读快照 —— 拉取/增删改之后它也必须是新的
       if (state === "standalone") showMeta();   // 读到了才知道 localStorage 通不通，副标题要跟上
     } catch (err) {
       document.getElementById("list").innerHTML =
@@ -1979,7 +2117,7 @@
 
   /** 切页签。切到查看时，若还没选中就默认选第一条 —— 右栏空着会让人以为坏了 */
   function setTab(name) {
-    ["create", "browse", "settings"].forEach(function (n) {
+    ["create", "browse", "table", "settings"].forEach(function (n) {
       document.getElementById("tab-" + n).setAttribute("aria-selected", n === name ? "true" : "false");
       document.getElementById("view-" + n).hidden = n !== name;
     });
@@ -1987,6 +2125,8 @@
       if (!selectedId && shown.length) selectedId = shown[0].id;
       repaint();
       renderDetail();
+    } else if (name === "table") {
+      renderTable();               // 表格是只读快照，每次进来重画一遍（数据可能刚被 WPS 拉取改过）
     } else if (name === "settings") {
       fillBindStore();
     } else {
@@ -2002,6 +2142,7 @@
     }).join("");
   }
   refreshOptSelects();           // 配置还没读回来之前先用出厂默认，loadCfg 回来会再刷一遍
+  buildTableHead();              // 表格页的列头/列宽（一次成，之后只换 tbody）
   // （状态筛选下拉由 fillBrowseFilters 填：三个派生态 ∪ 流程名，见那边）
   // 发货时间默认今天 —— 大多数单子登的就是最近几天发的货
   document.getElementById("shipped").value =
@@ -2011,6 +2152,7 @@
 
   document.getElementById("tab-create").addEventListener("click", function () { setTab("create"); });
   document.getElementById("tab-browse").addEventListener("click", function () { setTab("browse"); });
+  document.getElementById("tab-table").addEventListener("click", function () { setTab("table"); });
   document.getElementById("tab-settings").addEventListener("click", function () { setTab("settings"); });
 
   // 设置页：粘一条 ERP 链接 → 认出客服 ID → 绑到指定店铺
@@ -2151,6 +2293,14 @@
   document.getElementById("catFilter").addEventListener("change", function () {
     repaint();
     renderDetail();
+  });
+
+  // 表格页：搜索只筛表格本身（不动左栏）；点一行 → 跳回「查看」并选中那条
+  // （jumpToTicket 会顺手清掉查看页的筛选，保证那条真的看得见）
+  document.getElementById("tableSearch").addEventListener("input", renderTable);
+  document.getElementById("tableBody").addEventListener("click", function (e) {
+    var tr = e.target.closest("tr[data-id]");
+    if (tr) jumpToTicket(tr.getAttribute("data-id"));
   });
 
   // 左栏：点行里的「↗」→ 直接呼起（**不**改变选中，扫单时不打乱右栏）；
