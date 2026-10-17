@@ -1259,7 +1259,7 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   await page.click("#tab-create");
   await page.waitForTimeout(400);
   const labels = await page.evaluate(() =>
-    [...document.querySelectorAll("#create-card label.f > span")].map((s) => s.textContent.trim()));
+    [...document.querySelectorAll("#create-card .f > :first-child")].map((s) => s.textContent.trim()));
   check("异常单：登记页字段 = 台账有的那些（店铺/订单号/快递单号/快递公司/登记时间/情况/描述），旧字段不再摆出来",
     JSON.stringify(labels) === JSON.stringify(["店铺", "订单号", "快递单号", "快递公司", "登记时间", "情况", "详细描述"]),
     labels.join("/"));
@@ -1333,6 +1333,129 @@ console.log("\n=== 6. 异常单号登记 abnormal-ticket ===");
   });
   check("异常单：「登记」按钮和那句说明并排，卡片头讲清去哪补处理信息",
     actions.gap < 24 && /处理方式/.test(actions.sub) && /查看/.test(actions.sub), JSON.stringify(actions));
+
+  /* ---------- 0.9.1：日期选择器自己画 ----------
+     用户截图里的弹窗是浏览器原生 input[type=date] 的 —— 字体/圆角/选中色
+     都不跟主题走，换月还只有一对上下箭头。判据不能只看"有没有日历"：
+     ① 输入框已经不是 type=date；② 面板出现在视口里；③ 点日期真能改值；
+     ④ 月份标题能进「年月」视图；⑤ 手敲 8 位数字回车能规范化。 */
+  await page.fill("#shipped", "2026-10-17");
+  await page.click("#dpBtn");
+  await page.waitForTimeout(250);
+  const dpOpen = await page.evaluate(() => {
+    const dp = document.getElementById("dp");
+    const r = dp.getBoundingClientRect();
+    const selEl = dp.querySelector(".dp-day.is-sel");
+    return {
+      hidden: dp.hidden,
+      type: document.getElementById("shipped").type,
+      title: document.getElementById("dpTitle").textContent.replace(/\s+/g, " ").trim(),
+      week: [...dp.querySelectorAll(".dp-week span")].map((x) => x.textContent).join(""),
+      sel: selEl ? selEl.dataset.d : "",
+      dayCount: dp.querySelectorAll(".dp-day").length,
+      inView: r.left >= 0 && r.top >= 0 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1,
+    };
+  });
+  check("异常单：日期弹窗换成了自绘面板（不再用 input[type=date]，面板在视口内、固定 42 格）",
+    dpOpen.hidden === false && dpOpen.type === "text" && dpOpen.inView && dpOpen.dayCount === 42,
+    JSON.stringify(dpOpen));
+  check("异常单：日历标题写「2026 年 10 月」、周一开始、17 号是选中态",
+    /2026\s*年\s*10\s*月/.test(dpOpen.title) && dpOpen.week === "一二三四五六日" &&
+      dpOpen.sel === "2026-10-17",
+    JSON.stringify(dpOpen));
+
+  await page.click('#dp .dp-day[data-d="2026-10-05"]');
+  await page.waitForTimeout(200);
+  const dpPick = await page.evaluate(() => ({
+    v: document.getElementById("shipped").value,
+    hidden: document.getElementById("dp").hidden,
+  }));
+  check("异常单：点日历里的 5 号 → 输入框变 2026-10-05，面板自动收起",
+    dpPick.v === "2026-10-05" && dpPick.hidden === true, JSON.stringify(dpPick));
+
+  await page.click("#dpBtn");
+  await page.waitForTimeout(150);
+  await page.click("#dpTitle");
+  await page.waitForTimeout(150);
+  const dpMonths = await page.evaluate(() => ({
+    n: document.querySelectorAll("#dp .dp-mon").length,
+    daysHidden: document.getElementById("dpDays").hidden,
+    title: document.getElementById("dpTitle").textContent.replace(/\s+/g, " ").trim(),
+    mode: document.getElementById("dp").dataset.mode,
+    selMonth: (document.querySelector("#dp .dp-mon.is-sel") || {}).textContent || "",
+  }));
+  check("异常单：点月份标题进「年月」视图（标题只剩年份、12 个月、当前月高亮）",
+    dpMonths.n === 12 && dpMonths.daysHidden === true && dpMonths.mode === "month" &&
+      /^2026\s*年$/.test(dpMonths.title) && dpMonths.selMonth.trim() === "10 月",
+    JSON.stringify(dpMonths));
+
+  await page.click('#dp .dp-mon[data-m="3"]');
+  await page.waitForTimeout(200);
+  const dpMar = await page.evaluate(() => {
+    const first = document.querySelector("#dp .dp-day");
+    return {
+      title: document.getElementById("dpTitle").textContent.replace(/\s+/g, " ").trim(),
+      first: first ? first.dataset.d : "",
+      daysHidden: document.getElementById("dpDays").hidden,
+      monthsHidden: document.getElementById("dpMonths").hidden,
+      hasOut: !!document.querySelector("#dp .dp-day.is-out"),
+    };
+  });
+  check("异常单：选了 3 月 → 日视图从 2026-02-23（周一）起排，前后月用淡色补格",
+    /2026\s*年\s*3\s*月/.test(dpMar.title) && dpMar.first === "2026-02-23" &&
+      dpMar.daysHidden === false && dpMar.monthsHidden === true && dpMar.hasOut === true,
+    JSON.stringify(dpMar));
+
+  await page.click('#dp .dp-day[data-d="2026-03-10"]');
+  await page.waitForTimeout(150);
+
+  await page.click("#dpBtn");
+  await page.click('#dp .dp-link[data-quick="0"]');
+  await page.waitForTimeout(120);
+  const d0 = new Date();
+  const ymd = (x) => x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0");
+  const quickToday = await page.evaluate(() => document.getElementById("shipped").value);
+  await page.click("#dpBtn");
+  await page.click('#dp .dp-link[data-quick="-1"]');
+  await page.waitForTimeout(120);
+  const quickYest = await page.evaluate(() => document.getElementById("shipped").value);
+  check("异常单：「今天 / 昨天」一键落值（补录最常用的两个入口）",
+    quickToday === ymd(d0) && quickYest === ymd(new Date(d0.getTime() - 864e5)),
+    JSON.stringify({ quickToday, quickYest }));
+
+  await page.fill("#shipped", "20261009");
+  await page.press("#shipped", "Enter");
+  await page.waitForTimeout(120);
+  const dpNorm = await page.evaluate(() => document.getElementById("shipped").value);
+  check("异常单：手敲 8 位数字回车就规范成 2026-10-09", dpNorm === "2026-10-09", dpNorm);
+
+  await page.fill("#shipped", "2026-02-31");
+  await page.press("#shipped", "Enter");
+  await page.waitForTimeout(120);
+  const dpBad = await page.evaluate(() => ({
+    v: document.getElementById("shipped").value,
+    bad: document.getElementById("shipped").classList.contains("is-bad"),
+  }));
+  check("异常单：不存在的日期（2 月 31 日）退回上一个合法值并标红",
+    dpBad.v === "2026-10-09" && dpBad.bad === true, JSON.stringify(dpBad));
+
+  await page.fill("#shipped", "2026-10-17");
+  await page.press("#shipped", "ArrowDown");
+  await page.waitForTimeout(150);
+  await page.press("#shipped", "ArrowRight");
+  await page.waitForTimeout(150);
+  const dpKey = await page.evaluate(() => ({
+    v: document.getElementById("shipped").value,
+    open: !document.getElementById("dp").hidden,
+  }));
+  check("异常单：↓ 开日历、→ 挪一天并同步到输入框（不用鼠标也能选）",
+    dpKey.v === "2026-10-18" && dpKey.open === true, JSON.stringify(dpKey));
+  await page.press("#shipped", "Escape");
+  await page.waitForTimeout(120);
+  const dpEsc = await page.evaluate(() => document.getElementById("dp").hidden);
+  check("异常单：Esc 收起日历", dpEsc === true, String(dpEsc));
+  await page.fill("#shipped", "2026-10-01");   // 还原给后面的登记节用
+
 
   /* ---------- 0.7.0：两个单号都空要拦下 ----------
      台账上每条至少挂着快递单号或订单号之一 —— 全空的基本是误触。 */

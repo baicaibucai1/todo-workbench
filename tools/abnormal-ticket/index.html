@@ -162,7 +162,9 @@
 
   .fgrid { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 10px 12px; align-items: start; }
   .f { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-  .f > span { font-size: 11.5px; color: var(--fg2); }
+  .f > span, .f > .fcap { font-size: 11.5px; color: var(--fg2); }
+  /* 登记时间那格包了按钮（label 不能套 button），caption 用 <label for> */
+  .f > label.fcap { cursor: pointer; }
   .f > select, .f > input, .f > textarea { width: 100%; }
   .f > textarea { font-family: inherit; font-size: 12.5px; resize: vertical; }
   /* 24 列上的跨度：2+9+6+5 + 6+8+10 = 24 —— 两行都刚好铺满，右边不留豁口 */
@@ -410,6 +412,61 @@
     .kv { grid-template-columns: 76px minmax(0,1fr); }
   }
 
+  /* ---- 日期选择器（自绘） ----
+     原生 input[type=date] 的弹窗由浏览器画，字体 / 圆角 / 主题色都不跟页面走；
+     这里改成普通文本框 + 自己的面板（见脚本里的「日期选择器」）。 */
+  .dwrap { position: relative; display: block; }
+  .dwrap > input { width: 100%; padding-right: 34px; font-family: var(--mono); font-size: 13px; }
+  .dbtn { position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
+    width: 26px; height: 26px; padding: 0; display: grid; place-items: center;
+    border: 0; background: transparent; color: var(--dim); border-radius: 6px; }
+  .dbtn:hover { background: var(--chip); color: var(--fg); }
+  .dbtn svg { width: 15px; height: 15px; display: block; }
+  #shipped.is-bad { border-color: var(--danger); box-shadow: 0 0 0 3px rgba(163,45,45,.12); }
+
+  .dp { position: fixed; z-index: 60; width: 268px; padding: 8px 10px 0;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 14px 34px rgba(0,0,0,.13), 0 2px 6px rgba(0,0,0,.05);
+    user-select: none; }
+  html[data-theme="dark"] .dp { box-shadow: 0 18px 44px rgba(0,0,0,.55); }
+  .dp[hidden] { display: none !important; }
+  /* ★ [hidden] 打不过 display:grid —— 日视图/月视图切换必须显式写死 */
+  .dp-body[hidden] { display: none !important; }
+  .dp-head { display: flex; align-items: center; gap: 2px; padding: 2px 0 4px; }
+  .dp-nav { width: 26px; height: 26px; padding: 0; display: grid; place-items: center;
+    border: 0; background: transparent; color: var(--fg2); border-radius: 7px;
+    font-size: 16px; line-height: 1; }
+  .dp-nav:hover { background: var(--chip); color: var(--fg); }
+  .dp-title { flex: 1; padding: 4px 6px; border: 0; background: transparent; border-radius: 7px;
+    font-size: 13px; font-weight: 600; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .dp-title:hover { background: var(--chip); }
+  .dp-title::after { content: "▾"; margin-left: 5px; font-size: 9px; color: var(--dim); }
+  /* 年月视图里标题变成"返回日视图"：箭头翻过来，别让 ▾ 骗人 */
+  .dp[data-mode="month"] .dp-title::after { content: "▴"; }
+  .dp-week, .dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
+  .dp-week span { text-align: center; font-size: 11px; color: var(--dim); padding: 2px 0 5px; }
+  .dp-day { height: 31px; padding: 0; border: 1px solid transparent; background: transparent;
+    border-radius: 8px; font-size: 12.5px; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .dp-day:hover { background: var(--chip); }
+  .dp-day.is-out { color: var(--dim); }
+  .dp-day.is-out:hover { color: var(--fg2); }
+  .dp-day.is-today { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .dp-day.is-sel, .dp-day.is-sel:hover { background: var(--accent); border-color: transparent;
+    color: #fff; font-weight: 600; }
+  .dp-day.is-cur { box-shadow: inset 0 0 0 1px var(--accent); }
+  .dp-mgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding-bottom: 10px; }
+  .dp-mon { padding: 8px 0; border: 1px solid transparent; background: transparent;
+    border-radius: 8px; font-size: 12.5px; color: var(--fg); }
+  .dp-mon:hover { background: var(--chip); }
+  .dp-mon.is-sel, .dp-mon.is-sel:hover { background: var(--accent); color: #fff; font-weight: 600; }
+  .dp-foot { display: flex; align-items: center; gap: 2px; margin: 6px -10px 0;
+    padding: 7px 10px; border-top: 1px solid var(--line); }
+  .dp-link { border: 0; background: transparent; padding: 3px 7px; border-radius: 6px;
+    font-size: 12px; color: var(--accent); }
+  .dp-link:hover { background: var(--chip); }
+  .dp-link.muted { color: var(--dim); margin-left: auto; }
+  .dp-link.muted:hover { color: var(--danger); }
+
   #toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(8px);
     background: var(--chip); color: var(--fg2); border: 1px solid var(--line); border-radius: 8px;
     padding: 7px 14px; font-size: 12.5px; opacity: 0; transition: .18s; pointer-events: none; max-width: 80vw; }
@@ -484,10 +541,24 @@
         <div class="fgrid">
           <!-- 本条是哪天登记的。字段仍写 shipped_at（推 WPS 时落到那张表的「发货时间」列），
                界面上叫「登记时间」—— 因为实际填的就是"今天登的这条"。 -->
-          <label class="f f-day">
-            <span>登记时间</span>
-            <input id="shipped" type="date" title="这条异常是哪天登记的（默认今天）—— 推到台账就是那一列" />
-          </label>
+          <!-- ★ 0.9.1：日期不再用 input[type=date] —— 那个弹窗是浏览器画的，
+               字体/圆角/配色都不跟主题走，换月还只有一对上下箭头。这里换成
+               普通文本框 + 自绘面板（按钮开日历，照样能直接敲 20261017）。 -->
+          <div class="f f-day">
+            <label class="fcap" for="shipped">登记时间</label>
+            <span class="dwrap">
+              <input id="shipped" type="text" inputmode="numeric" autocomplete="off" spellcheck="false"
+                aria-haspopup="dialog" aria-expanded="false" placeholder="2026-10-17"
+                title="这条异常是哪天登记的（默认今天）—— 推到台账就是那一列。也可以直接敲 2026-10-17 / 20261017" />
+              <button type="button" class="dbtn" id="dpBtn" aria-label="打开日历" title="打开日历">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+                  stroke-linecap="round" aria-hidden="true">
+                  <rect x="2.2" y="3.4" width="11.6" height="10.2" rx="2"></rect>
+                  <path d="M2.2 6.8h11.6M5.4 2v2.6M10.6 2v2.6"></path>
+                </svg>
+              </button>
+            </span>
+          </div>
           <label class="f f-cat">
             <span>情况</span>
             <select id="category" title="这条单是什么情况 —— 选项在「设置」页里加"></select>
@@ -606,6 +677,28 @@
       <pre id="schema">…</pre>
     </details>
   </section>
+</div>
+<!-- 日期选择器面板（fixed 定位，脚本按输入框位置摆）—— 放在 body 末尾，
+     免得被 #view-create 的滚动容器裁掉。 -->
+<div class="dp" id="dp" hidden role="dialog" aria-label="选择日期">
+  <div class="dp-head">
+    <button type="button" class="dp-nav" data-nav="-1" title="上个月" aria-label="上个月">‹</button>
+    <button type="button" class="dp-title" id="dpTitle" title="点这里换年月">2026 年 10 月</button>
+    <button type="button" class="dp-nav" data-nav="1" title="下个月" aria-label="下个月">›</button>
+  </div>
+  <div class="dp-body" id="dpDays">
+    <div class="dp-week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+    <div class="dp-grid" id="dpGrid"></div>
+  </div>
+  <div class="dp-body" id="dpMonths" hidden>
+    <div class="dp-mgrid" id="dpMgrid"></div>
+  </div>
+  <div class="dp-foot">
+    <button type="button" class="dp-link" data-quick="0">今天</button>
+    <button type="button" class="dp-link" data-quick="-1">昨天</button>
+    <button type="button" class="dp-link" data-quick="-2">前天</button>
+    <button type="button" class="dp-link muted" data-quick="clear">清除</button>
+  </div>
 </div>
 <div id="toast"></div>
 
@@ -2419,6 +2512,279 @@
   // 登记时间默认今天 —— 绝大多数单子就是当天登记（补录历史单才改它）
   document.getElementById("shipped").value =
     "" + new Date().getFullYear() + "-" + pad(new Date().getMonth() + 1) + "-" + pad(new Date().getDate());
+
+  /* ---------------- 日期选择器 ----------------
+     ★ 为什么不用 input[type=date]：那个弹窗是浏览器自己画的 —— 字体、圆角、
+     选中色都不跟主题走（浅色卡片上弹出一块系统样式的日历），换月只有一对
+     上下箭头（看不出那是"上/下个月"），也没有补录时最常用的「昨天 / 前天」。
+     这里把输入框退回普通文本框（照样能直接敲 20261017），弹窗换成自己的。
+     值仍是 "YYYY-MM-DD" —— 落库 / 推 WPS 的格式一点没变。 */
+  (function () {
+    var input = document.getElementById("shipped");
+    var btn = document.getElementById("dpBtn");
+    var pop = document.getElementById("dp");
+    var grid = document.getElementById("dpGrid");
+    var title = document.getElementById("dpTitle");
+    var daysView = document.getElementById("dpDays");
+    var monthsView = document.getElementById("dpMonths");
+    var mgrid = document.getElementById("dpMgrid");
+
+    var isOpen = false;
+    var view = "";          // 面板正在显示哪个月：YYYY-MM
+    var sel = "";           // 选中的那天：YYYY-MM-DD
+    var cur = "";           // 键盘光标（虚框）所在那天
+    var last = input.value; // 上一个合法值 —— 敲错了回滚到它
+    var monthMode = false;
+
+    function fmt(d) {
+      return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+    }
+    function todayStr() { return fmt(new Date()); }
+
+    /** 认这几种手输写法：2026-10-01 / 2026/10/1 / 2026.10.1 / 20261001 / 10-1（补今年）。
+        空串算合法（= 清空）；认不出或日期不存在（2 月 31 日）返回 null。 */
+    function parse(s) {
+      s = String(s == null ? "" : s).replace(/\s+/g, "");
+      if (!s) return "";
+      var y, mo, d, m = s.match(/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?$/);
+      if (!m) m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+      if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+      else {
+        m = s.match(/^(\d{1,2})[-/.](\d{1,2})$/);
+        if (!m) return null;
+        y = new Date().getFullYear(); mo = +m[1]; d = +m[2];
+      }
+      var dt = new Date(y, mo - 1, d);
+      if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+      return y + "-" + pad(mo) + "-" + pad(d);
+    }
+
+    function shiftDay(s, n) {
+      var p = (s || todayStr()).split("-");
+      return fmt(new Date(+p[0], +p[1] - 1, +p[2] + n));
+    }
+    function addMonths(ym, n) {
+      var p = ym.split("-");
+      return fmt(new Date(+p[0], +p[1] - 1 + n, 1)).slice(0, 7);
+    }
+
+    function render() {
+      var y = +view.slice(0, 4), mo = +view.slice(5, 7);
+      // 年月视图里标题只写年份（月份在下面的格子里），两处都写年份会重复
+      title.textContent = monthMode ? y + " 年" : y + " 年 " + mo + " 月";
+      pop.dataset.mode = monthMode ? "month" : "day";
+
+      // 周一起算；固定 42 格（6 行）—— 换月时面板高度不跳
+      var first = new Date(y, mo - 1, 1);
+      var start = new Date(y, mo - 1, 1 - ((first.getDay() + 6) % 7));
+      var t = todayStr(), html = "";
+      for (var i = 0; i < 42; i++) {
+        var d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+        var s = fmt(d), cls = "dp-day";
+        if (d.getMonth() !== mo - 1) cls += " is-out";
+        if (s === t) cls += " is-today";
+        if (s === sel) cls += " is-sel";
+        else if (s === cur) cls += " is-cur";
+        html += '<button type="button" class="' + cls + '" data-d="' + s + '"' +
+          (s === sel ? ' aria-pressed="true"' : "") + ">" + d.getDate() + "</button>";
+      }
+      grid.innerHTML = html;
+
+      var mh = "";
+      for (var j = 1; j <= 12; j++) {
+        mh += '<button type="button" class="dp-mon' + (j === mo ? " is-sel" : "") +
+          '" data-m="' + j + '">' + j + " 月</button>";
+      }
+      mgrid.innerHTML = mh;
+    }
+
+    function place() {
+      var r = input.getBoundingClientRect();
+      var pw = pop.offsetWidth, ph = pop.offsetHeight;
+      var left = r.left;
+      if (left + pw > window.innerWidth - 8) left = window.innerWidth - 8 - pw;
+      if (left < 8) left = 8;
+      var top = r.bottom + 6;
+      if (top + ph > window.innerHeight - 8) {
+        var up = r.top - ph - 6;
+        top = up >= 8 ? up : Math.max(8, window.innerHeight - 8 - ph);
+      }
+      pop.style.left = Math.round(left) + "px";
+      pop.style.top = Math.round(top) + "px";
+    }
+
+    function setMode(months) {
+      monthMode = !!months;
+      daysView.hidden = monthMode;
+      monthsView.hidden = !monthMode;
+      render();
+      place();
+    }
+
+    function fire() {
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function commit(s) {
+      input.value = s;
+      last = s;
+      sel = s;
+      input.classList.remove("is-bad");
+      closePanel();
+      fire();
+      input.focus();
+    }
+
+    function openPanel() {
+      if (isOpen) return;
+      isOpen = true;
+      var v = parse(input.value);
+      sel = v === null ? (last || "") : v;
+      cur = sel || todayStr();
+      view = cur.slice(0, 7);
+      monthMode = false;
+      daysView.hidden = false;
+      monthsView.hidden = true;
+      pop.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+      render();
+      place();
+    }
+    function closePanel() {
+      if (!isOpen) return;
+      isOpen = false;
+      pop.hidden = true;
+      input.setAttribute("aria-expanded", "false");
+    }
+
+    /** 敲错了：退回上一个合法值 + 红边框闪一下（失焦时静默，回车时才提示） */
+    function rollback(noisy) {
+      var raw = input.value;
+      input.value = last;
+      input.classList.add("is-bad");
+      window.setTimeout(function () { input.classList.remove("is-bad"); }, 1200);
+      if (noisy) toast("认不出这个日期：" + raw + "（也可以点日历选）");
+    }
+
+    // ---- 输入框：点开 / 直接敲 / 失焦规范化 ----
+    input.addEventListener("click", function () { openPanel(); });
+    input.addEventListener("input", function () {
+      input.classList.remove("is-bad");
+      if (!isOpen) return;
+      var v = parse(input.value);
+      if (v) {            // 敲到完整日期时，日历跟着翻到那个月（半截的不动）
+        sel = v; cur = v; view = v.slice(0, 7);
+        if (monthMode) setMode(false); else { render(); place(); }
+      }
+    });
+    input.addEventListener("blur", function () {
+      var v = parse(input.value);
+      if (v === null) { rollback(false); }
+      else {
+        input.value = v;
+        last = v;
+        input.classList.remove("is-bad");
+      }
+      // Tab 走了就收起（点面板里的按钮不算 —— 延迟一拍再看焦点落在哪）
+      window.setTimeout(function () {
+        if (!isOpen) return;
+        var a = document.activeElement;
+        // 焦点在面板/按钮上，或者鼠标正压在面板上（有的 webview 点按钮不给焦点）→ 不关
+        if (a === input || (a && (pop.contains(a) || btn.contains(a))) || pop.matches(":hover")) return;
+        closePanel();
+      }, 0);
+    });
+    input.addEventListener("keydown", function (e) {
+      if (!isOpen) {
+        if (e.key === "ArrowDown") { e.preventDefault(); openPanel(); return; }
+        // 手敲完直接回车：当场规范化（20261009 → 2026-10-09），不用等失焦
+        if (e.key === "Enter") {
+          e.preventDefault();
+          var v0 = parse(input.value);
+          if (v0 === null) { rollback(true); return; }
+          input.value = v0;
+          last = v0;
+          input.classList.remove("is-bad");
+          fire();
+        }
+        return;
+      }
+      var k = e.key;
+      if (k === "Escape") { e.preventDefault(); closePanel(); return; }
+      if (k === "Enter") {
+        e.preventDefault();
+        var v = parse(input.value);
+        if (v === null) { rollback(true); return; }
+        if (v) commit(v); else closePanel();
+        return;
+      }
+      var step = 0, mstep = 0;
+      if (k === "ArrowLeft") step = -1;
+      else if (k === "ArrowRight") step = 1;
+      else if (k === "ArrowUp") step = -7;
+      else if (k === "ArrowDown") step = 7;
+      else if (k === "PageUp") mstep = -1;
+      else if (k === "PageDown") mstep = 1;
+      else return;
+      e.preventDefault();
+      // PgUp/PgDn 只翻月（不改进输入框的值）；方向键挪一天，输入框跟着预览
+      if (mstep) {
+        view = monthMode ? (+view.slice(0, 4) + mstep) + view.slice(4) : addMonths(view, mstep);
+        render();
+        place();
+        return;
+      }
+      cur = shiftDay(cur || sel || todayStr(), step);
+      input.value = cur;
+      sel = cur;
+      view = cur.slice(0, 7);
+      if (monthMode) setMode(false); else { render(); place(); }
+    });
+
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (isOpen) closePanel(); else openPanel();
+    });
+
+    // ---- 面板内点击 ----
+    pop.addEventListener("click", function (e) {
+      var t = e.target.closest ? e.target.closest("button") : null;
+      if (!t) return;
+      if (t.classList.contains("dp-day")) { commit(t.getAttribute("data-d")); return; }
+      if (t.classList.contains("dp-mon")) {
+        view = view.slice(0, 4) + "-" + pad(+t.getAttribute("data-m"));
+        setMode(false);
+        return;
+      }
+      if (t.id === "dpTitle") { setMode(!monthMode); return; }
+      if (t.hasAttribute("data-nav")) {
+        var n = +t.getAttribute("data-nav");
+        // 日视图 ‹› 翻月；年月视图 ‹› 翻年（同一个按钮，不另起一行）
+        view = monthMode ? (+view.slice(0, 4) + n) + view.slice(4) : addMonths(view, n);
+        render();
+        place();
+        return;
+      }
+      var q = t.getAttribute("data-quick");
+      if (q === "clear") {
+        input.value = ""; last = ""; sel = "";
+        closePanel(); fire(); input.focus();
+        return;
+      }
+      if (q !== null) { commit(shiftDay(todayStr(), +q)); }
+    });
+
+    // 点别处 / 页面滚动 → 收起（fixed 定位，滚动后位置就不对了）
+    document.addEventListener("pointerdown", function (e) {
+      if (!isOpen) return;
+      if (pop.contains(e.target) || e.target === input || btn.contains(e.target)) return;
+      closePanel();
+    }, true);
+    window.addEventListener("scroll", function () { if (isOpen) closePanel(); }, true);
+    window.addEventListener("resize", function () { if (isOpen) place(); });
+  })();
 
   /* ---------------- 事件 ---------------- */
 
