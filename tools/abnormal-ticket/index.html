@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.1.3）——整本重写过一次，之后按反馈迭代。
+  异常单号登记（v1.1.4）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -1499,12 +1499,37 @@
       + (r.updated_at ? " · 最后改动 " + esc(txt(r.updated_at).slice(0, 16).replace("T", " ")) : "")
       + "</div>";
 
-    /* ★ 流程和提醒提到最前面：翻一条异常单，先要回答的就是"到哪一步了""什么时候该再跟"。
-       提醒是流程的看门狗，所以紧贴在流程下面 —— 记一步流程，提醒自己会后移。 */
+    /* 下面几段共用的派生量，先算好 */
     var v = remindView(r);
     var plan = v.plan;
     var last = flowLast(r);
 
+    /* 先基本信息：打开一条单子第一眼要确认「是哪张单」。**都能改** —— 登记时漏填的
+       （快递单号、快递公司…）在这儿补，填错了也在这儿改，点「保存修改」落库。 */
+    html += '<div class="sect"><h3 data-ico="doc">基本信息（都能改）</h3><div class="grid24">'
+      + '<label class="f c12"><span class="lbl" data-ico="doc">订单号</span>'
+      + '<input id="dOrder" autocomplete="off" spellcheck="false" /></label>'
+      + '<label class="f c12"><span class="lbl" data-ico="box">快递单号</span>'
+      + '<input id="dTrack" autocomplete="off" spellcheck="false" /></label>'
+      + '<div class="f c12"><span class="lbl" data-ico="truck">快递公司</span>'
+      + '<div class="pills" id="dCourier"></div></div>'
+      + '<label class="f c12"><span class="lbl" data-ico="cal">登记时间</span>'
+      + '<input id="dDate" autocomplete="off" spellcheck="false" /></label>'
+      + '<div class="f c24"><span class="lbl" data-ico="shop">店铺</span>'
+      + '<div class="pills" id="dStore"></div></div>'
+      + '<div class="f c24"><span class="lbl" data-ico="alert">情况</span>'
+      + '<div class="pills" id="dCategory"></div></div>'
+      + '<label class="f c24"><span class="lbl" data-ico="pen">详细描述</span>'
+      + '<textarea id="dTitle" rows="2"></textarea></label>'
+      + '<label class="f c24"><span class="lbl" data-ico="chat">处理情况</span>'
+      + '<input id="dNote" autocomplete="off" spellcheck="false" /></label>'
+      + "</div>"
+      + '<div class="r" style="margin-top:8px"><button class="primary" id="btnEdit">保存修改</button>'
+      + '<button id="btnEditUndo">撤掉改动</button>'
+      + '<span class="hint" id="editMsg" style="margin:0"></span></div></div>';
+
+    /* 流程 + 提醒：确认完「是哪张单」，接着回答「到哪一步了」「什么时候该再跟」。
+       这两块是同一件事的两面 —— 流程停了多久，提醒就什么时候响。 */
     html += '<div class="sect"><h3 data-ico="flow">流程状态</h3>';
     if (!flow.length) {
       html += '<div class="note">还没记 —— 状态先由下面的「处理」派生；提醒按<b>登记时刻 + '
@@ -1571,31 +1596,7 @@
     }
     html += "</div></div>";
 
-    /* 基本信息：**都能改**。登记时漏填的（快递单号、快递公司…）在这儿补，
-       填错了也在这儿改 —— 改完点「保存修改」，一改就落库。 */
-    html += '<div class="sect"><h3 data-ico="doc">基本信息（都能改）</h3><div class="grid24">'
-      + '<label class="f c12"><span class="lbl" data-ico="doc">订单号</span>'
-      + '<input id="dOrder" autocomplete="off" spellcheck="false" /></label>'
-      + '<label class="f c12"><span class="lbl" data-ico="box">快递单号</span>'
-      + '<input id="dTrack" autocomplete="off" spellcheck="false" /></label>'
-      + '<div class="f c12"><span class="lbl" data-ico="truck">快递公司</span>'
-      + '<div class="pills" id="dCourier"></div></div>'
-      + '<label class="f c12"><span class="lbl" data-ico="cal">登记时间</span>'
-      + '<input id="dDate" autocomplete="off" spellcheck="false" /></label>'
-      + '<div class="f c24"><span class="lbl" data-ico="shop">店铺</span>'
-      + '<div class="pills" id="dStore"></div></div>'
-      + '<div class="f c24"><span class="lbl" data-ico="alert">情况</span>'
-      + '<div class="pills" id="dCategory"></div></div>'
-      + '<label class="f c24"><span class="lbl" data-ico="pen">详细描述</span>'
-      + '<textarea id="dTitle" rows="2"></textarea></label>'
-      + '<label class="f c24"><span class="lbl" data-ico="chat">处理情况</span>'
-      + '<input id="dNote" autocomplete="off" spellcheck="false" /></label>'
-      + "</div>"
-      + '<div class="r" style="margin-top:8px"><button class="primary" id="btnEdit">保存修改</button>'
-      + '<button id="btnEditUndo">撤掉改动</button>'
-      + '<span class="hint" id="editMsg" style="margin:0"></span></div></div>';
-
-    /* 处理区：处理方式 / 结果 / 结账 —— 一改就落库 */
+    /* 处理区放最后：处理方式 / 结果 / 结账 —— 一改就落库 */
     html += '<div class="sect"><h3 data-ico="gear">处理</h3><div class="grid24">'
       + '<label class="f c8"><span>处理方式</span><select id="dHandling"></select></label>'
       + '<label class="f c8"><span>结果</span><select id="dResult"></select></label>'
@@ -1603,8 +1604,6 @@
       + "</div>"
       + '<div class="r" style="margin-top:8px"><button class="primary" id="btnProc">保存处理</button>'
       + '<span class="hint" id="procMsg" style="margin:0"></span></div></div>';
-
-    /* 流程 / 提醒已经在最上面 —— 这里不再重复。 */
 
     box.innerHTML = html;
     paintIcos(box);

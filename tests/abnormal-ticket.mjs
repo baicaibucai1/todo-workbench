@@ -326,13 +326,16 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
     booked[0]?.payload.note);
   check("待办 id 记回了本地行", !!r0.remind_task, JSON.stringify(r0.remind_task));
 
-  /* ② 详情页顺序：流程、提醒提到最前（用户要的就是这两块先看见） */
+  /* ② 详情页顺序：基本信息 → 流程 → 提醒 → 处理
+       （用户定的：先确认是哪张单，再看流程到哪步、什么时候该跟） */
   doc.getElementById("tab-browse").click();
   await sleep(60);
   doc.querySelector("#list .ticket").click();
   await sleep(80);
   const sects = Array.from(doc.querySelectorAll("#detail .sect > h3")).map((h) => h.textContent.trim());
-  check("流程 / 提醒提到了基本信息前面", sects[0] === "流程状态" && sects[1] === "跟进提醒", sects.join(" / "));
+  check("分区顺序是 基本信息 → 流程 → 提醒 → 处理",
+    sects.length === 4 && /^基本信息/.test(sects[0]) && sects[1] === "流程状态"
+      && sects[2] === "跟进提醒" && sects[3] === "处理", sects.join(" / "));
   const why0 = doc.querySelector("#detail .remindbox .why")?.textContent || "";
   check("提醒区说清了是按流程派发", /按流程派发/.test(why0), why0.slice(0, 120));
 
