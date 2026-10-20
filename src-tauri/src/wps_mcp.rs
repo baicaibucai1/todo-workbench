@@ -26,7 +26,7 @@ use serde_json::{json, Map as JsonMap, Value as Json};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::wps::WpsPull;
-use crate::wps_cloud_plan::{formula_for, plan_cloud_write, COLUMNS};
+use crate::wps_cloud_plan::{formula_for, plan_cloud_sync, COLUMNS};
 
 const MCP_URL: &str = "https://mcp-center.wps.cn/skill_hub/mcp";
 const AUTH_GUIDE: &str = "https://mcp-center.wps.cn/kdocs-auth/auth-guide?auth_code=";
@@ -76,12 +76,12 @@ pub struct WpsMcpPush {
     pub appended: usize,
     /// 推到哪个文件（就是绑定的 file_id）
     pub file_kuid: String,
-    /// 表上原本有的数据行里，会被这次推送**整行覆盖**的行数。
-    /// 推送是"以本地为准"的：这些行原来的值会被本地的值顶掉。
-    pub overwrites: usize,
-    /// 本地比表上少 → 多出来的旧行会被**清空**的行数（0 表示不用删）。
-    /// 非空时前端必须先问一句再写。
-    pub cleared: usize,
+    /// 这次新增了几行（本地有、表上没有）
+    pub added: usize,
+    /// 这次改了几个格（两边都有这条单，值不一样）
+    pub changed: usize,
+    /// 表上有、本地没有的行数 —— **不会删**，只报出来
+    pub orphan_rows: usize,
     /// true 表示这只是"先算一遍"，一格都没写（用来做推送前确认）
     pub dry_run: bool,
 }
@@ -996,9 +996,13 @@ pub async fn wps_mcp_sheet_pull(
 
 /// 推送台账：**只写台账那 14 列**，表里其它列（用户自己的备注/公式）不动。
 ///
-/// 对账逻辑直接复用 `plan_cloud_write`（就是原来 AirScript 那条路用的那份，
-/// 带 6 条断言），只是把"写"从 webhook 换成 `sheet.update_range_data`：
-/// 找列 → 缺的列补在末尾 → 按列写值 → 多出来的旧行写空串。
+/// 对账是**增量**的（2026-10-20 改成）：按单号比对表上和本地，
+///   · 本地有、表上没有   → 追加一行
+///   · 两边都有、值不一样 → 只写变了的那些格
+///   · 表上有、本地没有   → 不动（可能是别人手工加的，删了就找不回来）
+/// 只写台账这 14 列，表上其它列（备注 / 公式）一个都不碰。
+/// 纯逻辑在 `plan_cloud_sync`（带 6 条断言，含"再推一次什么都不写"的幂等），
+/// 这里只负责把它翻译成 `sheet.update_range_data` 的一批 op。
 #[tauri::command]
 pub async fn wps_mcp_sheet_push(
     token: String,
@@ -1025,66 +1029,57 @@ pub async fn wps_mcp_sheet_push(
     let (sheet_id, _, grid) =
         read_sheet_grid(&client, token, &client_id, &session, file_id, &sheet).await?;
 
+    // ★ 增量对账：**只写新增的行和值真的变了的格**。
+    // 整本重写在表小的时候看不出问题，几百行之后既慢又危险 —— 万一读到
+    // 的是旧网格，会把别人刚填的内容抹掉。这里是"按单号比对"的差量。
     let header: Vec<String> = grid.first().cloned().unwrap_or_default();
-    let old_rows = if grid.len() > 1 { grid.len() - 1 } else { 0 };
-    let (cols, clear, appended) = plan_cloud_write(&header, old_rows, &rows)?;
+    let plan = plan_cloud_sync(&header, &grid, &rows)?;
+    let added = plan.appends.len();
+    let changed = plan.updates.len();
+    let orphan_rows = plan.orphans.len();
+    let appended = plan.appended;
 
-    // 「推送前确认」要用的两个数字，先看清楚再动手写：
-    //  · overwrites 表上已有的行会被本地顶掉多少条（以本地为准）
-    //  · cleared    本地比表上少，多出来的旧行会被清空多少行
-    let overwrites = old_rows.min(rows.len());
-    let cleared = clear
-        .iter()
-        .map(|c| {
-            let from = c.get("from").and_then(Json::as_i64).unwrap_or(1) as usize;
-            let to = c.get("to").and_then(Json::as_i64).unwrap_or(0) as usize;
-            to.saturating_sub(from) + 1
-        })
-        .max()
-        .unwrap_or(0);
-
-    // 只算不写：把对账结果原样带回去，让前端先问一句"要删 N 行，确定？"
+    // 只算不写：把对账结果原样带回去，让前端先摆一句"要写什么"再动手
     if dry_run.unwrap_or(false) {
         return Ok(WpsMcpPush {
             count: rows.len(),
             columns: COLUMNS.len(),
             appended,
             file_kuid: file_id.to_string(),
-            overwrites,
-            cleared,
+            added,
+            changed,
+            orphan_rows,
             dry_run: true,
         });
     }
 
-    // 一个格一条 op：MCP 这边的形状是 (rowFrom..rowTo, colFrom..colTo, formula)，
-    // 而 plan 给的是"按列 + 1-based 行号"，这里做一次翻译
     let mut ops: Vec<Json> = Vec::new();
-    for col in &cols {
-        let c0 = col.get("col").and_then(Json::as_i64).unwrap_or(1) - 1;
-        let key = col.get("key").and_then(Json::as_str).unwrap_or("");
-        let values = col.get("values").and_then(Json::as_array).cloned().unwrap_or_default();
-        for (i, v) in values.iter().enumerate() {
-            let s = v.as_str().unwrap_or("");
-            ops.push(json!({
-                "opType": "formula",
-                "rowFrom": i, "rowTo": i,
-                "colFrom": c0, "colTo": c0,
-                "formula": if s.is_empty() { String::new() } else { formula_for(key, s) },
-            }));
+    // 1) 表头：补出来的列得有表头；已有列重写一遍（同一个值，不影响）
+    for (_key, label, col) in &plan.cols {
+        ops.push(cell_op(0, col - 1, label));
+    }
+    // 2) 值变了的格 —— 一个格一条 op
+    for u in &plan.updates {
+        ops.push(cell_op(u.row - 1, u.col - 1, &formula_for(&u.key, &u.value)));
+    }
+    // 3) 新增的行，接着表尾（或中间的空行）往下写
+    for (i, vals) in plan.appends.iter().enumerate() {
+        let r = plan.append_start - 1 + i;
+        for ((key, _label, col), v) in plan.cols.iter().zip(vals.iter()) {
+            ops.push(cell_op(r, col - 1, &formula_for(key, v)));
         }
     }
-    for c in &clear {
-        let c0 = c.get("col").and_then(Json::as_i64).unwrap_or(1) - 1;
-        let from = c.get("from").and_then(Json::as_i64).unwrap_or(2) - 1;
-        let to = c.get("to").and_then(Json::as_i64).unwrap_or(1) - 1;
-        for r in from..=to {
-            ops.push(json!({
-                "opType": "formula",
-                "rowFrom": r, "rowTo": r,
-                "colFrom": c0, "colTo": c0,
-                "formula": "",
-            }));
-        }
+    if ops.is_empty() {
+        return Ok(WpsMcpPush {
+            count: rows.len(),
+            columns: COLUMNS.len(),
+            appended: 0,
+            file_kuid: file_id.to_string(),
+            added: 0,
+            changed: 0,
+            orphan_rows,
+            dry_run: false,
+        });
     }
 
     for chunk in ops.chunks(WRITE_BATCH) {
@@ -1114,9 +1109,20 @@ pub async fn wps_mcp_sheet_push(
         columns: COLUMNS.len(),
         appended,
         file_kuid: file_id.to_string(),
-        overwrites,
-        cleared,
+        added,
+        changed,
+        orphan_rows,
         dry_run: false,
+    })
+}
+
+/// 一条写格 op。行列都是 **0-based**（MCP 那边的形状）。
+fn cell_op(row: usize, col: usize, formula: &str) -> Json {
+    json!({
+        "opType": "formula",
+        "rowFrom": row, "rowTo": row,
+        "colFrom": col, "colTo": col,
+        "formula": formula,
     })
 }
 

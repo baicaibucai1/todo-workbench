@@ -1668,8 +1668,9 @@ export function createToolBridge(
             return reply(id, true, {
               count: r.count,
               appended: r.appended,
-              overwrites: r.overwrites,
-              cleared: r.cleared,
+              added: r.added,
+              changed: r.changed,
+              orphanRows: r.orphan_rows,
               dryRun: r.dry_run,
             });
           }

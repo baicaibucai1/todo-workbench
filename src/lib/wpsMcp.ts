@@ -148,10 +148,12 @@ export type McpPush = {
   /** 末尾补了几列（表里原来没有的台账列） */
   appended: number;
   file_kuid: string;
-  /** 表上已有数据行里会被整行覆盖掉的行数（以本地为准） */
-  overwrites: number;
-  /** 本地比表上少 → 多出来的旧行会被清空的行数 */
-  cleared: number;
+  /** 这次新增的行数（本地有、表上没有） */
+  added: number;
+  /** 这次改动的格数（两边都有这条单，值不一样） */
+  changed: number;
+  /** 表上有、本地没有的行数 —— 不会删，只报出来 */
+  orphan_rows: number;
   /** true = 只是先算了一遍，一格没写 */
   dry_run: boolean;
 };

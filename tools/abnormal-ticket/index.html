@@ -300,6 +300,8 @@
       <p class="note" style="margin:0 0 8px">
         每张 WPS 授权都有<b>一条分享链接</b> —— 粘一条进来就认出是哪张表，之后就在本工具里
         <b>推送 / 拉取</b>。<b>只写台账那 14 列</b>：你自己加的备注列、公式列一格都不动；
+        <b>推送是增量的</b> —— 按单号比对，只写「本地新增的行」和「值变了的那些格」，
+        表上已有的行不重写，表上有而本地没有的行留着不动；
         拉取<b>先看差异、确认了才写库</b>。授权在 <b>设置 → WPS 授权</b> 里做一次就行
         （同一份令牌，不重复授权）。
       </p>
@@ -1423,20 +1425,30 @@
       var r = await call("wps.mcpPush", { fileId: wps.fileId, sheet: wps.sheet, dryRun: !confirmed }, 120000);
       var res = r || {};
       if (!confirmed && res.dryRun) {
-        var ov = res.overwrites || 0, cl = res.cleared || 0;
-        if (!ov && !cl) { wpsBusy = false; await doPush(true); return; }
-        var lines = ["推送会改这张表（" + (wps.name || "在线表格") + "）："];
-        if (ov) lines.push("· 覆盖表上已有的 " + ov + " 行 —— 以本地为准，这些行原来的值会被本地顶掉");
-        if (cl) lines.push("· 清掉表上多出来的 " + cl + " 行 —— 本地没那么多条，多出来的行会被清空");
+        var add = res.added || 0, chg = res.changed || 0, orph = res.orphanRows || 0;
+        if (!add && !chg && !res.appended) {
+          setWpsMsg("两边一样 —— 表上一格不用改" + (orph ? "（表上有 " + orph + " 行本地没有，留着没动）" : ""));
+          return;
+        }
+        // ★ 只写差量：不是整本覆盖，所以措辞要说清"动哪几格"
+        var lines = ["只写对不上的部分（" + (wps.name || "在线表格") + "）："];
+        if (add) lines.push("· 新增 " + add + " 行 —— 本地有、表上没有的");
+        if (chg) lines.push("· 改 " + chg + " 个格 —— 两边都有这条单、值不一样的那些列");
         if (res.appended) lines.push("· 末尾补 " + res.appended + " 列台账表头");
-        lines.push("你自己加的其它列（备注、公式）不动 —— 但上面这些改动撤不回来。");
+        if (orph) lines.push("· 表上有 " + orph + " 行本地没有 —— 留着不动");
+        lines.push("表上已有的其它行、你自己加的列（备注、公式）一个都不碰。");
         $("wpsPushText").textContent = lines.join("\n");
         $("wpsPushPreview").hidden = false;
         setWpsMsg("先看清楚，确认了才写");
         return;
       }
-      setWpsMsg("已推送 " + res.count + " 条到「" + (wps.name || "在线表格") + "」"
-        + (res.appended ? "（末尾补了 " + res.appended + " 列台账表头）" : ""));
+      var done = [];
+      if (res.added) done.push("新增 " + res.added + " 行");
+      if (res.changed) done.push("改了 " + res.changed + " 个格");
+      setWpsMsg("已推送到「" + (wps.name || "在线表格") + "」："
+        + (done.length ? done.join("、") : "两边一样，没写任何格子")
+        + (res.appended ? "（末尾补了 " + res.appended + " 列台账表头）" : "")
+        + (res.orphanRows ? "；表上有 " + res.orphanRows + " 行本地没有，留着没动" : ""));
     } catch (err) {
       setWpsMsg(txt(err && err.message ? err.message : err), true);
     } finally {

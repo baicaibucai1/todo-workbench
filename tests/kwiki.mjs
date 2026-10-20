@@ -579,8 +579,15 @@ section("8. AirScript 那套已经不在了（静态检查，防回潮）");
   );
   check(
     "写格时按列的 key 走这条规则",
-    /formula_for\(key, s\)/.test(mcp),
+    /formula_for\(/.test(mcp),
     /formula_for\([^)]*\)/.exec(mcp)?.[0] || "没找到调用点",
+  );
+  /* 推送必须是**增量**的（2026-10-20 改）：表大了还整本重写既慢又危险。
+   * 这两条防"又退回全量覆盖"的回潮。 */
+  check("推送走增量对账（plan_cloud_sync）", /plan_cloud_sync\(/.test(mcp));
+  check(
+    "只写新增行与变动的格，不再整本重写",
+    /plan\.appends/.test(mcp) && /plan\.updates/.test(mcp) && !/plan_cloud_write\(/.test(mcp),
   );
   check(
     "计划里带上了列名 key（写格靠它认单号列）",

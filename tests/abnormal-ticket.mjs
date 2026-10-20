@@ -110,12 +110,13 @@ function host(win, e) {
       });
       return;
     case "wps.mcpPush":
-      // 表上原本有 2 行会被顶掉、还多出 1 行要清掉 —— 逼出"确认"那一屏
+      // 增量口径：新增 1 行、改 2 个格，表上还有 1 行本地没有（留着不动）
       reply(win, m.id, true, {
         count: store.length,
         appended: 0,
-        overwrites: 2,
-        cleared: 1,
+        added: 1,
+        changed: 2,
+        orphanRows: 1,
         dryRun: p.dryRun === true,
       });
       return;
@@ -262,17 +263,21 @@ const push1 = args.filter((a) => a.op === "wps.mcpPush");
 check("推送第一步是 dryRun（只看不写）", push1.length === 1 && push1[0].payload.dryRun === true,
   JSON.stringify(push1.map((a) => a.payload)));
 check("弹出了确认屏", doc.getElementById("wpsPushPreview").hidden === false);
-check("确认屏写清了会覆盖 2 行",
-  /覆盖表上已有的 2 行/.test(doc.getElementById("wpsPushText").textContent || ""),
-  (doc.getElementById("wpsPushText").textContent || "").slice(0, 120));
-check("确认屏写清了会清掉 1 行",
-  /清掉表上多出来的 1 行/.test(doc.getElementById("wpsPushText").textContent || ""));
+check("确认屏说清了新增 1 行",
+  /新增 1 行/.test(doc.getElementById("wpsPushText").textContent || ""),
+  (doc.getElementById("wpsPushText").textContent || "").slice(0, 140));
+check("确认屏说清了改 2 个格",
+  /改 2 个格/.test(doc.getElementById("wpsPushText").textContent || ""));
+check("确认屏说明了表上多出来的行留着不动",
+  /留着不动|留着没动/.test(doc.getElementById("wpsPushText").textContent || ""));
 check("没确认前没有真写", args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== true).length === 0);
 doc.getElementById("wpsPushGo").click();
 await sleep(200);
 const push2 = args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== true);
 check("确认后才真推", push2.length === 1, JSON.stringify(args.filter((a) => a.op === "wps.mcpPush").map((a) => a.payload)));
-check("推送结果有回显", /已推送/.test(doc.getElementById("wpsMsg").textContent || ""),
+check("推送结果有回显（说清写了几行几格）",
+  /已推送/.test(doc.getElementById("wpsMsg").textContent || "") &&
+  /新增 1 行/.test(doc.getElementById("wpsMsg").textContent || ""),
   doc.getElementById("wpsMsg").textContent);
 
 console.log("\n7b. 右上角按钮同样走两步确认");
