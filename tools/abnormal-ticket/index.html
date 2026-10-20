@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.1.4）——整本重写过一次，之后按反馈迭代。
+  异常单号登记（v1.1.5）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -203,6 +203,17 @@
     display: flex; align-items: center; gap: 5px;
   }
   .sect > h3 .ico { width: 13px; height: 13px; color: var(--dim); }
+  /* ---------- 基本信息：默认锁着，点标题上的「编辑」才开 ----------
+     打开一条单子多半是"看看它是啥"，不是"顺手改两笔" —— 锁着就不会手滑改掉单号
+     （单号一改，推送出去的表也跟着变）。锁态：虚线框 + 虚化标签，胶囊点不动。 */
+  .sect.base input:disabled, .sect.base textarea:disabled, .sect.base select:disabled {
+    background: transparent; border-style: dashed; border-color: var(--line);
+    color: var(--fg); opacity: 1; -webkit-text-fill-color: var(--fg); cursor: default;
+  }
+  .sect.base.locked .lbl { color: var(--dim); }
+  .sect.base .pill:disabled { opacity: 1; color: var(--fg2); cursor: default; }
+  .sect.base .pill:disabled.on { opacity: 1; }
+  .basehint { font-size: 11.5px; color: var(--dim); }
   .flowrow { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
   .flowrow .t { color: var(--dim); font-family: var(--mono); font-size: 11.5px; }
 
@@ -637,6 +648,7 @@
     flow: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.4" cy="4" r="1.3"/><circle cx="3.4" cy="12" r="1.3"/><path d="M3.4 5.3v5.4M5.6 4h7M5.6 12h7"/></svg>',
     bell: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 11.2V7.2a3.6 3.6 0 1 1 7.2 0v4"/><path d="M3 11.2h10M6.6 13.2h2.8"/></svg>',
     grid: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.4" y="2.4" width="11.2" height="11.2" rx="1.6"/><path d="M2.4 6.1h11.2M2.4 9.9h11.2M6.1 2.4v11.2M9.9 2.4v11.2"/></svg>',
+    lock: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.4" rx="1.4"/><path d="M5.8 7V5.4a2.2 2.2 0 0 1 4.4 0V7"/></svg>',
   };
 
   /* 空态插画：一张虚线单据 + 一个放大镜。描边、中性灰、跟着主题反色。
@@ -679,6 +691,7 @@
     var bs = el.querySelectorAll(".pill");
     for (var k = 0; k < bs.length; k++) {
       bs[k].onclick = function () {
+        if (this.disabled) return;   // 锁态兜一层：jsdom 会给 disabled 按钮派 click，真浏览器不会
         var v = this.getAttribute("data-v");
         pillSet(el, el.getAttribute("data-value") === v ? "" : v);
         if (onPick) onPick(el.getAttribute("data-value"));
@@ -703,6 +716,21 @@
     if (!el) return;
     el.className = bad ? "hint bad" : "hint";
     el.textContent = txt(text);
+  }
+
+  /**
+   * 详情「基本信息」的锁：锁态把所有输入框和胶囊 disable 掉。
+   * 虚线边框只是观感，真正拦手的是 disabled（键盘 Tab 也跳不进去）；
+   * 胶囊同理 —— 容器加 pointer-events 挡不住 Tab，得逐个 disable。
+   */
+  function setBaseLock(locked) {
+    var sect = $("sectBase");
+    if (!sect) return;
+    var flds = sect.querySelectorAll("input, textarea, select");
+    for (var i = 0; i < flds.length; i++) flds[i].disabled = !!locked;
+    var pills = sect.querySelectorAll(".pill");
+    for (var j = 0; j < pills.length; j++) pills[j].disabled = !!locked;
+    if (locked) sect.classList.add("locked"); else sect.classList.remove("locked");
   }
 
   /** 给下拉填选项。首格是空值（显示「待选」），value 是它的原样文本 */
@@ -832,6 +860,9 @@
    * ================================================================== */
   var rows = [];          // 全量（台账量级：几百到几千，一次拉全最简单也最不容易错）
   var selectedId = null;
+  /* 详情「基本信息」解锁的那一条的 id —— 只对这一条生效，切走 / 存完都自动回锁。
+     存行 id 而不是布尔值，是为了换一条单子时它自己就是锁的（不然手滑改的是新那条）。 */
+  var baseEditId = "";
   var LS_ROWS = "wbtool:" + TOOL_ID + ":rows";
 
   async function load() {
@@ -1504,9 +1535,15 @@
     var plan = v.plan;
     var last = flowLast(r);
 
-    /* 先基本信息：打开一条单子第一眼要确认「是哪张单」。**都能改** —— 登记时漏填的
-       （快递单号、快递公司…）在这儿补，填错了也在这儿改，点「保存修改」落库。 */
-    html += '<div class="sect"><h3 data-ico="doc">基本信息（都能改）</h3><div class="grid24">'
+    /* 先基本信息：打开一条单子第一眼要确认「是哪张单」。
+       ★ 默认锁着 —— 点标题上的「编辑」才开。多数时候翻详情是"看看它是啥"，
+       不是"顺手改两笔"，而且单号一改，推给 WPS 的表也会跟着变，不该顺手碰到。
+       ★ 解锁态只跟着这一条走（baseEditId）：切到别的单子自动落回锁态。 */
+    var editingBase = baseEditId === String(r.id);
+    html += '<div class="sect base' + (editingBase ? "" : " locked") + '" id="sectBase">'
+      + '<h3 data-ico="doc">' + (editingBase ? "基本信息（编辑中）" : "基本信息")
+      + '<button class="mini" id="btnBaseToggle" data-ico="' + (editingBase ? "lock" : "pen") + '">'
+      + (editingBase ? "取消编辑" : "编辑") + "</button></h3><div class=\"grid24\">"
       + '<label class="f c12"><span class="lbl" data-ico="doc">订单号</span>'
       + '<input id="dOrder" autocomplete="off" spellcheck="false" /></label>'
       + '<label class="f c12"><span class="lbl" data-ico="box">快递单号</span>'
@@ -1524,9 +1561,15 @@
       + '<label class="f c24"><span class="lbl" data-ico="chat">处理情况</span>'
       + '<input id="dNote" autocomplete="off" spellcheck="false" /></label>'
       + "</div>"
-      + '<div class="r" style="margin-top:8px"><button class="primary" id="btnEdit">保存修改</button>'
-      + '<button id="btnEditUndo">撤掉改动</button>'
-      + '<span class="hint" id="editMsg" style="margin:0"></span></div></div>';
+      + (editingBase
+        ? '<div class="r" style="margin-top:8px"><button class="primary" id="btnEdit" data-ico="pen">保存修改</button>'
+          + '<button id="btnEditUndo">撤掉改动</button>'
+          + '<span class="hint" id="editMsg" style="margin:0"></span></div>'
+        : '<div class="r" style="margin-top:8px"><span class="basehint">'
+          + "锁着 —— 点右边「编辑」解锁后才能改（改单号会一并改掉推给表格的内容）</span>"
+          // 回显条两种状态都要在场：存完是回锁态画的，「已保存」得有地方写
+          + '<span class="hint" id="editMsg" style="margin:0"></span></div>')
+      + "</div>";
 
     /* 流程 + 提醒：确认完「是哪张单」，接着回答「到哪一步了」「什么时候该再跟」。
        这两块是同一件事的两面 —— 流程停了多久，提醒就什么时候响。 */
@@ -1617,28 +1660,40 @@
     renderPills($("dCourier"), cfg.couriers, txt(r.courier));
     renderPills($("dStore"), cfg.stores.map(function (s) { return s.name; }), txt(r.store));
     renderPills($("dCategory"), cfg.situations, txt(r.category));
+    setBaseLock(!editingBase);
     $("dDate").onfocus = function () { openDp(this); };
     $("dDate").onclick = function () { openDp(this); };
-    $("btnEdit").onclick = function () {
-      void (async function () {
-        var order = washOrder(readErp($("dOrder").value).order || $("dOrder").value);
-        var track = washOrder($("dTrack").value);
-        if (!order && !track) { setHint("editMsg", "订单号和快递单号不能都空", true); return; }
-        await update(r.id, {
-          order_sn: order,
-          tracking_no: track,
-          courier: pillVal($("dCourier")),
-          shipped_at: $("dDate").value.trim(),
-          store: pillVal($("dStore")),
-          category: pillVal($("dCategory")),
-          title: $("dTitle").value.trim(),
-          note: $("dNote").value.trim(),
-        });
-        await load();     // ★ 重画会把提示条冲掉 —— 回显必须在 load 之后写
-        setHint("editMsg", "已保存「" + (order || track) + "」");
-      })();
+    $("btnBaseToggle").onclick = function () {
+      // 解锁对着这一条；再点一次 = 放弃改动（等价于「撤掉改动」）
+      baseEditId = editingBase ? "" : String(r.id);
+      renderDetail();
     };
-    $("btnEditUndo").onclick = function () { renderDetail(); };
+    if (editingBase) {
+      $("btnEditUndo").onclick = function () {
+        baseEditId = "";
+        renderDetail();
+      };
+      $("btnEdit").onclick = function () {
+        void (async function () {
+          var order = washOrder(readErp($("dOrder").value).order || $("dOrder").value);
+          var track = washOrder($("dTrack").value);
+          if (!order && !track) { setHint("editMsg", "订单号和快递单号不能都空", true); return; }
+          await update(r.id, {
+            order_sn: order,
+            tracking_no: track,
+            courier: pillVal($("dCourier")),
+            shipped_at: $("dDate").value.trim(),
+            store: pillVal($("dStore")),
+            category: pillVal($("dCategory")),
+            title: $("dTitle").value.trim(),
+            note: $("dNote").value.trim(),
+          });
+          baseEditId = "";      // 存完回锁 —— 别让输入框一直敞着
+          await load();     // ★ 重画会把提示条冲掉 —— 回显必须在 load 之后写
+          setHint("editMsg", "已保存「" + (order || track) + "」");
+        })();
+      };
+    }
 
     fillSelect($("dHandling"), cfg.handlings, r.handling);
     fillSelect($("dResult"), cfg.results, r.result);

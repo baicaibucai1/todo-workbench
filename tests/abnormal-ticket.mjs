@@ -260,12 +260,12 @@ check("表格里能搜到这条单号", (body.textContent || "").includes("69312
 check("表头 14 列", doc.getElementById("tableHead").querySelectorAll("th").length === 14,
   String(doc.getElementById("tableHead").querySelectorAll("th").length));
 
-console.log("\n5b. 查看页能补全 / 改信息（不用回登记页重录）");
+console.log("\n5b. 查看页能补全 / 改信息（默认锁着，点「编辑」才开）");
 doc.getElementById("tab-browse").click();
 await sleep(80);
 doc.querySelector("#list .ticket").click();
 await sleep(80);
-check("详情里有能改的订单号框", !!doc.getElementById("dOrder"));
+check("详情里有订单号框", !!doc.getElementById("dOrder"));
 check("订单号预填的是这条的原值", doc.getElementById("dOrder").value === "6931234567890123456",
   doc.getElementById("dOrder").value);
 check("快递单号也预填了", doc.getElementById("dTrack").value === "YT9988776655",
@@ -278,6 +278,34 @@ check("店铺胶囊高亮在这条的店铺上",
   doc.getElementById("dStore").getAttribute("data-value") === "拼5" &&
   !!doc.getElementById("dStore").querySelector(".pill.on"),
   doc.getElementById("dStore").getAttribute("data-value"));
+
+/* ★ 默认锁着：不让顺手改单号（单号一改，推给 WPS 的表也跟着变） */
+check("基本信息默认锁着", doc.getElementById("dOrder").disabled === true);
+check("快递公司胶囊也点不动", Array.from(doc.getElementById("dCourier").querySelectorAll(".pill"))
+  .every((b) => b.disabled === true));
+check("锁着时不给保存按钮", !doc.getElementById("btnEdit"));
+check("标题上挂着「编辑」按钮", /编辑/.test(doc.getElementById("btnBaseToggle").textContent || ""),
+  doc.getElementById("btnBaseToggle").textContent);
+check("锁着时有句说明", /锁着/.test(doc.querySelector("#sectBase .basehint")?.textContent || ""),
+  doc.querySelector("#sectBase .basehint")?.textContent);
+{
+  const beforeUpd = args.filter((a) => a.op === "row.update").length;
+  const keep = doc.getElementById("dCourier").getAttribute("data-value");
+  doc.querySelector("#dCourier .pill").click();
+  await sleep(20);
+  check("锁态点胶囊不生效", args.filter((a) => a.op === "row.update").length === beforeUpd
+    && doc.getElementById("dCourier").getAttribute("data-value") === keep,
+    "点完还是 " + doc.getElementById("dCourier").getAttribute("data-value") + "（原 " + keep + "）");
+}
+
+doc.getElementById("btnBaseToggle").click();
+await sleep(80);
+check("点「编辑」解锁了", doc.getElementById("dOrder").disabled === false);
+check("解锁后胶囊能点", Array.from(doc.getElementById("dCourier").querySelectorAll(".pill"))
+  .every((b) => b.disabled === false));
+check("解锁后才有保存 / 撤掉", !!doc.getElementById("btnEdit") && !!doc.getElementById("btnEditUndo"));
+check("标题变成「编辑中」", /编辑中/.test(doc.querySelector("#sectBase h3").textContent || ""),
+  doc.querySelector("#sectBase h3").textContent);
 
 { // 补全：快递公司换一个（登记页那次选的会带过来，所以挑个跟当前值不同的）；描述改一句
   const dCourier = doc.getElementById("dCourier");
@@ -308,6 +336,33 @@ check("店铺胶囊高亮在这条的店铺上",
     doc.getElementById("dTitle").value);
   check("改完给了回显", /已保存/.test(doc.getElementById("editMsg").textContent || ""),
     doc.getElementById("editMsg").textContent);
+  /* ★ 存完自动回锁 —— 别让输入框一直敞着 */
+  check("保存后自动回锁", doc.getElementById("dOrder").disabled === true);
+  check("回锁后保存按钮收起来了", !doc.getElementById("btnEdit"));
+}
+
+{ // 解锁改了不想要 → 「撤掉改动」回去，库不能动
+  const beforeUpd = args.filter((a) => a.op === "row.update").length;
+  doc.getElementById("btnBaseToggle").click();
+  await sleep(80);
+  doc.getElementById("dTitle").value = "这是临时写的，不该落库";
+  doc.getElementById("btnEditUndo").click();
+  await sleep(120);
+  check("撤掉改动没写库", args.filter((a) => a.op === "row.update").length === beforeUpd,
+    String(args.filter((a) => a.op === "row.update").length));
+  check("撤掉后框里回到原值", doc.getElementById("dTitle").value === "客户确认破损，走赔付",
+    doc.getElementById("dTitle").value);
+  check("撤掉后也回锁", doc.getElementById("dOrder").disabled === true);
+}
+
+{ // 换一条单子：解锁态不能跟着过去
+  const items = doc.querySelectorAll("#list .ticket");
+  doc.getElementById("btnBaseToggle").click();
+  await sleep(80);
+  check("（前置）当前这条解锁着", doc.getElementById("dOrder").disabled === false);
+  if (items.length >= 2) { items[1].click(); await sleep(120); }
+  else { doc.getElementById("btnBaseToggle").click(); await sleep(120); }
+  check("切到别的单子自动回锁", doc.getElementById("dOrder").disabled === true);
 }
 
 console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
