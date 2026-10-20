@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.0.0）——整本重写。
+  异常单号登记（v1.1.1）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -252,25 +252,66 @@
     font-family: var(--mono); font-size: 11px; color: var(--dim);
     white-space: pre-wrap; word-break: break-all; margin: 0;
   }
+
+  /* ---------- 装饰：一律中性灰，只拉层次，不抢内容（无阴影、无渐变） ---------- */
+  /* 页头小标：圆角方块里三条横线，跟 favicon 一个形状 */
+  .brand {
+    width: 18px; height: 18px; flex: 0 0 auto;
+    fill: none; stroke: var(--dim); stroke-width: 1.5;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  /* 页签：图标跟着选中态走，未选中灰、选中深 */
+  .tabs button { display: flex; align-items: center; gap: 5px; }
+  .tabs button .ico { width: 13px; height: 13px; color: var(--dim); }
+  .tabs button[aria-selected="true"] .ico { color: var(--fg); }
+  /* 卡片标题：左边一条 2px 中灰竖条 */
+  .card h2 { display: flex; align-items: center; gap: 7px; }
+  .card h2::before {
+    content: ""; flex: 0 0 auto; width: 2px; height: 12px;
+    border-radius: 2px; background: var(--dim);
+  }
+  /* 分区标题：右边接一条细线，把这一节"托"起来 */
+  .sect > h3::after {
+    content: ""; flex: 1 1 auto; height: 1px; background: var(--line); margin-left: 6px;
+  }
+  button .ico { width: 13px; height: 13px; }
+  /* 空态：一张描边插画（虚线单据 + 放大镜），比干一句灰字好认 */
+  .empty {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    padding: 24px 12px; color: var(--dim);
+  }
+  .empty .art {
+    width: 46px; height: 46px; flex: 0 0 auto;
+    fill: none; stroke: var(--dim); stroke-width: 1.2;
+    stroke-linecap: round; stroke-linejoin: round; opacity: .75;
+  }
+  .empty .t { font-size: 12px; }
+  .empty.sm { padding: 14px 10px; gap: 6px; }
+  .empty.sm .art { width: 34px; height: 34px; }
 </style>
 </head>
 <body data-bind-state="booting">
 
 <header>
+  <!-- 小标：圆角方块 + 三条横线（和 favicon 同形），纯中性灰，深色模式自动反色 -->
+  <svg class="brand" viewBox="0 0 32 32" aria-hidden="true">
+    <rect x="6.5" y="5.5" width="19" height="21" rx="4" />
+    <path d="M11 12h10M11 16h10M11 20h6" />
+  </svg>
   <h1>异常单号登记</h1>
   <span class="dot" id="hostState">连接中…</span>
   <span class="meta" id="meta"></span>
   <span class="spacer"></span>
-  <span class="meta" id="todayCount"></span>
+  <span class="badge" id="todayCount"></span>
   <!-- 推送按钮钉在右上角：哪个页签都看得见、够得着 -->
   <button id="hdrPush" data-host-only disabled style="margin-left:10px">推送到表格</button>
 </header>
 
 <div class="tabs" role="tablist">
-  <button id="tab-create" data-tab="create" role="tab" aria-selected="true">登记</button>
-  <button id="tab-browse" data-tab="browse" role="tab" aria-selected="false">查看</button>
-  <button id="tab-table" data-tab="table" role="tab" aria-selected="false">表格</button>
-  <button id="tab-settings" data-tab="settings" role="tab" aria-selected="false">设置</button>
+  <button id="tab-create" data-tab="create" data-ico="pen" role="tab" aria-selected="true">登记</button>
+  <button id="tab-browse" data-tab="browse" data-ico="doc" role="tab" aria-selected="false">查看</button>
+  <button id="tab-table" data-tab="table" data-ico="grid" role="tab" aria-selected="false">表格</button>
+  <button id="tab-settings" data-tab="settings" data-ico="gear" role="tab" aria-selected="false">设置</button>
 </div>
 
 <main>
@@ -305,7 +346,7 @@
           <textarea id="fTitle" rows="2" placeholder="发生了什么"></textarea></label>
       </div>
       <div class="r" style="margin-top:10px">
-        <button class="primary" id="btnAdd">登记</button>
+        <button class="primary" id="btnAdd" data-ico="pen">登记</button>
         <span class="note">订单号和快递单号至少填一个。登记后店铺 / 快递公司 / 登记时间会留着，方便连着录下一条。</span>
       </div>
     </div>
@@ -517,7 +558,22 @@
     gear: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.9v1.5M8 12.6v1.5M1.9 8h1.5M12.6 8h1.5M3.7 3.7l1.1 1.1M11.2 11.2l1.1 1.1M12.3 3.7l-1.1 1.1M4.8 11.2l-1.1 1.1"/></svg>',
     flow: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.4" cy="4" r="1.3"/><circle cx="3.4" cy="12" r="1.3"/><path d="M3.4 5.3v5.4M5.6 4h7M5.6 12h7"/></svg>',
     bell: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 11.2V7.2a3.6 3.6 0 1 1 7.2 0v4"/><path d="M3 11.2h10M6.6 13.2h2.8"/></svg>',
+    grid: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.4" y="2.4" width="11.2" height="11.2" rx="1.6"/><path d="M2.4 6.1h11.2M2.4 9.9h11.2M6.1 2.4v11.2M9.9 2.4v11.2"/></svg>',
   };
+
+  /* 空态插画：一张虚线单据 + 一个放大镜。描边、中性灰、跟着主题反色。
+     只画个轮廓，不画"插画级"细节 —— 这工具一天看几十次，花活多了就烦。 */
+  var EMPTY_ART =
+    '<svg class="art" viewBox="0 0 48 48" aria-hidden="true">'
+    + '<path d="M9 8.5h16.5l7.5 7.5V39a1.5 1.5 0 0 1-1.5 1.5H9A1.5 1.5 0 0 1 7.5 39V10A1.5 1.5 0 0 1 9 8.5z" stroke-dasharray="3 3"/>'
+    + '<path d="M25 8.5v7.5h7.5"/>'
+    + '<path d="M13.5 20h13M13.5 25.5h9" />'
+    + '<circle cx="31" cy="31" r="7.5"/><path d="M36.5 36.5 42 42"/>'
+    + "</svg>";
+  function emptyBlock(text, small) {
+    return '<div class="empty' + (small ? " sm" : "") + '">' + EMPTY_ART
+      + '<span class="t">' + esc(text) + "</span></div>";
+  }
   /** 把图标画进标了 data-ico 的标签里（SSR 免了：静态 HTML 与动态渲染共用一份） */
   function paintIcos(root) {
     var els = (root || document).querySelectorAll("[data-ico]");
@@ -1100,7 +1156,7 @@
     var list = filtered();
     var box = $("list");
     if (!list.length) {
-      box.innerHTML = '<div class="note" style="padding:12px">没有匹配的单子</div>';
+      box.innerHTML = emptyBlock("没有匹配的单子");
       return;
     }
     var html = "";
@@ -1133,7 +1189,7 @@
     var box = $("detail");
     var r = findRow(selectedId);
     if (!r) {
-      box.innerHTML = '<div class="note">左边选一条 —— 这里看它的全部内容。</div>';
+      box.innerHTML = emptyBlock("左边选一条 —— 这里看它的全部内容", true);
       return;
     }
     var st = statusOf(r);
@@ -1393,7 +1449,8 @@
       }
       body += "</tr>";
     }
-    $("tableBody").innerHTML = body || '<tr><td colspan="' + keys.length + '" style="color:var(--dim)">还没有数据</td></tr>';
+    $("tableBody").innerHTML = body
+      || '<tr><td colspan="' + keys.length + '">' + emptyBlock("还没有数据") + "</td></tr>";
 
     var trs = $("tableBody").querySelectorAll("tr");
     for (var t = 0; t < trs.length; t++) {
