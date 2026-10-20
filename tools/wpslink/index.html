@@ -61,7 +61,6 @@
   button.primary:disabled { opacity: .5; cursor: default; }
   button.ghost { background: transparent; }
   #fileSelect { flex: 1; min-width: 200px; }
-  #link { flex: 1; min-width: 200px; }
 
   .hint { color: var(--dim); font-size: 11.5px; line-height: 1.6; margin: 8px 0 0; }
   .chip {
@@ -121,9 +120,21 @@
   details { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
   details summary { cursor: pointer; font-size: 12.5px; color: var(--fg2); }
   details summary:hover { color: var(--fg); }
-  details .steps { margin: 8px 0 0; padding-left: 20px; font-size: 11.5px; line-height: 1.9; color: var(--dim); }
-  #scriptBox { width: 100%; height: 150px; margin-top: 8px; resize: vertical; font: 11px/1.6 var(--mono, ui-monospace, Consolas, monospace);
-    color: var(--fg2); background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  /* ② 的文件列表 */
+  .files { list-style: none; margin: 8px 0 0; padding: 0; max-height: 264px; overflow: auto;
+    border: 1px solid var(--line); border-radius: 8px; }
+  .files:empty { display: none; }
+  .files li { padding: 6px 10px; font-size: 12.5px; cursor: pointer; display: flex; gap: 8px;
+    align-items: baseline; border-bottom: 1px solid var(--line); }
+  .files li:last-child { border-bottom: 0; }
+  .files li:hover { background: var(--chip); }
+  .files li.on { background: var(--chip); outline: 1px solid var(--accent); outline-offset: -1px; }
+  .files li.skip { color: var(--dim); cursor: default; }
+  .files li.skip:hover { background: transparent; }
+  .files .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .files .k { font-size: 11px; color: var(--dim); }
+  .files .d { font-size: 11px; color: var(--dim); }
+
   .foot { margin-top: 16px; font-size: 11.5px; color: var(--dim); line-height: 1.7; }
   .foot code { background: var(--chip); padding: 1px 5px; border-radius: 4px; }
 </style>
@@ -135,38 +146,38 @@
     WPS 绑定文件
     <span class="dot" id="hostState">连接中…</span>
   </div>
-  <div class="sub">直连你那张云端表格：读、改、存回原表 —— 不复制、不经知识库</div>
+  <div class="sub">授权 → 选文件 → 链接：读你自己的云文档，文档能改能存回</div>
 </div>
 
 <!-- 未绑定：绑定面板 -->
 <section id="bindPanel" class="card">
-  <div class="sect">直连云端表格</div>
+  <div class="sect">① 授权（一次性）</div>
   <div class="row">
-    <input id="link" placeholder="云端表格链接 https://www.kdocs.cn/l/xxxx" autocomplete="off" spellcheck="false" />
-  </div>
-  <div class="row" style="margin-top:8px">
-    <input id="hook" placeholder="AirScript webhook（脚本「更多」菜单里复制）" autocomplete="off" spellcheck="false" />
-  </div>
-  <div class="row" style="margin-top:8px">
-    <input id="token" type="password" placeholder="AirScript 脚本令牌" autocomplete="off" spellcheck="false" />
-    <button class="primary" id="bindCloud" data-host-only>直连绑定</button>
-    <button class="ghost" id="copyScript" data-host-only>复制脚本</button>
+    <button class="primary" id="mcpTest" data-host-only>测试连接</button>
+    <span class="dot" id="mcpState">还没测</span>
   </div>
   <p class="hint">
-    直连 = 直接读写你那张<strong>原表</strong>：不复制、不经过知识库、不产生副本。
-    第一次用要先在表格里建一个 AirScript（点「复制脚本」，步骤见下）。
+    用的是 WPS 官方的 agent 入口（MCP）。令牌在
+    <code>设置 → WPS MCP 连接</code> 里授权拿到，工具不碰它 ——
+    它是账号级的，能看到你整个云文档。点一下上面的「测试连接」就知道通没通。
   </p>
-  <details id="howto">
-    <summary>第一次用？两分钟建脚本</summary>
-    <ol class="steps">
-      <li>在 WPS 里打开那张表格，点顶部「效率 → 高级开发 → AirScript 脚本编辑器」。</li>
-      <li>新建脚本，把「复制脚本」拿到的代码整段粘进去，保存。</li>
-      <li>点工具栏「脚本令牌」创建并复制令牌（需实名认证；一个账号只有一个）。</li>
-      <li>在脚本「更多」菜单里复制「脚本 webhook」，连同令牌一起填到上面。</li>
-      <li>点「直连绑定」——读出表名和表头就通了。</li>
-    </ol>
-    <textarea id="scriptBox" readonly spellcheck="false" placeholder="点上面的「复制脚本」"></textarea>
-  </details>
+
+  <div class="sect" style="margin-top:12px">② 选择文件</div>
+  <div class="row">
+    <button id="mcpList" data-host-only>读取我的文件</button>
+    <span class="hint" id="mcpListHint" style="margin:0"></span>
+  </div>
+  <ul id="mcpFiles" class="files"></ul>
+
+  <div class="sect" style="margin-top:12px">③ 链接</div>
+  <div class="row">
+    <button class="primary" id="mcpBind" data-host-only disabled>绑定并打开</button>
+  </div>
+  <p class="hint" id="mcpBindHint">
+    从上面列表里点一份文件，再按这里。表格读进来能改、Ctrl+S 写回原表；
+    文档读进来能改、能整段存回（智能文档）。
+  </p>
+
   <details>
     <summary>或者：绑定知识库里的文件（文档也能编辑）</summary>
     <div class="row" style="margin-top:8px">
@@ -225,11 +236,11 @@
 </div>
 
 <div class="foot">
-  <b>直连模式</b>：保存把编辑器里的内容整表写回原表 —— 脚本只改单元格的值，格式保留；
-  但公式列会被当前显示值覆盖，改前先想清楚。脚本在表格里跑，凭证（webhook + 脚本令牌）
-  也只属于那张表。<br />
-  <b>知识库模式</b>：保存走 新建 → 删旧 → 改名（上传只能新建），旧版本进回收站 7 天；
-  表格只写第一个工作表，文档只写纯文本。两种模式都存在本机，不经过第三方。
+  <b>官方入口（MCP）</b>：授权一次，之后「读取我的文件」列出的就是你云文档里的东西，
+  点哪份绑哪份。表格读进来<strong>能改</strong>、Ctrl+S 按格写回那张原表（长订单号当文本存，不会丢位）；
+  智能文档能改、能整段存回。<br />
+  <b>知识库路</b>：保存走 新建 → 删旧 → 改名（上传只能新建），旧版本进回收站 7 天。
+  绑定信息都存在本机，令牌不经过第三方。
 </div>
 
 <script>
@@ -253,6 +264,13 @@
   var busy = false;
   var files = [];
   var rebinding = false;
+  /* 官方 agent 入口（② 的文件列表） */
+  var mcpList = [];
+  var mcpPicked = "";
+  /* 曾经：官方入口的表格当只读（保存键一直灰着）。
+     那是误判 —— sheet.update_range_data 能按格写回原表，所以这里恒为 false。
+     留着这个变量是为了 .dbt（多维表格）：哪天接了它，那类文件仍要灰着保存键。 */
+  var readOnly = false;
 
   /* ==================================================================
    * 一、宿主状态机
@@ -346,8 +364,10 @@
     dirty = !!on;
     document.getElementById("dirtyChip").hidden = !dirty;
     var save = document.getElementById("saveBtn");
-    save.disabled = !dirty || busy;
-    save.textContent = busy ? "保存中…" : "保存到 WPS";
+    save.disabled = readOnly || !dirty || busy;
+    save.textContent = readOnly
+      ? "官方入口只读"
+      : busy ? "保存中…" : "保存到 WPS";
   }
 
   /* ================= 绑定 ================= */
@@ -366,14 +386,13 @@
 
   function boot() {
     loadBinding().then(function (b) {
-      if (b && (b.cloud || b.kuid)) {
+      if (b && (b.kuid || b.mcp)) {
         binding = b;
-        if (b.cloud && !b.title) b.title = b.name || "云端表格";
+        if (b.mcp && !b.title) b.title = b.name || "云文档";
         showHead();
         return readBinding();
       }
       showBindPanel();
-      return loadFiles();
     }).catch(function (err) {
       notice(String(err && err.message ? err.message : err), "err");
     });
@@ -401,6 +420,9 @@
   }
 
   function showBindPanel() {
+    readOnly = false;
+    mcpPicked = "";
+    renderMcpFiles();
     document.getElementById("bindPanel").hidden = false;
     document.getElementById("fileHead").hidden = true;
     document.getElementById("sheetPane").hidden = true;
@@ -412,15 +434,20 @@
     document.getElementById("bindPanel").hidden = true;
     document.getElementById("fileHead").hidden = false;
     document.getElementById("fileName").textContent = binding.title;
-    document.getElementById("fileKind").textContent = binding.cloud
-      ? "直连表格"
-      : binding.kind === "sheet" ? "表格" : "文档";
+    document.getElementById("fileKind").textContent = binding.kind === "sheet" ? "表格" : "文档";
     var note = document.getElementById("boundNote");
-    if (binding.cloud) {
+    // 官方入口这条路上**表格也能写** —— 之前按"WPS 没给写单元格的接口"写成了只读，
+    // 那是误判：sheet.update_range_data 能按格写（Agent测试表里的值就是这么写进去的）。
+    // 只有多维表格(.dbt)暂时开不了，那类文件在绑定时就被拒了。
+    readOnly = false;
+    if (binding.mcp) {
       note.hidden = false;
-      note.textContent = "直连「" + (binding.name || binding.title) + "」" +
-        (binding.sheet ? " · 工作表 " + binding.sheet : "") +
-        " —— 读写的就是这张原表（没有副本，也不经知识库）";
+      note.textContent = "官方入口 · 「" + (binding.name || binding.title) + "」" +
+        (binding.kind === "doc"
+          ? " —— 改完直接存回这篇智能文档"
+          : " —— 改完 Ctrl+S 写回这张原表（长订单号当文本存，不会丢位）");
+    } else {
+      note.hidden = true;
     }
     markDirty(false);
   }
@@ -434,8 +461,8 @@
 
   function readBinding() {
     notice("");
-    var req = binding.cloud
-      ? call("wps.cloudRead", { binding: binding }, 60000)
+    var req = binding.mcp
+      ? call("wps.mcpRead", { binding: binding }, 60000)
       : call("wps.fileRead", {
           kuid: binding.kuid,
           title: binding.title,
@@ -449,13 +476,14 @@
         text: doc.text || "",
       };
       if (doc.kind) binding.kind = doc.kind;
+      if (doc.sheet) binding.sheet = doc.sheet;
       render();
       markDirty(false);
     }).catch(function (err) {
       var msg = String(err && err.message ? err.message : err);
       // 绑定失效最常见的原因：保存后节点换了（旧的在回收站），或者被人在 WPS 里删了。
       // 知识库里若恰好只有一份同名文件，直接改绑过去 —— 省得人再点一遍。
-      if (!binding.cloud && !rebinding && binding && binding.title) {
+      if (!rebinding && binding && binding.title) {
         rebinding = true;
         call("wps.files").then(function (r) {
           var same = ((r && r.files) || []).filter(function (f) { return f.title === binding.title; });
@@ -622,24 +650,42 @@
     busy = true;
     markDirty(true);
     notice("");
-    var req = binding.cloud
-      ? call("wps.cloudWrite", {
-          binding: binding,
-          header: model.header,
-          rows: model.rows,
-        }, WRITE_TIMEOUT)
-      : call("wps.fileWrite", {
-          kuid: binding.kuid,
-          title: binding.title,
-          docType: binding.doc_type,
-          header: model.header,
-          rows: model.rows,
-          text: model.text,
-        }, WRITE_TIMEOUT);
+    if (binding.mcp) {
+      if (binding.kind === "doc") {
+        busy = true; markDirty(true); notice("");
+        call("wps.mcpDocWrite", {
+          binding: binding, text: model.text, mode: "replace",
+        }, WRITE_TIMEOUT).then(function () {
+          markDirty(false); notice("已存回这篇智能文档", "ok");
+        }).catch(function (err) {
+          notice(String(err && err.message ? err.message : err), "err");
+        }).then(function () { busy = false; markDirty(dirty); });
+        return;
+      }
+      // 表格：整块写回原表（表头 + 数据行一起发；删掉的行由宿主补空串清掉）
+      call("wps.mcpSheetWrite", {
+        binding: binding, header: model.header, rows: model.rows,
+      }, WRITE_TIMEOUT).then(function (r) {
+        markDirty(false);
+        var n = (r && r.result && r.result.wrote) || 0;
+        notice("已写回这张表（" + n + " 格）", "ok");
+      }).catch(function (err) {
+        notice(String(err && err.message ? err.message : err), "err");
+      }).then(function () { busy = false; markDirty(dirty); });
+      return;
+    }
+    var req = call("wps.fileWrite", {
+      kuid: binding.kuid,
+      title: binding.title,
+      docType: binding.doc_type,
+      header: model.header,
+      rows: model.rows,
+      text: model.text,
+    }, WRITE_TIMEOUT);
     req.then(function (r) {
       var res = r.result || {};
       // ★ 节点 id 一定变了：旧的那份已经进回收站，继续用旧 kuid 会读不到
-      if (!binding.cloud && res.kuid) binding.kuid = res.kuid;
+      if (res.kuid) binding.kuid = res.kuid;
       if (res.title) binding.title = res.title;
       saveBinding(binding);
       markDirty(false);
@@ -666,20 +712,26 @@
     saveBinding(null);
     notice("");
     showBindPanel();
-    loadFiles();
   };
   document.getElementById("openBtn").onclick = function () {
     if (!binding) return;
+    if (binding.mcp) { notice("官方入口没给文件网址，去 kdocs 里手动打开吧", "warn"); return; }
     var a = document.createElement("a");
-    a.href = binding.cloud
-      ? binding.link
-      : "https://www.kdocs.cn/wiki/l/" + encodeURIComponent(binding.kuid);
+    a.href = "https://www.kdocs.cn/wiki/l/" + encodeURIComponent(binding.kuid);
     a.target = "_blank";
     a.rel = "noreferrer";
     document.body.appendChild(a);
     a.click();
     a.remove();
   };
+
+  /* 知识库那条路是折叠区：展开了才去拉列表 —— 不然每次开工具都白请求一次 */
+  var kbDetails = document.querySelectorAll("#bindPanel > details");
+  if (kbDetails.length) {
+    kbDetails[kbDetails.length - 1].addEventListener("toggle", function () {
+      if (this.open && !files.length) loadFiles();
+    });
+  }
 
   document.getElementById("bindPick").onclick = function () {
     var kuid = document.getElementById("fileSelect").value;
@@ -689,50 +741,115 @@
     bindTo(f);
   };
 
-  document.getElementById("bindCloud").onclick = function () {
-    var link = document.getElementById("link").value.trim();
-    var webhook = document.getElementById("hook").value.trim();
-    var token = document.getElementById("token").value.trim();
-    if (!link || !webhook || !token) {
-      notice("链接、webhook、脚本令牌 —— 三样都要填", "warn");
-      return;
-    }
+  /* ================= 官方 agent 入口：授权 → 选择文件 → 链接 ================= */
+
+  function mcpState(text, ok) {
+    var dot = document.getElementById("mcpState");
+    dot.textContent = text;
+    dot.className = "dot" + (ok ? " ok" : " warn");
+  }
+
+  /** 扩展名 → 表格还是文档。list_my_files 只给文件名，类型得自己认 */
+  function kindOfName(name) {
+    var n = String(name || "").toLowerCase();
+    if (/\.(ksheet|et|xlsx|xls|csv)$/.test(n)) return "sheet";
+    if (/\.(otl|docx|doc|wps|md|txt)$/.test(n)) return "doc";
+    return "";
+  }
+
+  function fmtWhen(t) {
+    if (!t) return "";
+    var d = new Date(t * 1000);
+    return isNaN(d.getTime()) ? "" : d.toLocaleDateString("zh-CN");
+  }
+
+  document.getElementById("mcpTest").onclick = function () {
     if (busy) return;
     busy = true;
-    notice("正在连那张表…");
-    call("wps.cloudBind", { link: link, webhook: webhook, token: token }, WRITE_TIMEOUT).then(function (r) {
-      var b = r.binding || {};
-      binding = {
-        cloud: true,
-        kind: "sheet",
-        doc_type: "s",
-        link: b.link,
-        name: b.name,
-        title: b.name || "云端表格",
-        sheet: b.sheet || "",
-        webhook: b.webhook,
-        token: b.token,
-      };
-      saveBinding(binding);
-      showHead();
-      document.getElementById("link").value = "";
-      document.getElementById("hook").value = "";
-      document.getElementById("token").value = "";
-      return readBinding();
+    notice("正在连 WPS 官方入口…");
+    call("wps.mcpProbe", {}, 60000).then(function (r) {
+      var s = r.server || {};
+      var n = s.tools || 0;
+      var ok = n >= 100;
+      mcpState((s.name || "SkillHub") + " · " + n + " 个工具", ok);
+      notice(ok ? "通了 —— 点「读取我的文件」" : "连上了但工具数不对（" + n + "），令牌可能不对", ok ? "ok" : "warn");
     }).catch(function (err) {
+      mcpState("没通", false);
       notice(String(err && err.message ? err.message : err), "err");
     }).then(function () { busy = false; });
   };
 
-  document.getElementById("copyScript").onclick = function () {
-    call("wps.cloudScript").then(function (r) {
-      var script = (r && r.script) || "";
-      document.getElementById("scriptBox").value = script;
-      document.getElementById("howto").open = true;
-      copyText(script);
+  document.getElementById("mcpList").onclick = function () {
+    if (busy) return;
+    busy = true;
+    notice("正在读你的文件列表…");
+    call("wps.mcpFiles", {}, 60000).then(function (r) {
+      mcpList = (r && r.files) || [];
+      mcpPicked = "";
+      renderMcpFiles();
+      var n = mcpList.filter(function (f) { return f.ftype !== "folder"; }).length;
+      notice(n ? "列出 " + n + " 份 —— 点一份，再按「绑定并打开」" : "根目录下没有文件", n ? "ok" : "warn");
+    }).catch(function (err) {
+      mcpList = [];
+      renderMcpFiles();
+      notice(String(err && err.message ? err.message : err), "err");
+    }).then(function () { busy = false; });
+  };
+
+  function renderMcpFiles() {
+    var ul = document.getElementById("mcpFiles");
+    ul.textContent = "";
+    document.getElementById("mcpBind").disabled = true;
+    document.getElementById("mcpBindHint").textContent =
+      "从上面列表里点一份文件，再按这里。表格读进来能看、能复制；文档读进来能改、能整段存回（智能文档）。";
+    if (!mcpList.length) {
+      ul.appendChild(el("li", "skip", "（还没有列表 —— 先点「读取我的文件」）"));
+      return;
+    }
+    mcpList.forEach(function (f) {
+      var isDir = f.ftype === "folder";
+      var li = el("li", isDir ? "skip" : "");
+      li.appendChild(el("span", "t", f.name));
+      var kind = kindOfName(f.name);
+      li.appendChild(el("span", "k", isDir ? "文件夹" : kind === "sheet" ? "表格" : kind === "doc" ? "文档" : ""));
+      li.appendChild(el("span", "d", fmtWhen(f.mtime)));
+      if (isDir) {
+        li.title = "暂不支持进入文件夹 —— WPS 这个入口只给了根目录列举";
+      } else {
+        li.onclick = function () {
+          mcpPicked = f.id;
+          Array.prototype.forEach.call(ul.children, function (x) { x.classList.remove("on"); });
+          li.classList.add("on");
+          document.getElementById("mcpBind").disabled = false;
+          document.getElementById("mcpBindHint").textContent = "将绑定「" + f.name + "」（" +
+            (kindOfName(f.name) === "doc" ? "文档 · 改完能存回" : "表格 · 读改都行，Ctrl+S 存回") + "）";
+        };
+      }
+      ul.appendChild(li);
+    });
+  }
+
+  document.getElementById("mcpBind").onclick = function () {
+    var f = mcpList.filter(function (x) { return x.id === mcpPicked; })[0];
+    if (!f) { notice("先在上面列表里点一份文件", "warn"); return; }
+    if (busy) return;
+    busy = true;
+    notice("正在打开「" + f.name + "」…");
+    call("wps.mcpBind", {
+      fileId: f.id,
+      name: f.name,
+      fileKind: kindOfName(f.name) || "sheet",
+    }, WRITE_TIMEOUT).then(function (r) {
+      binding = r.binding;
+      binding.title = f.name;
+      saveBinding(binding);
+      showHead();
+      return readBinding().then(function () {
+        notice("已绑定「" + f.name + "」", "ok");
+      });
     }).catch(function (err) {
       notice(String(err && err.message ? err.message : err), "err");
-    });
+    }).then(function () { busy = false; });
   };
 
   document.getElementById("reloadList").onclick = function () { loadFiles(); };

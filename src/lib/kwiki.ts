@@ -375,65 +375,6 @@ export async function pullLedger(token: string, spaceKuid: string, title: string
 /* 共享链接（kdocs.cn/l/xxx）—— 只读预览                                */
 /* ------------------------------------------------------------------ */
 
-/**
- * 一条共享链接指向什么。
- *
- * `kind` 由扩展名判定：sheet = 表格、doc = 文档、other = 不预览。
- * `permission` 是**链接给来访者的权限**（read/write），不是账号权限。
- */
-export type WpsLink = {
-  link_id: string;
-  file_id: string;
-  name: string;
-  kind: "sheet" | "doc" | "other" | string;
-  size: number;
-  owner: string;
-  permission: string;
-  group_name: string;
-};
-
-/** 共享文件的内容。表格走 header/rows，文档走 text，两者只会有一个 */
-export type WpsLinkContent = {
-  name: string;
-  kind: string;
-  header: string[];
-  rows: string[][];
-  text: string;
-  /** 过程说明（临时副本怎么处理的），直接显示给用户 */
-  note: string;
-};
-
-/**
- * 解析共享链接 —— **不需要登录**。
- *
- * 这一步只读元数据（名字、分享者、大小），用来先告诉用户"这条链接指向什么"。
- * 真正的 CORS 与登录问题都在 Rust 侧（见 src-tauri/src/wps.rs 那一节）。
- */
-export async function linkInfo(link: string): Promise<WpsLink> {
-  if (!isTauri()) desktopOnly();
-  const url = need(link.trim(), "先粘贴一个金山文档的分享链接");
-  return invoke<WpsLink>("wps_link_info", { link: url });
-}
-
-/**
- * 读共享链接里的内容。
- *
- * 实现是「复制进知识库 → 读 → 删临时副本」：kdocs 的下载接口要浏览器
- * 登录态（wps_sid），kwiki 令牌打不通；skills_hub 的 file/import 能把云文档
- * 复制进知识库，之后 download / content 都能用。`spaceKuid` 只是临时落点。
- */
-export async function linkRead(
-  token: string,
-  spaceKuid: string,
-  link: string,
-): Promise<WpsLinkContent> {
-  if (!isTauri()) desktopOnly();
-  need(token, "还没登录 WPS");
-  need(spaceKuid, "还没选知识库 —— 读共享文件要借它当临时落点");
-  const url = need(link.trim(), "先粘贴一个金山文档的分享链接");
-  return invoke<WpsLinkContent>("wps_link_read", { token, spaceKuid, link: url });
-}
-
 /* ------------------------------------------------------------------ */
 /* 设置的读写辅助                                                      */
 /* ------------------------------------------------------------------ */

@@ -1,9 +1,9 @@
-//! 台账列定义与「云端表格」的纯逻辑 —— 不依赖 tauri / reqwest / 网络。
+//! 台账列定义与「在线表格同步」的纯逻辑 —— 不依赖 tauri / reqwest / 网络。
 //!
 //! 单独成一个文件，是为了能**离线编译成测试程序**跑一遍：
 //! `plan_cloud_write` 决定"写哪几列、会不会覆盖用户自己的列"，
 //! 这条逻辑错了会直接改坏用户的原表，不能只靠跑一次真表格来验证。
-//! 宿主侧的 `wps.rs` 只负责 HTTP 与命令封装，这里负责算。
+//! 宿主侧的 `wps_mcp.rs` 只负责 MCP 会话与命令封装，这里负责算。
 
 use serde_json::{json, Map as JsonMap, Value as Json};
 
@@ -46,32 +46,11 @@ pub fn cell_text(v: &Json) -> String {
     }
 }
 
-/// AirScript 返回的二维数组 → 等宽字符串网格。
-pub fn cloud_grid(v: &Json) -> Vec<Vec<String>> {
-    let rows = v
-        .get("rows")
-        .and_then(Json::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let mut grid: Vec<Vec<String>> = Vec::with_capacity(rows.len());
-    for r in rows {
-        match r {
-            Json::Array(cells) => grid.push(cells.iter().map(cell_text).collect()),
-            other => grid.push(vec![cell_text(&other)]),
-        }
-    }
-    let width = grid.iter().map(Vec::len).max().unwrap_or(0);
-    for r in &mut grid {
-        r.resize(width, String::new());
-    }
-    grid
-}
-
 /// 算出"写哪几列、每列写什么、多出来的旧行清到哪"。
 ///
-/// 返回 `(cols, clear, appended)`，形状与 AirScript 脚本里的 `write` 分支
-/// 一一对应。原则：**只碰台账这 14 列**，用户自己加的列（备注 / 公式）
-/// 一个都不动；表里没有的列补在最后，不插在中间。
+/// 返回 `(cols, clear, appended)`：`cols` 是每列要写的内容，`clear` 是要
+/// 清掉的多余旧行，`appended` 是补在末尾的列数。原则：**只碰台账这 14 列**，
+/// 用户自己加的列（备注 / 公式）一个都不动；表里没有的列补在最后，不插在中间。
 pub fn plan_cloud_write(
     header: &[String],
     old_rows: usize,
@@ -79,9 +58,15 @@ pub fn plan_cloud_write(
 ) -> Result<(Vec<Json>, Vec<Json>, usize), String> {
     let known: std::collections::HashSet<&str> = COLUMNS.iter().map(|(_, h)| *h).collect();
     let hits = header.iter().filter(|h| known.contains(h.trim())).count();
-    // 表头不为空、却一个台账列都认不出来 → 多半是用户自己的表头（"订单编号"）。
-    // 这时候硬写会把 14 列全补在后面，表变成两套列 —— 宁可停下来说清楚。
-    if !header.is_empty() && hits == 0 {
+    // 表头里有**非空**内容、却一个台账列都认不出来 → 多半是用户自己的表头
+    // （"订单编号"）。这时候硬写会把 14 列全补在后面，表变成两套列 ——
+    // 宁可停下来说清楚。
+    // ★ 判据是"有没有非空格"，不是 `!header.is_empty()`：读回来的网格会补齐
+    //   成等宽，一张**全空的表**第一行也是 `["", "", …]` —— 向量非空但全是
+    //   空串。按旧判据它会被当成"用户的表头"报错，可它明明是张空表，
+    //   该往下走、把 14 列表头自己写进去（2026-10-19 测试异常单.ksheet 实踩）。
+    let has_text = header.iter().any(|h| !h.trim().is_empty());
+    if has_text && hits == 0 {
         return Err(format!(
             "这张表第一行是「{}」—— 一个台账列名都没认出来。请把第一行改成台账表头（订单号 / 快递单号 / 快递公司…），或者清空第一行让程序自己写。",
             clip(
@@ -99,7 +84,7 @@ pub fn plan_cloud_write(
     let mut cols: Vec<Json> = Vec::new();
     let mut clear: Vec<Json> = Vec::new();
     // 已占用的列数 = 最后一个**非空**表头格的位置 + 1。
-    // 不能直接用 header.len()：cloud_grid 会把所有行补齐成等宽，
+    // 不能直接用 header.len()：读回来的网格会被补齐成等宽，
     // 表头行末尾可能挂着几个补出来的空串，用 len() 会让补列从 15、16 开始，
     // 在表中间挖出一段空列。
     let mut next = header
@@ -191,7 +176,7 @@ mod tests {
         assert!(cols.iter().all(|c| c["col"] != 1));
     }
 
-    /// 表头行被 cloud_grid 补齐出尾随空串时，补列仍应从最后一个**非空**表头之后开始，
+    /// 表头行被补齐出尾随空串时，补列仍应从最后一个**非空**表头之后开始，
     /// 不能在中间挖出空列（把 header.len() 当已占列数就会踩这个）。
     #[test]
     fn cloud_plan_ignores_padding_cells_in_header() {
@@ -230,13 +215,17 @@ mod tests {
         assert!(err.contains("没认出来"), "{err}");
     }
 
-    /// AirScript 的二维数组可能长短不一：补齐成等宽，别让 C 列取到 undefined。
+    /// ★ 整行空串的"空表"（网格补齐后第一行是 ["","","…"]）要当成空表：
+    /// 自己把 14 列表头写进去，而不是报"没认出来"。
+    /// （2026-10-19 实踩：测试异常单.ksheet 第一行看着空、其实是带格式的空格。）
     #[test]
-    fn cloud_grid_pads_ragged_rows() {
-        let v: Json = serde_json::from_str(r#"{"rows":[["a","b"],["c"],[]]}"#).unwrap();
-        let g = cloud_grid(&v);
-        assert_eq!(g.len(), 3);
-        assert!(g.iter().all(|r| r.len() == 2));
-        assert_eq!(g[1][1], "");
+    fn cloud_plan_treats_all_blank_header_as_empty_sheet() {
+        let header = vec![String::new(); 20]; // 补齐出来的等宽网格就长这样
+        let (cols, clear, appended) = plan_cloud_write(&header, 0, &sample_rows()).unwrap();
+        assert_eq!(appended, COLUMNS.len());
+        assert!(clear.is_empty());
+        // 14 列从第 1 列开始排，不从中间或者 15 列开始
+        assert_eq!(cols[0]["col"], 1);
+        assert_eq!(cols[COLUMNS.len() - 1]["col"], COLUMNS.len());
     }
 }

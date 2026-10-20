@@ -17,7 +17,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "./db";
 import { SETTINGS } from "./settings";
 import type { WpsFile } from "./kwiki";
-import { cloudProbe, cloudSheetRead, cloudSheetWrite } from "./wpsCloud";
 
 /** 绑定：一份知识库文件的身份。保存后 kuid 会变，界面必须用它更新绑定 */
 export type WpsBinding = {
@@ -175,90 +174,9 @@ export async function writeBoundFile(
   });
 }
 
-/* ------------------------------------------------------------------ */
-/* 云端表格直连（AirScript）—— 不经知识库的那条路                        */
-/* ------------------------------------------------------------------ */
-
-/**
- * 直连绑定：贴一条链接，读写它**指向的那张原表**。
- *
- * 与上面的 `bindByLink` 的区别是根本性的：
- *   · `bindByLink` 把云文档**复制**进知识库，编辑的是副本；
- *   · 这里不复制、不登录、不产生任何文件 —— 直接对原表读写。
- *
- * 之所以能这样，是因为用户在那张表里建了一个 AirScript（脚本跑在表里，
- * 读写它自己的单元格）。webhook 和令牌都由用户在工具里填，宿主只负责转发。
+/*
+ * 曾经这里还有一条「云端表格直连（AirScript）」—— 要用户在表里建脚本、
+ * 复制 webhook 与脚本令牌。2026-10-19 已整套迁到官方 MCP：
+ * 那条路的活现在由 `wpsMcp.ts` + 工具里的 `wps.mcpBind / mcpRead / mcpSheetWrite`
+ * 接手（一次授权，挑一份文件就能读写原表，不用在 WPS 里建任何东西）。
  */
-export type CloudBinding = {
-  /** 绑定类型标记：工具靠它区分"知识库文件"和"直连云表格" */
-  kind: "cloud";
-  link: string;
-  name: string;
-  /** 工作表名（探测时读到的，写回时带上，免得用户切了 sheet 写错地方） */
-  sheet: string;
-  webhook: string;
-  token: string;
-};
-
-/** 绑定一条云表格链接：先确认它指向表格，再用 webhook 探一次表头 */
-export async function bindCloudLink(
-  link: string,
-  webhook: string,
-  token: string,
-): Promise<CloudBinding & { header: string[]; rows: number }> {
-  if (!isTauri()) desktopOnly();
-  const url = need(link, "先粘贴云端表格的链接（https://www.kdocs.cn/l/xxxx）");
-  const hook = need(webhook, "先填 AirScript 的 webhook 地址");
-  const tok = need(token, "先填 AirScript 脚本令牌");
-  // 链接只用来认出"是哪张表、叫什么"，匿名可读（与设置页同一个接口）
-  const info = await invoke<{ name: string; kind: string }>("wps_link_info", { link: url });
-  if (info.kind !== "sheet") {
-    throw new Error(`「${info.name}」不是表格 —— 直连只支持表格（.xlsx / .ksheet）`);
-  }
-  const probe = await cloudProbe(hook, tok);
-  return {
-    kind: "cloud",
-    link: url,
-    name: info.name,
-    sheet: probe.sheet,
-    webhook: hook,
-    token: tok,
-    header: probe.header,
-    rows: probe.rows,
-  };
-}
-
-/** 读直连表格（原样二维数组） */
-export async function readCloudBound(binding: CloudBinding): Promise<WpsFileDoc> {
-  if (!isTauri()) desktopOnly();
-  const s = await cloudSheetRead(binding.webhook, binding.token, binding.sheet);
-  return {
-    kuid: "cloud",
-    title: binding.name,
-    kind: "sheet",
-    doc_type: "s",
-    header: s.header,
-    rows: s.rows,
-    text: "",
-  };
-}
-
-/** 写回直连表格（整表覆盖，保留格式） */
-export async function writeCloudBound(
-  binding: CloudBinding,
-  doc: WpsEditable,
-): Promise<WpsWriteResult> {
-  if (!isTauri()) desktopOnly();
-  const n = await cloudSheetWrite(
-    binding.webhook,
-    binding.token,
-    binding.sheet,
-    doc.header,
-    doc.rows,
-  );
-  return {
-    kuid: "cloud",
-    title: binding.name,
-    note: `已写回原表「${binding.name}」（${n} 行）—— 没有副本，也没有动知识库`,
-  };
-}

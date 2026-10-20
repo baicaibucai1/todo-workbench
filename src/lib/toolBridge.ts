@@ -96,8 +96,25 @@
  * 安全边界：转交的数据只在本机 postMessage 通道里流动，**不经过数据库**，
  * 工具依然拿不到别的表。tools.open 也不能让工具未经用户操作就互相拉起
  * （见 store.openToolWithIntent —— 它走的是和用户点侧边栏同一条路径）。
+ *
+ * ------------------------------------------------------------------
+ * wps.mcp* —— 官方 agent 入口（「我的云文档」直连）
+ * ------------------------------------------------------------------
+ * 与 wps.files/fileRead/fileWrite（知识库路）并列的另一条 WPS 通道：
+ * SkillHub MCP，令牌能碰**全部云文档**。
+ *
+ * 三道门，一个都不能少：
+ *   1. manifest 声明 `wps` capability（和知识库路同一道门）；
+ *   2. 设置 → WPS 授权 里完成授权（令牌只待在本机）；
+ *   3. **用户按过「确认启用」**（wps.mcp.enabled=1）—— 授权成功只证明
+ *      账号能用，用户没点头之前工具一个字都读不到。
+ *
+ * 能触达的 MCP 工具是 Rust 侧的**硬白名单**（wps_mcp.rs 的 BRIDGE_TOOLS）：
+ * 列文件 / 读表格 / 读文档 / 写智能文档，就这五个 —— 这条命令不该变成
+ * "625 个工具随便调"的口子。令牌只待在宿主，iframe 永远拿不到。
  */
 
+import { invoke } from "@tauri-apps/api/core";
 import { db, dbInfo, isTauri, type Param } from "./db";
 import { toolPrefix, toolTable } from "./tools";
 import type { ValidatedTable } from "./toolSchema";
@@ -121,18 +138,27 @@ import {
 } from "./repo";
 import type { ImagebedItem, ImagebedKind, ImagebedOrigin } from "../types";
 import { capabilityError, capabilityState } from "./extensions/registry";
-import { AIRSCRIPT_SNIPPET } from "./wpsCloud";
 import type { ToolInjectKind } from "./extensions/types";
 import {
   bindByLink,
-  bindCloudLink,
   listBindable,
   readBoundFile,
-  readCloudBound,
   writeBoundFile,
-  writeCloudBound,
-  type CloudBinding,
 } from "./wpsLink";
+import {
+  mcpBridgeTool,
+  mcpProbe,
+  mcpSheetPull,
+  mcpSheetPush,
+} from "./wpsMcp";
+import {
+  applyPull,
+  planPull,
+  readLedger,
+  type LedgerRow,
+  type PullPlan,
+} from "./kwiki";
+import { SETTINGS } from "./settings";
 /** 协议标记，避免和页面里其他 postMessage 流量串台 */
 export const TOOL_SOURCE = "workbench-tool";
 export const HOST_SOURCE = "workbench-host";
@@ -178,17 +204,32 @@ export type ToolOp =
   | "wps.fileRead"
   | "wps.fileWrite"
   /**
-   * 直连云表格（AirScript）：不复制、不登录，直接读写用户自己那张表。
-   *
-   * cloudBind 只做"确认链接是表格 + 探表头"；cloudRead / cloudWrite 转发
-   * webhook 调用。webhook 与脚本令牌都由用户填、随绑定一起存在工具自己的
-   * KV 里（它们是**那张表**的凭证，不是账号令牌，所以可以随工具走）。
+   * WPS MCP（SkillHub）：官方 agent 入口，「我的云文档」直连。
+   * 见文件头「wps.mcp* —— 官方 agent 入口」；令牌不出宿主，
+   * 且必须在 设置 → WPS 授权 里**确认启用**后这组 op 才有响应。
    */
-  | "wps.cloudBind"
-  | "wps.cloudRead"
-  | "wps.cloudWrite"
-  /** 把 AirScript 脚本原文取回去（一键复制；只读，不碰任何账号） */
-  | "wps.cloudScript";
+  | "wps.mcpProbe"
+  | "wps.mcpFiles"
+  | "wps.mcpBind"
+  | "wps.mcpRead"
+  | "wps.mcpDocWrite"
+  /** 整块写回表格（官方入口这条路上表格也能改 —— 见 mcpSheetWrite 那段注释） */
+  | "wps.mcpSheetWrite"
+  /**
+   * 台账同步三件套（给「异常单号登记」这类"自己就是一本台账"的工具用）：
+   *   · mcpLink  分享链接 → 文件信息（认表用，不需要登录）
+   *   · mcpPush  本地台账 → 在线表格
+   *   · mcpPull  在线表格 → 差异预览（**不写库**）
+   *   · mcpApply 把上一次 mcpPull 的预览真正写进库
+   *
+   * ★ 为什么对账留在宿主：只写台账 14 列、表头认不出就停手、长订单号前置单引号
+   *   这套保护在 Rust 里（`wps_cloud_plan.rs`，带断言）。放在工具页里就等于
+   *   给一份关键保护开第二份实现 —— 改一处必漏另一处。
+   */
+  | "wps.mcpLink"
+  | "wps.mcpPush"
+  | "wps.mcpPull"
+  | "wps.mcpApply";
 
 /**
  * 工具私有 KV 的键名约束。
@@ -238,32 +279,111 @@ function stringList(v: unknown): string[] {
   return v.map((x) => (x == null ? "" : String(x)));
 }
 
+/* ------------------------------ wps.mcp* 辅助 ------------------------------ */
+
+/**
+ * `wps.mcpPull` 算出来、等着 `wps.mcpApply` 落库的计划。
+ *
+ * 只留一份（后一次拉取覆盖前一次）：工具既拿不到令牌也碰不到数据库，
+ * 把计划传进 iframe 再传回来，只是给"工具伪造写库内容"多开一次机会。
+ */
+let pendingPull: PullPlan | null = null;
+
+/** 绑定对象里那个"工作表"字段。payload 的键是宽泛类型，统一这样取 */
+function sheetOf(v: unknown): string {
+  if (!v || typeof v !== "object") return "";
+  const s = (v as { sheet?: unknown }).sheet;
+  return typeof s === "string" ? s.trim() : "";
+}
+
+/** 给工具看的"这一行是哪条"—— 只够认人，不给整行（工具不需要，也不必拿） */
+function pullBrief(row: LedgerRow): { key: string; store: string; status: string } {
+  return {
+    key: String(row.order_sn || row.tracking_no || ""),
+    store: String(row.store || ""),
+    status: String(row._status || ""),
+  };
+}
+
+/** MCP 业务信封：{code, message, data}。code!=0 就是失败（2026-10-19 实测约定） */
+function mcpBiz(v: unknown): Record<string, unknown> {
+  if (!v || typeof v !== "object") throw new Error("MCP 返回的不是业务信封");
+  const env = v as { code?: unknown; message?: unknown; data?: unknown };
+  if (Number(env.code) !== 0) {
+    throw new Error(
+      typeof env.message === "string" && env.message
+        ? env.message
+        : `MCP 业务码 ${String(env.code)}`,
+    );
+  }
+  return (env.data ?? {}) as Record<string, unknown>;
+}
+
+function mcpObj(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+}
+
+function mcpArr(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : [];
+}
+
+/** 读表格用的上限。与写回同量级：postMessage 通道两边各序列化一遍，别把内存打爆 */
+const MCP_SHEET_MAX_ROWS = 2000;
+const MCP_SHEET_MAX_COLS = 60;
+
+/**
+ * 把 get_range_data 的稀疏格点拼成稠密网格。
+ *
+ * 服务端给的是「非空格 + 坐标」列表（空格不给），rowFrom/colFrom 是
+ * 0-based 起点合快合并单元格只写在左上角。拼网格时只取每个格的左上角 ——
+ * 合并单元格的重复值会自然落在左上，右下留空，跟表格里的观感一致。
+ */
+function mcpAssembleGrid(
+  cells: unknown[],
+  rowTo: number,
+  colTo: number,
+): string[][] {
+  const grid: string[][] = Array.from({ length: rowTo + 1 }, () =>
+    Array.from({ length: colTo + 1 }, () => ""),
+  );
+  for (const raw of cells) {
+    const c = mcpObj(raw);
+    const r = Number(c.rowFrom);
+    const col = Number(c.colFrom);
+    if (!Number.isFinite(r) || !Number.isFinite(col)) continue;
+    if (r < 0 || r > rowTo || col < 0 || col > colTo) continue;
+    const text = c.cellText ?? c.originalCellValue;
+    grid[r][col] = text == null ? "" : String(text);
+  }
+  return grid;
+}
+
+/** MCP 侧按扩展名判断能不能整段写回：整文替换的入口只开了智能文档 */
+function mcpDocWritable(name: string): boolean {
+  return /\.otl$/i.test(name.trim());
+}
+
+/**
+ * 长数字必须**当文本写**，否则服务端按 double 存，末尾几位直接丢了。
+ *
+ * 实测（2026-10-19）：直接写 `6931234567890123456` → 读回 `6.93123E+18`。
+ * 前导单引号是表格里"这一格是文本"的老规矩，实测读回**一字不差**；
+ * `="…"` 也行，但那会让格子变成公式，用户在 WPS 里再点一下容易懵。
+ * 前导零同理（"007" 当数字写就变 7），所以一起保护。
+ */
+function mcpCellText(v: string): string {
+  if (/^\d{15,}$/.test(v)) return `'${v}`;
+  if (/^0\d+$/.test(v)) return `'${v}`;
+  return v;
+}
+
+/** 单次批量写的格数上限。服务端没明说写有多少，按读的 5 万格打个对折留余量 */
+const MCP_WRITE_BATCH = 5000;
+
 /** 二维表格：逐行收成 string[]；非数组的行当空行 */
 function stringGrid(v: unknown): string[][] {
   if (!Array.isArray(v)) return [];
   return v.map((row) => stringList(row));
-}
-
-/**
- * 收一个直连绑定的形状。工具是外部输入，**三样缺一不可**：
- * 少了 webhook/token 就调不动脚本，少了 link 就没法给人看"绑的是哪张表"。
- */
-function cloudBindingOf(v: unknown): CloudBinding {
-  const o = (v ?? {}) as Record<string, unknown>;
-  const link = typeof o.link === "string" ? o.link.trim() : "";
-  const webhook = typeof o.webhook === "string" ? o.webhook.trim() : "";
-  const token = typeof o.token === "string" ? o.token.trim() : "";
-  if (!link || !webhook || !token) {
-    throw new Error("云表格绑定不完整（缺链接 / webhook / 令牌）—— 回到绑定区重新连一次");
-  }
-  return {
-    kind: "cloud",
-    link,
-    name: typeof o.name === "string" ? o.name : "",
-    sheet: typeof o.sheet === "string" ? o.sheet : "",
-    webhook,
-    token,
-  };
 }
 
 interface ToolRequest {
@@ -328,13 +448,17 @@ interface ToolRequest {
     /** 表格：表头 + 数据行（写回时一并发给宿主） */
     header?: string[];
     rows?: string[][];
-    /* wps.cloud* —— 直连云表格（AirScript） */
-    /** AirScript 脚本 webhook（用户从表格的脚本编辑器里复制） */
-    webhook?: string;
-    /** AirScript 脚本令牌 */
-    token?: string;
-    /** 直连绑定对象：{cloud:true, link, name, sheet, webhook, token} */
+    /** 绑定对象（知识库那条路的 {kuid,title,doc_type,kind}；MCP 那条路的 {mcp,id,name,kind}） */
     binding?: unknown;
+    /* wps.mcp* —— 官方 agent 入口（「我的云文档」直连） */
+    /** 要绑定的文件 id（list_my_files 给的那个） */
+    fileId?: string;
+    /** 文件名（原样存进绑定，写回时靠扩展名判断能不能写） */
+    name?: string;
+    /** sheet / doc —— 宿主只信扩展名推断与这个的结合 */
+    fileKind?: string;
+    /** 文档写回模式：replace（整文替换）/ append。工具目前只用 replace */
+    mode?: string;
     /** 文档：正文纯文本 */
     text?: string;
   };
@@ -1260,10 +1384,16 @@ export function createToolBridge(
         op === "wps.bindLink" ||
         op === "wps.fileRead" ||
         op === "wps.fileWrite" ||
-        op === "wps.cloudBind" ||
-        op === "wps.cloudRead" ||
-        op === "wps.cloudWrite" ||
-        op === "wps.cloudScript"
+        op === "wps.mcpProbe" ||
+        op === "wps.mcpFiles" ||
+        op === "wps.mcpBind" ||
+        op === "wps.mcpRead" ||
+        op === "wps.mcpDocWrite" ||
+        op === "wps.mcpSheetWrite" ||
+        op === "wps.mcpLink" ||
+        op === "wps.mcpPush" ||
+        op === "wps.mcpPull" ||
+        op === "wps.mcpApply"
       ) {
         const state = capabilityState(currentSettings(), toolId, "wps");
         if (state !== "on") {
@@ -1278,33 +1408,314 @@ export function createToolBridge(
           const link = typeof payload?.link === "string" ? payload.link : "";
           return reply(id, true, { binding: await bindByLink(link, settings) });
         }
-        if (op === "wps.cloudScript") {
-          return reply(id, true, { script: AIRSCRIPT_SNIPPET });
-        }
-        if (op === "wps.cloudBind") {
-          const link = typeof payload?.link === "string" ? payload.link : "";
-          const webhook = typeof payload?.webhook === "string" ? payload.webhook : "";
-          const token = typeof payload?.token === "string" ? payload.token : "";
-          return reply(id, true, { binding: await bindCloudLink(link, webhook, token) });
-        }
-        if (op === "wps.cloudRead") {
-          return reply(id, true, { doc: await readCloudBound(cloudBindingOf(payload?.binding)) });
-        }
-        if (op === "wps.cloudWrite") {
-          const header = stringList(payload?.header);
-          const rows = stringGrid(payload?.rows);
-          if (rows.length > WPS_WRITE_MAX_ROWS) {
-            return reply(id, false, `行数超过上限（最多 ${WPS_WRITE_MAX_ROWS} 行）`);
+
+        /* ---------------- wps.mcp* —— 官方 agent 入口 ----------------
+         * 比知识库那条路多一道门：用户必须在设置里按过「确认启用」。
+         * 授权成功 ≠ 同意 —— 这个令牌能碰的是全部云文档。 */
+        if (
+          op === "wps.mcpProbe" ||
+          op === "wps.mcpLink" ||
+          op === "wps.mcpFiles" ||
+          op === "wps.mcpBind" ||
+          op === "wps.mcpRead" ||
+          op === "wps.mcpDocWrite" ||
+          op === "wps.mcpSheetWrite" ||
+          op === "wps.mcpPush" ||
+          op === "wps.mcpPull" ||
+          op === "wps.mcpApply"
+        ) {
+          /* 分享链接 → 文件信息。**不需要令牌**（匿名只读元数据），
+           * 所以放在令牌检查之前 —— 用户还没授权时也能先把表认下来。 */
+          if (op === "wps.mcpLink") {
+            const link = typeof payload?.link === "string" ? payload.link.trim() : "";
+            if (!link) return reply(id, false, "先粘贴一条 WPS 授权的分享链接");
+            const info = await invoke<{
+              link_id: string;
+              file_id: string;
+              name: string;
+              kind: string;
+              owner: string;
+              permission: string;
+              group_name: string;
+            }>("wps_link_info", { link });
+            if (!info.file_id) {
+              return reply(id, false, "这条链接没解析出文件 —— 确认它还在分享中");
+            }
+            if (info.kind !== "sheet") {
+              return reply(
+                id,
+                false,
+                `「${info.name}」不是表格（认出来是 ${info.kind}）—— 台账要接在表格上`,
+              );
+            }
+            return reply(id, true, {
+              file: {
+                id: info.file_id,
+                name: info.name,
+                linkId: info.link_id,
+                permission: info.permission,
+                owner: info.owner,
+              },
+            });
           }
-          if (!header.length) return reply(id, false, "没有表头 —— 不知道写到哪些列");
-          return reply(id, true, {
-            result: await writeCloudBound(cloudBindingOf(payload?.binding), {
-              header,
-              rows,
-              text: "",
-            }),
-          });
+
+          const mcpToken = String(settings[SETTINGS.wpsMcpToken] || "").trim();
+          const mcpClientId = String(settings[SETTINGS.wpsMcpClientId] || "").trim();
+          if (!mcpToken || !mcpClientId) {
+            return reply(id, false, "还没连接 WPS MCP —— 去 设置 → WPS 授权 完成授权");
+          }
+          if (settings[SETTINGS.wpsMcpEnabled] !== "1") {
+            return reply(id, false, "WPS MCP 未启用 —— 在 设置 → WPS 授权 里按「确认启用」");
+          }
+
+          if (op === "wps.mcpProbe") {
+            const r = await mcpProbe(mcpToken, mcpClientId);
+            return reply(id, true, { server: { name: r.server || "SkillHub MCP", tools: r.tools } });
+          }
+
+          if (op === "wps.mcpFiles") {
+            // 翻页拿全根目录（每页 50，最多 8 页 —— 400 份文件对"挑一份绑定"足够了）
+            const files: Array<{ id: string; name: string; mtime: number; ftype: string }> = [];
+            let pageToken = "";
+            for (let i = 0; i < 8; i++) {
+              const args: Record<string, unknown> = { page_size: 50 };
+              if (pageToken) args.page_token = pageToken;
+              const data = mcpBiz(await mcpBridgeTool("list_my_files", args, mcpToken, mcpClientId));
+              for (const raw of mcpArr(data.items)) {
+                const it = mcpObj(raw);
+                const fid = String(it.id ?? "");
+                const fname = String(it.name ?? "");
+                if (!fid || !fname) continue;
+                files.push({
+                  id: fid,
+                  name: fname,
+                  mtime: Number(it.mtime ?? 0) || 0,
+                  // 服务端的 type 就是 "folder" / "file"，工具按 ftype==="folder" 分流
+                  ftype: String(it.type ?? "file"),
+                });
+              }
+              pageToken = String(data.next_page_token ?? "");
+              if (!pageToken) break;
+            }
+            return reply(id, true, { files });
+          }
+
+          if (op === "wps.mcpBind") {
+            // 绑定只是记一笔（文件 id + 名字 + 类型），不碰网络。
+            // 令牌在宿主手里，工具拿着 binding 也只能通过桥读
+            const fileId = typeof payload?.fileId === "string" ? payload.fileId.trim() : "";
+            const name = typeof payload?.name === "string" ? payload.name.trim() : "";
+            const fileKind = payload?.fileKind === "doc" ? "doc" : "sheet";
+            if (!fileId) return reply(id, false, "缺少 fileId（要绑定哪份文件）");
+            if (!name) return reply(id, false, "缺少文件名");
+            return reply(id, true, { binding: { mcp: true, id: fileId, name, kind: fileKind } });
+          }
+
+          if (op === "wps.mcpRead") {
+            const b = mcpObj(payload?.binding);
+            const fileId = String(b.id ?? "").trim();
+            const fname = String(b.name ?? "");
+            if (!fileId) return reply(id, false, "绑定里没有文件 id —— 重新绑定一次");
+
+            if (b.kind === "doc") {
+              // 文档（智能文档 / docx / md…）：read_file 直接给 markdown 正文
+              const data = mcpBiz(
+                await mcpBridgeTool("read_file", { file_id: fileId, format: "markdown" }, mcpToken, mcpClientId),
+              );
+              return reply(id, true, {
+                doc: { kind: "doc", text: String(data.content ?? "") },
+              });
+            }
+
+            // 表格：先探表（顺便拿到已用范围），再读选区拼网格
+            if (/\.dbt$/i.test(fname)) {
+              return reply(id, false, "多维表格(.dbt)暂时不能在这里打开 —— 它要先选表，等下一版接 dbsheet 那组工具");
+            }
+            const info = mcpObj(
+              mcpBiz(await mcpBridgeTool("sheet.get_sheets_info", { file_id: fileId }, mcpToken, mcpClientId)).detail,
+            );
+            const sheets = mcpArr(info.sheetsInfo).map(mcpObj);
+            const sheet = sheets[0];
+            if (!sheet) return reply(id, false, "这份表格没有可见的工作表");
+            // 已用范围（sheetsInfo 给的就是非空边界），再卡到桥的序列化上限内
+            const rowTo = Math.min(Number(sheet.rowTo ?? 0) || 0, MCP_SHEET_MAX_ROWS - 1);
+            const colTo = Math.min(Number(sheet.colTo ?? 0) || 0, MCP_SHEET_MAX_COLS - 1);
+            const detail = mcpObj(
+              mcpBiz(
+                await mcpBridgeTool(
+                  "sheet.get_range_data",
+                  {
+                    file_id: fileId,
+                    worksheet_id: Number(sheet.sheetId ?? 0),
+                    range: { rowFrom: 0, rowTo, colFrom: 0, colTo },
+                  },
+                  mcpToken,
+                  mcpClientId,
+                ),
+              ).detail,
+            );
+            const grid = mcpAssembleGrid(mcpArr(detail.rangeData), rowTo, colTo);
+            return reply(id, true, {
+              doc: {
+                kind: "sheet",
+                sheet: String(sheet.sheetName ?? ""),
+                header: grid[0] ?? [],
+                rows: grid.slice(1),
+              },
+            });
+          }
+
+          /* 表格整块写回。
+           *
+           * 官方入口这条路**能写** —— 工具界面上写"只能读"是它自己的判断，
+           * 不是服务端限制（`Agent测试表` 里的值就是 agent 写进去的）。
+           * 两个必须处理对的地方：
+           *   1. 格子变少时，多出来的旧格要**显式写空串** —— 只写新内容的话
+           *      表里会留着上一版的尾巴（实测写 "" 确实能清掉）。
+           *   2. 15 位以上的数字（订单号）必须当文本写，否则被 double 吃掉末尾。
+           */
+          if (op === "wps.mcpSheetWrite") {
+            const sb = mcpObj(payload?.binding);
+            const sFileId = String(sb.id ?? "").trim();
+            if (!sFileId) return reply(id, false, "绑定里没有文件 id —— 重新绑定一次");
+            const header = stringList(payload?.header);
+            const rows = stringGrid(payload?.rows);
+            if (!header.length && !rows.length) {
+              return reply(id, false, "没有要保存的内容（表头和数据都是空的）");
+            }
+            if (rows.length > WPS_WRITE_MAX_ROWS) {
+              return reply(id, false, `行数超过上限（最多 ${WPS_WRITE_MAX_ROWS} 行）`);
+            }
+
+            // ① 探表：绑定里只有表名，worksheet_id 得现查；顺带拿到旧的已用范围
+            const sInfo = mcpObj(
+              mcpBiz(
+                await mcpBridgeTool("sheet.get_sheets_info", { file_id: sFileId }, mcpToken, mcpClientId),
+              ).detail,
+            );
+            const sheets = mcpArr(sInfo.sheetsInfo).map(mcpObj);
+            const want = String(sb.sheet ?? "").trim();
+            const sheet = sheets.find((s) => String(s.sheetName ?? "") === want) ?? sheets[0];
+            if (!sheet) return reply(id, false, "这份表格没有可见的工作表");
+            const sheetId = Number(sheet.sheetId ?? 0);
+            const oldRowTo = Math.max(Number(sheet.rowTo ?? 0) || 0, 0);
+            const oldColTo = Math.max(Number(sheet.colTo ?? 0) || 0, 0);
+
+            // ② 新旧取大：新内容覆盖到哪写到哪，旧内容多出来的那些格补空串
+            const grid = [header, ...rows];
+            const nCols = grid.reduce((m, r) => Math.max(m, r.length), 0);
+            const rowEnd = Math.min(Math.max(grid.length - 1, oldRowTo), MCP_SHEET_MAX_ROWS - 1);
+            const colEnd = Math.min(Math.max(nCols - 1, oldColTo), MCP_SHEET_MAX_COLS - 1);
+            const ops: Array<Record<string, unknown>> = [];
+            for (let r = 0; r <= rowEnd; r++) {
+              const line = grid[r] ?? [];
+              for (let c = 0; c <= colEnd; c++) {
+                const v = line[c] ?? "";
+                ops.push({
+                  opType: "formula",
+                  rowFrom: r,
+                  rowTo: r,
+                  colFrom: c,
+                  colTo: c,
+                  formula: v === "" ? "" : mcpCellText(v),
+                });
+              }
+            }
+
+            // ③ 分批下发（一次几万格会让请求变大、失败就得整批重来）
+            for (let i = 0; i < ops.length; i += MCP_WRITE_BATCH) {
+              mcpBiz(
+                await mcpBridgeTool(
+                  "sheet.update_range_data",
+                  {
+                    file_id: sFileId,
+                    worksheet_id: sheetId,
+                    rangeData: ops.slice(i, i + MCP_WRITE_BATCH),
+                  },
+                  mcpToken,
+                  mcpClientId,
+                ),
+              );
+            }
+            return reply(id, true, { result: { wrote: ops.length } });
+          }
+
+          /* ---------------- 台账同步（工具侧入口） ----------------
+           * 这三个 op 是「异常单号登记」自己那张设置卡用的，与设置页的推/拉
+           * 走同一条路 —— 差别只在于 file_id 由工具带来（工具自己记绑定），
+           * 不再读设置里的 `wps.mcp.ledgerFile`。 */
+
+          if (op === "wps.mcpPush") {
+            const pb = mcpObj(payload?.binding);
+            const pFileId = String(pb.id || payload?.fileId || "").trim();
+            const pSheet = sheetOf(payload?.binding) || sheetOf(payload);
+            if (!pFileId) return reply(id, false, "还没绑定表格 —— 先在工具设置里粘一条分享链接");
+            const rows = await readLedger();
+            if (!rows.length) return reply(id, false, "本地一条异常单都没有 —— 先登记几例再推");
+            const r = await mcpSheetPush(
+              pFileId,
+              pSheet,
+              rows as unknown as Array<Record<string, unknown>>,
+              mcpToken,
+              mcpClientId,
+            );
+            return reply(id, true, { count: r.count, appended: r.appended });
+          }
+
+          if (op === "wps.mcpPull") {
+            const gb = mcpObj(payload?.binding);
+            const gFileId = String(gb.id || payload?.fileId || "").trim();
+            const gSheet = sheetOf(payload?.binding) || sheetOf(payload);
+            if (!gFileId) return reply(id, false, "还没绑定表格 —— 先在工具设置里粘一条分享链接");
+            const res = await mcpSheetPull(gFileId, gSheet, mcpToken, mcpClientId);
+            const local = await readLedger();
+            const plan = planPull(res.rows as unknown as Parameters<typeof planPull>[0], local);
+            // 计划留在宿主：工具拿不到令牌也碰不到数据库，传回去再传回来只是
+            // 多一次"工具可以伪造写库内容"的机会
+            pendingPull = plan;
+            return reply(id, true, {
+              header: res.header,
+              adds: plan.adds.map(pullBrief),
+              updates: plan.updates.map((u) => ({
+                ...pullBrief(u.row),
+                changes: Object.keys(u.patch),
+              })),
+            });
+          }
+
+          if (op === "wps.mcpApply") {
+            if (!pendingPull) return reply(id, false, "没有待写入的结果 —— 先点「拉取」");
+            const plan = pendingPull;
+            pendingPull = null;
+            const r = await applyPull(plan);
+            return reply(id, true, r);
+          }
+
+          // wps.mcpDocWrite：整段写回，只开给智能文档（服务端就这一个整文替换入口）
+          const wb = mcpObj(payload?.binding);
+          const wFileId = String(wb.id ?? "").trim();
+          const wName = String(wb.name ?? "");
+          const text = typeof payload?.text === "string" ? payload.text : "";
+          const mode = payload?.mode === "append" ? "append" : "replace";
+          if (!wFileId) return reply(id, false, "绑定里没有文件 id —— 重新绑定一次");
+          if (!text) return reply(id, false, "没有要保存的正文");
+          if (text.length > WPS_WRITE_MAX_TEXT) {
+            return reply(id, false, `正文超过上限（最多 ${WPS_WRITE_MAX_TEXT} 字）`);
+          }
+          if (!mcpDocWritable(wName)) {
+            return reply(id, false, `.${wName.split(".").pop() || "?"} 暂不支持整段写回 —— WPS 的写回入口只开了智能文档(.otl)`);
+          }
+          mcpBiz(
+            await mcpBridgeTool(
+              "otl.insert_content",
+              { file_id: wFileId, content: text, format: "markdown", mode },
+              mcpToken,
+              mcpClientId,
+            ),
+          );
+          return reply(id, true, { result: {} });
         }
+
 
         const kuid = typeof payload?.kuid === "string" ? payload.kuid.trim() : "";
         const title = typeof payload?.title === "string" ? payload.title : "";

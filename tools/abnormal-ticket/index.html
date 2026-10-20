@@ -4,46 +4,40 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>异常单号登记</title>
-<!-- 内联 favicon：不写的话浏览器会去要 /favicon.ico，控制台留一条 404 红字 -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23EA580C'/%3E%3Cstop offset='1' stop-color='%23FACC15'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='1' y='1' width='30' height='30' rx='6.6' fill='url(%23g)'/%3E%3Crect x='4' y='4.7' width='24' height='22.6' rx='4.4' fill='%23fff'/%3E%3Cpath d='M9 12h14M9 16.4h14M9 20.8h7' stroke='%23D9480F' stroke-width='2.4' stroke-linecap='round'/%3E%3Ccircle cx='24.4' cy='23.4' r='4.4' fill='%23D9480F'/%3E%3Cpath d='M24.4 21.3v2.9' stroke='%23fff' stroke-width='1.7' stroke-linecap='round'/%3E%3Ccircle cx='24.4' cy='25.7' r='.9' fill='%23fff'/%3E%3C/svg%3E" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记。
+  异常单号登记（v1.0.0）——整本重写。
 
-  界面分四块，靠顶部页签切：
-    · 登记 —— 只干一件事：把一条异常快速录进去（连续录入不被别的东西打断）
-    · 查看 —— 左右分栏：左边是单号列表（找），右边是选中那条的详情 + 处理区（办）
-    · 表格 —— 整本台账一屏铺开（只读）：列与推给 WPS 的那张在线表格同序同列，
-              点一行跳回「查看」页那条的详情
-    · 设置 —— 店铺表 / 客服 ID / 下拉选项
-
-  为什么把「看」和「办」放在同一屏：异常单的日常动作是"对着一条单子看情况、改状态、
-  写处理备注"，来回跳页面是最烦的。列表只负责"找到它"，其余都在右栏完成。
-
-  数据层见文末说明：manifest 里声明了一张私有表 tickets，宿主建在
-  tool_abnormal_ticket_tickets 命名空间下 —— 跟待办和别的工具物理隔开。
-  脱离工作台单独打开也能用（数据落浏览器本地）。约定见
-  docs/tool-authoring-and-injection.md「独立运行这一档」。
+  宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
+    · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
+    · 通信是 postMessage：请求 {source:"workbench-tool",type:"tool:request",id,op,payload}，
+      回包 {source:"workbench-host",type:"tool:response",id,ok,data,error}；
+      连上宿主时它会主动推 tool:context；1.2 秒没等到就按独立运行处理；
+    · 宿主专属的控件标 data-host-only —— 靠 CSS 藏（el.hidden 打不过作者样式里的 flex）；
+    · 台账的**对账与写库都在宿主**：桥接 op 是 wps.mcpLink/mcpPush/mcpPull/mcpApply，
+      工具只喊"推 / 拉 / 确认"，绝不自己算 14 列怎么排（那份保护在 Rust 里）。
 -->
 <style>
   :root {
-    /* ★ 两层底色：--page 是页面（极淡暖灰），--bg 是卡片/输入框/表格（白）。
-       以前两者都是纯白 —— 一整页白纸上摞白卡，层次全靠 1px 边框撑着，
-       所以看着「单调」。分开之后卡片自己就浮起来了，不需要阴影。 */
+    /* 两层底色：--page 是页面（极淡暖灰），--bg 是卡片 / 输入框（白）。
+       卡片靠这层次浮起来，不用阴影也不用渐变。 */
     --page: #f3f2ec;
-    --bg: #ffffff; --field: #ffffff; --fg: #2c2c2a; --fg2: #5f5e5b; --dim: #918f89;
-    --line: #e6e4dd; --chip: #eceadf; --accent: #378add; --danger: #a32d2d;
-    --ok: #2f9e63; --warn: #c9820b;
-    --sel: #eef4fe;                     /* 列表选中行的底色 */
-    --ring: rgba(55,138,221,.16);       /* 输入框聚焦时那圈很淡的光 */
+    --bg: #ffffff; --field: #ffffff;
+    --fg: #2c2c2a; --fg2: #5f5e5b; --dim: #918f89;
+    --line: #e6e4dd; --chip: #eceadf;
+    --accent: #378add; --danger: #a32d2d; --ok: #2f9e63; --warn: #c9820b;
+    --sel: #eef4fe;
+    --ring: rgba(55,138,221,.16);
     --mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
     color-scheme: light;
   }
   html[data-theme="dark"] {
     --page: #151513;
-    --bg: #232320; --field: #1b1b18; --fg: #e8e6e0; --fg2: #b3b0a8; --dim: #8a8780;
-    /* ★ 边框在浅色里比面板暗、在深色里必须比面板亮，否则整条线消失 */
-    --line: #3a3932; --chip: #2f2e28; --accent: #5b9de8; --danger: #e07272;
-    --ok: #4ec78a; --warn: #e0b458;
+    --bg: #232320; --field: #1b1b18;
+    --fg: #e8e6e0; --fg2: #b3b0a8; --dim: #8a8780;
+    /* 深色里边框必须比面板**亮**，否则整条线看不见 */
+    --line: #3a3932; --chip: #2f2e28;
+    --accent: #5b9de8; --danger: #e07272; --ok: #4ec78a; --warn: #e0b458;
     --sel: #24303f;
     --ring: rgba(91,157,232,.22);
     color-scheme: dark;
@@ -55,649 +49,334 @@
     font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
     display: flex; flex-direction: column;
   }
-  /* ★ 约定之二：宿主专属的控件标 data-host-only，靠这两条 CSS 藏。
-     不能靠 el.hidden —— 作者样式里的 display:inline-flex / flex 会盖掉
-     浏览器默认的 [hidden]{display:none}，控件会照常露在界面上。 */
+  /* 宿主专属控件：独立运行时藏掉（不能用 el.hidden，会被作者样式里的 flex 盖掉） */
   body:not([data-bind-state="bound"]) [data-host-only],
   body:not([data-gallery="on"]) [data-host-gallery] { display: none !important; }
-
-  /* 页签切换同理：作者样式里有 display:flex，所以这条 !important 不能省 */
   .view[hidden] { display: none !important; }
 
   input, select, textarea {
     font: inherit; color: var(--fg); background: var(--field);
     border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
-    transition: border-color .12s, box-shadow .12s;
+    width: 100%; transition: border-color .12s, box-shadow .12s;
   }
-  /* hover 只动边框色（不提亮底色）：一整排输入框不会跟着鼠标一起闪 */
   input:not(:disabled):hover, select:not(:disabled):hover, textarea:hover { border-color: var(--dim); }
   input:focus, select:focus, textarea:focus {
     outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring);
   }
   input::placeholder, textarea::placeholder { color: var(--dim); }
-  /* ★ 空值的下拉显成灰的「待选」—— 原来写「（没选）」，加括号像在报错；
-     灰色的字一眼就知道"这格还空着"，而不是"这格填错了"。
-     option 用原生渲染，颜色在 Chromium 上跟着 select 走，所以由 JS 打 is-empty。 */
+  /* 空下拉显成灰的「待选」—— 不是「（没选）」，加括号像在报错 */
   select.is-empty { color: var(--dim); }
   select.is-empty option { color: var(--fg); }
   button {
-    font: inherit; border-radius: 7px; border: 1px solid var(--line);
-    background: var(--bg); color: var(--fg); padding: 7px 13px; cursor: pointer; white-space: nowrap;
+    font: inherit; color: var(--fg); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+    transition: border-color .12s, background .12s;
   }
-  button:hover { background: var(--chip); }
-  button.primary { background: var(--accent); border-color: transparent; color: #fff; }
-  button.primary:hover { filter: brightness(1.06); }
-  button:disabled { opacity: .45; cursor: not-allowed; }
-  button.tiny { padding: 3px 9px; font-size: 12px; border-radius: 6px; }
+  button:hover:not(:disabled) { border-color: var(--dim); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); filter: brightness(1.06); }
   button.danger { color: var(--danger); }
+  button.mini { padding: 2px 8px; font-size: 12px; border-radius: 4px; }
 
-  /* ---- 顶部 ---- */
-  /* ★ 不再限宽 1120px：窗口拉多宽就用多宽（登记表单的字段是网格排的，
-     宽了会自己往上长一列，不会出现"一列超长输入框"）。 */
-  .top { padding: 14px 22px 0; }
-  .head { display: flex; align-items: center; gap: 10px; }
-  h1 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
-  /* ★ 约定之一：宿主状态位。四态文案由 JS 填 */
-  .host-dot {
-    display: inline-flex; align-items: center; gap: 5px; margin-left: auto;
-    font-size: 11.5px; color: var(--dim); white-space: nowrap;
+  /* ---------- 头部 ---------- */
+  header {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--bg);
   }
-  .host-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
-  .host-dot.ok::before { background: var(--ok); }
-  .host-dot.warn::before { background: var(--warn); }
-  .sub { color: var(--dim); font-size: 12px; }
-
-  .tabs { display: flex; gap: 4px; margin: 12px 0 0; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .meta { font-size: 11.5px; color: var(--dim); }
+  .dot {
+    font-size: 11px; color: var(--dim); border: 1px solid var(--line);
+    border-radius: 999px; padding: 2px 9px;
+  }
+  .dot.ok { color: var(--ok); border-color: var(--ok); }
+  .dot.warn { color: var(--warn); border-color: var(--warn); }
+  .tabs { display: flex; gap: 4px; padding: 8px 14px 0; flex: 0 0 auto; }
   .tabs button {
-    border: none; background: none; border-radius: 6px 6px 0 0; padding: 7px 14px 8px;
-    color: var(--dim); border-bottom: 2px solid transparent; margin-bottom: -1px;
+    border-radius: 8px 8px 0 0; border-bottom: none; color: var(--fg2); background: transparent;
   }
-  .tabs button:hover { background: var(--chip); color: var(--fg2); }
-  .tabs button[aria-selected="true"] { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
-
-  /* ---- 主体 ---- */
-  .body { flex: 1; min-height: 0; padding: 12px 22px 18px; display: flex; }
-  .view { flex: 1; min-height: 0; display: flex; }
-  #view-create { display: block; overflow-y: auto; }
-  #view-settings { display: block; overflow-y: auto; }
-  /* 设置页的卡片自己限宽（内联 720px）：页面铺满后它们会全挤在左边，
-     宽屏时居中摆，两侧留白对称。 */
-  #view-settings > .card { margin-left: auto; margin-right: auto; }
-
-  /* ---- 登记 ---- */
-  .card { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 18px 22px 16px; }
-  .card h2 { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg); }
-  .r { display: flex; gap: 8px; flex-wrap: wrap; }
-  .r + .r, .r + input, input + .r { margin-top: 8px; }
-  .r > .grow { flex: 1 1 220px; min-width: 0; }
-
-  /* ---- 登记页：一格 = 小标签 + 控件 ----
-     ★ 标签**始终可见**：填了值之后 placeholder 就没了，靠位置去猜"这格是什么"
-     最容易填错（8 个字段排在一起时尤其）。所以每个字段都有个固定的标签行，
-     placeholder 只负责示例 / 补充说明。 */
-  /* ★ 0.9.0：卡片不再写死 880px，改成**铺满 + 24 列栅格**。
-     宽度够时一行四格（店铺/订单号/快递单号/快递公司），窗口收窄就自己折行 ——
-     字段的宽窄由 span 定，不由"窗口减去一串固定 px"定。 */
-  #create-card { position: relative; }
-  #create-card > * + * { margin-top: 16px; }
-
-  /* 卡片头：标题 + 一句说明 + 右上角今日条数。整页原来只有一行灰标题，
-     信息没有落点；有了这条分隔线，卡片才像一个"面板"而不是一段表单。 */
-  .cardhead { display: flex; align-items: flex-start; gap: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
-  .cardhead .ct { min-width: 0; }
-  /* 标题前那根竖条：3px 圆角小色块，比整条横幅克制，也比纯文字有精神 */
-  .cardhead h2 { display: flex; align-items: center; gap: 8px; }
-  .cardhead h2::before { content: ""; width: 3px; height: 15px; border-radius: 2px; background: var(--accent); }
-  .cardsub { margin: 3px 0 0; color: var(--dim); font-size: 11.5px; }
-  #todayTip { margin-left: auto; flex: 0 0 auto; color: var(--fg2); background: var(--chip);
-    border-radius: 999px; padding: 3px 11px; font-size: 11.5px; white-space: nowrap; }
-  #todayTip b { color: var(--fg); font-weight: 600; }
-
-  /* 分组：订单 / 异常 —— 一组一个小标题，两组之间留白隔开。
-     8 个字段平铺时用户要自己数"哪几格是一伙的"，分组之后不用数。 */
-  .fgroup + .fgroup { margin-top: 14px; }
-  .gtitle { display: flex; align-items: center; gap: 8px; margin-bottom: 7px;
-    font-size: 11px; letter-spacing: .06em; color: var(--dim); }
-  .gtitle::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-
-  .fgrid { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 10px 12px; align-items: start; }
-  .f { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-  .f > span, .f > .fcap { font-size: 11.5px; color: var(--fg2); }
-  /* 登记时间那格包了按钮（label 不能套 button），caption 用 <label for> */
-  .f > label.fcap { cursor: pointer; }
-  .f > select, .f > input, .f > textarea { width: 100%; }
-  .f > textarea { font-family: inherit; font-size: 12.5px; resize: vertical; }
-  /* 24 列上的跨度：2+9+6+5 + 6+8+10 = 24 —— 两行都刚好铺满，右边不留豁口 */
-  .f-store { grid-column: span 3; }
-  .f-sn { grid-column: span 8; }
-  .f-track { grid-column: span 6; }
-  .f-courier { grid-column: span 7; }
-  .f-day { grid-column: span 4; }
-  .f-cat { grid-column: span 7; }
-  .f-desc { grid-column: span 13; }
-  .f-full { grid-column: span 24; }
-  #orderSn { font-family: var(--mono); font-size: 13px; }
-  #trackingNo { font-family: var(--mono); font-size: 12.5px; }
-  /* 订单号 + 它下面那条格式提示要捆在一起：提示得贴在订单号框正下方，
-     不能横铺一整行 —— 那样看着像在说左边的「异常单号」。 */
-  .snwrap { display: flex; flex-direction: column; min-width: 0; }
-  .snwrap > .f { flex: 0 0 auto; }
-  .snwrap .hint { margin-top: 4px; }
-
-  /* 操作条：一条分隔线把"填"和"交"分开 */
-  .actions { align-items: center; gap: 12px; border-top: 1px solid var(--line); padding-top: 14px; }
-  .actions .hint { margin-top: 0; }
-  .actions button.primary { padding: 8px 26px; font-size: 13.5px; border-radius: 8px; }
-  #title { width: 100%; }
-
-  /* 中等宽度：一行从 4 格退到 2 格（栅格换成 12 列，跨度按比例收） */
-  @media (max-width: 900px) {
-    .fgrid { grid-template-columns: repeat(12, minmax(0, 1fr)); }
-    .f-store { grid-column: span 4; }
-    .f-sn { grid-column: span 8; }
-    .f-track { grid-column: span 6; }
-    .f-courier { grid-column: span 6; }
-    .f-day { grid-column: span 5; }
-    .f-cat { grid-column: span 7; }
-    .f-desc { grid-column: span 12; }
-    .f-full { grid-column: span 12; }
+  .tabs button[aria-selected="true"] {
+    background: var(--bg); color: var(--fg); border-color: var(--line); font-weight: 600;
   }
-  /* 窄窗口：一格一行，标签也不再和输入框抢横向空间 */
-  @media (max-width: 560px) {
-    .fgrid { grid-template-columns: minmax(0, 1fr); }
-    .f-store, .f-sn, .f-track, .f-courier, .f-day, .f-cat, .f-desc, .f-full { grid-column: 1 / -1; }
-    .cardhead { flex-wrap: wrap; }
+  main { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 14px 20px; }
+  .view { height: 100%; }
+
+  /* ---------- 通用块 ---------- */
+  .card {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 14px;
   }
-  /* 设置页那条「粘一条链接绑店铺」：等宽字体，一眼能看出粘进去的是不是整条链接 */
-  #bindLink { width: 100%; font-family: var(--mono); font-size: 12px; }
-  #bindLink + .hint { margin-top: 4px; }
-  .bindlab { flex: 0 0 auto; color: var(--fg2); font-size: 12.5px; }
-  #bindStore { flex: 1 1 180px; max-width: 280px; }
-  /* 登记页那几个的宽度由外层的 .f-* 定（控件本身只是填满它所在的那一格）；
-     这里的 flex 规则只留给**不在** .f 里的设置页控件（如 #bindStore）。 */
-  .stores { display: flex; flex-direction: column; gap: 6px; }
-  .store-row { display: flex; align-items: center; gap: 6px; }
-  .store-row .idx { flex: 0 0 20px; color: var(--dim); font-size: 11.5px; text-align: right; }
-  .store-row input { flex: 1 1 120px; font-size: 12.5px; }
-  .store-row input.cs { flex: 1 1 150px; font-family: var(--mono); }
-  .store-row button { flex: 0 0 auto; padding: 4px 8px; font-size: 12px; }
-  /* 没绑客服 ID 的行不再挂黄框 —— 空行是"等着填"，不是"出错"；
-     要不要绑看 placeholder（客服 ID（cs_…））就够了 */
-  /* 设置页「下拉选项」：四个编辑框 2×2 摆（窄屏退成一列） */
-  .optgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
-  .optgrid textarea { width: 100%; min-height: 84px; resize: vertical; font-family: inherit; font-size: 12.5px; }
-  @media (max-width: 560px) { .optgrid { grid-template-columns: 1fr; } }
+  .card + .card { margin-top: 10px; }
+  .card h2 { font-size: 13px; margin: 0 0 8px; font-weight: 600; }
+  .r { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .hint { color: var(--dim); font-size: 11.5px; margin-top: 8px; }
-  .hint code, .cfg-note code { font-family: var(--mono); color: var(--fg2); }
-  .cfg-note { color: var(--dim); font-size: 11.5px; margin: 0 0 8px; }
+  .hint.bad { color: var(--warn); }
+  .note { color: var(--dim); font-size: 11.5px; }
+  .spacer { flex: 1 1 auto; }
 
-  /* ---- 查看：左右分栏 ----
-     0.9.0 起整块也做成一张白卡：页面底色是暖灰，内容区不包一层就"浮"在灰底上，
-     和登记页的白卡不是一个世界。 */
-  #view-browse { gap: 12px; background: var(--bg); border: 1px solid var(--line);
-    border-radius: 12px; padding: 12px 14px; }
-  .pane-left { flex: 0 0 320px; min-width: 0; display: flex; flex-direction: column; }
-  .pane-right { flex: 1 1 auto; min-width: 0; border-left: 1px solid var(--line); padding-left: 14px; display: flex; flex-direction: column; }
-  .filters { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
-  #search { flex: 1 1 100%; min-width: 0; }
-  #filter { flex: 1 1 96px; min-width: 0; }
-  #storeFilter, #catFilter { flex: 1 1 96px; min-width: 0; }
-  .stats { color: var(--dim); font-size: 11.5px; margin-bottom: 6px; }
-  .stats b { color: var(--fg2); font-weight: 600; }
-  .list { flex: 1; overflow-y: auto; min-height: 0; }
-
-  .ticket { border: 1px solid transparent; border-left-width: 3px; border-radius: 8px; padding: 7px 9px; cursor: pointer; }
-  .ticket + .ticket { margin-top: 2px; }
-  .ticket:hover { background: var(--chip); }
-  .ticket[aria-selected="true"] { background: var(--sel); border-color: var(--line); border-left-color: var(--accent); }
-  .ticket .l1 { display: flex; align-items: center; gap: 7px; }
-  /* ★ 单号必须是一整行：拼多多单号里有连字符，浏览器默认会在 `-` 之后断行 ——
-     22 个字符的单号一断就成了两行，把整个列表行撑高（用户一眼就看出来了）。
-     除 nowrap 外再兜一层省略号：真遇上超长的单号，宁可截断也不要撑破布局。 */
-  .ticket .code { font-family: var(--mono); font-size: 12.5px; font-weight: 600; letter-spacing: .2px;
-    white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .ticket .title { margin-top: 2px; font-size: 12.5px; color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  /* 第二行：状态标签 + 店铺标签 + 内容（状态原来挤在第一行，长单号就没地方了） */
-  .ticket .title .badge { margin-right: 5px; vertical-align: middle; }
-  /* 列表行里的店铺小标签：8 个店的单子混在一起时，一眼能分清是哪家的 */
-  .ticket .store-tag { display: inline-block; color: var(--dim); border: 1px solid var(--line); border-radius: 4px;
-    padding: 0 4px; font-size: 10.5px; line-height: 15px; margin-right: 5px; }
-  /* 快递公司 / 情况的小标签：同一套样式 —— 对应台账里那两列的彩色标签 */
-  .ticket .courier-tag, .ticket .cat-tag { display: inline-block; color: var(--dim); border: 1px solid var(--line);
-    border-radius: 4px; padding: 0 4px; font-size: 10.5px; line-height: 15px; margin-right: 5px; }
-  .ticket .when { margin-left: auto; color: var(--dim); font-size: 11px; white-space: nowrap; flex: 0 0 auto; }
-  .ticket.s-done .code, .ticket.s-done .title { color: var(--dim); }
-
-  /* 行内「↗」：有订单号才有。这个能力是"每条单号都能一键唤醒"，所以得**看得见** ——
-     别做成 hover 才出现的隐藏按钮（那样等于没有）。指到行上/选中时再提亮一档。
-     点它 = 直接呼起客户端，不会改右栏选中的那条 —— 扫单时一条条点着走。 */
-  .ticket .wake { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-    width: 22px; height: 19px; padding: 0; border-radius: 5px; font-size: 12px; line-height: 1;
-    border: 1px solid var(--line); background: var(--bg); color: var(--accent); cursor: pointer; opacity: .8; }
-  .ticket:hover .wake, .ticket[aria-selected="true"] .wake { opacity: 1; }
-  .ticket .wake:hover { border-color: var(--accent); color: var(--accent); background: var(--sel); }
-
-  /* 订单号格式提示：合形状的走「说明」，不合形状的走「警告」。
-     里面的链接（重复单号的「去看那条」）跟着提示的颜色走，别跳成默认蓝 */
-  .snhint.ok { color: var(--ok); }
-  .snhint.bad { color: var(--warn); }
-  .snhint a { color: inherit; text-decoration: underline; }
-
-  .badge { font-size: 11px; border-radius: 5px; padding: 1px 6px; background: var(--chip); color: var(--fg2); white-space: nowrap; flex: 0 0 auto; }
-  .badge.wait { color: var(--warn); }
-  .badge.doing { color: var(--accent); }
-  .badge.done { color: var(--ok); }
-
-  /* ---- 右栏：详情 + 处理 ---- */
-  .detail { flex: 1; overflow-y: auto; min-height: 0; }
-  .d-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-  /* 同样不许在连字符处断开（右栏够宽，这里只是不给它断的机会） */
-  .d-code { font-family: var(--mono); font-size: 15px; font-weight: 600; letter-spacing: .2px; white-space: nowrap; }
-  .d-title { margin: 8px 0 12px; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
-  /* kv 两列铺：台账 7 列（登记/更新各占一格）在 76px+1fr 的单列下要滚很久，
-     两列后 4 行看完。dt 固定宽、dd 弹性，两对之间用列距分开。 */
-  .kv { display: grid; grid-template-columns: 76px minmax(0,1fr) 76px minmax(0,1fr);
-    gap: 5px 12px; font-size: 12.5px; }
-  .kv dt { color: var(--dim); }
-  .kv dd { margin: 0; overflow-wrap: anywhere; }
-  .sect { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
-  .sect > label { display: block; font-size: 12.5px; color: var(--fg2); margin-bottom: 6px; }
-  /* ---- 流程状态：时间线 + 记一步 ---- */
-  .flow-list { display: flex; flex-direction: column; gap: 4px; }
-  .flow-step { display: flex; align-items: center; gap: 8px; font-size: 12.5px;
-    padding: 4px 8px; border-radius: 6px; background: var(--chip); }
-  .flow-step.cur { background: var(--sel); }
-  .flow-step.cur .flow-name { color: var(--accent); font-weight: 600; }
-  .flow-name { flex: 0 0 auto; }
-  .flow-time { flex: 1 1 auto; min-width: 0; color: var(--dim); font-size: 11.5px;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .flow-del { flex: 0 0 auto; border: 0; background: transparent; color: var(--dim);
-    cursor: pointer; font-size: 12px; line-height: 1; padding: 3px 5px; border-radius: 4px; }
-  .flow-del:hover { color: var(--danger); background: var(--bg); }
-  .flow-empty { color: var(--dim); font-size: 12px; padding: 2px 0; }
-  /* 收尾的那一步（完结） */
-  .flow-step.fin .flow-name { color: var(--ok); }
-  .flow-closed { color: var(--ok); font-size: 12px; padding: 4px 0 2px; }
-  .flow-add { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
-  .flow-add select { flex: 1 1 120px; }
-  .flow-add input[type="datetime-local"] { flex: 1 1 168px; }
-  .flow-add button { flex: 0 0 auto; }
-  /* ---- 提醒：设定 / 取消 ---- */
-  .remind-row { display: flex; gap: 6px; flex-wrap: wrap; }
-  .remind-row input[type="datetime-local"] { flex: 1 1 168px; }
-  .remind-row button { flex: 0 0 auto; }
-  /* 列表行上的提醒标记：⏰ + 时刻；到点了转红 —— 扫一眼就知道哪几条在催 */
-  .remind-tag { display: inline-block; color: var(--dim); border: 1px solid var(--line);
-    border-radius: 4px; padding: 0 4px; font-size: 10.5px; line-height: 15px; }
-  .remind-tag.due { color: var(--danger); border-color: var(--danger); }
-  #d-note { width: 100%; min-height: 96px; resize: vertical; font-family: inherit; }
-  /* 处理区第一行：处理方式 / 结果 / 已结账 —— 状态就是从这三个派生的（见 statusOf） */
-  .prorow { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 10px; }
-  .prorow .f { flex: 1 1 130px; max-width: 340px; }
-  .chk { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; color: var(--fg2);
-    white-space: nowrap; padding-bottom: 6px; cursor: pointer; }
-  .chk input { width: auto; }
-  .client-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  /* 快捷行：店铺 + 呼起/复制并成一排，摆在单号正下方 ——
-     拿到一条单子第一件事就是呼起客户端，别让它埋在页面中间 */
-  .quick { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; margin: 2px 0 4px; }
-  .quick .store-line { margin-bottom: 0; }
-  .quick .client-row { margin-bottom: 0; }
-  /* 右栏的店铺选择：它决定呼起时用哪个客服 ID，所以摆在呼起按钮正上方 */
-  .store-line { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12.5px; color: var(--fg2); }
-  .store-line select { flex: 1 1 150px; max-width: 260px; font-size: 12.5px; }
-  .d-ops { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
-  .saved { color: var(--dim); font-size: 11.5px; margin-left: auto; }
-
-  .empty { color: var(--dim); font-size: 13px; text-align: center; margin: auto 0; padding: 0 10px; }
-  .empty code { font-family: var(--mono); color: var(--fg2); }
-
-  /* ---- 表格页：整本台账一屏铺开 ----
-     列的顺序与「推给 WPS 的那张表」逐列一致（lib/kwiki.ts 的 COLUMNS）——
-     程序里看到哪一列，在线表格里就是哪一列，不用在两种摆法之间换算。
-     只读：点一行跳回「查看」页那条的详情，改仍然只在详情里改。 */
-  /* ★ min-width:0 不能省：.view 是 .body（row flex）的子项，默认 min-width:auto
-     会让它拒绝缩到内容宽度以下 —— 14 列的定宽表（1556px）会把整页顶宽，
-     而 body 是 overflow:hidden，超出的列**看得见却滚不到**。
-     给了 0，超宽的部分才会落在 .tblscroll 自己的横向滚动条里。 */
-  #view-table { flex-direction: column; min-height: 0; min-width: 0; }
-  .tblbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
-  #tableSearch { flex: 1 1 260px; min-width: 0; }
-  .tblbar .stats { margin: 0; }
-  .tblscroll { flex: 1; min-height: 0; min-width: 0; overflow: auto; border: 1px solid var(--line);
-    border-radius: 12px; background: var(--bg); }
-
-  /* ---- 表格页的列配置 ---- */
-  .colwrap { position: relative; flex: 0 0 auto; }
-  #colBtn { padding: 6px 11px; font-size: 12.5px; }
-  #colCount { color: var(--dim); }
-  /* 面板贴着按钮往下弹。★ 不加阴影（与工作台同一套黑白灰审美），靠 1px 边框分层 */
-  .colpanel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30;
-    width: 250px; max-height: 62vh; overflow: auto; padding: 6px;
-    background: var(--bg); border: 1px solid var(--line); border-radius: 10px; }
-  .colpanel .crow { display: flex; align-items: center; gap: 2px; padding: 3px 4px; border-radius: 6px; }
-  .colpanel .crow:hover { background: var(--chip); }
-  .colpanel .crow label { flex: 1; display: flex; align-items: center; gap: 7px;
-    cursor: pointer; font-size: 12.5px; user-select: none; }
-  .colpanel .crow input { margin: 0; }
-  /* 上下移用小按钮：不占地方，但手指也点得中（20px 见方） */
-  .colpanel .crow button { padding: 0 5px; min-width: 20px; height: 20px; line-height: 18px;
-    font-size: 12px; border: 0; background: transparent; color: var(--fg2); }
-  .colpanel .crow button:hover { background: var(--chip); color: var(--fg); }
-  .colpanel .crow button:disabled { opacity: .2; }
-  .colpanel .cfoot { display: flex; gap: 6px; margin-top: 4px; padding: 6px 4px 2px;
-    border-top: 1px solid var(--line); }
-  .colpanel .cfoot button { flex: 1; padding: 4px 8px; font-size: 12px; }
-  /* table-layout: fixed + colgroup 的定宽是「省略号截断」能生效的前提（auto 布局下
-     td 的 max-width 不可靠）；列宽之和 ≈ min-width，窄了横向滚，宽了按比例铺满 */
-  table.ledger { table-layout: fixed; width: 100%; min-width: 1556px;
-    border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
-  table.ledger th, table.ledger td { padding: 6px 9px; border-bottom: 1px solid var(--line); text-align: left; }
-  table.ledger thead th { position: sticky; top: 0; z-index: 1; background: var(--chip); color: var(--fg2);
-    font-size: 11.5px; font-weight: 600; white-space: nowrap; }
-  table.ledger tbody tr { cursor: pointer; }
-  table.ledger tbody tr:hover { background: var(--chip); }
-  table.ledger td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  table.ledger td.mono { font-family: var(--mono); font-size: 12px; }
-  table.ledger td .nil { color: var(--dim); }
-  table.ledger td .settle-ok { color: var(--ok); }
-  table.ledger tr.empty-row td { cursor: default; color: var(--dim); text-align: center; padding: 30px 10px; }
-  table.ledger tr.empty-row:hover { background: transparent; }
-
-  /* 窄一点就上下堆叠：左栏列表给固定高度，右栏接着往下 */
-  @media (max-width: 720px) {
-    #view-browse { flex-direction: column; }
-    .pane-left { flex: 0 0 42%; }
-    .pane-right { border-left: none; border-top: 1px solid var(--line); padding-left: 0; padding-top: 10px; }
-    .kv { grid-template-columns: 76px minmax(0,1fr); }
+  /* 登记页：24 列栅格，窗口窄了自己折行（不写死宽度） */
+  .grid24 { display: grid; grid-template-columns: repeat(24, 1fr); gap: 10px 12px; }
+  .f { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .f > span { font-size: 11.5px; color: var(--fg2); padding-left: 2px; }
+  .c4 { grid-column: span 4; } .c6 { grid-column: span 6; } .c8 { grid-column: span 8; }
+  .c12 { grid-column: span 12; } .c24 { grid-column: span 24; }
+  @media (max-width: 900px) {
+    .c4, .c6, .c8 { grid-column: span 12; }
+    .c12 { grid-column: span 24; }
   }
 
-  /* ---- 日期选择器（自绘） ----
-     原生 input[type=date] 的弹窗由浏览器画，字体 / 圆角 / 主题色都不跟页面走；
-     这里改成普通文本框 + 自己的面板（见脚本里的「日期选择器」）。 */
-  .dwrap { position: relative; display: block; }
-  .dwrap > input { width: 100%; padding-right: 34px; font-family: var(--mono); font-size: 13px; }
-  .dbtn { position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
-    width: 26px; height: 26px; padding: 0; display: grid; place-items: center;
-    border: 0; background: transparent; color: var(--dim); border-radius: 6px; }
-  .dbtn:hover { background: var(--chip); color: var(--fg); }
-  .dbtn svg { width: 15px; height: 15px; display: block; }
-  #shipped.is-bad { border-color: var(--danger); box-shadow: 0 0 0 3px rgba(163,45,45,.12); }
+  /* ---------- 查看页：左右分栏 ---------- */
+  .split { display: flex; gap: 10px; height: 100%; min-height: 0; }
+  .split > .left { flex: 0 0 320px; display: flex; flex-direction: column; min-height: 0; }
+  .split > .right { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; }
+  .listwrap { flex: 1 1 auto; min-height: 0; overflow: auto; border-top: 1px solid var(--line); }
+  .ticket {
+    display: flex; flex-direction: column; gap: 2px; padding: 8px 10px;
+    border-bottom: 1px solid var(--line); cursor: pointer;
+  }
+  .ticket:hover { background: var(--chip); }
+  .ticket.on { background: var(--sel); }
+  .ticket .line1 { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+  .ticket .sn { font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ticket .tags { display: flex; gap: 5px; flex-wrap: wrap; font-size: 11px; color: var(--dim); }
+  .tag { background: var(--chip); border-radius: 4px; padding: 0 6px; }
+  .badge {
+    font-size: 11px; border-radius: 999px; padding: 1px 9px;
+    border: 1px solid var(--line); color: var(--fg2); white-space: nowrap;
+  }
+  .badge.s0 { color: var(--warn); border-color: var(--warn); }
+  .badge.s1 { color: var(--accent); border-color: var(--accent); }
+  .badge.s2 { color: var(--ok); border-color: var(--ok); }
 
-  .dp { position: fixed; z-index: 60; width: 268px; padding: 8px 10px 0;
-    background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
-    box-shadow: 0 14px 34px rgba(0,0,0,.13), 0 2px 6px rgba(0,0,0,.05);
-    user-select: none; }
-  html[data-theme="dark"] .dp { box-shadow: 0 18px 44px rgba(0,0,0,.55); }
-  .dp[hidden] { display: none !important; }
-  /* ★ [hidden] 打不过 display:grid —— 日视图/月视图切换必须显式写死 */
-  .dp-body[hidden] { display: none !important; }
-  .dp-head { display: flex; align-items: center; gap: 2px; padding: 2px 0 4px; }
-  .dp-nav { width: 26px; height: 26px; padding: 0; display: grid; place-items: center;
-    border: 0; background: transparent; color: var(--fg2); border-radius: 7px;
-    font-size: 16px; line-height: 1; }
-  .dp-nav:hover { background: var(--chip); color: var(--fg); }
-  .dp-title { flex: 1; padding: 4px 6px; border: 0; background: transparent; border-radius: 7px;
-    font-size: 13px; font-weight: 600; color: var(--fg); font-variant-numeric: tabular-nums; }
-  .dp-title:hover { background: var(--chip); }
-  .dp-title::after { content: "▾"; margin-left: 5px; font-size: 9px; color: var(--dim); }
-  /* 年月视图里标题变成"返回日视图"：箭头翻过来，别让 ▾ 骗人 */
-  .dp[data-mode="month"] .dp-title::after { content: "▴"; }
-  .dp-week, .dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
-  .dp-week span { text-align: center; font-size: 11px; color: var(--dim); padding: 2px 0 5px; }
-  .dp-day { height: 31px; padding: 0; border: 1px solid transparent; background: transparent;
-    border-radius: 8px; font-size: 12.5px; color: var(--fg); font-variant-numeric: tabular-nums; }
-  .dp-day:hover { background: var(--chip); }
-  .dp-day.is-out { color: var(--dim); }
-  .dp-day.is-out:hover { color: var(--fg2); }
-  .dp-day.is-today { border-color: var(--accent); color: var(--accent); font-weight: 600; }
-  .dp-day.is-sel, .dp-day.is-sel:hover { background: var(--accent); border-color: transparent;
-    color: #fff; font-weight: 600; }
-  .dp-day.is-cur { box-shadow: inset 0 0 0 1px var(--accent); }
-  .dp-mgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding-bottom: 10px; }
-  .dp-mon { padding: 8px 0; border: 1px solid transparent; background: transparent;
-    border-radius: 8px; font-size: 12.5px; color: var(--fg); }
-  .dp-mon:hover { background: var(--chip); }
-  .dp-mon.is-sel, .dp-mon.is-sel:hover { background: var(--accent); color: #fff; font-weight: 600; }
-  .dp-foot { display: flex; align-items: center; gap: 2px; margin: 6px -10px 0;
-    padding: 7px 10px; border-top: 1px solid var(--line); }
-  .dp-link { border: 0; background: transparent; padding: 3px 7px; border-radius: 6px;
-    font-size: 12px; color: var(--accent); }
-  .dp-link:hover { background: var(--chip); }
-  .dp-link.muted { color: var(--dim); margin-left: auto; }
-  .dp-link.muted:hover { color: var(--danger); }
+  .kv { display: grid; grid-template-columns: 88px 1fr; gap: 6px 10px; font-size: 12.5px; }
+  .kv > span { color: var(--dim); }
+  .kv > div { min-width: 0; word-break: break-all; }
+  .sect { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .sect > h3 { font-size: 12px; margin: 0 0 6px; color: var(--fg2); font-weight: 600; }
+  .flowrow { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
+  .flowrow .t { color: var(--dim); font-family: var(--mono); font-size: 11.5px; }
 
-  #toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(8px);
-    background: var(--chip); color: var(--fg2); border: 1px solid var(--line); border-radius: 8px;
-    padding: 7px 14px; font-size: 12.5px; opacity: 0; transition: .18s; pointer-events: none; max-width: 80vw; }
-  #toast.on { opacity: 1; transform: translateX(-50%); }
-  details { margin-top: 10px; color: var(--dim); font-size: 12px; }
-  pre { background: var(--chip); padding: 8px 10px; border-radius: 7px; overflow-x: auto; font-size: 11.5px; color: var(--fg2); }
+  /* ---------- 表格页 ---------- */
+  .tblbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  .tblbar input { flex: 1 1 220px; width: auto; }
+  .tblscroll { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--chip); color: var(--dim); font-weight: 400; font-size: 11.5px; }
+  tbody tr:hover { background: var(--chip); }
+  td { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  .colpanel {
+    position: absolute; z-index: 20; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-width: 220px;
+  }
+  .colpanel label { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
+  .colpanel .updown { display: flex; gap: 4px; margin-left: auto; }
+
+  /* ---------- 日期选择（自绘：原生 date 弹窗不跟主题走） ---------- */
+  .dp {
+    position: fixed; z-index: 50; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px; width: 232px;
+  }
+  .dp-head { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
+  .dp-title { flex: 1 1 auto; font-size: 12.5px; background: transparent; border-color: transparent; }
+  .dp-nav { padding: 2px 8px; }
+  .dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .dp-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; font-size: 11px; color: var(--dim); margin-bottom: 2px; }
+  .dp-week span, .dp-grid button { text-align: center; }
+  .dp-grid button { padding: 4px 0; border: none; background: transparent; border-radius: 4px; font-size: 12px; }
+  .dp-grid button:hover { background: var(--chip); }
+  .dp-grid button.out { color: var(--dim); }
+  .dp-grid button.today { border: 1px solid var(--accent); }
+  .dp-foot { display: flex; gap: 4px; margin-top: 6px; }
+  .dp-foot button { flex: 1 1 auto; font-size: 11.5px; padding: 3px 0; }
+  .mgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .mgrid button { font-size: 12px; padding: 5px 0; }
+
+  /* ---------- 提示条 ---------- */
+  #toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    display: flex; flex-direction: column; gap: 6px; align-items: center; z-index: 80;
+  }
+  #toast div {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 14px; font-size: 12.5px; color: var(--fg);
+  }
+  pre.schema {
+    font-family: var(--mono); font-size: 11px; color: var(--dim);
+    white-space: pre-wrap; word-break: break-all; margin: 0;
+  }
 </style>
 </head>
-<!-- data-bind-state 在 HTML 里就写上，别留"还没设"的空窗 -->
 <body data-bind-state="booting">
-<div class="top">
-  <div class="head">
-    <h1>异常单号登记</h1>
-    <span class="host-dot" id="hostState">连接中…</span>
-  </div>
-  <div class="sub" id="meta">连接中…</div>
-  <div class="tabs" role="tablist">
-    <button id="tab-create" data-tab="create" role="tab" aria-selected="true">登记</button>
-    <button id="tab-browse" data-tab="browse" role="tab" aria-selected="false">查看</button>
-    <button id="tab-table" data-tab="table" role="tab" aria-selected="false">表格</button>
-    <button id="tab-settings" data-tab="settings" role="tab" aria-selected="false">设置</button>
-  </div>
+
+<header>
+  <h1>异常单号登记</h1>
+  <span class="dot" id="hostState">连接中…</span>
+  <span class="meta" id="meta"></span>
+  <span class="spacer"></span>
+  <span class="meta" id="todayCount"></span>
+</header>
+
+<div class="tabs" role="tablist">
+  <button id="tab-create" data-tab="create" role="tab" aria-selected="true">登记</button>
+  <button id="tab-browse" data-tab="browse" role="tab" aria-selected="false">查看</button>
+  <button id="tab-table" data-tab="table" role="tab" aria-selected="false">表格</button>
+  <button id="tab-settings" data-tab="settings" role="tab" aria-selected="false">设置</button>
 </div>
 
-<div class="body">
-  <!-- ============ 一、登记 ============ -->
+<main>
+  <!-- ==================== 登记 ==================== -->
   <section class="view" id="view-create">
-    <div class="card" id="create-card">
-      <div class="cardhead">
-        <div class="ct">
-          <h2>登记一条异常</h2>
-          <p class="cardsub">订单号、快递单号至少填一个 · 处理方式 / 结果 / 结账 登记后在「查看」页补</p>
-        </div>
-        <!-- 今日条数：连录时用来确认"刚才那条真的进去了"（load 后由 JS 填） -->
-        <span id="todayTip"></span>
+    <div class="card" style="max-width:1100px">
+      <h2>登记一条异常</h2>
+      <div class="grid24">
+        <label class="f c4"><span>店铺</span><select id="fStore"></select></label>
+        <label class="f c6"><span>订单号</span><input id="fOrder" placeholder="粘单号，或整条 ERP 链接" autocomplete="off" spellcheck="false" /></label>
+        <label class="f c6"><span>快递单号</span><input id="fTrack" placeholder="没有订单号时至少填这个" autocomplete="off" spellcheck="false" /></label>
+        <label class="f c4"><span>快递公司</span><select id="fCourier"></select></label>
+        <label class="f c4"><span>登记时间</span><input id="fDate" placeholder="点这里选（今天 / 昨天 / 前天）" autocomplete="off" spellcheck="false" /></label>
+        <label class="f c4"><span>情况</span><select id="fCategory"></select></label>
+        <label class="f c24"><span>详细描述</span><textarea id="fTitle" rows="2" placeholder="发生了什么"></textarea></label>
       </div>
-      <!-- 主线三样：哪个店、哪一单、哪个包裹。
-           字段都带**可见的小标签** —— 填了值之后 placeholder 就没了，
-           靠位置去猜"这格是什么"最容易填错，标签一直看得见。 -->
-      <!-- 字段与用户那张登记台账一一对应（0.7.0）：
-           快递单号 / 快递 / 登记时间 / 情况 / 录入时间(自动) / 处理方式 / 结果 /
-           附件(详细描述) / 店铺 / 订单号 / 结账。
-           处理方式、结果、结账是**事后**才有的信息，登记页不摆 —— 在「查看」页那条
-           单子的处理区里补；补到哪一步，状态就跟到哪一步（见 statusOf）。 -->
-      <div class="fgroup">
-        <div class="gtitle">订单</div>
-        <div class="fgrid">
-          <label class="f f-store">
-            <span>店铺</span>
-            <select id="store" title="这条单是哪个店铺的 —— 呼起客户端时按它取对应的客服 ID"></select>
-          </label>
-          <span class="snwrap f-sn">
-            <label class="f">
-              <span>订单号</span>
-              <!-- 粘 ERP 给的整条链接也认：链接里本来就有订单号和客服 ID -->
-              <input id="orderSn" placeholder="粘单号，或整条 ERP 链接" />
-            </label>
-            <span class="hint snhint" id="snHint"></span>
-          </span>
-          <label class="f f-track">
-            <span>快递单号</span>
-            <input id="trackingNo" placeholder="台账第一列的 A 单号" />
-          </label>
-          <label class="f f-courier">
-            <span>快递公司</span>
-            <select id="courier" title="申通 / 中通 / 圆通… —— 选项在「设置」页里加"></select>
-          </label>
-        </div>
+      <div class="r" style="margin-top:10px">
+        <button class="primary" id="btnAdd">登记</button>
+        <span class="note">订单号和快递单号至少填一个。登记后店铺 / 快递公司 / 登记时间会留着，方便连着录下一条。</span>
       </div>
-      <div class="fgroup">
-        <div class="gtitle">异常</div>
-        <div class="fgrid">
-          <!-- 本条是哪天登记的。字段仍写 shipped_at（推 WPS 时落到那张表的「发货时间」列），
-               界面上叫「登记时间」—— 因为实际填的就是"今天登的这条"。 -->
-          <!-- ★ 0.9.1：日期不再用 input[type=date] —— 那个弹窗是浏览器画的，
-               字体/圆角/配色都不跟主题走，换月还只有一对上下箭头。这里换成
-               普通文本框 + 自绘面板（按钮开日历，照样能直接敲 20261017）。 -->
-          <div class="f f-day">
-            <label class="fcap" for="shipped">登记时间</label>
-            <span class="dwrap">
-              <input id="shipped" type="text" inputmode="numeric" autocomplete="off" spellcheck="false"
-                aria-haspopup="dialog" aria-expanded="false" placeholder="2026-10-17"
-                title="这条异常是哪天登记的（默认今天）—— 推到台账就是那一列。也可以直接敲 2026-10-17 / 20261017" />
-              <button type="button" class="dbtn" id="dpBtn" aria-label="打开日历" title="打开日历">
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
-                  stroke-linecap="round" aria-hidden="true">
-                  <rect x="2.2" y="3.4" width="11.6" height="10.2" rx="2"></rect>
-                  <path d="M2.2 6.8h11.6M5.4 2v2.6M10.6 2v2.6"></path>
-                </svg>
-              </button>
-            </span>
-          </div>
-          <label class="f f-cat">
-            <span>情况</span>
-            <select id="category" title="这条单是什么情况 —— 选项在「设置」页里加"></select>
-          </label>
-          <label class="f f-desc">
-            <span>详细描述</span>
-            <textarea id="title" rows="2" placeholder="对应台账的「附件（详细描述）」，有就写，选填"></textarea>
-          </label>
-        </div>
-      </div>
-      <div class="r actions">
-        <button class="primary" id="add">登记</button>
-        <span class="hint" id="formHint">登记后可直接接着录下一条 · 店铺 / 快递公司 / 登记时间会保留</span>
-      </div>
+      <div class="hint" id="addMsg"></div>
     </div>
   </section>
 
-  <!-- ============ 二、查看：左列表 / 右详情 ============ -->
+  <!-- ==================== 查看 ==================== -->
   <section class="view" id="view-browse" hidden>
-    <div class="pane-left">
-      <div class="filters">
-        <input id="search" placeholder="搜单号 / 快递单号 / 描述 / 处理方式" />
-        <select id="filter" title="按处理状态过滤"></select>
-        <select id="storeFilter" title="只看某个店铺的单子"></select>
-        <select id="catFilter" title="只看某种情况的单子"></select>
+    <div class="split">
+      <div class="left">
+        <div class="card" style="padding:8px 10px">
+          <input id="search" placeholder="搜订单号 / 快递单号 / 描述" />
+          <div class="r" style="margin-top:6px">
+            <select id="fltStore" style="flex:1 1 auto"></select>
+            <select id="fltStatus" style="flex:1 1 auto"></select>
+          </div>
+        </div>
+        <div class="listwrap" id="list"></div>
       </div>
-      <div class="stats" id="stats"></div>
-      <div class="list" id="list"></div>
-    </div>
-    <div class="pane-right">
-      <div class="detail" id="detail"></div>
+      <div class="right">
+        <div class="card" id="detail"><div class="note">左边选一条 —— 这里看它的全部内容。</div></div>
+      </div>
     </div>
   </section>
 
-  <!-- ============ 三、表格：整本台账一屏铺开（只读） ============ -->
-  <!-- 列头与列宽都从 TABLE_COLS 生成（JS），不在这里写死 —— 避免"表头改了、
-       单元格没改"这种最难查的错位。 -->
+  <!-- ==================== 表格 ==================== -->
   <section class="view" id="view-table" hidden>
     <div class="tblbar">
       <input id="tableSearch" placeholder="搜订单号 / 快递单号 / 店铺 / 描述 / 处理" />
-      <span class="stats" id="tableStats"></span>
-      <!-- 列配置：点开勾选要看的列、用 ↑↓ 调顺序。至少留一列 -->
-      <div class="colwrap">
-        <button id="colBtn" type="button" title="选择要显示的列、调整列顺序">
-          列 · <span id="colCount">14/14</span>
-        </button>
-        <div id="colPanel" class="colpanel" hidden></div>
+      <span class="meta" id="tableStats"></span>
+      <span class="spacer"></span>
+      <div style="position:relative">
+        <button id="colBtn">列 · <span id="colCount">14/14</span></button>
+        <div class="colpanel" id="colPanel" hidden></div>
       </div>
     </div>
-    <div class="tblscroll">
-      <table class="ledger">
-        <colgroup id="tableCols"></colgroup>
+    <div class="tblscroll" style="max-height:calc(100vh - 190px)">
+      <table>
         <thead id="tableHead"></thead>
         <tbody id="tableBody"></tbody>
       </table>
     </div>
   </section>
 
-  <!-- ============ 四、设置：店铺与客服 ID ============ -->
+  <!-- ==================== 设置 ==================== -->
   <section class="view" id="view-settings" hidden>
-    <!-- 传一条链接 → 认出客服 ID → 绑到某个店铺 -->
-    <div class="card" style="max-width:720px">
-      <h2>用一条链接绑定店铺</h2>
-      <p class="cfg-note" style="margin-top:0">
-        <b>客服 ID 是 ERP 生成的，不用你去认</b> —— ERP 给你的每一条唤醒链接里都写着它
-        （<code>mallcsid=cs_…</code>）。粘一条进来，认出来之后绑到对应店铺就行；
-        同一个店的<b>哪一条</b>链接都可以，不必是某张特定的订单。
+    <!-- 在线表格（WPS）：粘一条分享链接 → 认出那张表 → 推 / 拉。
+         整张卡标 data-host-only：这几个 op 只能宿主跑（令牌、数据库都在那边），
+         独立运行时露出来只会让人点了个必然失败的按钮。 -->
+    <div class="card" data-host-only style="max-width:720px">
+      <h2>在线表格（WPS）</h2>
+      <p class="note" style="margin:0 0 8px">
+        每张 WPS 授权都有<b>一条分享链接</b> —— 粘一条进来就认出是哪张表，之后就在本工具里
+        <b>推送 / 拉取</b>。<b>只写台账那 14 列</b>：你自己加的备注列、公式列一格都不动；
+        拉取<b>先看差异、确认了才写库</b>。授权在 <b>设置 → WPS 授权</b> 里做一次就行
+        （同一份令牌，不重复授权）。
       </p>
-      <input id="bindLink" placeholder="把 ERP 给的一条链接粘到这里（pddim:sendmsg/?OpeId=open_order&mallcsid=cs_…&ordersn=…）" />
-      <div class="hint snhint" id="bindHint"></div>
+      <input id="wpsLink" placeholder="https://www.kdocs.cn/l/xxxx —— 在 WPS 里点「分享」复制链接" />
       <div class="r" style="margin-top:8px">
-        <span class="bindlab">绑到</span>
-        <select id="bindStore" title="这个客服 ID 属于哪个店铺"></select>
-        <button class="primary" id="bindDo">绑定</button>
+        <button class="primary" id="wpsBind">绑定</button>
+        <button id="wpsUnbind" hidden>解绑</button>
+        <span class="hint" id="wpsName" style="margin:0">还没绑定</span>
       </div>
-      <div class="hint" id="bindMsg"></div>
+      <div class="r" style="margin-top:8px">
+        <button id="wpsPush" disabled>推送到表格</button>
+        <button id="wpsPull" disabled>从表格拉取</button>
+      </div>
+      <div class="hint" id="wpsMsg"></div>
+      <div id="wpsPreview" hidden style="margin-top:8px">
+        <div class="hint" id="wpsPreviewText" style="white-space:pre-line"></div>
+        <div class="r" style="margin-top:6px">
+          <button class="primary" id="wpsApply">确认写库</button>
+          <button id="wpsCancel">取消</button>
+        </div>
+      </div>
     </div>
 
-    <div class="card" style="max-width:720px; margin-top:12px">
+    <div class="card" style="max-width:720px">
       <h2>店铺表</h2>
-      <p class="cfg-note" style="margin-top:0">
-        每个店铺一个客服 ID。登记时选店铺、呼起客户端时自动用对应那个。
-        「客服 ID」那一格里<b>直接粘整条链接也行</b>，会当场把 <code>cs_…</code> 抠出来。
+      <p class="note" style="margin:0 0 8px">
+        每个店铺一个客服 ID —— 呼起客户端时按它定位。<b>把 ERP 给的一条链接粘进「客服 ID」那格</b>，
+        会当场把 <code>cs_…</code> 抠出来，不用你自己去认。
       </p>
-      <div id="stores" class="stores"></div>
+      <div id="stores"></div>
       <div class="r" style="margin-top:8px">
         <button id="addStore">+ 加一个店铺</button>
-        <button class="primary" id="saveCfg">保存店铺表</button>
+        <button class="primary" id="saveStores">保存店铺表</button>
       </div>
-      <div class="hint" id="cfgHint"></div>
+      <div class="hint" id="storeMsg"></div>
     </div>
 
-    <!-- 下拉选项：快递公司 / 情况 / 处理方式 / 结果 —— 四个下拉的选项都会随业务变，
-         别写死在代码里 —— 用户自己一行一个地加，保存进 kv。 -->
-    <div class="card" style="max-width:720px; margin-top:12px">
+    <div class="card" style="max-width:720px">
       <h2>下拉选项</h2>
-      <p class="cfg-note" style="margin-top:0">
-        登记页和处理区里四个下拉的选项，<b>一行一个</b> —— 加一行就多一个，改完点保存。
-        已经在单子上的旧值不受影响。
+      <p class="note" style="margin:0 0 8px">
+        五个下拉的选项<b>一行一个</b>，改完点保存。已经在单子上的旧值不受影响。
+        流程状态里<b>「完结」恒定在最后一项</b> —— 它是收尾步，不跟着下面这格走。
       </p>
-      <div class="optgrid">
-        <label class="f"><span>快递公司</span><textarea id="optCouriers" rows="5"></textarea></label>
-        <label class="f"><span>情况</span><textarea id="optSituations" rows="5"></textarea></label>
-        <label class="f"><span>处理方式</span><textarea id="optHandlings" rows="5"></textarea></label>
-        <label class="f"><span>结果</span><textarea id="optResults" rows="5"></textarea></label>
-        <label class="f"><span>流程状态</span><textarea id="optFlows" rows="5"></textarea></label>
+      <div class="grid24">
+        <label class="f c12"><span>快递公司</span><textarea id="optCouriers" rows="5"></textarea></label>
+        <label class="f c12"><span>情况</span><textarea id="optSituations" rows="5"></textarea></label>
+        <label class="f c12"><span>处理方式</span><textarea id="optHandlings" rows="5"></textarea></label>
+        <label class="f c12"><span>结果</span><textarea id="optResults" rows="5"></textarea></label>
+        <label class="f c12"><span>流程状态（中间步骤）</span><textarea id="optFlows" rows="5"></textarea></label>
       </div>
       <div class="r" style="margin-top:8px">
         <button class="primary" id="saveOpts">保存选项</button>
-        <span class="hint" id="optHint"></span>
+        <span class="hint" id="optMsg" style="margin:0"></span>
       </div>
     </div>
 
-    <details data-host-only style="max-width:720px; margin-top:12px">
+    <details data-host-only style="max-width:720px">
       <summary>这张表在数据库里是什么样</summary>
-      <pre id="schema">…</pre>
+      <pre class="schema" id="schema">…</pre>
     </details>
   </section>
-</div>
-<!-- 日期选择器面板（fixed 定位，脚本按输入框位置摆）—— 放在 body 末尾，
-     免得被 #view-create 的滚动容器裁掉。 -->
+</main>
+
+<!-- 日期面板：fixed 定位，放在 main 外面免得被滚动容器裁掉 -->
 <div class="dp" id="dp" hidden role="dialog" aria-label="选择日期">
   <div class="dp-head">
-    <button type="button" class="dp-nav" data-nav="-1" title="上个月" aria-label="上个月">‹</button>
-    <button type="button" class="dp-title" id="dpTitle" title="点这里换年月">2026 年 10 月</button>
-    <button type="button" class="dp-nav" data-nav="1" title="下个月" aria-label="下个月">›</button>
+    <button type="button" class="dp-nav" data-nav="-1" aria-label="上个月">‹</button>
+    <button type="button" class="dp-title" id="dpTitle">—</button>
+    <button type="button" class="dp-nav" data-nav="1" aria-label="下个月">›</button>
   </div>
   <div class="dp-body" id="dpDays">
     <div class="dp-week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
     <div class="dp-grid" id="dpGrid"></div>
   </div>
   <div class="dp-body" id="dpMonths" hidden>
-    <div class="dp-mgrid" id="dpMgrid"></div>
+    <div class="mgrid" id="dpMgrid"></div>
   </div>
   <div class="dp-foot">
-    <button type="button" class="dp-link" data-quick="0">今天</button>
-    <button type="button" class="dp-link" data-quick="-1">昨天</button>
-    <button type="button" class="dp-link" data-quick="-2">前天</button>
-    <button type="button" class="dp-link muted" data-quick="clear">清除</button>
+    <button type="button" data-quick="0">今天</button>
+    <button type="button" data-quick="-1">昨天</button>
+    <button type="button" data-quick="-2">前天</button>
+    <button type="button" data-quick="clear">清除</button>
   </div>
 </div>
 <div id="toast"></div>
@@ -706,95 +385,121 @@
 (function () {
   "use strict";
 
-  var TOOL_ID = "abnormal-ticket";     // 独立运行时的 localStorage 前缀要带它
+  var TOOL_ID = "abnormal-ticket";
   var TOOL_SOURCE = "workbench-tool";
   var HOST_SOURCE = "workbench-host";
-  var TABLE = "tickets";               // 裸表名，宿主会拼成 tool_abnormal_ticket_tickets
+  var TABLE = "tickets";               // 裸表名，宿主拼成 tool_abnormal_ticket_tickets
 
-  /* 业务字典。
-     · 五个下拉（快递公司 / 情况 / 处理方式 / 结果 / 流程状态）的选项都**可配置** ——
-       各存一份 kv，在「设置 → 下拉选项」里一行一个地改。
-       下面这些只是出厂默认；「情况」那组直接抄的用户台账（平台自动退款 /
-       退件标注 / 未揽收拦截 / 途中拦截 / 运单未达 / 退件中转（空包）/ 缺少物流）。
-     · 「流程状态」是单子的处理轨迹：每记一步落一个（名称+时间），最后一步
-       就是当前状态（见 statusOf / flowOf）。**不自动种** —— 没记流程时状态
-       仍走派生（处理方式/结果），记了第一步才由流程接管，两条机制不打架。
-     · 「状态」本身不再单独存 —— 有流程看最后一步，没流程才由
-       处理方式 / 结果 派生。三个状态名留给筛选和统计用。 */
+  /* ==================================================================
+   * 0. 小工具
+   * ================================================================== */
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+  function txt(v) { return v == null ? "" : String(v); }
+  function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+  function ymd(d) { return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()); }
+  function todayStr() { return ymd(new Date()); }
+  function newId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+  function toast(text) {
+    var box = $("toast");
+    var d = document.createElement("div");
+    d.textContent = text;
+    box.appendChild(d);
+    setTimeout(function () { if (d.parentNode) d.parentNode.removeChild(d); }, 2600);
+  }
+  /** 空下拉显成灰的「待选」。右栏是动态重建的，逐个绑监听必漏 —— 挂 document 上 */
+  function markSel(sel) {
+    if (!sel || sel.tagName !== "SELECT") return;
+    if (!sel.value) sel.classList.add("is-empty");
+    else sel.classList.remove("is-empty");
+  }
+  /** 给下拉填选项。首格是空值（显示「待选」），value 是它的原样文本 */
+  function fillSelect(sel, list, keepValue) {
+    var html = '<option value="">待选</option>';
+    for (var i = 0; i < list.length; i++) {
+      var v = txt(list[i]);
+      if (!v) continue;
+      html += '<option value="' + esc(v) + '">' + esc(v) + "</option>";
+    }
+    sel.innerHTML = html;
+    if (keepValue) sel.value = keepValue;
+    markSel(sel);
+  }
+
+  /* ==================================================================
+   * 1. 业务字典（出厂默认，都能在设置里改）
+   * ================================================================== */
   var DEFAULT_COURIERS = ["申通", "中通", "圆通"];
   var DEFAULT_SITUATIONS = ["平台自动退款", "退件标注", "未揽收拦截", "途中拦截", "运单未达", "退件中转（空包）", "缺少物流"];
   var DEFAULT_HANDLINGS = ["平台申诉", "越级申诉", "快递来源"];
   var DEFAULT_RESULTS = ["开仓中转"];
   var DEFAULT_FLOWS = ["已联系快递", "平台申诉中"];
   var STATUSES = ["待处理", "处理中", "已关闭"];
-  /** 流程的收尾步**固定叫「完结」** —— 它是终点不是普通一步：记上就封口，
-      之后不能再往这条单子上加步骤（要继续先删掉它）。下拉里它恒在最后一项，
-      不跟着「设置 → 下拉选项」走（那几格配的是中间步骤）。 */
-  var FLOW_DONE_NAME = "完结";
-  /** 判定「已完结」的口径。历史数据里记过的 已解决/已关闭/已完成 也算，
-      免得老单子一夜之间从已关闭掉回处理中。 */
+  /** 流程的收尾步**固定叫「完结」**：记上就封口，不能再加步（要继续先删掉它） */
+  var FLOW_DONE = "完结";
   var FLOW_DONE_RE = /^(?:完结|已解决|已关闭|已完成)$/;
-  function isDoneName(n) { return FLOW_DONE_RE.test(String(n || "").trim()); }
-  /** 流程名下拉：配置里的中间步骤 + 末尾恒定的「完结」。 */
-  function flowStepOptions() {
-    var mid = (cfg.flows.length ? cfg.flows : DEFAULT_FLOWS)
-      .map(function (s) { return String(s || "").trim(); })
-      .filter(function (s) { return s && !isDoneName(s); });
-    return mid.concat([FLOW_DONE_NAME]);
-  }
+  function isDoneName(n) { return FLOW_DONE_RE.test(txt(n).trim()); }
 
-  var seq = 0;
-  var waiting = new Map();
-  var ctx = null;
+  /** 台账 14 列：与宿主 Rust 那份 COLUMNS 同序同列（推送给在线表格就按这个排） */
+  var COLS = [
+    ["order_sn", "订单号", 6],
+    ["tracking_no", "快递单号", 6],
+    ["courier", "快递公司", 4],
+    ["shipped_at", "登记时间", 4],
+    ["store", "店铺", 4],
+    ["category", "情况", 4],
+    ["title", "详细描述", 8],
+    ["handling", "处理方式", 4],
+    ["result", "结果", 4],
+    ["settled", "结账", 3],
+    ["_status", "当前状态", 4],
+    ["note", "处理情况", 6],
+    ["created_at", "登记时刻", 6],
+    ["updated_at", "更新时刻", 6],
+  ];
 
   /* ==================================================================
-   * 一、宿主状态机
-   * ------------------------------------------------------------------
-   *   booting    —— 开机，还不知道自己在哪
-   *   bound      —— 收到 tool:context（或 info 的回包），在工作台里
-   *   standalone —— 超时没等到，且 parent === window：独立打开
-   *   error      —— 超时没等到，但确实被嵌在某页里：桥没接上
+   * 2. 与宿主通信（postMessage）
    * ================================================================== */
-  var LABEL = { booting: "连接中…", bound: "已连工作台", standalone: "独立运行", error: "未连接宿主" };
+  var seq = 0;
+  var waiting = new Map();
   var state = "booting";
-
   var settleResolve = null;
-  /** 状态落定（不再是 booting）时兑现，数据层要等它 */
   var settle = new Promise(function (res) { settleResolve = res; });
+
+  /** `ms`：默认 10 秒。推 / 拉要走网络（MCP 连金山），给它们单独放宽到 2 分钟 */
+  function call(op, payload, ms) {
+    var id = "r" + ++seq;
+    return new Promise(function (resolve, reject) {
+      waiting.set(id, { resolve: resolve, reject: reject });
+      parent.postMessage(
+        { source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} },
+        "*",
+      );
+      setTimeout(function () {
+        if (waiting.delete(id)) reject(new Error("宿主没有回应（" + op + "）"));
+      }, ms || 10000);
+    }).then(function (res) {
+      if (!res.ok) throw new Error(txt(res.error) || "宿主拒绝了这次请求");
+      return res.data;
+    });
+  }
 
   function setState(next) {
     state = next;
     document.body.dataset.bindState = next;
-    paintHostDot();
-    showMeta();
+    var dot = $("hostState");
+    dot.textContent = next === "bound" ? "已连工作台" : next === "standalone" ? "独立运行" : next === "error" ? "未连接宿主" : "连接中…";
+    dot.className = "dot" + (next === "bound" ? " ok" : next === "booting" ? "" : " warn");
     if (next !== "booting" && settleResolve) { var r = settleResolve; settleResolve = null; r(); }
   }
-
-  function paintHostDot() {
-    var dot = document.getElementById("hostState");
-    if (!dot) return;
-    dot.textContent = LABEL[state] || state;
-    dot.className = "host-dot" + (state === "bound" ? " ok" : state === "booting" ? "" : " warn");
-  }
-
-  /** 只在连着宿主时才发请求；独立态发出去也只会等到超时 */
   function bound() { return state === "bound"; }
-
-  /* ================= 与宿主通信 ================= */
-
-  function call(op, payload) {
-    var id = "r" + ++seq;
-    return new Promise(function (resolve, reject) {
-      waiting.set(id, { resolve: resolve, reject: reject });
-      parent.postMessage({ source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} }, "*");
-      setTimeout(function () {
-        if (waiting.delete(id)) reject(new Error("宿主没有回应（" + op + "）"));
-      }, 10000);
-    }).then(function (res) {
-      if (!res.ok) throw new Error(String(res.error || "宿主拒绝了这次请求"));
-      return res.data;
-    });
-  }
 
   window.addEventListener("message", function (e) {
     var m = e.data;
@@ -806,2297 +511,1123 @@
       return;
     }
     if (m.type === "tool:context") {
-      ctx = m.data;
-      // 主题：宿主推什么用什么。独立打开时由下面的 fallback 跟系统走
-      if (ctx && ctx.theme) document.documentElement.dataset.theme = ctx.theme;
-      // 图床通道开没开（这个工具暂时没用图床，先盖着，以后加附图就现成）
-      document.body.dataset.gallery = (ctx && ctx.gallery) ? "on" : "off";
+      if (m.data && m.data.theme) document.documentElement.dataset.theme = m.data.theme;
+      document.body.dataset.gallery = m.data && m.data.gallery ? "on" : "off";
       setState("bound");
-      bootstrapHostBits();
+      void bootHost();
       return;
     }
     if (m.type === "tool:event") {
-      // 宿主在「设置 → 数据库」里清空了这个工具的命名空间：
-      // 表会被立刻重建成空表，但界面上摆的仍是旧列表，得重新拉一次
+      // 宿主清空了这个工具的数据 / 把在线表格拉下来写进了库 —— 界面都得重画，
+      // 否则数据库变了、界面还摆着旧列表，是最容易让人以为"同步没生效"的场景
       if (m.event === "schema:reset") {
         selectedId = null;
         void load();
         toast("这段数据已被清空");
         return;
       }
-      // 宿主在「设置 → WPS 在线表格联动」里把在线表格拉下来写进了库。
-      // 少了这一句，数据库明明变了、界面还摆着旧列表 —— 两种真相对不上，
-      // 是最容易让人以为"同步没生效"的场景（与 schema:reset 同一个理由）
       if (m.event === "kwiki:pulled") {
-        void load();   // 选中不动：load() 里会自己处理"那条没了就清掉"
+        void load();
         toast("台账已从在线表格同步回来");
         return;
       }
-      toast("收到事件：" + m.event);
     }
   });
 
   /* ==================================================================
-   * 二、数据门面：一套接口，两套实现
-   * ------------------------------------------------------------------
-   * 上面那半边是宿主（row.*），下面那半边是独立运行时的 localStorage。
-   * 调用方（load / add / remove / saveNote / saveProcField）只认这个门面。
+   * 3. 数据门面：一套接口，两套实现（宿主 row.* / 独立态 localStorage）
    * ================================================================== */
+  var rows = [];          // 全量（台账量级：几百到几千，一次拉全最简单也最不容易错）
+  var selectedId = null;
+  var LS_ROWS = "wbtool:" + TOOL_ID + ":rows";
 
-  var memFallback = Object.create(null);
-  var storageOk = true;
-  function keyOf(table) { return "wbtool:" + TOOL_ID + ":t:" + table; }
-
-  function readTable(table) {
-    try {
-      var raw = localStorage.getItem(keyOf(table));
-      storageOk = true;
-      return raw ? (JSON.parse(raw) || []) : [];
-    } catch (e) {
-      // 隐私模式 / 存储被禁：退到内存，界面上会说明"刷新即丢"
-      storageOk = false;
-      return memFallback[table] || [];
+  async function load() {
+    if (bound()) {
+      var res = await call("row.select", { table: TABLE, orderBy: "created_at", orderDir: "desc", limit: 20000 });
+      rows = (res && res.rows) || [];
+    } else {
+      try { rows = JSON.parse(localStorage.getItem(LS_ROWS) || "[]"); } catch (e) { rows = []; }
     }
+    rows = rows.map(norm);
+    renderAll();
   }
-  function writeTable(table, rows) {
-    memFallback[table] = rows;
-    try { localStorage.setItem(keyOf(table), JSON.stringify(rows)); storageOk = true; }
-    catch (e) { storageOk = false; }
+  function saveLocal() {
+    try { localStorage.setItem(LS_ROWS, JSON.stringify(rows)); } catch (e) { /* 满了就算了 */ }
   }
-
-  /* 本地兜底只实现这个工具真正用到的那几个形态：
-     等值 where / orderBy / limit —— 不写通用 SQL。 */
-  var Local = {
-    select: function (a) {
-      var rows = readTable(a.table).slice();
-      if (a.where) {
-        rows = rows.filter(function (r) {
-          return Object.keys(a.where).every(function (k) { return r[k] === a.where[k]; });
-        });
-      }
-      var col = a.orderBy || "created_at";
-      var dir = a.orderDir === "asc" ? 1 : -1;
-      rows.sort(function (x, y) {
-        var vx = String(x[col] == null ? "" : x[col]);
-        var vy = String(y[col] == null ? "" : y[col]);
-        return vx < vy ? -dir : vx > vy ? dir : 0;
-      });
-      return { rows: rows.slice(0, a.limit || rows.length) };
-    },
-    insert: function (a) {
-      var rows = readTable(a.table);
-      var at = rows.findIndex(function (r) { return r.id === a.row.id; });
-      if (at >= 0) rows[at] = a.row; else rows.push(a.row);
-      writeTable(a.table, rows);
-      return { ok: true };
-    },
-    update: function (a) {
-      var rows = readTable(a.table);
-      var at = rows.findIndex(function (r) { return r.id === a.id; });
-      if (at < 0) return { ok: false };
-      var next = {};
-      Object.keys(rows[at]).forEach(function (k) { next[k] = rows[at][k]; });
-      Object.keys(a.patch || {}).forEach(function (k) { next[k] = a.patch[k]; });
-      rows[at] = next;
-      writeTable(a.table, rows);
-      return { ok: true };
-    },
-    del: function (a) {
-      writeTable(a.table, readTable(a.table).filter(function (r) { return r.id !== a.id; }));
-      return { ok: true };
-    },
-  };
-
-  /** 门面。等状态落定再决定走哪条路 —— booting 期间发请求会白等一次超时 */
-  function route(hostOp, localFn) {
-    return function (arg) {
-      return settle.then(function () {
-        if (bound()) return call(hostOp, arg);
-        // 被嵌在某页里却没接到宿主：这时候往浏览器本地写是**悄悄换了个地方存**，
-        // 用户会以为写进了工作台。宁可报错也不静默改落点。
-        if (state === "error") throw new Error("没接到工作台的回应，这条数据没有落点");
-        return localFn(arg);
-      });
-    };
-  }
-  var Db = {
-    select: route("row.select", Local.select),
-    insert: route("row.insert", Local.insert),
-    update: route("row.update", Local.update),
-    del: route("row.delete", Local.del),
-  };
-
-  /* ------------------------------------------------------------------
-   * 配置：一张店铺表（店铺名 + 各自的客服 ID）
-   *
-   * ★ 为什么是"一张表"而不是"当前客服 ID"一个值：
-   *   用户有 8 个店铺，每条单属于其中一个，呼起时必须用**那个店的** mallcsid。
-   *   只留一个全局值的话，每次呼起前都得手动切一次 —— 切错了那个链接照样弹起
-   *   客户端、只是定位不到订单，界面上一点报错都没有。那是这个工具里最难查的症状。
-   *
-   * 存哪：kv（宿主 core_tool_kv / 独立态 localStorage）。
-   *   kv 是给"配置"准备的、tickets 表是给"记录"准备的 —— 店铺表是配置，单子是记录。
-   * ------------------------------------------------------------------ */
-  var cfg = { stores: [], couriers: [], situations: [], handlings: [], results: [], flows: [] };
-  var STORE_KEY = "stores";
-  // 四组下拉选项各存一份 kv（situations 沿用旧键名，老配置直接升级上来）
-  var OPT_KEYS = { couriers: "couriers", situations: "situations", handlings: "handlings", results: "results", flows: "flows" };
-  // 每组选项：kv 键 → 出厂默认 → 页面上的编辑框 → 要刷新的下拉（处理区那两个
-  // 由 renderDetail 每次重画，不用在这里刷）
-  var OPT_DEFS = [
-    { key: "couriers",   box: "optCouriers",   defaults: DEFAULT_COURIERS,   label: "快递公司", sels: ["courier"] },
-    { key: "situations", box: "optSituations", defaults: DEFAULT_SITUATIONS, label: "情况",     sels: ["category"] },
-    { key: "handlings",  box: "optHandlings",  defaults: DEFAULT_HANDLINGS,  label: "处理方式", sels: [] },
-    { key: "results",    box: "optResults",    defaults: DEFAULT_RESULTS,    label: "结果",     sels: [] },
-    // 流程状态：详情页「记录一步」的下拉用它。它不是"选一个值"而是"记一步轨迹"，
-    // 所以没有 sels —— 登记页那个下拉跟它无关。
-    { key: "flows",      box: "optFlows",      defaults: DEFAULT_FLOWS,      label: "流程状态", sels: [] },
-  ];
-  /**
-   * 已经**实测确认**的 (店铺名, 客服 ID)。两个都是用户给的 ERP 链接里读出来的：
-   *   · 5 店 `cs_355831479` —— 还实测过：拼上另一个订单号，客户端确实打开了那张单
-   *   · 6 店 `cs_671782974`
-   * 其余留空，等用户把 ERP 的链接粘到「设置」页（不用知道 ID）。
-   */
-  var KNOWN_STORES = [
-    { name: "拼多多5店", mallcsid: "cs_355831479" },
-    { name: "拼多多6店", mallcsid: "cs_671782974" },
-  ];
-  function defaultStores() {
-    var out = [];
-    for (var i = 1; i <= 8; i++) {
-      out.push(KNOWN_STORES[i - 1] || { name: "店铺 " + i, mallcsid: "" });
+  function norm(r) {
+    var o = {};
+    for (var i = 0; i < COLS.length; i++) {
+      var k = COLS[i][0];
+      if (k === "_status") continue;      // 派生列不存库
+      o[k] = txt(r[k]);
     }
-    return out;
+    o.id = txt(r.id);
+    o.flow = txt(r.flow);
+    o.remind_at = txt(r.remind_at);
+    o.remind_task = txt(r.remind_task);
+    return o;
   }
-
-  var LocalCfg = {
-    get: function (a) {
-      try { return { value: localStorage.getItem(cfgKey(a && a.key)) }; } catch (e) { return { value: null }; }
-    },
-    set: function (a) {
-      try { localStorage.setItem(cfgKey(a && a.key), String(a.value)); return { ok: true }; }
-      catch (e) { return { ok: false }; }
-    },
-  };
-  function cfgKey(key) { return "wbtool:" + TOOL_ID + ":cfg:" + String(key || ""); }
-  var Cfg = {
-    get: route("kv.get", LocalCfg.get),
-    set: route("kv.set", LocalCfg.set),
-  };
-
-  /** 店铺表的解析：坏数据一律当"没配过"，不要拿半个数组去驱动界面 */
-  function parseStores(raw) {
-    if (!raw) return null;
-    var arr;
-    try { arr = JSON.parse(raw); } catch (e) { return null; }
-    if (!arr || !arr.length) return null;
-    var out = [];
-    for (var i = 0; i < arr.length; i++) {
-      var s = arr[i] || {};
-      var name = String(s.name == null ? "" : s.name).trim();
-      if (!name) continue;
-      out.push({ name: name, mallcsid: String(s.mallcsid == null ? "" : s.mallcsid).trim() });
+  async function insert(row) {
+    if (bound()) {
+      var res = await call("row.insert", { table: TABLE, row: row });
+      return norm((res && res.row) || row);
     }
-    return out.length ? out : null;
+    rows.unshift(norm(row));
+    saveLocal();
+    return rows[0];
   }
-
-  function findStore(name) {
-    var n = String(name || "").trim();
-    if (!n) return null;
-    for (var i = 0; i < cfg.stores.length; i++) if (cfg.stores[i].name === n) return cfg.stores[i];
+  async function update(id, patch) {
+    patch.updated_at = new Date().toISOString();
+    if (bound()) {
+      var res = await call("row.update", { table: TABLE, id: id, patch: patch });
+      var got = res && res.row ? norm(res.row) : null;
+      for (var i = 0; i < rows.length; i++) if (rows[i].id === id && got) rows[i] = got;
+      return got;
+    }
+    for (var j = 0; j < rows.length; j++) {
+      if (rows[j].id === id) { for (var k in patch) rows[j][k] = txt(patch[k]); }
+    }
+    saveLocal();
+    return findRow(id);
+  }
+  async function remove(id) {
+    if (bound()) await call("row.delete", { table: TABLE, id: id });
+    rows = rows.filter(function (r) { return r.id !== id; });
+    if (!bound()) saveLocal();
+  }
+  function findRow(id) {
+    for (var i = 0; i < rows.length; i++) if (rows[i].id === id) return rows[i];
     return null;
   }
 
-  /** kv 里存的选项（JSON 串）解析：坏数据一律当"没配过"，用默认那组兜底；重复项去掉 */
-  function parseStoredList(raw) {
+  /* kv：宿主那一份 + 本地镜像。
+     ★ 先同步写镜像再补写宿主：页面刚打开就写宿主 kv 会排在 settle 后面，刷新即丢。 */
+  var LS_CFG = "wbtool:" + TOOL_ID + ":cfg:";
+  function cfgGet(key) {
+    return new Promise(function (resolve) {
+      var local = null;
+      try { local = localStorage.getItem(LS_CFG + key); } catch (e) { /* ignore */ }
+      if (!bound()) { resolve(local); return; }
+      call("kv.get", { key: key })
+        .then(function (r) { resolve(r && r.value != null ? r.value : local); })
+        .catch(function () { resolve(local); });
+    });
+  }
+  function cfgSet(key, value) {
+    try { localStorage.setItem(LS_CFG + key, value); } catch (e) { /* ignore */ }
+    if (!bound()) return Promise.resolve();
+    return call("kv.set", { key: key, value: value }).catch(function () { /* 静默：镜像已在 */ });
+  }
+
+  /* ==================================================================
+   * 4. 配置（店铺表 + 五组下拉 + 列显示 + 在线表格绑定）
+   * ================================================================== */
+  var cfg = {
+    stores: [],
+    couriers: DEFAULT_COURIERS.slice(),
+    situations: DEFAULT_SITUATIONS.slice(),
+    handlings: DEFAULT_HANDLINGS.slice(),
+    results: DEFAULT_RESULTS.slice(),
+    flows: DEFAULT_FLOWS.slice(),
+  };
+  var tableCols = null;       // { order:[key…], hidden:[key…] } —— 空 = 全显示、按 COLS 顺序
+  var wps = { link: "", fileId: "", name: "", sheet: "" };
+
+  function parseList(raw) {
     if (!raw) return null;
-    var arr;
-    try { arr = JSON.parse(raw); } catch (e) { return null; }
-    if (!arr || !arr.length) return null;
-    var out = [];
-    for (var i = 0; i < arr.length; i++) {
-      var v = String(arr[i] == null ? "" : arr[i]).trim();
-      if (v && out.indexOf(v) < 0) out.push(v);
-    }
-    return out.length ? out : null;
+    try {
+      var arr = JSON.parse(raw);
+      if (!arr || !arr.length) return null;
+      var out = [];
+      for (var i = 0; i < arr.length; i++) {
+        var v = txt(arr[i]).trim();
+        if (v) out.push(v);
+      }
+      return out.length ? out : null;
+    } catch (e) { return null; }
+  }
+  function parseStores(raw) {
+    if (!raw) return null;
+    try {
+      var arr = JSON.parse(raw);
+      if (!arr || !arr.length) return null;
+      var out = [];
+      for (var i = 0; i < arr.length; i++) {
+        var s = arr[i] || {};
+        var name = txt(s.name).trim();
+        if (!name) continue;
+        out.push({ name: name, mallcsid: txt(s.mallcsid).trim() });
+      }
+      return out.length ? out : null;
+    } catch (e) { return null; }
   }
 
   async function loadCfg() {
-    var raw = null, legacy = null;
+    var defs = [
+      ["stores", "stores", parseStores],
+      ["couriers", "optCouriers", parseList],
+      ["situations", "optSituations", parseList],
+      ["handlings", "optHandlings", parseList],
+      ["results", "optResults", parseList],
+      ["flows", "optFlows", parseList],
+    ];
+    for (var i = 0; i < defs.length; i++) {
+      var raw = await cfgGet(defs[i][1]);
+      var parsed = defs[i][2](raw);
+      if (parsed) cfg[defs[i][0]] = parsed;
+    }
+    if (!cfg.stores.length) {
+      cfg.stores = [];
+      for (var s = 1; s <= 8; s++) cfg.stores.push({ name: "店铺 " + s, mallcsid: "" });
+    }
+    // 列配置：存的是「全量顺序 + 隐藏名单」，新增列自动可见（不用每次改代码补名单）
+    var tc = await cfgGet("tableCols");
+    try { tableCols = tc ? JSON.parse(tc) : null; } catch (e) { tableCols = null; }
+    var w = await cfgGet("wps.sheet");
     try {
-      var res = await Cfg.get({ key: STORE_KEY });
-      raw = res && res.value;
-      if (!raw) {
-        // 0.3.0 只配过一个客服 ID。升级上来的话把它填进第一个店铺 —— 别让人重填一遍。
-        var old = await Cfg.get({ key: "mallcsid" });
-        legacy = old && old.value;
-      }
-      // 四组下拉选项：存过就用存的，没存过用出厂默认
-      for (var i = 0; i < OPT_DEFS.length; i++) {
-        var def = OPT_DEFS[i];
-        var got = null;
-        try { var r2 = await Cfg.get({ key: OPT_KEYS[def.key] }); got = r2 && r2.value; } catch (e2) { /* 读不到用默认 */ }
-        cfg[def.key] = parseStoredList(got) || def.defaults.slice();
-      }
-    } catch (e) { /* 读不到就用默认表 */ }
-
-    var list = parseStores(raw);
-    if (!list && legacy) { list = defaultStores(); list[0].mallcsid = legacy; }
-    cfg.stores = list || defaultStores();
-
-    renderStores();
-    fillStoreSelect();
-    fillBindStore();
-    refreshOptSelects();
-    renderOptEditors();
-    fillBrowseFilters();
-    showCfgHint();
-    showSnHint();     // 订单号框初始化时是空的，这条会自己清掉
-
-    // 列配置：要在第一次真正画表格之前读回来（启动时那次 buildTableHead 用的是默认全列）。
-    // load() 与 loadCfg() 谁先回来不确定，所以这里画一次表头再顺手重画表体。
-    await loadTableCols();
-    buildTableHead();
-    renderTable();
+      var o = w ? JSON.parse(w) : null;
+      if (o && o.fileId) wps = { link: txt(o.link), fileId: txt(o.fileId), name: txt(o.name), sheet: txt(o.sheet) };
+    } catch (e) { /* 坏数据当没绑过 */ }
+    renderSettings();
+    renderCreateForm();
   }
 
-  /** 店铺表编辑区：一行 = 店铺名 + 客服 ID + 删除。
-      data-was 记着这一行**渲染时的旧名字** —— 保存时靠它算出"谁改成了什么"，
-      比按索引对齐靠得住（删一行就会让索引整体错位，那会把 A 的改名记到 B 头上）。 */
-  function renderStores() {
-    var box = document.getElementById("stores");
-    if (!box) return;
-    box.innerHTML = cfg.stores.map(function (s, i) {
-      var hasCs = !!String(s.mallcsid || "").trim();
-      var was = s.was != null ? s.was : s.name;     // 编辑期间保留"原本叫什么"，别被中途的重渲染抹掉
-      return '<div class="store-row' + (hasCs ? "" : " empty-cs") + '" data-was="' + esc(was) + '">' +
-        '<span class="idx">' + (i + 1) + "</span>" +
-        '<input class="name" value="' + esc(s.name) + '" placeholder="店铺名（你认得就行）" />' +
-        '<input class="cs" value="' + esc(s.mallcsid) + '" placeholder="客服 ID（cs_…）" />' +
-        '<button data-act="del-store" title="删掉这个店铺">×</button>' +
-      "</div>";
-    }).join("");
-  }
-
-  /** 把编辑区读回来。**与 DOM 行一一对应**（空白行也保留）—— 删行要靠索引定位，
-      跳过空行会让索引错位。要"去掉空白行"的地方走 tidyStores()。 */
-  function readStoresFromDom() {
-    var rows = document.querySelectorAll("#stores .store-row");
-    var out = [];
-    for (var i = 0; i < rows.length; i++) {
-      var csRaw = rows[i].querySelector("input.cs").value.trim();
-      // 粘进来整条链接也认 —— 客服 ID 是 ERP 生成的，用户手上只有链接
-      var hit = parseClientUrl(csRaw);
-      out.push({
-        was: rows[i].getAttribute("data-was") || "",
-        name: rows[i].querySelector("input.name").value.trim(),
-        mallcsid: hit && hit.mallcsid ? hit.mallcsid : csRaw,
-      });
-    }
-    return out;
-  }
-
-  /** 去掉完全空白的行；只填了客服 ID 的补一个默认名 */
-  function tidyStores(list) {
-    var out = [];
-    for (var i = 0; i < list.length; i++) {
-      var name = String(list[i].name || "").trim();
-      var cs = String(list[i].mallcsid || "").trim();
-      if (!name && !cs) continue;
-      out.push({ name: name || "店铺 " + (out.length + 1), mallcsid: cs });
-    }
-    return out;
-  }
-
-  async function saveCfg() {
-    var rows = readStoresFromDom();
-    var next = tidyStores(rows);
-    if (!next.length) { toast("至少留一个店铺"); return; }
-    var dup = next.map(function (s) { return s.name; }).filter(function (n, i, a) { return a.indexOf(n) !== i; });
-    if (dup.length) { toast("店铺名不能重复：" + dup[0]); return; }
-
-    // 改名要让已登记的单子跟着走 —— 单子上记的是店铺名，不跟就会变成
-    // "店铺不在表里了"、呼不起来，而用户只是把「店铺 1」改成了真名字。
-    var renamed = [];
-    for (var i = 0; i < rows.length; i++) {
-      var was = String(rows[i].was || "").trim();
-      var now = String(rows[i].name || "").trim();
-      if (was && now && was !== now) renamed.push([was, now]);
-    }
-
-    cfg.stores = next;
+  /* ==================================================================
+   * 5. 派生：状态、流程
+   * ================================================================== */
+  function parseFlow(raw) {
     try {
-      await Cfg.set({ key: STORE_KEY, value: JSON.stringify(next) });
-      var moved = await renameTickets(renamed);
-      renderStores();
-      fillStoreSelect();
-      fillBindStore();
-      fillBrowseFilters();     // 改过名的店在筛选下拉里也要跟着变
-      renderList();
-      renderDetail();
-      toast("已保存 " + next.length + " 个店铺" + (moved ? "，并把 " + moved + " 条单子换到新名字" : ""));
-    } catch (err) { toast("存不上：" + err.message); }
-  }
-
-  /** 把单子上的旧店铺名改成新名字（改名传播）。返回改了几条 */
-  async function renameTickets(pairs) {
-    var n = 0;
-    for (var i = 0; i < pairs.length; i++) {
-      var from = pairs[i][0], to = pairs[i][1];
-      var hit = allRows.filter(function (r) { return String(r.store || "") === from; });
-      for (var j = 0; j < hit.length; j++) {
-        try {
-          await Db.update({ table: TABLE, id: hit[j].id, patch: { store: to, updated_at: new Date().toISOString() } });
-          n++;
-        } catch (e) { /* 单条失败不该拖住整张表的保存 */ }
+      var arr = JSON.parse(raw || "[]");
+      if (!arr || !arr.length) return [];
+      var out = [];
+      for (var i = 0; i < arr.length; i++) {
+        var st = arr[i] || {};
+        var n = txt(st.n).trim();
+        if (!n) continue;
+        out.push({ n: n, t: txt(st.t) });
       }
+      return out;
+    } catch (e) { return []; }
+  }
+  /** 状态：记了流程看最后一步，没记流程才由 处理方式 / 结果 派生（两条机制不打架） */
+  function statusOf(r) {
+    var flow = parseFlow(r.flow);
+    if (flow.length) {
+      var last = flow[flow.length - 1];
+      if (isDoneName(last.n)) return "已关闭";
+      return last.n;
     }
-    if (n) await load();
-    return n;
+    if (txt(r.result).trim()) return "已关闭";
+    if (txt(r.handling).trim()) return "处理中";
+    return "待处理";
+  }
+  function statusClass(s) {
+    if (s === "待处理") return "s0";
+    if (s === "处理中") return "s1";
+    if (s === "已关闭") return "s2";
+    return "";
+  }
+  function keyOf(r) { return txt(r.order_sn).trim() || txt(r.tracking_no).trim(); }
+  function flowOptions() {
+    var mid = (cfg.flows.length ? cfg.flows : DEFAULT_FLOWS)
+      .map(function (s) { return txt(s).trim(); })
+      .filter(function (s) { return s && !isDoneName(s); });
+    return mid.concat([FLOW_DONE]);
   }
 
-  function fillStoreSelect() {
-    var el = document.getElementById("store");
-    if (!el) return;
-    var keep = el.value;
+  /* ==================================================================
+   * 6. 登记页
+   * ================================================================== */
+  function renderCreateForm() {
     var names = cfg.stores.map(function (s) { return s.name; });
-    el.innerHTML = names.length
-      ? names.map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + "</option>"; }).join("")
-      : '<option value="">（还没配店铺）</option>';
-    if (keep && names.indexOf(keep) >= 0) el.value = keep;   // 现场录单常常是同一个店，别每次都跳回第一个
+    fillSelect($("fStore"), names, "");
+    fillSelect($("fCourier"), cfg.couriers, "");
+    fillSelect($("fCategory"), cfg.situations, "");
+    $("fDate").value = todayStr();
+    $("todayCount").textContent = "今日已登记 " + rows.filter(function (r) {
+      return txt(r.created_at).slice(0, 10) === todayStr();
+    }).length + " 条";
   }
 
-  function showCfgHint() {
-    var el = document.getElementById("cfgHint");
-    if (!el) return;
-    var ready = cfg.stores.filter(function (s) { return String(s.mallcsid || "").trim(); }).length;
-    el.textContent = "共 " + cfg.stores.length + " 个店铺，" + ready + " 个绑好了客服 ID" +
-      (ready < cfg.stores.length
-        ? " —— 没绑的那几个用不了（黄框那几行），登记时选了它们也呼不起来。"
-        : " —— 登记时选店铺，呼起时自动用对应的那个。");
-  }
-
-  /* ---------------- 四组下拉选项（可配置，存 kv） ---------------- */
-
-  /** "一行一个"的文本 → 去空行、去重 */
-  function parseOptionList(raw) {
-    var lines = String(raw == null ? "" : raw).split("\n");
-    var out = [];
-    for (var i = 0; i < lines.length; i++) {
-      var v = lines[i].trim();
-      if (v && out.indexOf(v) < 0) out.push(v);
+  /** ERP 给的整条链接里写着订单号和客服 ID —— 粘进来一起认出来 */
+  function readErp(text) {
+    var out = { order: "", mallcsid: "" };
+    var s = txt(text).trim();
+    if (!s) return out;
+    var m = /mallcsid=([^&\s]+)/i.exec(s);
+    if (m) out.mallcsid = decodeURIComponent(m[1]);
+    var o = /ordersn=([^&\s]+)/i.exec(s);
+    if (o) out.order = decodeURIComponent(o[1]);
+    if (!out.order) {
+      var p = /(\d{6}-\d+)/.exec(s);     // 裸的 YYMMDD-数字
+      if (p) out.order = p[1];
     }
     return out;
   }
-
-  /** 一个选项下拉的 <option> 串：开头放灰色的「待选」—— 不选就保持空，
-      别把第一项悄悄记进单子。单子上的旧值就算从配置里删了也要能显示出来。
-      ★ 文案从「（没选）」改成「待选」：加括号读起来像一句报错，
-      "待选"是状态描述 —— 这格还没定，不是这格填错了。 */
-  function optOptions(list, cur) {
-    var opts = list.slice();
-    if (cur && opts.indexOf(cur) < 0) opts.push(cur);
-    return '<option value="">待选</option>' + opts.map(function (v) {
-      return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + ">" + esc(v) + "</option>";
-    }).join("");
+  /** 订单号形状：YYMMDD-数字。全角连字符 / 破折号 / 看不见的空白都先洗净 */
+  function washOrder(s) {
+    return txt(s)
+      .replace(/[\uFF0D\u2013\u2014\u2015]/g, "-")
+      .replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, "")
+      .trim();
+  }
+  function orderLooksRight(s) { return /^\d{6}-\d{4,}$/.test(s); }
+  /** 真·拼多多单号前 6 位就是下单日期（YYMMDD）—— 补成完整年份，别让人读成「26 年」 */
+  function orderDateText(s) {
+    return 2000 + Number(s.slice(0, 2)) + " 年 " + s.slice(2, 4) + " 月 " + s.slice(4, 6) + " 日";
+  }
+  /** 只有**真的一条链接**才算 ERP 命中：手打的 `261010-…` 也会撞上 `\d{6}-\d+`，
+      但那是人自己敲的单号，不该弹「已从链接里取出订单号」 */
+  function erpHit(text) {
+    var s = txt(text).trim();
+    if (!/[?&](?:ordersn|mallcsid)=/i.test(s) && !/^(?:https?|pddim):/i.test(s)) return null;
+    return readErp(s);
   }
 
-  /** 空值的下拉整体变灰（CSS 的 select.is-empty）。
-      原生 select 的"空选项"没法单独上色，只能按当前值给整个控件挂 class。
-      所有会重写 option 的地方（refreshOptSelects / renderDetail / 流程）之后都要调一次。 */
-  function markSel(el) {
-    if (!el || el.tagName !== "SELECT") return;
-    if (el.value === "") el.classList.add("is-empty");
-    else el.classList.remove("is-empty");
-  }
-  function syncSelEmpty() {
-    var list = document.querySelectorAll("select");
-    for (var i = 0; i < list.length; i++) markSel(list[i]);
-  }
-
-  /** 刷新登记页的选项下拉（配置刚读回来 / 刚保存时调）。
-      现场录单时保持已选的那项 —— 用户先选了「中通」再改选项，不该被弹回「待选」。 */
-  function refreshOptSelects() {
-    for (var i = 0; i < OPT_DEFS.length; i++) {
-      var def = OPT_DEFS[i];
-      var list = cfg[def.key].length ? cfg[def.key] : def.defaults;
-      for (var j = 0; j < def.sels.length; j++) {
-        var el = document.getElementById(def.sels[j]);
-        if (!el) continue;
-        var cur = el.value;
-        el.innerHTML = optOptions(list, "");
-        if (cur && list.indexOf(cur) >= 0) el.value = cur;
-      }
-    }
-    syncSelEmpty();
-    fillBrowseFilters();
-  }
-
-  /** 设置页的四个编辑框：一行一个。已在单子上的旧值不受影响 */
-  function renderOptEditors() {
-    for (var i = 0; i < OPT_DEFS.length; i++) {
-      var def = OPT_DEFS[i];
-      var box = document.getElementById(def.box);
-      if (!box) continue;
-      var list = cfg[def.key].length ? cfg[def.key] : def.defaults;
-      box.value = list.join("\n");
-    }
-    var hint = document.getElementById("optHint");
-    if (hint) hint.textContent = "登记页、处理区和流程「记录一步」的下拉都在用这几组选项，空着也行（那就只剩「待选」）。其中「流程状态」配的是中间步骤 —— 收尾的「完结」是内置的，不用配、也改不掉（它恒在下拉最后一项）。";
-  }
-
-  async function saveOpts() {
-    var said = [];
-    try {
-      for (var i = 0; i < OPT_DEFS.length; i++) {
-        var def = OPT_DEFS[i];
-        var box = document.getElementById(def.box);
-        var next = parseOptionList(box ? box.value : "");
-        cfg[def.key] = next;
-        await Cfg.set({ key: OPT_KEYS[def.key], value: JSON.stringify(next) });
-        said.push(def.label + " " + next.length + " 个");
-      }
-    } catch (err) { toast("存不上：" + friendlyErr(err)); return; }
-    renderOptEditors();
-    refreshOptSelects();
-    repaint();          // 筛选下拉的选项变了，过滤结果跟着对一遍
-    renderDetail();     // 右栏处理区那两个下拉也用这些选项
-    toast("已保存选项：" + said.join(" · "));
-  }
-
-  /* ---------------- 设置页：用一条链接把客服 ID 绑到某个店铺 ---------------- */
-
-  /** 「绑到」那个下拉：列出店铺表里**已经保存**的店铺 */
-  function fillBindStore(pick) {
-    var el = document.getElementById("bindStore");
-    if (!el) return;
-    var keep = pick || el.value;
-    el.innerHTML = cfg.stores.length
-      ? cfg.stores.map(function (s) {
-          var cs = String(s.mallcsid || "").trim();
-          return '<option value="' + esc(s.name) + '">' + esc(s.name) +
-            (cs ? "（" + esc(cs) + "）" : "（还没绑）") + "</option>";
-        }).join("")
-      : '<option value="">（先去下面加一个店铺）</option>';
-    if (keep) el.value = keep;
-    if (el.selectedIndex < 0 && el.options.length) el.selectedIndex = 0;
-  }
-
-  /** 读设置页那条链接，认出客服 ID 并把「绑到」指到已经在用它（如果有）的店铺 */
-  function readBindLink() {
-    var box = document.getElementById("bindHint");
-    var text = String((document.getElementById("bindLink") || {}).value || "").trim();
-    var hit = parseClientUrl(text);
-    if (!hit || !hit.mallcsid) {
-      // 粘的是订单号而不是链接：这儿要的是（客服 ID），订单号帮不上忙 —— 说清而不是只报"错"
-      var snOnly = normSn(text);
-      if (snOnly && PDD_SN_RE.test(snOnly)) {
-        box.className = "hint snhint bad";
-        box.textContent = "这是订单号，不是唤醒链接 —— 绑店铺要的是 ERP 那条链接（只有它里面有 mallcsid）。" +
-          "要登记这条单的话，去「登记」页填订单号。";
-        return null;
-      }
-      box.className = "hint snhint" + (text ? " bad" : "");
-      box.textContent = text
-        ? "这条链接里没认出客服 ID（mallcsid）—— 它应该形如 pddim:sendmsg/?OpeId=open_order&mallcsid=cs_…&ordersn=…"
-        : "";
-      return null;
-    }
-    box.className = "hint snhint ok";
-    box.textContent = "客服 ID：" + hit.mallcsid +
-      (hit.ordersn ? "（里面的订单号 " + hit.ordersn + " 用不上，绑定时只有客服 ID 有用）" : "");
-    var owner = cfg.stores.filter(function (s) {
-      return String(s.mallcsid || "").trim() === hit.mallcsid;
-    })[0];
-    if (owner) fillBindStore(owner.name);
-    return hit;
-  }
-
-  async function doBind() {
-    var msg = document.getElementById("bindMsg");
-    var hit = parseClientUrl((document.getElementById("bindLink") || {}).value);
-    if (!hit || !hit.mallcsid) { msg.textContent = "先在上面粘一条链接，认出客服 ID 再绑。"; return; }
-    var name = document.getElementById("bindStore").value;
-    var target = findStore(name);
-    if (!target) { msg.textContent = "先在右边选一个店铺；没有合适的就去下面加一个、保存后再回来绑。"; return; }
-    var old = String(target.mallcsid || "").trim();
-    if (old === hit.mallcsid) { msg.textContent = "「" + name + "」已经就是这个客服 ID 了，不用再绑。"; return; }
-
-    target.mallcsid = hit.mallcsid;
-    try {
-      await persistStores(cfg.stores);
-      renderStores();
-      fillBindStore(name);
-      showCfgHint();
-      renderList();
-      renderDetail();
-      msg.textContent = old
-        ? "「" + name + "」的客服 ID 从 " + old + " 改成了 " + hit.mallcsid + "，已保存。"
-        : "「" + name + "」绑上了 " + hit.mallcsid + "，已保存。";
-    } catch (err) { msg.textContent = "存不上：" + friendlyErr(err); }
-  }
-
-  /** 登记页：订单号输入框下面那条实时提示 —— 边打边说它像不像拼多多单号；
-      这个单号已经登记过时，再补一句 + 一个「去看那条」的入口（重复检测） */
-  function showSnHint() {
-    var el = document.getElementById("snHint");
-    if (!el) return;
-    var raw = (document.getElementById("orderSn") || {}).value;
-    var info = snInfo(normSn(raw));
-    var dup = findDupBySn(raw);
-    var parts = [];
-    if (info.text) parts.push(esc(info.text));
-    if (dup) {
-      parts.push("已经登记过：" + esc(dup.code || "(未编号)") + "（" + esc(statusOf(dup)) + "）—— " +
-        '<a href="#" data-act="jump-dup" data-id="' + esc(dup.id) + '">去看那条</a>' +
-        (dupAck === normSn(raw) ? "；确实要再录一条，就再点一次「登记」" : ""));
-    }
-    var cls = "hint snhint" + (dup ? " bad" : info.state === "ok" ? " ok" : info.state === "weird" ? " bad" : "");
-    var next = parts.join(" · ");
-    // ★ 内容没变就别动 DOM：这个提示条挂在订单号框下面，
-    //    点提示里的链接会先让输入框失焦 → 走到这儿重绘 → <a> 被换成新的，
-    //    点击事件就落空了（真实点击实测踩过；程序化 .click() 反而看不出来）。
-    if (el.className !== cls) el.className = cls;
-    if (el.innerHTML !== next) el.innerHTML = next;
-  }
-
-  /* ---------------- 小工具 ---------------- */
-
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
-    });
-  }
-  function pad(n) { return n < 10 ? "0" + n : "" + n; }
-
-  /** ISO → "10-11 17:20"（本地时区） */
-  function timeText(iso) {
-    if (!iso) return "";
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return String(iso);
-    return pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
-  }
-  /** ISO → "2026-10-11 17:20" */
-  function fullTime(iso) {
-    if (!iso) return "—";
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return String(iso);
-    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " +
-      pad(d.getHours()) + ":" + pad(d.getMinutes());
-  }
-  /** "2026-10-09" → "2026-10-09"（原样，非法就返回空） */
-  function dayText(s) {
-    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ""));
-    return m ? m[0] : "";
-  }
-
-  var toastTimer = null;
-  function toast(text) {
-    var el = document.getElementById("toast");
-    el.textContent = text;
-    el.classList.add("on");
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { el.classList.remove("on"); }, 2600);
-  }
-
-  /** 副标题：把"数据现在存在哪"说清楚 —— 独立态说"浏览器里"，不让用户对着报错发懵 */
-  function showMeta() {
-    var el = document.getElementById("meta");
-    if (state === "standalone") {
-      el.textContent = "独立运行 · 数据存在这个浏览器里（" +
-        (storageOk ? "localStorage" : "内存，刷新即丢") + "）";
-      return;
-    }
-    if (state === "error") { el.textContent = "被嵌进了某个页面，但一直没接到工作台的回应"; return; }
-    if (state === "booting") { el.textContent = "连接中…"; return; }
-    if (!ctx) { el.textContent = "还没收到宿主的运行上下文"; return; }
-    el.textContent =
-      "存在 " + ctx.tablePrefix + TABLE + " · " +
-      (ctx.driver === "sqlite" ? "SQLite" : "内存库") +
-      " · schema v" + ctx.schemaVersion + " · " + (ctx.runtime === "desktop" ? "桌面版" : "浏览器");
-  }
-
-  /* ---------------- 状态 ---------------- */
-  // （0.7.0 起没有"YC- 自动编号"了 —— 台账认的是快递单号 / 订单号，
-  //   再造一套内部编号反而是第二套要人维护的记号。）
-
-  var allRows = [];      // 最近一次从库里拉回来的全部
-  var shown = [];        // 左栏当前显示的那些（过滤后）
-  var selectedId = null;
-  var dupAck = "";       // 重复单号「再点一次登记」的确认位：记着已经确认过的那个订单号
-
-  function findRow(id) {
-    return allRows.filter(function (r) { return r.id === id; })[0] || null;
-  }
-  /** 按订单号找已有单子（两边都先洗过再比）—— 重复登记检测用 */
-  function findDupBySn(sn) {
-    var s = normSn(sn);
-    if (!s) return null;
-    for (var i = 0; i < allRows.length; i++) {
-      if (normSn(allRows[i].order_sn) === s) return allRows[i];
+  /* 重复单号的「再点一次」确认位：记着已经提示过的那个订单号。
+     ★ 形状存疑**不设确认位** —— 它不拦人（用户自己的台账里有大把 16/19 位纯数字），
+     只在提示条上说一句；真要拦的是"同一单号录两遍"。 */
+  var dupAck = "";
+  function findDup(order) {
+    if (!order) return null;
+    for (var i = 0; i < rows.length; i++) {
+      if (washOrder(rows[i].order_sn) === order) return rows[i];
     }
     return null;
   }
-  /** 流程记录：flow 列存 JSON 数组 [{n: 名称, t: ISO 时刻}]，按记的顺序排列。
-      坏数据一律当空 —— 老行根本没有这一列，手改坏的也别让界面崩。 */
-  function parseFlow(raw) {
-    try {
-      var arr = JSON.parse(String(raw || "[]"));
-      if (!Array.isArray(arr)) return [];
-      return arr
-        .filter(function (s) { return s && typeof s.n === "string" && s.n.trim(); })
-        .map(function (s) { return { n: String(s.n).trim(), t: String(s.t || "") }; });
-    } catch (e) { return []; }
-  }
-  function flowOf(r) { return parseFlow(r && r.flow); }
-  /** 这条单子的流程封口了吗 —— 最后一步是「完结」就算（之后不许再加步）。 */
-  function flowDone(r) {
-    var fl = flowOf(r);
-    return fl.length > 0 && isDoneName(fl[fl.length - 1].n);
-  }
-
-  /** 当前状态：有流程看**最后一步**的名称（流程是用户亲手记的轨迹，最诚实）；
-      没记过流程才退回派生 —— 补了结果 → 已关闭，补了处理方式 → 处理中，否则待处理。 */
-  function statusOf(r) {
-    var fl = flowOf(r);
-    if (fl.length) return fl[fl.length - 1].n;
-    if (String(r.result || "").trim()) return "已关闭";
-    if (String(r.handling || "").trim()) return "处理中";
-    return "待处理";
-  }
-  /** 统计与划线的归桶：流程名是配置来的，只有这三个桶认得出 ——
-      待处理 / 处理中照旧，流程名带「已解决/已关闭/已完成」算已关闭，
-      走到别的名字上一律算「还在路上」（处理中）。 */
-  function bucketOf(r) {
-    var st = statusOf(r);
-    if (st === "待处理" || st === "处理中") return st;
-    return FLOW_DONE_RE.test(st) ? "已关闭" : "处理中";
-  }
-  function badgeOf(status) {
-    var cls = status === "待处理" ? "wait" : FLOW_DONE_RE.test(status) ? "done" : "doing";
-    return '<span class="badge ' + cls + '">' + esc(status) + "</span>";
-  }
-
-  /* ---------------- 渲染：左栏列表 ---------------- */
-
-  function renderList() {
-    var el = document.getElementById("list");
-    if (!allRows.length) {
-      el.innerHTML = '<div class="empty" style="padding:26px 8px">还没有登记过异常单。</div>';
-      return;
-    }
-    if (!shown.length) { el.innerHTML = '<div class="empty" style="padding:26px 8px">没有符合条件的单号。</div>'; return; }
-
-    el.innerHTML = shown.map(function (r) {
-      var st = statusOf(r);
-      var sn = String(r.order_sn || "").trim();
-      // 有订单号的行直接挂一个「↗」—— 不用先选中、再点右栏，扫单时一条条点着走。
-      // 按钮的提示分三种：能呼起（说清打开哪一单、哪个店）、单号形状可疑（照样能点，
-      // 但要说清"可能定位不到"）、以及压根呼不起来（说清缺什么）。
-      var snState = snInfo(sn);
-      var wakeTip = buildClientUrl(r.order_sn, r.store)
-        ? (snState.ok
-            ? "呼起商家版打开 " + sn + "（" + String(r.store || "").trim() + "）"
-            : snState.text)
-        : whyNoClient(r.order_sn, r.store);
-      var wake = sn
-        ? '<button class="wake" data-act="open-client" data-sn="' + esc(sn) + '"' +
-          ' data-store="' + esc(String(r.store || "")) + '"' +
-          ' title="' + esc(wakeTip) + '">↗</button>'
-        : "";
-      // 第一行 = 台账的 A 列：快递单号（没填就退到订单号），旁边挂快递公司小标签。
-      // 第二行 = 状态 + 店铺 + 情况 + 描述（状态标签不能回第一行 —— 0.6.2 踩过）。
-      var mainSn = String(r.tracking_no || "").trim() || sn;
-      // 提醒标记：设了提醒就在行上挂一个 ⏰（到点了变红）——
-      // 不用点开详情，扫列表就知道哪几条在等提醒。
-      var remindTag = "";
-      var remindAt = String(r.remind_at || "").trim();
-      if (remindAt) {
-        var fired = new Date(remindAt).getTime() <= Date.now();
-        remindTag = '<span class="remind-tag' + (fired ? " due" : "") + '" title="' +
-          (fired ? "提醒已到点 —— 工作台待办里应该已经标记" : "已设提醒：" + fullTime(remindAt)) +
-          '">⏰ ' + (fired ? "到点了" : timeText(remindAt)) + "</span>";
-      }
-      return '<div class="ticket' + (bucketOf(r) === "已关闭" ? " s-done" : "") + '" data-ticket data-id="' + esc(r.id) + '"' +
-        ' role="option" aria-selected="' + (r.id === selectedId ? "true" : "false") + '">' +
-        '<div class="l1">' +
-          '<span class="code">' + esc(mainSn || "(无单号)") + "</span>" +
-          (String(r.courier || "").trim() ? '<span class="courier-tag">' + esc(r.courier) + "</span>" : "") +
-          wake +
-          '<span class="when">' + timeText(r.created_at) + "</span>" +
-        "</div>" +
-        '<div class="title">' +
-          badgeOf(st) +
-          remindTag +
-          (String(r.store || "").trim() ? '<span class="store-tag">' + esc(r.store) + "</span>" : "") +
-          (String(r.category || "").trim() ? '<span class="cat-tag">' + esc(r.category) + "</span>" : "") +
-          esc(r.title || "(无描述)") + "</div>" +
-      "</div>";
-    }).join("");
-  }
-
-  function renderStats() {
-    var el = document.getElementById("stats");
-    var n = function (s) { return allRows.filter(function (r) { return bucketOf(r) === s; }).length; };
-    el.innerHTML = "共 <b>" + allRows.length + "</b> 条 · 待处理 <b>" + n("待处理") +
-      "</b> · 处理中 <b>" + n("处理中") + "</b> · 已关闭 <b>" + n("已关闭") + "</b>";
-  }
-
-  /* ---------------- 渲染：表格页（只读） ----------------
-     列 = lib/kwiki.ts 的 COLUMNS，顺序也一样 —— 那张表就是这套联动的
-     「线上那一份」，程序里这一份要能一一对上（列名、列序、派生状态的口径）。
-     改这里时务必同步 kwiki.ts / wps.rs / sync-ledger.py 三处的列定义。 */
-  var TABLE_COLS = [
-    { key: "order_sn", label: "订单号", w: 160, mono: true },
-    { key: "tracking_no", label: "快递单号", w: 132, mono: true },
-    { key: "courier", label: "快递公司", w: 84 },
-    // 列名跟 WPS 台账那张表走（表头写的「发货时间」），跟登记页的「登记时间」是同一列
-    { key: "shipped_at", label: "发货时间", w: 96, mono: true },
-    { key: "store", label: "店铺", w: 82 },
-    { key: "category", label: "情况", w: 84 },
-    { key: "title", label: "详细描述", w: 200 },
-    { key: "handling", label: "处理方式", w: 100 },
-    { key: "result", label: "结果", w: 100 },
-    { key: "settled", label: "结账", w: 58 },
-    { key: "_status", label: "当前状态", w: 92 },
-    { key: "note", label: "处理情况", w: 160 },
-    { key: "created_at", label: "登记时间", w: 104, mono: true, time: true },
-    { key: "updated_at", label: "更新时间", w: 104, mono: true, time: true },
-  ];
-
-  /* ---------------- 表格页的列配置 ----------------
-     用户能挑显示哪些列、按什么顺序摆。存 kv（键 tableCols），与店铺表同一套。
-     ★ 存的是「全量顺序 + 隐藏名单」两份，不是「可见列清单」：
-       这样表里将来新增一列时，老配置也能把它带出来（可见、追加在末尾），
-       不会出现「升级后新列永远藏着」。
-     ★ 至少留一列 —— 全隐藏后表格只剩一条空线，用户会以为数据全没了。 */
-  var TABLE_COL_KEY = "tableCols";
-  var tableColOrder = TABLE_COLS.map(function (c) { return c.key; });
-  var tableColHidden = {};
-
-  function defaultColOrder() {
-    return TABLE_COLS.map(function (c) { return c.key; });
-  }
-
-  /** 把存下来的配置收敛成可用的形状：未知键丢掉、缺的列补到末尾、顺序去重 */
-  function normalizeColState(saved) {
-    var valid = {};
-    var order = [], hidden = {};
-    TABLE_COLS.forEach(function (c) { valid[c.key] = true; });
-    if (saved && saved.order && saved.order.length) {
-      saved.order.forEach(function (k) {
-        if (valid[k] && order.indexOf(k) < 0) order.push(k);
-      });
-    }
-    if (saved && saved.hidden && saved.hidden.length) {
-      saved.hidden.forEach(function (k) { if (valid[k]) hidden[k] = true; });
-    }
-    TABLE_COLS.forEach(function (c) { if (order.indexOf(c.key) < 0) order.push(c.key); });
-    return { order: order, hidden: hidden };
-  }
-
-  /** 当前真正要画的列（保持用户排的顺序） */
-  function activeCols() {
-    var byKey = {};
-    TABLE_COLS.forEach(function (c) { byKey[c.key] = c; });
-    return tableColOrder.filter(function (k) { return !tableColHidden[k]; })
-      .map(function (k) { return byKey[k]; })
-      .filter(Boolean);
-  }
-
-  async function loadTableCols() {
-    var raw = null;
-    // ★ 先读本地那份：独立态它就是权威；宿主态它是镜像。
-    //   反过来先等 Cfg.get 的话，页面刚打开那几百毫秒里 settle 还没兑现，
-    //   整个 loadCfg 会被吊在半空（店铺表也会跟着晚到）。
-    try { raw = LocalCfg.get({ key: TABLE_COL_KEY }).value; } catch (e) { /* 读不到往下走 */ }
-    if (!raw) {
-      try {
-        var res = await Cfg.get({ key: TABLE_COL_KEY });
-        raw = res && res.value;
-      } catch (e2) { /* 宿主没回应 → 用默认全部列 */ }
-    }
-    if (!raw) return;
-    try {
-      var st = normalizeColState(JSON.parse(raw));
-      tableColOrder = st.order;
-      tableColHidden = st.hidden;
-    } catch (e3) { /* 解析不了 → 用默认全部列 */ }
-  }
-
-  function saveTableCols() {
-    var payload = JSON.stringify({ order: tableColOrder, hidden: Object.keys(tableColHidden) });
-    // 本地镜像是同步写的，**一定落得下去**：页面刚打开就改列时，宿主握手可能
-    // 还没完成，只走 Cfg.set 的回调会被排队 —— 用户一刷新就回到默认。
-    try { LocalCfg.set({ key: TABLE_COL_KEY, value: payload }); } catch (e) { /* ignore */ }
-    var writeHost = function () {
-      if (!bound()) return;
-      // 宿主态再写一份到工作台的 kv（换台机器/清浏览器缓存也还在）
-      try { Cfg.set({ key: TABLE_COL_KEY, value: payload }); } catch (e2) { /* ignore */ }
-    };
-    if (bound()) writeHost();
-    // 刚打开就改列时握手还没完成：等状态落定再补一次，别只留在本地镜像里
-    else settle.then(writeHost);
-  }
-
-  /** 列头、colgroup 与整表最小宽度都从当前可见列重建 */
-  function buildTableHead() {
-    var cols = activeCols();
-    var total = 0;
-    document.getElementById("tableCols").innerHTML = cols.map(function (c) {
-      total += c.w;
-      return '<col style="width:' + c.w + 'px">';
-    }).join("");
-    document.getElementById("tableHead").innerHTML = "<tr>" + cols.map(function (c) {
-      return "<th>" + esc(c.label) + "</th>";
-    }).join("") + "</tr>";
-    // min-width 跟着可见列走：隐藏一半列还留着 1556px 的话，等于白白横向滚
-    var table = document.querySelector("#view-table table.ledger");
-    if (table) table.style.minWidth = total + "px";
-    document.getElementById("colCount").textContent = cols.length + "/" + TABLE_COLS.length;
-  }
-
-  /** 列配置面板：勾选显示/隐藏，↑↓ 调顺序 */
-  function renderColPanel() {
-    var panel = document.getElementById("colPanel");
-    var byKey = {};
-    TABLE_COLS.forEach(function (c) { byKey[c.key] = c; });
-    panel.innerHTML = tableColOrder.map(function (k, i) {
-      var c = byKey[k];
-      if (!c) return "";
-      var on = !tableColHidden[k];
-      return '<div class="crow">' +
-        '<label><input type="checkbox" data-col="' + esc(k) + '"' + (on ? " checked" : "") + ">" +
-        esc(c.label) + "</label>" +
-        '<button type="button" data-act="up" data-col="' + esc(k) + '" title="上移"' +
-        (i === 0 ? " disabled" : "") + ">↑</button>" +
-        '<button type="button" data-act="down" data-col="' + esc(k) + '" title="下移"' +
-        (i === tableColOrder.length - 1 ? " disabled" : "") + ">↓</button>" +
-        "</div>";
-    }).join("") +
-      '<div class="cfoot">' +
-      '<button type="button" data-act="all">全选</button>' +
-      '<button type="button" data-act="reset">恢复默认</button>' +
-      "</div>";
-  }
-
-  function afterColsChanged() {
-    saveTableCols();
-    buildTableHead();
-    renderTable();
-    renderColPanel();
-  }
-
-  /** 表格页的搜索：与「查看」页那个搜索同样的覆盖范围（外加店铺） */
-  function tableVisibleRows() {
-    var q = document.getElementById("tableSearch").value.trim().toLowerCase();
-    if (!q) return allRows;
-    return allRows.filter(function (r) {
-      return [r.order_sn, r.tracking_no, r.courier, r.store, r.category, r.title,
-        r.handling, r.result, r.note].some(function (v) {
-        return String(v || "").toLowerCase().indexOf(q) >= 0;
-      });
-    });
-  }
-
-  function renderTable() {
-    var body = document.getElementById("tableBody");
-    var stats = document.getElementById("tableStats");
-    var rows = tableVisibleRows();
-    var cols = activeCols();
-    if (!allRows.length) {
-      body.innerHTML = '<tr class="empty-row"><td colspan="' + cols.length +
-        '">还没有登记过异常单。</td></tr>';
-      stats.textContent = "";
-      return;
-    }
-    if (!rows.length) {
-      body.innerHTML = '<tr class="empty-row"><td colspan="' + cols.length +
-        '">没有符合条件的单号。</td></tr>';
-    } else {
-      body.innerHTML = rows.map(function (r) {
-        return '<tr data-id="' + esc(r.id) + '">' + cols.map(function (c) {
-          var raw = String(r[c.key] == null ? "" : r[c.key]).trim();
-          var html, tip = "";
-          if (c.key === "_status") {
-            var st = statusOf(r);
-            html = badgeOf(st);
-            tip = st;
-          } else if (c.key === "settled") {
-            html = raw === "1" ? '<span class="settle-ok">已结</span>' : '<span class="nil">—</span>';
-            tip = raw === "1" ? "已结账" : "未结账";
-          } else if (!raw) {
-            html = '<span class="nil">—</span>';
-          } else if (c.time) {
-            html = esc(fullTime(raw));
-            tip = raw;
-          } else {
-            html = esc(raw);
-            tip = raw;
-          }
-          return '<td' + (c.mono ? ' class="mono"' : "") +
-            (tip ? ' title="' + esc(tip) + '"' : "") + ">" + html + "</td>";
-        }).join("") + "</tr>";
-      }).join("");
-    }
-    stats.innerHTML = "共 <b>" + rows.length + "</b> 条" +
-      (rows.length === allRows.length ? "" : "（全部 " + allRows.length + " 条）") +
-      " · 点一行打开详情";
-  }
-
-  /* ---------------- 呼起本地客户端 ---------------- */
-
-  /**
-   * 判断单号像不像拼多多订单编号。
-   *
-   * 规则来自用户自己的 make-url.mjs：真·拼多多订单编号是 `YYMMDD-数字`
-   * （例：261010-257666640262557），前 6 位就是下单日期。
-   * 不符合这个形状的（比如一长串纯数字）客户端**照样会弹起来，但定位不到那张订单** ——
-   * 那是最难查的症状，所以界面上要提前说一句。
-   */
-  var PDD_SN_RE = /^\d{6}-\d+$/;
-  function snInfo(sn) {
-    var s = String(sn || "").trim();
-    if (!s) return { state: "empty", ok: false, text: "" };
-    if (PDD_SN_RE.test(s)) {
-      // 单号前 6 位就是下单日期（YYMMDD）—— 补成完整年份，别让人读成 "26 年"
-      var yy = Number(s.slice(0, 2));
-      var date = (2000 + yy) + " 年 " + s.slice(2, 4) + " 月 " + s.slice(4, 6) + " 日";
-      return { state: "ok", ok: true, date: date, text: "拼多多订单号，下单日期 " + date };
-    }
-    return {
-      state: "weird", ok: false,
-      text: "格式存疑：拼多多单号形如 261010-257666640262557，这一串客户端可能定位不到",
+  /** 提示条：一条共用的渲染（登记时和边打边看时都用它，免得两处说法不一致） */
+  function dupHint(dup, order) {
+    var msg = $("addMsg");
+    msg.className = "hint";
+    msg.innerHTML = '这个订单号已经登记过了 —— <a href="#" id="gotoDup" style="color:var(--accent)">去看看那条</a>'
+      + (orderLooksRight(order) ? "" : "（形状存疑：应该是 6 位日期-数字，客户端可能定位不到）")
+      + (dupAck === order ? "" : " —— 确实要再录一条，就再点一次「登记」");
+    var a = $("gotoDup");
+    if (a) a.onclick = function (ev) {
+      ev.preventDefault();
+      selectedId = dup.id;
+      setTab("browse");
+      renderDetail();
     };
   }
-
-  /**
-   * 把从各处粘来的订单号收拾干净，再拿去判形状。
-   *
-   * 现实里单号很少是干净的：从聊天 / 表格 / ERP 里复制过来常常带着
-   * 全角连字符（－）、长短破折号（—–）、不可见空白（\u00A0 / \u200B）、首尾空格，
-   * 甚至整条 pddim 链接。这些都会让 `/^\d{6}-\d+$/` 判不过，界面上只显示一句
-   * 「格式存疑」—— 而单号其实一点问题都没有，用户只会觉得工具在骗他。
-   */
-  function normSn(raw) {
-    var s = String(raw == null ? "" : raw);
-    var hit = parseClientUrl(s);            // 万一整条唤醒链接被粘进了订单号框
-    if (hit && hit.ordersn) return hit.ordersn;
-    // 各种"看着像连字符"的字符统一成 '-'（全角－、长短破折号、减号、波浪、片假名长音）
-    s = s.replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFF0D\uFE58\uFE63\u30FC\uFF5E\u301C~]/g, "-");
-    s = s.replace(/[\u00A0\u1680\u2000-\u200D\u202F\u205F\u3000\uFEFF]/g, " ");   // 各种空白 → 普通空格
-    return s.trim().replace(/\s+/g, "");
-  }
-
-  /** 快递单号：没有严格形状（各家快递不一样），只把看不见的空白和夹带的空格清掉 */
-  function normTracking(raw) {
-    return String(raw == null ? "" : raw)
-      .replace(/[\u00A0\u1680\u2000-\u200D\u202F\u205F\u3000\uFEFF]/g, " ")
-      .trim().replace(/\s+/g, "");
-  }
-
-  /**
-   * 从一条 pddim 链接里抠出 mallcsid 与 ordersn。
-   *
-   * ★ 为什么需要它：**客服 ID 是 ERP 生成的，用户没法凭空知道**。
-   * 但那条链接是 ERP 给的、里面本来就写着 mallcsid 和 ordersn ——
-   * 所以正门是"把链接粘进来"，不是"请填客服 ID"。
-   * 两处都走这个函数：登记页的「ERP 链接」框、店铺表里的「客服 ID」框。
-   *
-   * 认不出来（不是 pddim / 没有这两个参数）返回 null，调用方给一句人话。
-   */
-  function parseClientUrl(raw) {
-    var s = String(raw || "").trim();
-    if (s.indexOf("pddim:") !== 0) return null;
-    var cs = /[?&]mallcsid=([^&\s]+)/i.exec(s);
-    var sn = /[?&]ordersn=([^&\s]+)/i.exec(s);
-    if (!cs && !sn) return null;
-    var dec = function (v) {
-      try { return decodeURIComponent(v); } catch (e) { return v; }
-    };
-    return {
-      mallcsid: cs ? dec(cs[1]).trim() : "",
-      ordersn: sn ? dec(sn[1]).trim() : "",
-    };
-  }
-
-  /** 存店铺表（从登记页认链接时也要落盘，否则刷新就没了） */
-  async function persistStores(list) {
-    // 只写该存的字段：列表在编辑期间会带上临时的 was（见 renderStores），别把它也写进 kv
-    var clean = list.map(function (s) { return { name: s.name, mallcsid: s.mallcsid }; });
-    await Cfg.set({ key: STORE_KEY, value: JSON.stringify(clean) });
-  }
-
-  /** 给新店铺挑一个不撞车的默认名 */
-  function nextStoreName(list) {
-    var n = list.length + 1;
-    while (list.some(function (s) { return s.name === "店铺 " + n; })) n++;
-    return "店铺 " + n;
-  }
-
-  /**
-   * 认店铺：把链接里的客服 ID 落到店铺表上，并把登记页的店铺选中它。
-   *
-   * ★ 为什么是"粘链接"而不是"填客服 ID"：**客服 ID 是 ERP 生成的、用户凭空
-   * 不知道**，但它写在 ERP 给的每一条唤醒链接里（mallcsid=cs_…）。把链接粘进
-   * 订单号框，订单号与店铺一起就有了 —— 不用人去认 ID、也不用再手选店铺。
-   *
-   * 落位的顺序（都是"尽量不打扰用户"）：
-   *   ① 表里已经有这个客服 ID → 直接选中那个店
-   *   ② 当前选中的店铺还空着客服 ID → 就填它
-   *   ③ 表里还有别的空行 → 填第一个空行
-   *   ④ 全填满了 → 新建一个店，等用户改名
-   * 不做"静默地改一堆东西"：每一步都返回一句话，由调用方说给用户听。
-   * 写不进配置时**抛错**，让调用方去兜（提示"存不上"）。
-   */
-  async function applyLinkStore(mallcsid) {
-    var cs = String(mallcsid || "").trim();
-    if (!cs) return "";
-    var known = cfg.stores.filter(function (s) { return String(s.mallcsid || "").trim() === cs; })[0];
-    if (known) {
-      document.getElementById("store").value = known.name;
-      return "店铺「" + known.name + "」";
-    }
-    var cur = findStore(document.getElementById("store").value);
-    var target = (cur && !String(cur.mallcsid || "").trim()) ? cur : null;
-    if (!target) target = cfg.stores.filter(function (s) { return !String(s.mallcsid || "").trim(); })[0];
-    if (target) {
-      target.mallcsid = cs;
-      await persistStores(cfg.stores);
-      renderStores();
-      fillStoreSelect();
-      document.getElementById("store").value = target.name;
-      return "客服 ID " + cs + " 记到了「" + target.name + "」";
-    }
-    var next = tidyStores(readStoresFromDom());
-    next.push({ name: nextStoreName(next), mallcsid: cs });
-    cfg.stores = next;
-    await persistStores(next);
-    renderStores();
-    fillStoreSelect();
-    document.getElementById("store").value = next[next.length - 1].name;
-    return "新加了一个店铺（" + cs + "）—— 去「设置」页给它改个名字";
-  }
-
-  /** 拼出拼多多商家版的协议链接。单号缺失、店铺没记、或那个店没配客服 ID 时返回空串 */
-  function buildClientUrl(orderSn, storeName) {
-    var sn = String(orderSn || "").trim();
-    var s = findStore(storeName);
-    var cs = s ? String(s.mallcsid || "").trim() : "";
-    if (!sn || !cs) return "";
-    return "pddim:sendmsg/?OpeId=open_order&mallcsid=" + encodeURIComponent(cs) +
-      "&ordersn=" + encodeURIComponent(sn);
-  }
-
-  /** 呼不起来的原因（一句话）。能呼起来时返回空串 —— 按钮文案和提示都从这儿取，免得两处说法不一致 */
-  function whyNoClient(orderSn, storeName) {
-    var sn = String(orderSn || "").trim();
-    var name = String(storeName || "").trim();
-    if (!sn) return "这条没填订单号 —— 呼不了";
-    if (!name) return "这条没记店铺 —— 在上面给它挑一个";
-    var s = findStore(name);
-    if (!s) return "店铺「" + name + "」不在店铺表里了 —— 去「设置」页的店铺表补上";
-    if (!String(s.mallcsid || "").trim()) return "店铺「" + name + "」还没绑客服 ID —— 去「设置」页粘一条这个店的链接绑上";
-    return "";
-  }
-
-  function clientBtns(r) {
-    var why = whyNoClient(r.order_sn, r.store);
-    if (why) {
-      return '<button disabled title="' + esc(why) + '">呼起客户端</button>' +
-        '<span class="cfg-note" style="margin:0">' + esc(why) + "</span>";
-    }
-    var url = buildClientUrl(r.order_sn, r.store);
-    return '<button class="primary" data-act="open-client" title="' + esc(url) + '">呼起客户端</button>' +
-      '<button data-act="copy-link" title="复制链接，粘到浏览器地址栏也能跳">复制链接</button>';
-  }
-
-  /** 右栏：店铺选择。单子上记的是店铺名，呼起时按它取客服 ID */
-  function storePicker(r) {
-    var cur = String(r.store || "").trim();
-    var opts = ['<option value="">（未记店铺）</option>'].concat(
-      cfg.stores.map(function (s) {
-        return '<option value="' + esc(s.name) + '"' + (s.name === cur ? " selected" : "") + ">" +
-          esc(s.name) + (String(s.mallcsid || "").trim() ? "" : "（缺客服 ID）") + "</option>";
-      }),
-    );
-    // 单子上记的店铺被从表里删掉了：把原值也列出来，别让它显示成"未记店铺"而看不出发生过什么
-    if (cur && !findStore(cur)) {
-      opts.unshift('<option value="' + esc(cur) + '" selected>' + esc(cur) + "（不在店铺表里）</option>");
-    }
-    return '<div class="store-line"><span>店铺</span><select id="d-store" data-act="set-store">' +
-      opts.join("") + "</select></div>";
-  }
-
-  /** 右栏：订单号那一条下面挂的说明（下单日期 / 格式存疑） */
-  function snDetailHint(r) {
-    var info = snInfo(r.order_sn);
-    if (!info.text) return "";
-    return '<div class="hint snhint ' + (info.ok ? "ok" : "bad") + '" style="margin:-2px 0 10px">' +
-      esc(info.text) + "</div>";
-  }
-
-  /**
-   * 呼起客户端。
-   *
-   * ⚠️ 两个坑都在这儿：
-   *   1. 用一个真的 <a> 并 .click()，**不是** location.href = url —— 自定义协议必须有
-   *      用户手势，脚本直接改 location 在部分浏览器里会被静默拦掉（什么也不发生）。
-   *   2. 工具跑在宿主的 iframe 里，那个 iframe 的 sandbox **没开 allow-top-navigation**，
-   *      所以只能让 iframe 自己导航，不能指挥顶层窗口去跳。
-   *
-   * 桌面端（WebView2）对自定义协议的支持与浏览器不同，跳不动时给一条退路：
-   * 界面上同时提供「复制链接」。
-   */
-  function openClient(orderSn, storeName) {
-    var url = buildClientUrl(orderSn, storeName);
-    if (!url) { toast(whyNoClient(orderSn, storeName) || "呼不了"); return; }
-    var a = document.createElement("a");
-    a.href = url;
-    a.rel = "noopener";
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    toast("已向「" + String(storeName || "").trim() + "」发出呼起请求 —— 没反应就点「复制链接」粘到地址栏试试");
-  }
-
-  function copyClientUrl(orderSn, storeName) {
-    var url = buildClientUrl(orderSn, storeName);
-    if (!url) { toast(whyNoClient(orderSn, storeName) || "呼不了"); return; }
-    try {
-      navigator.clipboard.writeText(url).then(
-        function () { toast("链接已复制"); },
-        function () { toast(url); },
-      );
-    } catch (e) { toast(url); }
-  }
-
-  /* ---------------- 渲染：右栏详情 / 处理区 ---------------- */
-
-  function renderDetail() {
-    var el = document.getElementById("detail");
-    var r = selectedId ? findRow(selectedId) : null;
-
-    if (!r) {
-      el.innerHTML = '<div class="empty">' +
-        (allRows.length ? "从左边挑一条单号，这里显示它的详情和处理区。" : "还没有登记过异常单，先到「登记」页加一条。") +
-        "</div>";
+  /** 边打边说：这一串像不像拼多多单号、是不是已经登记过。
+      形状不对只**提示**（红色），不拦登记 —— 拦了就是「工具不让我录」。 */
+  function showOrderHint() {
+    var msg = $("addMsg");
+    var order = washOrder($("fOrder").value);
+    if (!order) { msg.className = "hint"; msg.textContent = ""; return; }
+    var dup = findDup(order);
+    if (dup) { dupHint(dup, order); return; }
+    if (!orderLooksRight(order)) {
+      msg.className = "hint bad";
+      msg.textContent = "格式存疑：拼多多单号形如 " + todayStr().replace(/-/g, "").slice(2)
+        + "-数字，这一串客户端可能定位不到（照样能登记）";
       return;
     }
-
-    var st = statusOf(r);
-    // kv 顺序对齐用户的台账：哪一单（订单号）→ 哪个包裹（快递单号/公司/登记时间）→
-    // 什么情况 → 录入时间。**店铺不在 kv 里**：它同时是呼起的编辑入口（下面那排
-    // 快捷行里就能改），在 kv 里再写一遍就是同一个值出现两次。
-    // ★ 0.9.0：「登记时间」指手填的那个日期（shipped_at，推 WPS 落到「发货时间」列）；
-    // 系统时间戳 created_at 改叫「录入时间」—— 两个都叫登记时间会分不清哪个能改。
-    var kv = [
-      ["订单号", r.order_sn],
-      ["快递单号", r.tracking_no],
-      ["快递公司", r.courier],
-      ["登记时间", dayText(r.shipped_at)],
-      ["情况", r.category],
-      ["录入时间", fullTime(r.created_at)],
-      ["最近更新", fullTime(r.updated_at)],
-    ].map(function (pair) {
-      return "<dt>" + esc(pair[0]) + "</dt><dd>" + (pair[1] ? esc(pair[1]) : '<span style="color:var(--dim)">—</span>') + "</dd>";
-    }).join("");
-
-    el.innerHTML =
-      '<div class="d-head">' +
-        '<span class="d-code">' + esc(String(r.tracking_no || "").trim() || r.order_sn || "(无单号)") + "</span>" +
-        badgeOf(st) +
-      "</div>" +
-      '<div class="d-title">' + esc(r.title || "(无描述)") + "</div>" +
-      // 快捷行：店铺（呼起按它取客服 ID）+ 呼起/复制 + 单号说明。
-      // 拿到一条单子的动线是「看一眼 → 呼起客户端」，所以这排放最顶上，
-      // 不进 sect（不要分隔线，它是 d-title 的延伸）。
-      '<div class="quick">' + storePicker(r) + '<div class="client-row">' + clientBtns(r) + "</div>" + "</div>" +
-      snDetailHint(r) +
-      '<dl class="kv">' + kv + "</dl>" +
-      // 处理区：事后补录的主路径（补到哪状态走到哪），紧跟基本信息 ——
-      // 别让用户为补一条处理方式滚两屏
-      '<div class="sect">' +
-        '<label>处理</label>' +
-        '<div class="prorow">' +
-          '<label class="f"><span>处理方式</span><select id="d-handling">' +
-            optOptions(cfg.handlings.length ? cfg.handlings : DEFAULT_HANDLINGS, r.handling) + "</select></label>" +
-          '<label class="f"><span>结果</span><select id="d-result">' +
-            optOptions(cfg.results.length ? cfg.results : DEFAULT_RESULTS, r.result) + "</select></label>" +
-          '<label class="chk"><input type="checkbox" id="d-settled"' +
-            (r.settled === "1" ? " checked" : "") + "> 已结账</label>" +
-        "</div>" +
-        '<label for="d-note">处理情况</label>' +
-        '<textarea id="d-note" placeholder="写清怎么处理的、卡在哪、谁在跟 —— 边打边存"></textarea>' +
-      "</div>" +
-      // 流程状态：每一步都有名称和时间，最后一步就是头顶那枚徽标
-      '<div class="sect">' + flowBlock(r) + "</div>" +
-      // 提醒要落成工作台的待办 —— 独立打开没有宿主，整块藏掉（约定之二）
-      '<div class="sect" data-host-only>' + remindBlock(r) + "</div>" +
-      '<div class="d-ops">' +
-        '<button class="danger" data-act="del">删除</button>' +
-        '<span class="saved" id="d-saved"></span>' +
-      "</div>";
-
-    // 备注要先灌进去再挂监听，否则第一次输入会被自己的赋值触发
-    document.getElementById("d-note").value = r.note || "";
-    // 「记录一步」的时刻默认现在（可改——补记上午发生的事很常见）
-    var flowAt = document.getElementById("flowAt");
-    if (flowAt) flowAt.value = isoToLocalInput(new Date().toISOString());
-    // 右栏三个下拉（处理方式/结果/流程步）刚重建，空值的挂回灰色「待选」样式
-    syncSelEmpty();
+    msg.className = "hint";
+    msg.textContent = "拼多多订单号，下单日期 " + orderDateText(order);
   }
-
-  function markSaved(text) {
-    var el = document.getElementById("d-saved");
-    if (el) el.textContent = text;
-  }
-
-  /* ================ 流程状态 与 提醒 ================ */
-
-  /** ISO → datetime-local 的值（本地时区）。反向用 localInputToIso。
-      浏览器解析 "yyyy-MM-ddTHH:mm" 时按**本地**时区算，正好是用户在框里看到的时刻。 */
-  function isoToLocalInput(iso) {
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    return "" + d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
-      "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
-  }
-  function localInputToIso(v) {
-    var d = new Date(String(v || ""));
-    return isNaN(d.getTime()) ? "" : d.toISOString();
-  }
-
-  /** 详情页的「流程状态」块：已走的步（最后一步标当前）+ 记下一步的一行 */
-  function flowBlock(r) {
-    var steps = flowOf(r);
-    var done = flowDone(r);
-    var listHtml = steps.length
-      ? steps.map(function (s, i) {
-          var last = i === steps.length - 1;
-          var isDone = isDoneName(s.n);
-          return '<div class="flow-step' + (last ? " cur" : "") + (isDone ? " fin" : "") +
-              '" data-flow-step="' + i + '">' +
-            '<span class="flow-name">' + esc(s.n) + (isDone ? " · 收尾" : last ? " · 当前" : "") + "</span>" +
-            '<span class="flow-time">' + esc(fullTime(s.t)) + "</span>" +
-            '<button class="flow-del" data-act="flow-del" data-idx="' + i + '" title="删掉这一步（记错了用）">✕</button>' +
-          "</div>";
-        }).join("")
-      : '<div class="flow-empty">还没记过流程 —— 下面选一步记上，头顶的状态就跟着走。</div>';
-    // 封口后不给录入行：要继续记，先删掉「完结」那一步（这就是"最后一步必须是完结"的另一半）
-    var addHtml = done
-      ? '<div class="flow-closed">已完结 —— 这条不用再跟了。要补步骤，先删掉上面那一步。</div>'
-      : '<div class="flow-add">' +
-          '<select id="flowName" title="记哪一步 —— 中间步骤在「设置 → 下拉选项 → 流程状态」里配；' +
-            '「完结」恒在最后，选它就封口">' +
-            optOptions(flowStepOptions(), "") + "</select>" +
-          '<input type="datetime-local" id="flowAt" title="这一步发生的时刻，默认现在" />' +
-          '<button data-act="flow-add">记录一步</button>' +
-        "</div>";
-    return "<label>流程状态</label>" +
-      '<div class="flow-list">' + listHtml + "</div>" +
-      addHtml;
-  }
-
-  /** 详情页的「提醒」块：设定 / 取消。订下的提醒落在工作台待办里
-      （带「来自异常单号登记」的来源标记），到点由宿主的提醒机制弹卡。 */
-  function remindBlock(r) {
-    var set = String(r.remind_at || "").trim();
-    var fired = false;
-    if (set) {
-      var t = new Date(set).getTime();
-      fired = !isNaN(t) && t <= Date.now();
-    }
-    var stateText = !set
-      ? "还没设提醒。设了之后，工作台的待办里会多一条带来源标记的单子，到点弹提醒卡。"
-      : fired
-        ? "⏰ 已到点 —— 待办里那条应该已经标记，提醒卡片也弹了。"
-        : "已设提醒：" + fullTime(set) + "。到点后待办里那条会标记，并弹出提醒卡片。";
-    return "<label>提醒（到点后在待办里标记）</label>" +
-      '<div class="remind-row">' +
-        '<input type="datetime-local" id="remindAt" value="' + esc(set ? isoToLocalInput(set) : "") + '" />' +
-        '<button data-act="remind-set">设定提醒</button>' +
-        (set ? '<button data-act="remind-clear">取消提醒</button>' : "") +
-      "</div>" +
-      '<div class="hint" id="remindHint">' + stateText + "</div>";
-  }
-
-  /** 记一步流程。时刻空着就用现在 —— 但名称必须选（或先去设置里加）。 */
-  async function addFlowStep() {
-    if (!selectedId) return;
-    var nameEl = document.getElementById("flowName");
-    var atEl = document.getElementById("flowAt");
-    var name = nameEl ? String(nameEl.value || "").trim() : "";
-    if (!name) { toast("先选一步名称（要加选项去「设置 → 下拉选项 → 流程状态」）"); return; }
-    var t = (atEl && atEl.value) ? localInputToIso(atEl.value) : new Date().toISOString();
-    if (!t) { toast("这个时刻读不懂，清空它就用现在"); return; }
-    var row = findRow(selectedId);
-    if (!row) return;
-    var steps = flowOf(row);
-    if (steps.length && isDoneName(steps[steps.length - 1].n)) {
-      toast("这条已经「完结」了 —— 完结是最后一步。要继续补，先删掉那一步");
-      return;
-    }
-    steps.push({ n: name, t: t });
-    try {
-      var now = new Date().toISOString();
-      await Db.update({ table: TABLE, id: selectedId, patch: { flow: JSON.stringify(steps), updated_at: now } });
-      await load();
-      toast("已记一步：" + name);
-    } catch (err) { toast("没存上：" + friendlyErr(err)); }
-  }
-
-  /** 删一步流程（记错时间/点错名称的后悔药）。删完最后一步，状态退回派生。 */
-  async function delFlowStep(idx) {
-    if (!selectedId) return;
-    var row = findRow(selectedId);
-    if (!row) return;
-    var steps = flowOf(row);
-    if (idx < 0 || idx >= steps.length) return;
-    steps.splice(idx, 1);
-    try {
-      var now = new Date().toISOString();
-      await Db.update({ table: TABLE, id: selectedId, patch: { flow: JSON.stringify(steps), updated_at: now } });
-      await load();
-    } catch (err) { toast("没删掉：" + friendlyErr(err)); }
-  }
-
-  /**
-   * 订提醒：把「到点要干什么」落成工作台待办里的一条真单子。
-   *
-   * 为什么是"落成待办"而不是工具自己计时弹卡：工具页面关了计时就没了，
-   * 而待办是工作台的属地 —— 到点弹卡、能完成能推迟，全是宿主现成的机制。
-   * 那条待办带宿主盖的来源标记（界面上显示「来自工具：异常单号登记」），
-   * 用户分得清它是工具代订的。同一张单子同时只有一条提醒：
-   * 重订之前先把旧的取消（remind_task 记着上一次订的那条 id）。
-   */
-  async function bookReminder() {
-    if (!selectedId) return;
-    if (!bound()) { toast("设提醒要连着工作台 —— 独立打开时没有待办可标记"); return; }
-    var row = findRow(selectedId);
-    if (!row) return;
-    var raw = document.getElementById("remindAt").value;
-    if (!raw) { toast("先选一个提醒时间"); return; }
-    var dueIso = localInputToIso(raw);
-    if (!dueIso) { toast("这个时间读不懂，重选一次"); return; }
-
-    if (String(row.remind_task || "").trim()) {
-      try { await call("task.remind", { action: "cancel", taskId: String(row.remind_task) }); }
-      catch (e) { /* 旧的删不掉也继续 —— 新的照订，旧的到点用户自己点掉 */ }
-    }
-
-    var label = String(row.tracking_no || "").trim() || row.order_sn || "(无单号)";
-    var noteLines = [];
-    if (row.order_sn) noteLines.push("订单号：" + row.order_sn);
-    if (row.store) noteLines.push("店铺：" + row.store);
-    if (row.category) noteLines.push("情况：" + row.category);
-    if (row.title) noteLines.push("描述：" + row.title);
-    try {
-      var res = await call("task.remind", {
-        title: "⏰ 异常单提醒：" + label,
-        dueAt: dueIso,
-        ref: row.id,
-        note: noteLines.join("\n"),
-      });
-      var now = new Date().toISOString();
-      await Db.update({
-        table: TABLE, id: selectedId,
-        patch: { remind_at: dueIso, remind_task: String(res.taskId || ""), updated_at: now },
-      });
-      row.remind_at = dueIso;
-      row.remind_task = String(res.taskId || "");
-      row.updated_at = now;
-      repaint();
-      renderDetail();
-      toast("已订提醒 —— 到点会在待办「" + (res.listName || "?") + "」里标记");
-    } catch (err) { toast("提醒没订上：" + friendlyErr(err)); }
-  }
-
-  /** 取消提醒：删掉那条代订的待办（宿主只允许删本工具订的），再清本地两列。 */
-  async function cancelReminder() {
-    if (!selectedId) return;
-    var row = findRow(selectedId);
-    if (!row) return;
-    var taskId = String(row.remind_task || "").trim();
-    try {
-      if (taskId && bound()) {
-        await call("task.remind", { action: "cancel", taskId: taskId });
-      }
-      var now = new Date().toISOString();
-      await Db.update({
-        table: TABLE, id: selectedId,
-        patch: { remind_at: "", remind_task: "", updated_at: now },
-      });
-      row.remind_at = "";
-      row.remind_task = "";
-      row.updated_at = now;
-      repaint();
-      renderDetail();
-      toast("已取消提醒");
-    } catch (err) { toast("取消没成：" + friendlyErr(err)); }
-  }
-
-  /* ---------------- 读 / 写 ---------------- */
-
-  /** 左栏两个筛选下拉的选项：配置里的 ∪ 单子上实际出现过的。
-      老单子上的店 / 情况就算从配置里删了，也还能筛出来 —— 不然数据在、筛不到。 */
-  function fillBrowseFilters() {
-    var sSel = document.getElementById("storeFilter");
-    var cSel = document.getElementById("catFilter");
-    if (!sSel || !cSel) return;
-
-    var names = cfg.stores.map(function (s) { return s.name; });
-    allRows.forEach(function (r) {
-      var v = String(r.store || "").trim();
-      if (v && names.indexOf(v) < 0) names.push(v);
-    });
-    var keepS = sSel.value;
-    sSel.innerHTML = '<option value="">全部店铺</option>' + names.map(function (n) {
-      return '<option value="' + esc(n) + '">' + esc(n) + "</option>";
-    }).join("");
-    if (keepS && names.indexOf(keepS) >= 0) sSel.value = keepS;
-
-    var cats = (cfg.situations.length ? cfg.situations : DEFAULT_SITUATIONS).slice();
-    allRows.forEach(function (r) {
-      var v = String(r.category || "").trim();
-      if (v && cats.indexOf(v) < 0) cats.push(v);
-    });
-    var keepC = cSel.value;
-    cSel.innerHTML = '<option value="">全部情况</option>' + cats.map(function (n) {
-      return '<option value="' + esc(n) + '">' + esc(n) + "</option>";
-    }).join("");
-    if (keepC && cats.indexOf(keepC) >= 0) cSel.value = keepC;
-
-    // 状态筛选：三个派生态 ∪ 配置的流程名 ∪ 单子上实际走过的流程名。
-    // 「当前状态」的真身常常是流程名（statusOf 返回最后一步），
-    // 不把它们摆进下拉，"筛已解决的"就筛不到走流程的那些单子。
-    var fSel = document.getElementById("filter");
-    var stNames = STATUSES.slice();
-    flowStepOptions().forEach(function (v) {
-      if (stNames.indexOf(v) < 0) stNames.push(v);
-    });
-    allRows.forEach(function (r) {
-      var fl = flowOf(r);
-      var v = fl.length ? fl[fl.length - 1].n : "";
-      if (v && stNames.indexOf(v) < 0) stNames.push(v);
-    });
-    var keepF = fSel.value;
-    fSel.innerHTML = '<option value="*">全部状态</option>' + stNames.map(function (n) {
-      return '<option value="' + esc(n) + '">' + esc(n) + "</option>";
-    }).join("");
-    if (keepF && stNames.indexOf(keepF) >= 0) fSel.value = keepF;
-  }
-
-  function pickVisible() {
-    var q = document.getElementById("search").value.trim().toLowerCase();
-    var f = document.getElementById("filter").value;
-    var sf = (document.getElementById("storeFilter") || {}).value || "";
-    var cf = (document.getElementById("catFilter") || {}).value || "";
-    return allRows.filter(function (r) {
-      if (f && f !== "*" && statusOf(r) !== f) return false;
-      if (sf && String(r.store || "") !== sf) return false;
-      if (cf && String(r.category || "") !== cf) return false;
-      if (!q) return true;
-      return [r.order_sn, r.tracking_no, r.courier, r.title, r.category, r.handling, r.result, r.note].some(function (v) {
-        return String(v || "").toLowerCase().indexOf(q) >= 0;
-      });
-    });
-  }
-
-  function repaint() {
-    shown = pickVisible();
-    renderList();
-    renderStats();
-  }
-
-  /** 卡片右上角那颗「今日 N 条」：连录时用来确认"刚才那条真的进去了"。
-      created_at 存的是 toISOString（UTC），所以要先转回本地再比日期 ——
-      直接切字符串在晚上 8 点之后会算错一天。 */
-  function renderTodayTip() {
-    var el = document.getElementById("todayTip");
-    if (!el) return;
-    var now = new Date();
-    var key = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
-    var n = 0;
-    for (var i = 0; i < allRows.length; i++) {
-      var t = new Date(String(allRows[i].created_at || ""));
-      if (isNaN(t.getTime())) continue;
-      if (t.getFullYear() + "-" + pad(t.getMonth() + 1) + "-" + pad(t.getDate()) === key) n++;
-    }
-    // 列表只取最近 200 条：一天真录到 200 条以上时这个数是下限，不是谎报
-    el.innerHTML = n ? "今日 <b>" + n + "</b> 条" : "今日还没有登记";
-  }
-
-  async function load() {
-    try {
-      var res = await Db.select({ table: TABLE, orderBy: "created_at", orderDir: "desc", limit: 200 });
-      allRows = (res && res.rows) || [];
-      // 选中的那条要是没了（被删/被清库），把选中清掉，免得右栏挂着幽灵
-      if (selectedId && !findRow(selectedId)) selectedId = null;
-      fillBrowseFilters();     // 单子上出现过的店/情况可能变了，筛选项跟上
-      repaint();
-      renderDetail();
-      renderTable();           // 表格页是只读快照 —— 拉取/增删改之后它也必须是新的
-      renderTodayTip();
-      if (state === "standalone") showMeta();   // 读到了才知道 localStorage 通不通，副标题要跟上
-    } catch (err) {
-      document.getElementById("list").innerHTML =
-        '<div class="empty">读不到数据：' + esc(err.message) + "</div>";
-    }
-  }
-
-  async function add() {
-    var title = document.getElementById("title").value;
-    var sn = normSn(document.getElementById("orderSn").value);
-    var track = normTracking(document.getElementById("trackingNo").value);
-    // 台账上每一条都挂着「A 单号」或订单号 —— 两个都空的基本是误触，拦下来
-    if (!sn && !track) {
-      toast("订单号、快递单号至少填一个");
-      document.getElementById("orderSn").focus();
-      return;
-    }
-
-    // 同一个订单号录第二遍 90% 是手滑 —— 第一次点先拦下（提示条里有「去看那条」），
-    // 确实要再录一条（比如补发后新问题）就再点一次「登记」。
-    var dup = findDupBySn(sn);
-    if (dup && dupAck !== sn) {
-      dupAck = sn;
-      showSnHint();
-      toast("这个订单号已经登记过：" + (String(dup.tracking_no || "").trim() || dup.order_sn || "(无单号)") +
-        "（" + statusOf(dup) + "）—— 确实要再录一条，就再点一次「登记」");
-      return;
-    }
-
-    var now = new Date().toISOString();
-    try {
-      await Db.insert({
-        table: TABLE,
-        row: {
-          id: "t-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),   // ★ 主键必须自己给
-          order_sn: sn,                                                  // 存干净的，别把全角连字符带进库
-          tracking_no: track,
-          courier: document.getElementById("courier").value,
-          shipped_at: document.getElementById("shipped").value || "",
-          store: document.getElementById("store").value,
-          title: title.trim(),
-          category: document.getElementById("category").value,
-          handling: "",        // 处理方式 / 结果 / 结账是事后补的（查看页处理区），登记时先空着
-          result: "",
-          settled: "",
-          // 流程**不自动种**：没记流程时状态走派生（处理方式/结果），
-          // 用户在详情里记了第一步，最后一步才成为当前状态 —— 两条机制不打架。
-          // 提醒两列也先空着，那是查看页里订的。
-          flow: "",
-          remind_at: "",
-          remind_task: "",
-          note: "",
-          created_at: now,
-          updated_at: now,
-        },
-      });
-      document.getElementById("orderSn").value = "";
-      document.getElementById("trackingNo").value = "";
-      document.getElementById("title").value = "";
-      dupAck = "";
-      // 店铺、快递公司、登记时间**不清** —— 连着录同一个店 / 同一批单子是常态
-      showSnHint();        // 清空后那条格式提示也要跟着消掉
-      await load();
-      // 故意**不**自动跳到「查看」：现场录单常常是一条接一条，
-      // 跳走反而要手动跳回来。要确认就去查看页，它已经在最上面。
-      toast((String(track || "").trim() || sn) + " 已登记");
-      document.getElementById("title").focus();
-    } catch (err) {
-      toast("登记失败：" + friendlyErr(err));
-    }
-  }
-
-  /**
-   * 把宿主的原话翻译成人能照着做的话。
-   *
-   * 0.4.0 给 tickets 加了 store 列。工具的私有表是 `CREATE TABLE IF NOT EXISTS` 建的，
-   * **已存在的表不会被自动改** —— 老库里那张表还是旧结构，写入 store 会被 SQLite 拒掉，
-   * 原话是 "table tool_abnormal_ticket_tickets has no column named store"。
-   * 照着那句话用户什么也做不了，所以这里指向唯一的出口：设置 → 数据库 → 清理数据。
-   */
-  function friendlyErr(err) {
-    var msg = String((err && err.message) || err || "");
-    if (/no column named|has no column/i.test(msg)) {
-      return "工具表还是旧结构（缺新加的列，比如 courier / handling / result / flow / remind_at）。去「设置 → 数据库 → " +
-        "异常单号登记」点一次「清理数据」，下次打开会按新结构重建 —— 注意那会清掉已登记的记录。";
-    }
-    return msg;
-  }
-
-  /** 处理区的一项（处理方式 / 结果 / 已结账）落库。状态是它们派生的，
-      存完要整表重载 —— 徽标、列表、统计都跟着走。 */
-  async function saveProcField(field, value) {
-    if (!selectedId) return;
-    try {
-      await saveNote();        // 先把备注落盘，下面 load() 会重建右栏
-      var patch = { updated_at: new Date().toISOString() };
-      patch[field] = value;
-      await Db.update({ table: TABLE, id: selectedId, patch: patch });
-      await load();
-      var row = findRow(selectedId);
-      toast("已记处理 · 现在是「" + (row ? statusOf(row) : "?") + "」");
-    } catch (err) { toast("没存上：" + friendlyErr(err)); }
-  }
-
-  async function remove(id) {
-    try {
-      await Db.del({ table: TABLE, id: id });
-      await load();
-      toast("已删除");
-    } catch (err) { toast("删不掉：" + err.message); }
-  }
-
-  /* 备注自动保存：输入停下 700ms 写一次。
-     ⚠️ 存完**不重载整表** —— load() 会把右栏整个重建，正在打字的 textarea 会丢焦点和光标。
-     所以这里只更新内存里的那一行，列表也不动（备注不进列表）。 */
-  var noteTimer = null;
-  function scheduleNoteSave() {
-    markSaved("…");
-    clearTimeout(noteTimer);
-    noteTimer = setTimeout(function () { void saveNote(); }, 700);
-  }
-  async function saveNote() {
-    var ta = document.getElementById("d-note");
-    if (!ta || !selectedId) return;
-    var row = findRow(selectedId);
-    if (!row) return;
-    var val = ta.value;
-    if (String(row.note || "") === val) { markSaved("已保存"); return; }
-    try {
-      var now = new Date().toISOString();
-      await Db.update({ table: TABLE, id: selectedId, patch: { note: val, updated_at: now } });
-      row.note = val;
-      row.updated_at = now;
-      markSaved("已保存 " + timeText(now));
-    } catch (err) {
-      markSaved("");
-      toast("备注没存上：" + err.message);
-    }
-  }
-
-  /** 切页签。切到查看时，若还没选中就默认选第一条 —— 右栏空着会让人以为坏了 */
-  function setTab(name) {
-    ["create", "browse", "table", "settings"].forEach(function (n) {
-      document.getElementById("tab-" + n).setAttribute("aria-selected", n === name ? "true" : "false");
-      document.getElementById("view-" + n).hidden = n !== name;
-    });
-    if (name === "browse") {
-      if (!selectedId && shown.length) selectedId = shown[0].id;
-      repaint();
-      renderDetail();
-    } else if (name === "table") {
-      renderTable();               // 表格是只读快照，每次进来重画一遍（数据可能刚被 WPS 拉取改过）
-    } else if (name === "settings") {
-      fillBindStore();
-    } else {
-      document.getElementById("title").focus();
-    }
-  }
-
-  /* ---------------- 填充下拉 ---------------- */
-
-  function fillSelect(el, items, selected) {
-    el.innerHTML = items.map(function (v) {
-      return '<option value="' + esc(v) + '"' + (v === selected ? " selected" : "") + ">" + esc(v) + "</option>";
-    }).join("");
-  }
-  refreshOptSelects();           // 配置还没读回来之前先用出厂默认，loadCfg 回来会再刷一遍
-  buildTableHead();              // 表格页的列头/列宽（一次成，之后只换 tbody）
-  // （状态筛选下拉由 fillBrowseFilters 填：三个派生态 ∪ 流程名，见那边）
-  // 登记时间默认今天 —— 绝大多数单子就是当天登记（补录历史单才改它）
-  document.getElementById("shipped").value =
-    "" + new Date().getFullYear() + "-" + pad(new Date().getMonth() + 1) + "-" + pad(new Date().getDate());
-
-  /* ---------------- 日期选择器 ----------------
-     ★ 为什么不用 input[type=date]：那个弹窗是浏览器自己画的 —— 字体、圆角、
-     选中色都不跟主题走（浅色卡片上弹出一块系统样式的日历），换月只有一对
-     上下箭头（看不出那是"上/下个月"），也没有补录时最常用的「昨天 / 前天」。
-     这里把输入框退回普通文本框（照样能直接敲 20261017），弹窗换成自己的。
-     值仍是 "YYYY-MM-DD" —— 落库 / 推 WPS 的格式一点没变。 */
-  (function () {
-    var input = document.getElementById("shipped");
-    var btn = document.getElementById("dpBtn");
-    var pop = document.getElementById("dp");
-    var grid = document.getElementById("dpGrid");
-    var title = document.getElementById("dpTitle");
-    var daysView = document.getElementById("dpDays");
-    var monthsView = document.getElementById("dpMonths");
-    var mgrid = document.getElementById("dpMgrid");
-
-    var isOpen = false;
-    var view = "";          // 面板正在显示哪个月：YYYY-MM
-    var sel = "";           // 选中的那天：YYYY-MM-DD
-    var cur = "";           // 键盘光标（虚框）所在那天
-    var last = input.value; // 上一个合法值 —— 敲错了回滚到它
-    var monthMode = false;
-
-    function fmt(d) {
-      return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
-    }
-    function todayStr() { return fmt(new Date()); }
-
-    /** 认这几种手输写法：2026-10-01 / 2026/10/1 / 2026.10.1 / 20261001 / 10-1（补今年）。
-        空串算合法（= 清空）；认不出或日期不存在（2 月 31 日）返回 null。 */
-    function parse(s) {
-      s = String(s == null ? "" : s).replace(/\s+/g, "");
-      if (!s) return "";
-      var y, mo, d, m = s.match(/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?$/);
-      if (!m) m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
-      if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; }
-      else {
-        m = s.match(/^(\d{1,2})[-/.](\d{1,2})$/);
-        if (!m) return null;
-        y = new Date().getFullYear(); mo = +m[1]; d = +m[2];
-      }
-      var dt = new Date(y, mo - 1, d);
-      if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
-      return y + "-" + pad(mo) + "-" + pad(d);
-    }
-
-    function shiftDay(s, n) {
-      var p = (s || todayStr()).split("-");
-      return fmt(new Date(+p[0], +p[1] - 1, +p[2] + n));
-    }
-    function addMonths(ym, n) {
-      var p = ym.split("-");
-      return fmt(new Date(+p[0], +p[1] - 1 + n, 1)).slice(0, 7);
-    }
-
-    function render() {
-      var y = +view.slice(0, 4), mo = +view.slice(5, 7);
-      // 年月视图里标题只写年份（月份在下面的格子里），两处都写年份会重复
-      title.textContent = monthMode ? y + " 年" : y + " 年 " + mo + " 月";
-      pop.dataset.mode = monthMode ? "month" : "day";
-
-      // 周一起算；固定 42 格（6 行）—— 换月时面板高度不跳
-      var first = new Date(y, mo - 1, 1);
-      var start = new Date(y, mo - 1, 1 - ((first.getDay() + 6) % 7));
-      var t = todayStr(), html = "";
-      for (var i = 0; i < 42; i++) {
-        var d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
-        var s = fmt(d), cls = "dp-day";
-        if (d.getMonth() !== mo - 1) cls += " is-out";
-        if (s === t) cls += " is-today";
-        if (s === sel) cls += " is-sel";
-        else if (s === cur) cls += " is-cur";
-        html += '<button type="button" class="' + cls + '" data-d="' + s + '"' +
-          (s === sel ? ' aria-pressed="true"' : "") + ">" + d.getDate() + "</button>";
-      }
-      grid.innerHTML = html;
-
-      var mh = "";
-      for (var j = 1; j <= 12; j++) {
-        mh += '<button type="button" class="dp-mon' + (j === mo ? " is-sel" : "") +
-          '" data-m="' + j + '">' + j + " 月</button>";
-      }
-      mgrid.innerHTML = mh;
-    }
-
-    function place() {
-      var r = input.getBoundingClientRect();
-      var pw = pop.offsetWidth, ph = pop.offsetHeight;
-      var left = r.left;
-      if (left + pw > window.innerWidth - 8) left = window.innerWidth - 8 - pw;
-      if (left < 8) left = 8;
-      var top = r.bottom + 6;
-      if (top + ph > window.innerHeight - 8) {
-        var up = r.top - ph - 6;
-        top = up >= 8 ? up : Math.max(8, window.innerHeight - 8 - ph);
-      }
-      pop.style.left = Math.round(left) + "px";
-      pop.style.top = Math.round(top) + "px";
-    }
-
-    function setMode(months) {
-      monthMode = !!months;
-      daysView.hidden = monthMode;
-      monthsView.hidden = !monthMode;
-      render();
-      place();
-    }
-
-    function fire() {
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-
-    function commit(s) {
-      input.value = s;
-      last = s;
-      sel = s;
-      input.classList.remove("is-bad");
-      closePanel();
-      fire();
-      input.focus();
-    }
-
-    function openPanel() {
-      if (isOpen) return;
-      isOpen = true;
-      var v = parse(input.value);
-      sel = v === null ? (last || "") : v;
-      cur = sel || todayStr();
-      view = cur.slice(0, 7);
-      monthMode = false;
-      daysView.hidden = false;
-      monthsView.hidden = true;
-      pop.hidden = false;
-      input.setAttribute("aria-expanded", "true");
-      render();
-      place();
-    }
-    function closePanel() {
-      if (!isOpen) return;
-      isOpen = false;
-      pop.hidden = true;
-      input.setAttribute("aria-expanded", "false");
-    }
-
-    /** 敲错了：退回上一个合法值 + 红边框闪一下（失焦时静默，回车时才提示） */
-    function rollback(noisy) {
-      var raw = input.value;
-      input.value = last;
-      input.classList.add("is-bad");
-      window.setTimeout(function () { input.classList.remove("is-bad"); }, 1200);
-      if (noisy) toast("认不出这个日期：" + raw + "（也可以点日历选）");
-    }
-
-    // ---- 输入框：点开 / 直接敲 / 失焦规范化 ----
-    input.addEventListener("click", function () { openPanel(); });
-    input.addEventListener("input", function () {
-      input.classList.remove("is-bad");
-      if (!isOpen) return;
-      var v = parse(input.value);
-      if (v) {            // 敲到完整日期时，日历跟着翻到那个月（半截的不动）
-        sel = v; cur = v; view = v.slice(0, 7);
-        if (monthMode) setMode(false); else { render(); place(); }
-      }
-    });
-    input.addEventListener("blur", function () {
-      var v = parse(input.value);
-      if (v === null) { rollback(false); }
-      else {
-        input.value = v;
-        last = v;
-        input.classList.remove("is-bad");
-      }
-      // Tab 走了就收起（点面板里的按钮不算 —— 延迟一拍再看焦点落在哪）
-      window.setTimeout(function () {
-        if (!isOpen) return;
-        var a = document.activeElement;
-        // 焦点在面板/按钮上，或者鼠标正压在面板上（有的 webview 点按钮不给焦点）→ 不关
-        if (a === input || (a && (pop.contains(a) || btn.contains(a))) || pop.matches(":hover")) return;
-        closePanel();
-      }, 0);
-    });
-    input.addEventListener("keydown", function (e) {
-      if (!isOpen) {
-        if (e.key === "ArrowDown") { e.preventDefault(); openPanel(); return; }
-        // 手敲完直接回车：当场规范化（20261009 → 2026-10-09），不用等失焦
-        if (e.key === "Enter") {
-          e.preventDefault();
-          var v0 = parse(input.value);
-          if (v0 === null) { rollback(true); return; }
-          input.value = v0;
-          last = v0;
-          input.classList.remove("is-bad");
-          fire();
-        }
-        return;
-      }
-      var k = e.key;
-      if (k === "Escape") { e.preventDefault(); closePanel(); return; }
-      if (k === "Enter") {
-        e.preventDefault();
-        var v = parse(input.value);
-        if (v === null) { rollback(true); return; }
-        if (v) commit(v); else closePanel();
-        return;
-      }
-      var step = 0, mstep = 0;
-      if (k === "ArrowLeft") step = -1;
-      else if (k === "ArrowRight") step = 1;
-      else if (k === "ArrowUp") step = -7;
-      else if (k === "ArrowDown") step = 7;
-      else if (k === "PageUp") mstep = -1;
-      else if (k === "PageDown") mstep = 1;
-      else return;
-      e.preventDefault();
-      // PgUp/PgDn 只翻月（不改进输入框的值）；方向键挪一天，输入框跟着预览
-      if (mstep) {
-        view = monthMode ? (+view.slice(0, 4) + mstep) + view.slice(4) : addMonths(view, mstep);
-        render();
-        place();
-        return;
-      }
-      cur = shiftDay(cur || sel || todayStr(), step);
-      input.value = cur;
-      sel = cur;
-      view = cur.slice(0, 7);
-      if (monthMode) setMode(false); else { render(); place(); }
-    });
-
-    btn.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (isOpen) closePanel(); else openPanel();
-    });
-
-    // ---- 面板内点击 ----
-    pop.addEventListener("click", function (e) {
-      var t = e.target.closest ? e.target.closest("button") : null;
-      if (!t) return;
-      if (t.classList.contains("dp-day")) { commit(t.getAttribute("data-d")); return; }
-      if (t.classList.contains("dp-mon")) {
-        view = view.slice(0, 4) + "-" + pad(+t.getAttribute("data-m"));
-        setMode(false);
-        return;
-      }
-      if (t.id === "dpTitle") { setMode(!monthMode); return; }
-      if (t.hasAttribute("data-nav")) {
-        var n = +t.getAttribute("data-nav");
-        // 日视图 ‹› 翻月；年月视图 ‹› 翻年（同一个按钮，不另起一行）
-        view = monthMode ? (+view.slice(0, 4) + n) + view.slice(4) : addMonths(view, n);
-        render();
-        place();
-        return;
-      }
-      var q = t.getAttribute("data-quick");
-      if (q === "clear") {
-        input.value = ""; last = ""; sel = "";
-        closePanel(); fire(); input.focus();
-        return;
-      }
-      if (q !== null) { commit(shiftDay(todayStr(), +q)); }
-    });
-
-    // 点别处 / 页面滚动 → 收起（fixed 定位，滚动后位置就不对了）
-    document.addEventListener("pointerdown", function (e) {
-      if (!isOpen) return;
-      if (pop.contains(e.target) || e.target === input || btn.contains(e.target)) return;
-      closePanel();
-    }, true);
-    window.addEventListener("scroll", function () { if (isOpen) closePanel(); }, true);
-    window.addEventListener("resize", function () { if (isOpen) place(); });
-  })();
-
-  /* ---------------- 事件 ---------------- */
-
-  document.getElementById("tab-create").addEventListener("click", function () { setTab("create"); });
-  document.getElementById("tab-browse").addEventListener("click", function () { setTab("browse"); });
-  document.getElementById("tab-table").addEventListener("click", function () { setTab("table"); });
-  document.getElementById("tab-settings").addEventListener("click", function () { setTab("settings"); });
-
-  // 设置页：粘一条 ERP 链接 → 认出客服 ID → 绑到指定店铺
-  document.getElementById("bindLink").addEventListener("input", function () {
-    readBindLink();
-    document.getElementById("bindMsg").textContent = "";   // 链接一改，上一句结果就过期了
-  });
-  document.getElementById("bindDo").addEventListener("click", function () { void doBind(); });
-
-  document.getElementById("add").addEventListener("click", function () { void add(); });
-  // 任何下拉选完都同步一次"空/非空"的灰字状态（挂在 document 上：右栏、流程、
-  // 处理区都是动态重建的，逐个绑监听会漏）
-  document.addEventListener("change", function (e) {
-    if (e.target && e.target.tagName === "SELECT") markSel(e.target);
-  });
-  document.getElementById("saveCfg").addEventListener("click", function () { void saveCfg(); });
-  document.getElementById("saveOpts").addEventListener("click", function () { void saveOpts(); });
-  // 店铺表：加一行 / 删一行。删的只是编辑区里的那一行，要点「保存店铺表」才落盘 ——
-  // 否则点错一下就悄悄改了配置。
-  document.getElementById("addStore").addEventListener("click", function () {
-    var list = readStoresFromDom();          // 1:1 带上 was，中途重渲染也不会把改名信息弄丢
-    list.push({ was: "", name: "店铺 " + (list.length + 1), mallcsid: "" });
-    cfg.stores = list;
-    renderStores();
-    showCfgHint();
-    var rows = document.querySelectorAll("#stores .store-row input.name");
-    if (rows.length) rows[rows.length - 1].focus();
-  });
-  document.getElementById("stores").addEventListener("click", function (e) {
-    var btn = e.target.closest('button[data-act="del-store"]');
-    if (!btn) return;
-    var row = btn.closest(".store-row");
-    var all = Array.prototype.slice.call(document.querySelectorAll("#stores .store-row"));
-    var list = readStoresFromDom();          // 与 DOM 行一一对应，所以 idx 可以直接用
-    var idx = all.indexOf(row);
-    if (idx >= 0) list.splice(idx, 1);
-    cfg.stores = list;
-    renderStores();
-    showCfgHint();
-  });
-
-  /* 客服 ID 框里粘整条链接也认：粘完**当场**把 cs_… 抠出来显示在框里，
-     而不是等保存时才偷偷换掉 —— 那样用户会以为自己粘错了。 */
-  function normalizeCsInput(inp) {
-    if (!inp) return;
-    var hit = parseClientUrl(inp.value);
-    if (hit && hit.mallcsid) {
-      inp.value = hit.mallcsid;
-      var row = inp.closest(".store-row");
-      if (row) row.classList.remove("empty-cs");
-    }
-  }
-  document.getElementById("stores").addEventListener("change", function (e) {
-    normalizeCsInput(e.target.closest ? e.target.closest("input.cs") : null);
-  });
-  document.getElementById("stores").addEventListener("paste", function (e) {
-    var inp = e.target.closest ? e.target.closest("input.cs") : null;
-    if (!inp) return;
-    setTimeout(function () { normalizeCsInput(inp); }, 0);   // 粘贴要先等浏览器把值写进去
-  });
-
-  // 详细描述现在是多行 textarea：回车要留给换行，不再绑「回车=登记」
-  // 订单号边打边说它像不像拼多多单号（以及重复没重复）—— 格式不对时客户端会弹起来
-  // 却定位不到，重复录会把同一件事记两遍，都在这儿提前说清。一动输入就重置重复确认位。
-  document.getElementById("orderSn").addEventListener("input", function () {
-    dupAck = "";
-    showSnHint();
-  });
-  /**
-   * 订单号框：粘进来的东西就地收拾好。
-   *   整条 ERP 链接 → 抠出订单号，**顺便**把链接里的客服 ID 认成店铺
-   *                   （那条链接里有 mallcsid，不用人去认、也不用再手选店铺）；
-   *   手打的单号   → 洗净全角连字符与看不见的空白（当场改掉，让用户看见）。
-   */
-  function cleanOrderSnField() {
-    var el = document.getElementById("orderSn");
-    var raw = String(el.value || "");
-    var hit = parseClientUrl(raw);
+  /** 订单号框：粘进来的东西就地收拾好。
+      整条 ERP 链接 → 抠出订单号，**顺便**把链接里的客服 ID 认成店铺
+      （那条链接里有 mallcsid，不用人去认、也不用再手选店铺）；
+      手打的单号     → 洗净全角连字符与看不见的空白（当场改掉，让用户**看见**）。 */
+  function cleanOrderField() {
+    var el = $("fOrder");
+    var hit = erpHit(el.value);
     if (hit) {
-      el.value = hit.ordersn || "";
-      showSnHint();
+      el.value = hit.order || "";
       if (hit.mallcsid) {
-        void applyLinkStore(hit.mallcsid).then(function (said) {
-          toast("认出来了：" + (hit.ordersn ? "订单号 " + hit.ordersn + " · " : "") + said);
-        }, function (err) {
-          toast("店铺表存不上：" + friendlyErr(err));
-        });
-      } else if (hit.ordersn) {
+        var found = null;
+        for (var i = 0; i < cfg.stores.length; i++) {
+          if (cfg.stores[i].mallcsid === hit.mallcsid) { found = cfg.stores[i]; break; }
+        }
+        if (found) {
+          $("fStore").value = found.name;
+          markSel($("fStore"));
+          toast("认出来了：" + (hit.order ? "订单号 " + hit.order + " · " : "") + "店铺 " + found.name);
+        } else {
+          toast("链接里写着客服 ID " + hit.mallcsid + "，店铺表里没对上 —— 去「设置」把它填进对应店铺");
+        }
+      } else if (hit.order) {
         toast("已从链接里取出订单号（这条链接里没写客服 ID，店铺得自己选）");
       } else {
         toast("这条链接里没有订单号，手动填一下");
       }
-      return;
-    }
-    var v = normSn(raw);
-    if (v !== el.value) el.value = v;     // 当场改掉，让用户**看见**清成什么样了
-    showSnHint();
-  }
-  document.getElementById("orderSn").addEventListener("paste", function () {
-    setTimeout(cleanOrderSnField, 0);     // 粘贴要先等浏览器把值写进去
-  });
-  document.getElementById("orderSn").addEventListener("blur", cleanOrderSnField);
-  // 提示条里的「去看那条」：跳到查看页并选中它 —— 顺手清掉筛选，保证那条真的看得见
-  document.getElementById("snHint").addEventListener("click", function (e) {
-    var a = e.target.closest('a[data-act="jump-dup"]');
-    if (!a) return;
-    e.preventDefault();
-    jumpToTicket(a.getAttribute("data-id"));
-  });
-  function jumpToTicket(id) {
-    if (!findRow(id)) { toast("那条单子不在了（可能刚被删掉）"); return; }
-    ["search", "filter", "storeFilter", "catFilter"].forEach(function (fid) {
-      var el = document.getElementById(fid);
-      if (!el) return;
-      el.value = fid === "filter" ? "*" : "";
-    });
-    selectedId = id;
-    setTab("browse");
-    repaint();
-    renderDetail();
-    var item = document.querySelector('#list [data-ticket][data-id="' + id + '"]');
-    if (item && item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
-  }
-  // 快递单号：失焦时把夹带的空白清掉（各家快递单号形状不一，不做格式判定）
-  document.getElementById("trackingNo").addEventListener("blur", function () {
-    var el = document.getElementById("trackingNo");
-    var v = normTracking(el.value);
-    if (v !== el.value) el.value = v;
-  });
-
-  document.getElementById("search").addEventListener("input", function () {
-    repaint();
-    renderDetail();     // 选中的那条可能被筛掉了，右栏要跟上
-  });
-  document.getElementById("filter").addEventListener("change", function () {
-    repaint();
-    renderDetail();
-  });
-  document.getElementById("storeFilter").addEventListener("change", function () {
-    repaint();
-    renderDetail();
-  });
-  document.getElementById("catFilter").addEventListener("change", function () {
-    repaint();
-    renderDetail();
-  });
-
-  // 表格页：搜索只筛表格本身（不动左栏）；点一行 → 跳回「查看」并选中那条
-  // （jumpToTicket 会顺手清掉查看页的筛选，保证那条真的看得见）
-  document.getElementById("tableSearch").addEventListener("input", renderTable);
-
-  /* 列配置：按钮开关面板，面板里勾选可见列 / ↑↓ 调顺序，点面板外收起。
-     ★ 事件都挂在容器上做委托 —— 面板内容是重画的，逐个绑定会随重画失效。 */
-  document.getElementById("colBtn").addEventListener("click", function (e) {
-    e.stopPropagation();
-    var panel = document.getElementById("colPanel");
-    if (panel.hidden) renderColPanel();
-    panel.hidden = !panel.hidden;
-  });
-  document.getElementById("colPanel").addEventListener("click", function (e) {
-    e.stopPropagation();
-    var btn = e.target.closest("button[data-act]");
-    if (!btn) return;
-    var act = btn.getAttribute("data-act");
-    var key = btn.getAttribute("data-col");
-    var i = key ? tableColOrder.indexOf(key) : -1;
-    if (act === "up" && i > 0) {
-      tableColOrder[i] = tableColOrder[i - 1];
-      tableColOrder[i - 1] = key;
-      afterColsChanged();
-    } else if (act === "down" && i >= 0 && i < tableColOrder.length - 1) {
-      tableColOrder[i] = tableColOrder[i + 1];
-      tableColOrder[i + 1] = key;
-      afterColsChanged();
-    } else if (act === "all") {
-      tableColHidden = {};
-      afterColsChanged();
-    } else if (act === "reset") {
-      tableColOrder = defaultColOrder();
-      tableColHidden = {};
-      afterColsChanged();
-    }
-  });
-  document.getElementById("colPanel").addEventListener("change", function (e) {
-    var cb = e.target.closest("input[data-col]");
-    if (!cb) return;
-    var key = cb.getAttribute("data-col");
-    if (cb.checked) {
-      delete tableColHidden[key];
     } else {
-      // 至少留一列：表格全空比「少看一列」难解释得多
-      if (activeCols().length <= 1) {
-        cb.checked = true;
-        toast("至少要留一列");
-        return;
-      }
-      tableColHidden[key] = true;
+      var v = washOrder(el.value);
+      if (v !== el.value) el.value = v;
     }
-    afterColsChanged();
-  });
-  document.addEventListener("click", function (e) {
-    if (!e.target.closest(".colwrap")) document.getElementById("colPanel").hidden = true;
-  });
+    showOrderHint();
+  }
 
-  document.getElementById("tableBody").addEventListener("click", function (e) {
-    var tr = e.target.closest("tr[data-id]");
-    if (tr) jumpToTicket(tr.getAttribute("data-id"));
-  });
+  async function add() {
+    var rawOrder = $("fOrder").value;
+    var erp = readErp(rawOrder);
+    var order = washOrder(erp.order || rawOrder);
+    var track = washOrder($("fTrack").value);
+    var store = $("fStore").value;
+    var courier = $("fCourier").value;
+    var date = $("fDate").value.trim();
+    var category = $("fCategory").value;
+    var title = $("fTitle").value.trim();
+    var msg = $("addMsg");
 
-  // 左栏：点行里的「↗」→ 直接呼起（**不**改变选中，扫单时不打乱右栏）；
-  //       点其它地方 → 选中这一行
-  document.getElementById("list").addEventListener("click", function (e) {
-    var wake = e.target.closest('button[data-act="open-client"]');
-    if (wake) {
-      e.stopPropagation();
-      openClient(wake.getAttribute("data-sn"), wake.getAttribute("data-store"));
+    if (erp.mallcsid && !store) {
+      // 链接里带的客服 ID 反查店铺 —— 用户不用手选
+      for (var i = 0; i < cfg.stores.length; i++) {
+        if (cfg.stores[i].mallcsid === erp.mallcsid) { store = cfg.stores[i].name; break; }
+      }
+    }
+    if (!order && !track) { msg.className = "hint bad"; msg.textContent = "订单号和快递单号至少要填一个"; return; }
+
+    // 同一个订单号录第二遍 90% 是手滑 —— 第一次点先拦下（提示条里有「去看那条」），
+    // 确实要再录一条（补发后又出问题）就再点一次「登记」。
+    // ★ 形状存疑**不拦**：真·拼多多单号是 YYMMDD-数字，可用户台账里 16/19 位纯数字
+    //   也照样在录（那几行就在库里），拦下来就是"工具不让我录"。只在提示条里说一句。
+    var dup = findDup(order);
+    if (dup && dupAck !== order) {
+      dupHint(dup, order);        // ★ 先渲染再置位：提示里的「再点一次」要靠 dupAck 还是空的才说得出
+      dupAck = order;
       return;
     }
-    var item = e.target.closest("[data-ticket]");
-    if (!item) return;
-    selectedId = item.getAttribute("data-id");
+
+    var now = new Date().toISOString();
+    var row = {
+      id: newId(),
+      order_sn: order,
+      tracking_no: track,
+      courier: courier,
+      shipped_at: date || todayStr(),
+      store: store,
+      category: category,
+      title: title,
+      handling: "",
+      result: "",
+      settled: "",
+      note: "",
+      flow: "",
+      remind_at: "",
+      remind_task: "",
+      created_at: now,
+      updated_at: now,
+    };
+    await insert(row);
+    dupAck = "";
+    msg.className = "hint";
+    msg.textContent = "已登记「" + (order || track) + "」"
+      + (order && !orderLooksRight(order) ? "（这个单号形状不像拼多多单号，客户端可能定位不到那张订单）" : "")
+      + " —— 店铺 / 快递公司 / 登记时间留着了，可以接着录下一条";
+    // 连着录：只清掉"这一条才有的东西"
+    $("fOrder").value = "";
+    $("fTrack").value = "";
+    $("fCategory").value = "";
+    markSel($("fCategory"));
+    $("fTitle").value = "";
+    await load();
+    $("fOrder").focus();
+  }
+
+  /* ==================================================================
+   * 7. 查看页：列表 + 详情
+   * ================================================================== */
+  function filtered() {
+    var q = txt($("search").value).trim().toLowerCase();
+    var fs = txt($("fltStore").value);
+    var fst = txt($("fltStatus").value);
+    return rows.filter(function (r) {
+      if (fs && txt(r.store) !== fs) return false;
+      if (fst && statusOf(r) !== fst) return false;
+      if (!q) return true;
+      return (txt(r.order_sn) + " " + txt(r.tracking_no) + " " + txt(r.title) + " " + txt(r.handling)).toLowerCase().indexOf(q) >= 0;
+    });
+  }
+
+  function renderList() {
+    var list = filtered();
+    var box = $("list");
+    if (!list.length) {
+      box.innerHTML = '<div class="note" style="padding:12px">没有匹配的单子</div>';
+      return;
+    }
+    var html = "";
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i];
+      var st = statusOf(r);
+      var sn = txt(r.order_sn) || txt(r.tracking_no) || "（没有单号）";
+      html += '<div class="ticket' + (r.id === selectedId ? " on" : "") + '" data-id="' + esc(r.id) + '">'
+        + '<div class="line1"><span class="sn">' + esc(sn) + '</span>'
+        + '<span class="spacer"></span>'
+        + '<span class="badge ' + statusClass(st) + '">' + esc(st) + "</span></div>"
+        + '<div class="tags">'
+        + (r.store ? '<span class="tag">' + esc(r.store) + "</span>" : "")
+        + (r.courier ? '<span class="tag">' + esc(r.courier) + "</span>" : "")
+        + (r.category ? '<span class="tag">' + esc(r.category) + "</span>" : "")
+        + "</div></div>";
+    }
+    box.innerHTML = html;
+    var items = box.querySelectorAll(".ticket");
+    for (var k = 0; k < items.length; k++) {
+      items[k].onclick = function () {
+        selectedId = this.getAttribute("data-id");
+        renderList();
+        renderDetail();
+      };
+    }
+  }
+
+  function renderDetail() {
+    var box = $("detail");
+    var r = findRow(selectedId);
+    if (!r) {
+      box.innerHTML = '<div class="note">左边选一条 —— 这里看它的全部内容。</div>';
+      return;
+    }
+    var st = statusOf(r);
+    var sn = txt(r.order_sn) || txt(r.tracking_no);
+    var flow = parseFlow(r.flow);
+    var done = flow.length ? isDoneName(flow[flow.length - 1].n) : false;
+    var store = null;
+    for (var i = 0; i < cfg.stores.length; i++) if (cfg.stores[i].name === r.store) store = cfg.stores[i];
+
+    var html = ""
+      + '<div class="r"><b style="font-size:14px;font-family:var(--mono)">' + esc(sn) + "</b>"
+      + '<span class="badge ' + statusClass(st) + '">' + esc(st) + "</span>"
+      + '<span class="spacer"></span>'
+      + '<button class="mini" id="btnCall">呼起客户端</button>'
+      + '<button class="mini" id="btnCopy">复制单号</button>'
+      + '<button class="mini danger" id="btnDel">删除</button></div>'
+      + '<div class="kv" style="margin-top:10px">'
+      + "<span>店铺</span><div>" + esc(txt(r.store) || "—") + (store && store.mallcsid ? ' <span class="note">(' + esc(store.mallcsid) + ")</span>" : "") + "</div>"
+      + "<span>快递单号</span><div>" + esc(txt(r.tracking_no) || "—") + "</div>"
+      + "<span>快递公司</span><div>" + esc(txt(r.courier) || "—") + "</div>"
+      + "<span>登记时间</span><div>" + esc(txt(r.shipped_at) || "—") + "</div>"
+      + "<span>情况</span><div>" + esc(txt(r.category) || "—") + "</div>"
+      + "<span>详细描述</span><div>" + esc(txt(r.title) || "—") + "</div>"
+      + "</div>";
+
+    /* 处理区：处理方式 / 结果 / 结账 —— 一改就落库 */
+    html += '<div class="sect"><h3>处理</h3><div class="grid24">'
+      + '<label class="f c8"><span>处理方式</span><select id="dHandling"></select></label>'
+      + '<label class="f c8"><span>结果</span><select id="dResult"></select></label>'
+      + '<label class="f c8"><span>结账</span><select id="dSettled"></select></label>'
+      + "</div>"
+      + '<div class="r" style="margin-top:8px"><button class="primary" id="btnProc">保存处理</button>'
+      + '<span class="hint" id="procMsg" style="margin:0"></span></div></div>';
+
+    /* 流程：每一步 = 名称 + 时刻，最后一步就是当前状态。完结之后封口 */
+    html += '<div class="sect"><h3>流程状态</h3>';
+    if (!flow.length) html += '<div class="note">还没记 —— 现在的状态由上面的「处理」派生。</div>';
+    for (var j = 0; j < flow.length; j++) {
+      html += '<div class="flowrow"><span>' + esc(flow[j].n) + '</span>'
+        + '<span class="t">' + esc(flow[j].t) + "</span>"
+        + '<span class="spacer"></span>'
+        + '<button class="mini" data-delflow="' + j + '">删</button></div>';
+    }
+    if (!done) {
+      html += '<div class="r" style="margin-top:8px"><select id="dFlow" style="flex:1 1 auto"></select>'
+        + '<button class="primary" id="btnFlow">记一步</button></div>';
+    } else {
+      html += '<div class="note" style="margin-top:6px">已「完结」封口 —— 要继续先删掉那一步。</div>';
+    }
+    html += "</div>";
+
+    /* 提醒：落到宿主待办上，带来源标记 */
+    html += '<div class="sect"><h3>提醒</h3>';
+    if (r.remind_at) {
+      html += '<div class="r"><span>已设：' + esc(r.remind_at.replace("T", " ")) + "</span>"
+        + '<button class="mini" id="btnUnRemind">取消提醒</button></div>';
+    } else {
+      html += '<div class="r"><input id="dRemind" type="datetime-local" style="flex:1 1 auto" />'
+        + '<button class="primary" id="btnRemind">设提醒</button></div>'
+        + '<div class="note">到点后工作台待办里会多一条带「异常单号登记」标记的待办，并弹提醒卡。</div>';
+    }
+    html += "</div>";
+
+    box.innerHTML = html;
+
+    fillSelect($("dHandling"), cfg.handlings, r.handling);
+    fillSelect($("dResult"), cfg.results, r.result);
+    fillSelect($("dSettled"), ["未结账", "已结账"], r.settled);
+    if ($("dFlow")) fillSelect($("dFlow"), flowOptions(), "");
+
+    $("btnProc").onclick = function () {
+      void (async function () {
+        await update(r.id, {
+          handling: $("dHandling").value,
+          result: $("dResult").value,
+          settled: $("dSettled").value,
+        });
+        $("procMsg").textContent = "已保存";
+        await load();
+      })();
+    };
+    if ($("btnFlow")) {
+      $("btnFlow").onclick = function () {
+        void (async function () {
+          var n = $("dFlow").value;
+          if (!n) return;
+          var next = flow.concat([{ n: n, t: new Date().toLocaleString("zh-CN") }]);
+          await update(r.id, { flow: JSON.stringify(next) });
+          await load();
+        })();
+      };
+    }
+    var delBtns = box.querySelectorAll("[data-delflow]");
+    for (var d = 0; d < delBtns.length; d++) {
+      delBtns[d].onclick = function () {
+        var idx = Number(this.getAttribute("data-delflow"));
+        void (async function () {
+          var next = flow.slice();
+          next.splice(idx, 1);
+          await update(r.id, { flow: JSON.stringify(next) });
+          await load();
+        })();
+      };
+    }
+    $("btnCall").onclick = function () {
+      var cs = store ? store.mallcsid : "";
+      if (!cs) { toast("这个店铺还没配客服 ID —— 去「设置」里粘一条 ERP 链接"); return; }
+      if (!sn) { toast("这条没有单号，呼不起来"); return; }
+      window.location.href = "pddim:sendmsg/?OpeId=open_order&mallcsid=" + encodeURIComponent(cs) + "&ordersn=" + encodeURIComponent(sn);
+    };
+    $("btnCopy").onclick = function () {
+      var ta = document.createElement("textarea");
+      ta.value = sn;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); toast("已复制 " + sn); } catch (e) { toast("复制失败 —— 手动选一下"); }
+      document.body.removeChild(ta);
+    };
+    $("btnDel").onclick = function () {
+      if (!window.confirm("删掉这条「" + sn + "」？删了就找不回来了。")) return;
+      void (async function () {
+        await remove(r.id);
+        selectedId = null;
+        toast("已删除");
+        await load();
+      })();
+    };
+    if ($("btnRemind")) {
+      $("btnRemind").onclick = function () {
+        void (async function () {
+          var v = $("dRemind").value;
+          if (!v) { toast("先选一个时刻"); return; }
+          try {
+            var res = await call("task.remind", {
+              title: "异常单跟进：" + sn,
+              dueAt: new Date(v).toISOString(),
+              note: txt(r.title),
+              ref: r.id,
+            });
+            await update(r.id, { remind_at: v, remind_task: (res && res.taskId) || "" });
+            toast("提醒已设 —— 到点会在待办里出现");
+            await load();
+          } catch (err) {
+            toast(String(err && err.message ? err.message : err));
+          }
+        })();
+      };
+    }
+    if ($("btnUnRemind")) {
+      $("btnUnRemind").onclick = function () {
+        void (async function () {
+          if (r.remind_task) {
+            try { await call("task.remind", { action: "cancel", taskId: r.remind_task }); } catch (e) { /* 那条可能已被删 */ }
+          }
+          await update(r.id, { remind_at: "", remind_task: "" });
+          toast("提醒已取消");
+          await load();
+        })();
+      };
+    }
+  }
+
+  /* ==================================================================
+   * 8. 表格页（只读快照，列可自选 / 调序）
+   * ================================================================== */
+  function visibleCols() {
+    if (!tableCols || !tableCols.order || !tableCols.order.length) {
+      return COLS.map(function (c) { return c[0]; });
+    }
+    var hidden = tableCols.hidden || [];
+    return tableCols.order.filter(function (k) { return hidden.indexOf(k) < 0; });
+  }
+  function colLabel(key) {
+    for (var i = 0; i < COLS.length; i++) if (COLS[i][0] === key) return COLS[i][1];
+    return key;
+  }
+  function cellText(r, key) {
+    if (key === "_status") return statusOf(r);
+    return txt(r[key]);
+  }
+  function renderTable() {
+    var q = txt($("tableSearch").value).trim().toLowerCase();
+    var list = rows.filter(function (r) {
+      if (!q) return true;
+      return (txt(r.order_sn) + " " + txt(r.tracking_no) + " " + txt(r.store) + " " + txt(r.title) + " " + txt(r.handling)).toLowerCase().indexOf(q) >= 0;
+    });
+    var keys = visibleCols();
+    $("colCount").textContent = keys.length + "/" + COLS.length;
+    $("tableStats").textContent = "共 " + rows.length + " 条" + (list.length !== rows.length ? "（筛出 " + list.length + "）" : "");
+
+    var head = "<tr>";
+    for (var i = 0; i < keys.length; i++) head += "<th>" + esc(colLabel(keys[i])) + "</th>";
+    head += "</tr>";
+    $("tableHead").innerHTML = head;
+
+    var body = "";
+    for (var j = 0; j < list.length; j++) {
+      var r = list[j];
+      body += '<tr data-id="' + esc(r.id) + '">';
+      for (var k = 0; k < keys.length; k++) {
+        var v = cellText(r, keys[k]);
+        body += '<td title="' + esc(v) + '">' + (v ? esc(v) : '<span style="color:var(--dim)">—</span>') + "</td>";
+      }
+      body += "</tr>";
+    }
+    $("tableBody").innerHTML = body || '<tr><td colspan="' + keys.length + '" style="color:var(--dim)">还没有数据</td></tr>';
+
+    var trs = $("tableBody").querySelectorAll("tr");
+    for (var t = 0; t < trs.length; t++) {
+      trs[t].onclick = function () {
+        selectedId = this.getAttribute("data-id");
+        setTab("browse");
+        renderDetail();
+      };
+    }
+  }
+  function renderColPanel() {
+    var panel = $("colPanel");
+    var keys = (tableCols && tableCols.order && tableCols.order.length)
+      ? tableCols.order.slice()
+      : COLS.map(function (c) { return c[0]; });
+    var hidden = (tableCols && tableCols.hidden) || [];
+    var html = "";
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      html += '<label><input type="checkbox" data-col="' + esc(k) + '"' + (hidden.indexOf(k) < 0 ? " checked" : "") + " />"
+        + esc(colLabel(k))
+        + '<span class="updown"><button class="mini" data-up="' + i + '"' + (i === 0 ? " disabled" : "") + ">↑</button>"
+        + '<button class="mini" data-dn="' + i + '"' + (i === keys.length - 1 ? " disabled" : "") + ">↓</button></span></label>";
+    }
+    html += '<div class="r" style="margin-top:8px"><button class="primary" id="colSave">完成</button>'
+      + '<button id="colReset">恢复默认</button></div>';
+    panel.innerHTML = html;
+
+    var boxes = panel.querySelectorAll("[data-col]");
+    for (var b = 0; b < boxes.length; b++) {
+      boxes[b].onchange = function () {
+        var k = this.getAttribute("data-col");
+        var hid = hidden.slice();
+        if (this.checked) hid = hid.filter(function (x) { return x !== k; });
+        else if (hid.indexOf(k) < 0) hid.push(k);
+        tableCols = { order: keys, hidden: hid };
+      };
+    }
+    var ups = panel.querySelectorAll("[data-up]");
+    for (var u = 0; u < ups.length; u++) {
+      ups[u].onclick = function () {
+        var i = Number(this.getAttribute("data-up"));
+        var next = keys.slice();
+        var tmp = next[i - 1]; next[i - 1] = next[i]; next[i] = tmp;
+        tableCols = { order: next, hidden: hidden };
+        renderColPanel();
+      };
+    }
+    var dns = panel.querySelectorAll("[data-dn]");
+    for (var d = 0; d < dns.length; d++) {
+      dns[d].onclick = function () {
+        var i = Number(this.getAttribute("data-dn"));
+        var next = keys.slice();
+        var tmp = next[i + 1]; next[i + 1] = next[i]; next[i] = tmp;
+        tableCols = { order: next, hidden: hidden };
+        renderColPanel();
+      };
+    }
+    $("colSave").onclick = function () {
+      void (async function () {
+        await cfgSet("tableCols", JSON.stringify(tableCols || {}));
+        panel.hidden = true;
+        renderTable();
+      })();
+    };
+    $("colReset").onclick = function () {
+      void (async function () {
+        tableCols = null;
+        await cfgSet("tableCols", "");
+        panel.hidden = true;
+        renderTable();
+      })();
+    };
+  }
+
+  /* ==================================================================
+   * 9. 设置页
+   * ================================================================== */
+  function renderSettings() {
+    /* 店铺表 */
+    var html = "";
+    for (var i = 0; i < cfg.stores.length; i++) {
+      html += '<div class="r" style="margin-bottom:6px">'
+        + '<input data-sname="' + i + '" value="' + esc(cfg.stores[i].name) + '" style="flex:1 1 140px" />'
+        + '<input data-sid="' + i + '" value="' + esc(cfg.stores[i].mallcsid) + '" placeholder="客服 ID（cs_…）或整条 ERP 链接" style="flex:2 1 220px" />'
+        + '<button class="mini" data-sdel="' + i + '">删</button></div>';
+    }
+    $("stores").innerHTML = html;
+    var dels = $("stores").querySelectorAll("[data-sdel]");
+    for (var d = 0; d < dels.length; d++) {
+      dels[d].onclick = function () {
+        cfg.stores.splice(Number(this.getAttribute("data-sdel")), 1);
+        renderSettings();
+      };
+    }
+    // 「客服 ID」那格粘整条链接也认：当场抠出 cs_…
+    var ids = $("stores").querySelectorAll("[data-sid]");
+    for (var k = 0; k < ids.length; k++) {
+      ids[k].onchange = function () {
+        var i = Number(this.getAttribute("data-sid"));
+        var got = readErp(this.value);
+        if (got.mallcsid) { cfg.stores[i].mallcsid = got.mallcsid; this.value = got.mallcsid; }
+        else cfg.stores[i].mallcsid = this.value.trim();
+      };
+    }
+    var names = $("stores").querySelectorAll("[data-sname]");
+    for (var n = 0; n < names.length; n++) {
+      names[n].onchange = function () {
+        cfg.stores[Number(this.getAttribute("data-sname"))].name = this.value.trim();
+      };
+    }
+
+    /* 下拉选项 */
+    $("optCouriers").value = cfg.couriers.join("\n");
+    $("optSituations").value = cfg.situations.join("\n");
+    $("optHandlings").value = cfg.handlings.join("\n");
+    $("optResults").value = cfg.results.join("\n");
+    $("optFlows").value = cfg.flows.join("\n");
+
+    /* 在线表格 */
+    var on = !!wps.fileId;
+    $("wpsName").textContent = on ? "已绑定：" + (wps.name || wps.fileId) : "还没绑定";
+    $("wpsUnbind").hidden = !on;
+    $("wpsBind").textContent = on ? "换一张表" : "绑定";
+    $("wpsPush").disabled = !on || wpsBusy;
+    $("wpsPull").disabled = !on || wpsBusy;
+    if (on) $("wpsLink").value = wps.link;
+  }
+
+  /* ==================================================================
+   * 10. 在线表格（WPS）：分享链接 → 推 / 拉
+   * ------------------------------------------------------------------
+   * 认表只靠"分享链接"这一条凭据 —— 每张 WPS 授权都有，用户也最好拿。
+   * ★ 差异比对与写库都留在宿主：只写台账 14 列、表头认不出就停手、长订单号
+   *   前置单引号 —— 这套保护在 Rust 里，工具这边只负责喊"推 / 拉 / 确认"。
+   * ================================================================== */
+  var wpsBusy = false;
+  var wpsPlan = null;
+
+  function setWpsMsg(text, bad) {
+    var el = $("wpsMsg");
+    el.textContent = text || "";
+    el.className = bad ? "hint bad" : "hint";
+  }
+  function hideWpsPreview() {
+    wpsPlan = null;
+    $("wpsPreview").hidden = true;
+  }
+  async function saveWps() {
+    var payload = JSON.stringify(wps);
+    try { localStorage.setItem(LS_CFG + "wps.sheet", payload); } catch (e) { /* ignore */ }
+    if (bound()) { try { await call("kv.set", { key: "wps.sheet", value: payload }); } catch (e) { /* ignore */ } }
+    renderSettings();
+  }
+
+  $("wpsBind").onclick = function () {
+    var link = $("wpsLink").value.trim();
+    if (!link) { setWpsMsg("先粘一条分享链接", true); return; }
+    if (wpsBusy) return;
+    wpsBusy = true;
+    renderSettings();
+    hideWpsPreview();
+    setWpsMsg("正在认这张表…");
+    call("wps.mcpLink", { link: link }, 60000).then(function (r) {
+      var f = (r && r.file) || {};
+      wps = { link: link, fileId: txt(f.id), name: txt(f.name), sheet: "" };
+      return saveWps().then(function () { setWpsMsg("已绑定「" + (wps.name || wps.fileId) + "」"); });
+    }).catch(function (err) {
+      setWpsMsg(txt(err && err.message ? err.message : err), true);
+    }).then(function () { wpsBusy = false; renderSettings(); });
+  };
+  $("wpsUnbind").onclick = function () {
+    wps = { link: "", fileId: "", name: "", sheet: "" };
+    $("wpsLink").value = "";
+    hideWpsPreview();
+    setWpsMsg("已解绑");
+    void saveWps();
+  };
+  $("wpsPush").onclick = function () {
+    if (wpsBusy || !wps.fileId) return;
+    wpsBusy = true;
+    renderSettings();
+    hideWpsPreview();
+    setWpsMsg("正在推送…（整本台账，稍等）");
+    call("wps.mcpPush", { fileId: wps.fileId, sheet: wps.sheet }, 120000).then(function (r) {
+      var res = r || {};
+      setWpsMsg("已推送 " + res.count + " 条到「" + (wps.name || "在线表格") + "」"
+        + (res.appended ? "（末尾补了 " + res.appended + " 列台账表头）" : ""));
+    }).catch(function (err) {
+      setWpsMsg(txt(err && err.message ? err.message : err), true);
+    }).then(function () { wpsBusy = false; renderSettings(); });
+  };
+  $("wpsPull").onclick = function () {
+    if (wpsBusy || !wps.fileId) return;
+    wpsBusy = true;
+    renderSettings();
+    hideWpsPreview();
+    setWpsMsg("正在拉取…");
+    call("wps.mcpPull", { fileId: wps.fileId, sheet: wps.sheet }, 120000).then(function (r) {
+      var res = r || {};
+      var adds = res.adds || [], ups = res.updates || [];
+      wpsPlan = res;
+      if (!adds.length && !ups.length) { setWpsMsg("在线表格和本地一样，没有要改的"); return; }
+      var lines = [];
+      for (var i = 0; i < Math.min(adds.length, 8); i++) {
+        lines.push("+ " + (adds[i].key || "（没有单号）") + (adds[i].store ? " · " + adds[i].store : ""));
+      }
+      if (adds.length > 8) lines.push("… 还有 " + (adds.length - 8) + " 条新增");
+      for (var j = 0; j < Math.min(ups.length, 8); j++) {
+        lines.push("~ " + (ups[j].key || "（没有单号）") + "：" + (ups[j].changes || []).join("、"));
+      }
+      if (ups.length > 8) lines.push("… 还有 " + (ups.length - 8) + " 条更新");
+      $("wpsPreviewText").textContent = "将新增 " + adds.length + " 条、更新 " + ups.length + " 条\n" + lines.join("\n");
+      $("wpsPreview").hidden = false;
+      setWpsMsg("确认了才写库 —— 本地已有的行只补空格，不改已有的值");
+    }).catch(function (err) {
+      setWpsMsg(txt(err && err.message ? err.message : err), true);
+    }).then(function () { wpsBusy = false; renderSettings(); });
+  };
+  $("wpsCancel").onclick = function () {
+    hideWpsPreview();
+    setWpsMsg("已取消，什么都没改");
+  };
+  $("wpsApply").onclick = function () {
+    if (wpsBusy || !wpsPlan) return;
+    wpsBusy = true;
+    renderSettings();
+    setWpsMsg("正在写库…");
+    call("wps.mcpApply", {}, 60000).then(function (r) {
+      var res = r || {};
+      // 写库后宿主会发 kwiki:pulled，界面由那个事件重画
+      setWpsMsg("已写库：新增 " + (res.added || 0) + " 条、更新 " + (res.updated || 0) + " 条");
+      hideWpsPreview();
+    }).catch(function (err) {
+      setWpsMsg(txt(err && err.message ? err.message : err), true);
+    }).then(function () { wpsBusy = false; renderSettings(); });
+  };
+
+  /* ==================================================================
+   * 11. 日期选择（自绘：原生 date 弹窗不跟主题走）
+   * ================================================================== */
+  var dpFor = null;        // 当前是哪个输入框在用
+  var dpYear = 0, dpMonth = 0;
+
+  function openDp(input) {
+    dpFor = input;
+    var cur = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input.value.trim());
+    var d = cur ? new Date(Number(cur[1]), Number(cur[2]) - 1, 1) : new Date();
+    dpYear = d.getFullYear();
+    dpMonth = d.getMonth();
+    var rect = input.getBoundingClientRect();
+    var dp = $("dp");
+    dp.hidden = false;
+    $("dpMonths").hidden = true;
+    $("dpDays").hidden = false;
+    paintDp();
+    // 贴底空间不够就往上弹
+    var top = rect.bottom + 4;
+    if (top + dp.offsetHeight > window.innerHeight - 8) top = Math.max(8, rect.top - dp.offsetHeight - 4);
+    dp.style.top = Math.round(top) + "px";
+    dp.style.left = Math.round(Math.min(rect.left, window.innerWidth - dp.offsetWidth - 8)) + "px";
+  }
+  function closeDp() { $("dp").hidden = true; dpFor = null; }
+  function paintDp() {
+    $("dpTitle").textContent = dpYear + " 年 " + (dpMonth + 1) + " 月";
+    var first = new Date(dpYear, dpMonth, 1);
+    var lead = (first.getDay() + 6) % 7;          // 周一开始
+    var days = new Date(dpYear, dpMonth + 1, 0).getDate();
+    var html = "";
+    for (var i = 0; i < lead; i++) html += "<span></span>";
+    var t = todayStr();
+    for (var d = 1; d <= days; d++) {
+      var iso = dpYear + "-" + pad2(dpMonth + 1) + "-" + pad2(d);
+      html += '<button data-day="' + iso + '" class="' + (iso === t ? "today" : "") + '">' + d + "</button>";
+    }
+    $("dpGrid").innerHTML = html;
+    var btns = $("dpGrid").querySelectorAll("[data-day]");
+    for (var b = 0; b < btns.length; b++) {
+      btns[b].onclick = function () {
+        if (dpFor) dpFor.value = this.getAttribute("data-day");
+        closeDp();
+      };
+    }
+  }
+  function paintMonths() {
+    var html = "";
+    for (var y = dpYear - 6; y <= dpYear + 5; y++) {
+      html += '<button data-year="' + y + '">' + y + "</button>";
+    }
+    $("dpMgrid").innerHTML = html + '<div style="grid-column:span 3;display:flex;gap:4px;margin-top:4px"></div>';
+    var ys = $("dpMgrid").querySelectorAll("[data-year]");
+    for (var i = 0; i < ys.length; i++) {
+      ys[i].onclick = function () {
+        dpYear = Number(this.getAttribute("data-year"));
+        $("dpMonths").hidden = true;
+        $("dpDays").hidden = false;
+        paintDp();
+      };
+    }
+  }
+  $("dpTitle").onclick = function () {
+    $("dpDays").hidden = true;
+    $("dpMonths").hidden = false;
+    paintMonths();
+  };
+  var navs = document.querySelectorAll("[data-nav]");
+  for (var nv = 0; nv < navs.length; nv++) {
+    navs[nv].onclick = function () {
+      dpMonth += Number(this.getAttribute("data-nav"));
+      if (dpMonth < 0) { dpMonth = 11; dpYear -= 1; }
+      if (dpMonth > 11) { dpMonth = 0; dpYear += 1; }
+      paintDp();
+    };
+  }
+  var quicks = document.querySelectorAll("[data-quick]");
+  for (var q = 0; q < quicks.length; q++) {
+    quicks[q].onclick = function () {
+      var v = this.getAttribute("data-quick");
+      if (!dpFor) return;
+      if (v === "clear") dpFor.value = "";
+      else {
+        var d = new Date();
+        d.setDate(d.getDate() + Number(v));
+        dpFor.value = ymd(d);
+      }
+      closeDp();
+    };
+  }
+
+  /* ==================================================================
+   * 12. 页签与渲染总入口
+   * ================================================================== */
+  var TABS = ["create", "browse", "table", "settings"];
+  function setTab(name) {
+    for (var i = 0; i < TABS.length; i++) {
+      var v = TABS[i] === name;
+      $("view-" + TABS[i]).hidden = !v;
+      $("tab-" + TABS[i]).setAttribute("aria-selected", v ? "true" : "false");
+    }
+    if (name === "table") renderTable();
+    if (name === "browse") renderDetail();
+  }
+  function renderAll() {
     renderList();
     renderDetail();
-  });
-
-  // 右栏：处理动作（0.7.0 起"推进状态"就是改处理方式 / 结果 —— 派生状态没有独立按钮了）
-  document.getElementById("detail").addEventListener("click", function (e) {
-    var btn = e.target.closest("button[data-act]");
-    if (!btn || !selectedId) return;
-    var act = btn.getAttribute("data-act");
-    var row = findRow(selectedId);
-    if (act === "del") { void remove(selectedId); }
-    else if (act === "open-client") { void saveNote(); openClient(row && row.order_sn, row && row.store); }
-    else if (act === "copy-link") { copyClientUrl(row && row.order_sn, row && row.store); }
-    // 流程与提醒（0.8.0）：记一步 / 删一步 / 订提醒 / 取消提醒
-    else if (act === "flow-add") { void saveNote(); void addFlowStep(); }
-    else if (act === "flow-del") { void delFlowStep(Number(btn.getAttribute("data-idx"))); }
-    else if (act === "remind-set") { void bookReminder(); }
-    else if (act === "remind-clear") { void cancelReminder(); }
-  });
-  document.getElementById("detail").addEventListener("input", function (e) {
-    if (e.target && e.target.id === "d-note") scheduleNoteSave();
-  });
-  // 右栏换店铺：这是"这条单属于哪个店"的唯一修正入口 —— 登记时选错了就靠它。
-  // 处理方式 / 结果 / 已结账也是一改就存 —— 它们就是"处理到哪一步"本身。
-  document.getElementById("detail").addEventListener("change", function (e) {
-    var id = e.target && e.target.id;
-    if (id === "d-store") void setTicketStore(e.target.value);
-    else if (id === "d-handling") void saveProcField("handling", e.target.value);
-    else if (id === "d-result") void saveProcField("result", e.target.value);
-    else if (id === "d-settled") void saveProcField("settled", e.target.checked ? "1" : "");
-  });
-
-  /** 把选中那条的店铺改掉。呼起用的客服 ID 就跟着换 */
-  async function setTicketStore(name) {
-    if (!selectedId) return;
-    var v = String(name || "").trim();
-    try {
-      await saveNote();        // 先把备注落盘，下面 load() 会重建右栏
-      await Db.update({ table: TABLE, id: selectedId, patch: { store: v, updated_at: new Date().toISOString() } });
-      await load();            // load 里会 repaint + renderDetail，右栏的按钮跟着更新
-      toast(v ? "已记到「" + v + "」" : "已清掉店铺");
-    } catch (err) { toast("改店铺失败：" + friendlyErr(err)); }
+    renderTable();
+    renderCreateForm();
+    fillSelect($("fltStore"), cfg.stores.map(function (s) { return s.name; }), $("fltStore").value);
+    fillSelect($("fltStatus"), STATUSES, $("fltStatus").value);
   }
 
-  /* ---------------- 只有连着宿主才有的那点东西 ---------------- */
-
-  function bootstrapHostBits() {
+  /* ==================================================================
+   * 13. 事件绑定与启动
+   * ================================================================== */
+  ["create", "browse", "table", "settings"].forEach(function (n) {
+    $("tab-" + n).onclick = function () { setTab(n); };
+  });
+  $("btnAdd").onclick = function () { void add(); };
+  // 订单号框：一动输入就重置重复确认位；粘链接 / 失焦时就地收拾（把链接换成单号、认店铺）
+  $("fOrder").oninput = function () { dupAck = ""; showOrderHint(); };
+  $("fOrder").onpaste = function () { setTimeout(cleanOrderField, 0); };  // 粘贴要先等浏览器把值写进去
+  $("fOrder").onblur = cleanOrderField;
+  $("fTrack").onblur = function () { var v = washOrder(this.value); if (v !== this.value) this.value = v; };
+  $("search").oninput = renderList;
+  $("fltStore").onchange = function () { markSel(this); renderList(); };
+  $("fltStatus").onchange = function () { markSel(this); renderList(); };
+  $("tableSearch").oninput = renderTable;
+  $("colBtn").onclick = function () {
+    var p = $("colPanel");
+    if (!p.hidden) { p.hidden = true; return; }
+    renderColPanel();
+    p.hidden = false;
+  };
+  $("fDate").onfocus = function () { openDp(this); };
+  $("fDate").onclick = function () { openDp(this); };
+  // 失焦收起：有的 webview 点按钮不给焦点，所以再加一条"鼠标还在面板里就不收"
+  document.addEventListener("focusin", function (e) {
+    if (!$("dp").hidden && e.target !== $("fDate") && !$("dp").contains(e.target)) closeDp();
+  });
+  document.addEventListener("click", function (e) {
+    var p = $("colPanel");
+    if (!p.hidden && !p.contains(e.target) && e.target !== $("colBtn")) p.hidden = true;
+  });
+  document.addEventListener("change", function (e) {
+    if (e.target && e.target.tagName === "SELECT") markSel(e.target);
+  });
+  $("addStore").onclick = function () {
+    cfg.stores.push({ name: "店铺 " + (cfg.stores.length + 1), mallcsid: "" });
+    renderSettings();
+  };
+  $("saveStores").onclick = function () {
     void (async function () {
-      try {
-        var info = await call("schema.info", {});
-        document.getElementById("schema").textContent = JSON.stringify(info, null, 2);
-      } catch (err) {
-        document.getElementById("schema").textContent = "读不到表结构：" + err.message;
-      }
-      await load();
+      await cfgSet("stores", JSON.stringify(cfg.stores));
+      $("storeMsg").textContent = "已保存";
+      renderCreateForm();
+      renderList();
     })();
-  }
+  };
+  $("saveOpts").onclick = function () {
+    void (async function () {
+      cfg.couriers = parseList($("optCouriers").value) || [];
+      cfg.situations = parseList($("optSituations").value) || [];
+      cfg.handlings = parseList($("optHandlings").value) || [];
+      cfg.results = parseList($("optResults").value) || [];
+      cfg.flows = parseList($("optFlows").value) || [];
+      await cfgSet("optCouriers", JSON.stringify(cfg.couriers));
+      await cfgSet("optSituations", JSON.stringify(cfg.situations));
+      await cfgSet("optHandlings", JSON.stringify(cfg.handlings));
+      await cfgSet("optResults", JSON.stringify(cfg.results));
+      await cfgSet("optFlows", JSON.stringify(cfg.flows));
+      $("optMsg").textContent = "已保存";
+      renderCreateForm();
+      renderDetail();
+    })();
+  };
 
-  /* ---------------- 启动 ---------------- */
+  async function bootHost() {
+    try {
+      var info = await call("schema.info", {});
+      $("schema").textContent = JSON.stringify(info, null, 2);
+      $("meta").textContent = "数据落在 " + (info && info.table ? info.table : "tool_" + TOOL_ID.replace(/-/g, "_") + "_" + TABLE) + " · SQLite";
+    } catch (err) {
+      $("schema").textContent = "读不到表结构：" + txt(err.message);
+    }
+    await load();
+  }
 
   (function boot() {
-    paintHostDot();
-    showMeta();
-
-    // 独立打开时没有宿主推主题，跟系统走。宿主一旦连上会用 ctx.theme 覆盖掉
     try {
       if (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) {
         document.documentElement.dataset.theme = "dark";
       }
     } catch (err) { /* 老浏览器没有 matchMedia，保持浅色 */ }
 
-    // 超时兜底：到点还没有上下文，就按"在不在 iframe 里"分类
+    // 1.2 秒还没等到上下文：按"在不在 iframe 里"分类
     setTimeout(function () {
       if (state !== "booting") return;
       setState(parent === window ? "standalone" : "error");
       void load();
     }, 1200);
 
-    // 配置：不管连没连上宿主都要读（独立态读本地那份）
     void settle.then(function () { void loadCfg(); });
-
-    // 连上宿主那一次：上面那个超时器不会再开火，改成从宿主拉数据
-    void settle.then(function () {
-      if (bound()) bootstrapHostBits();
-    });
   })();
 })();
 </script>

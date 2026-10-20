@@ -47,7 +47,16 @@ import type { ToolManifest } from "../../types";
  * manifest 是外部输入，工具想写什么能力都写得上去 —— 所以在这里过一道白名单，
  * 认不出来的名字当场丢掉。宿主因此永远不会去判断一个自己不认识的"能力"。
  */
-export const CAPABILITY_NAMES: Capability[] = ["gallery", "attachments", "row", "kv", "task"];
+export const CAPABILITY_NAMES: Capability[] = [
+  "gallery",
+  "attachments",
+  "row",
+  "kv",
+  "task",
+  // 缺了它，「WPS 绑定文件」声明的 wps 能力会被白名单丢掉，
+  // 设置页里根本没有这一项的开关 —— 工具就拿不到读写授权。
+  "wps",
+];
 
 /**
  * AI 助手的模块 id。

@@ -252,36 +252,37 @@ export const SETTINGS = {
   kwikiLastAt: "kwiki.lastAt",
   kwikiLastSummary: "kwiki.lastSummary",
 
-  /* -------------------- 云端表格直连（AirScript webhook） -------------------- */
+  /* ------------------- WPS MCP（我的云文档直连） ------------------- */
+
+  /* ------------------- WPS MCP（我的云文档直连） ------------------- */
 
   /**
-   * 用户那张云表格的链接（`https://www.kdocs.cn/l/xxx`）。
+   * SkillHub MCP 的访问令牌（212 字符左右，设备码授权换回）。
    *
-   * 只存链接不存 file_id：链接是用户能认出来的东西（换一份表就是换一条链接），
-   * file_id 由程序每次从链接里现抠（见 Rust 的 link_id_of）。
+   * ⚠️ **爆炸半径比上面两个都大**：kwiki 只碰一个知识库、别的凭据也只碰一张表，
+   * 而这个令牌能读写用户**全部云文档**。它和 clientId 必须成对使用
+   * （少一个就报「Token 无效」code=400006）。
+   * 与 syncPassword 同一个待遇：明文存在本机 SQLite 里，界面上要说清楚。
    */
-  wpsCloudLink: "wps.cloud.link",
-  /** 关联出来给人看的表名（解析链接时顺手存下，失效了也不影响同步） */
-  wpsCloudName: "wps.cloud.name",
+  wpsMcpToken: "wps.mcp.token",
+  /** 本地生成的 16 位 hex，与令牌成对。丢了它令牌也用不了 */
+  wpsMcpClientId: "wps.mcp.clientId",
   /**
-   * AirScript 脚本的 webhook 地址。
+   * 用户按下的「确认启用」（"1" / ""）。
    *
-   * 形如 `https://www.kdocs.cn/api/v3/ide/file/<文件id>/script/<脚本id>/sync_task`。
-   * 它是"这张表里的这个脚本"的地址 —— 换表就要换一条。
+   * 单独留一格，是因为**授权成功不等于用户想启用它** —— 授权只是证明
+   * "这个账号可以用"，令牌能碰全部云文档这件事得让用户看过风险再点头。
+   * 后续读写功能一概以这一格为门。
    */
-  wpsCloudWebhook: "wps.cloud.webhook",
-  /**
-   * AirScript 脚本令牌（脚本编辑器 → 脚本令牌）。
-   *
-   * ⚠️ 与 kwikiToken 同一个待遇：**明文存在本机 SQLite 里**。
-   * 它只能跑用户自己文档里的脚本，泄露了等于把那张表交出去 ——
-   * 界面上要写清楚，别在公用电脑上填。
-   */
-  wpsCloudToken: "wps.cloud.token",
-  /** 测试连接时识别到的表头（展示用；推送时仍会每次现读，别拿它当缓存） */
-  wpsCloudHeader: "wps.cloud.header",
-  /** 测到的工作表名。推送/拉取时带回去，免得用户切了 sheet 就写错地方 */
-  wpsCloudSheet: "wps.cloud.sheet",
+  wpsMcpEnabled: "wps.mcp.enabled",
+  /** 令牌到期时刻（毫秒时间戳）。服务端不给就是空 */
+  wpsMcpExpiry: "wps.mcp.expiry",
+  /** 上次连上的时刻，与那次清点到的规模（只展示，不参与判断） */
+  wpsMcpLastAt: "wps.mcp.lastAt",
+  wpsMcpTools: "wps.mcp.tools",
+  wpsMcpFiles: "wps.mcp.files",
+  /** 上次探测到的授权账号昵称（从列文件返回的 created_by 里取） */
+  wpsMcpUser: "wps.mcp.user",
 
   /* ---------------------------- AI 助手 ---------------------------- */
 
@@ -490,13 +491,15 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.kwikiTableTitle]: "异常台账",
   [SETTINGS.kwikiLastAt]: "",
   [SETTINGS.kwikiLastSummary]: "",
-  // 云端表格直连：默认空。没配就走不了直连 —— 界面会自动停在"待配置"上
-  [SETTINGS.wpsCloudLink]: "",
-  [SETTINGS.wpsCloudName]: "",
-  [SETTINGS.wpsCloudWebhook]: "",
-  [SETTINGS.wpsCloudToken]: "",
-  [SETTINGS.wpsCloudHeader]: "",
-  [SETTINGS.wpsCloudSheet]: "",
+  // WPS MCP：默认空。没授权就走不了；授权了也要用户按「确认启用」才会置 "1"
+  [SETTINGS.wpsMcpToken]: "",
+  [SETTINGS.wpsMcpClientId]: "",
+  [SETTINGS.wpsMcpEnabled]: "",
+  [SETTINGS.wpsMcpExpiry]: "",
+  [SETTINGS.wpsMcpLastAt]: "",
+  [SETTINGS.wpsMcpTools]: "",
+  [SETTINGS.wpsMcpFiles]: "",
+  [SETTINGS.wpsMcpUser]: "",
   // 助手默认指向 Agnes（工作台里已经接入的那家），模型选 Agent 向的那个；
   // Key 留空 → 界面停在"还没配好"的状态里，明确告诉用户缺什么
   [SETTINGS.agentProvider]: "agnes",

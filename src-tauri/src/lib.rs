@@ -18,6 +18,7 @@ mod toolpkg;
 mod webdav;
 mod wps;
 mod wps_cloud_plan;
+mod wps_mcp;
 
 /// 把打包进安装包的内置工具同步到用户数据目录。
 ///
@@ -226,21 +227,24 @@ pub fn run() {
             wps::wps_files,
             wps::wps_push,
             wps::wps_pull,
-            // 共享链接（kdocs.cn/l/xxx）→ 只读预览。元数据匿名可读；
-            // 内容借知识库当临时落点（复制 → 读 → 删），见 wps.rs 那一节。
-            wps::wps_link_info,
-            wps::wps_link_read,
             // 绑定：把分享文件复制进知识库（不删，留给工具读写）；再按 kuid 读/写回。
             wps::wps_link_import,
             wps::wps_file_read,
             wps::wps_file_write,
-            // 云端表格直连（AirScript webhook）：不登录、不经知识库，
-            // 直接读写用户自己那张云表格（个人账号唯一能写原表的路）。
-            wps::wps_cloud_probe,
-            wps::wps_cloud_pull,
-            wps::wps_cloud_push,
-            wps::wps_cloud_sheet_read,
-            wps::wps_cloud_sheet_write,
+            // 分享链接 → 文件信息（匿名只读元数据）。工具「粘链接认表」走它。
+            wps::wps_link_info,
+            // WPS SkillHub MCP（「我的云文档」直连）。与上面 kwiki 是**两套授权**：
+            // 这里换来的令牌能碰全部云文档，见 wps_mcp.rs 顶部。
+            wps_mcp::wps_mcp_begin,
+            wps_mcp::wps_mcp_poll,
+            wps_mcp::wps_mcp_probe,
+            wps_mcp::wps_mcp_bridge,
+            wps_mcp::wps_mcp_sheet_pull,
+            wps_mcp::wps_mcp_sheet_push,
+            // 授权页必须在**程序内**弹出来：webview 里 window.open 静默无效
+            wps_mcp::wps_mcp_open_auth,
+            wps_mcp::wps_mcp_close_auth,
+            wps_mcp::wps_mcp_auth_alive,
         ])
         .setup(|app| {
             if let Err(e) = sync_builtin_tools(app.handle()) {

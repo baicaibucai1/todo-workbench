@@ -43,7 +43,8 @@
     "build:status": "node scripts/build-status.mjs",
     "installer:check": "node scripts/check-installer.mjs",
     "tauri": "tauri",
-    "kwiki:test": "esbuild tests/kwiki.mjs --bundle --platform=node --format=esm --target=node22 --outfile=tests/.kwiki.bundle.mjs --external:jsdom --log-level=warning && node tests/.kwiki.bundle.mjs"
+    "kwiki:test": "esbuild tests/kwiki.mjs --bundle --platform=node --format=esm --target=node22 --outfile=tests/.kwiki.bundle.mjs --external:jsdom --log-level=warning && node tests/.kwiki.bundle.mjs",
+    "ticket:test": "node tests/abnormal-ticket.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",

@@ -53,7 +53,7 @@ use zip::write::FileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 use crate::attachments::b64_decode;
-use crate::wps_cloud_plan::{cell_text, cloud_grid, plan_cloud_write, COLUMNS};
+use crate::wps_cloud_plan::{cell_text, COLUMNS};
 
 const BASE_URL: &str = "https://zhishi.wps.cn";
 const API_PREFIX: &str = "/kwiki/api/v1/skills_hub";
@@ -936,10 +936,6 @@ const KDOCS_FILE_URL: &str = "https://www.kdocs.cn/api/v3/office/file";
 /// 匿名访问必须像浏览器。少了 UA 服务端当爬虫，直接回 403 userNotLogin
 /// （同一个链接带 UA 就 200 —— 这不是鉴权，是风控）。
 const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-/// 预览体积上限。再大就别塞进设置页了 —— base64 过 IPC 会明显卡，而且
-/// 表格预览本来也只显示前几百行。
-const LINK_MAX_BYTES: i64 = 32 * 1024 * 1024;
-
 #[derive(Debug, Serialize)]
 pub struct WpsLink {
     /// 分享链接末尾那一段（`crkFlwR2In6z`）
@@ -956,19 +952,6 @@ pub struct WpsLink {
     pub permission: String,
     /// 归属空间名（「我的云文档」这类）—— 让用户确认拿到的是哪一份
     pub group_name: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct WpsLinkContent {
-    pub name: String,
-    pub kind: String,
-    /// 表格：表头 + 数据行（与 parse_sheet 同一套解析）
-    pub header: Vec<String>,
-    pub rows: Vec<Vec<String>>,
-    /// 文档：抽出来的纯文本
-    pub text: String,
-    /// 过程说明（临时副本怎么处理的），直接显示给用户
-    pub note: String,
 }
 
 /// 从链接（或裸 id）里抠出分享 id。
@@ -1034,8 +1017,14 @@ async fn kdocs_file_json(link_id: &str) -> Result<Json, String> {
     serde_json::from_str(&text).map_err(|e| format!("返回不是 JSON（{e}）：{}", clip(&text, 200)))
 }
 
-/// 解析共享链接。**不需要登录** —— 这一步只读元数据，拿来先给用户看
-/// 「这条链接指向什么」。
+/// 解析共享链接。**不需要登录** —— 这一步只读元数据（文件名 / 大小 / 分享者）。
+///
+/// 两处用得上：
+///   · `wps_link_import`（知识库绑定）；
+///   · **工具的「粘分享链接认表」** —— 每一张 WPS 表格都有一条分享链接，
+///     工具拿它当"这是哪张表"的凭据（2026-10-19 起，异常单号登记走这条）。
+///     解析出的 `file_id` 直接喂给 MCP 就能读写那张表（实测：UUID 般的分享 id
+///     与数字 file id，MCP 都认，读出来的内容一致）。
 #[tauri::command]
 pub async fn wps_link_info(link: String) -> Result<WpsLink, String> {
     let link_id = link_id_of(&link)?;
@@ -1069,87 +1058,6 @@ pub async fn wps_link_info(link: String) -> Result<WpsLink, String> {
             .unwrap_or("")
             .to_string(),
     })
-}
-
-/// 读共享链接里的内容：复制进知识库 → 读 → 删临时副本。
-///
-/// `space_kuid` 只是**临时落点**，读完就删；不是让用户把文件搬进知识库。
-#[tauri::command]
-pub async fn wps_link_read(
-    token: String,
-    space_kuid: String,
-    link: String,
-) -> Result<WpsLinkContent, String> {
-    let info = wps_link_info(link).await?;
-    if info.file_id.is_empty() {
-        return Err("链接没解析出文件 id —— 这份分享可能只给了「查看网页」的权限".into());
-    }
-    if info.kind == "other" {
-        return Err(format!(
-            "「{}」既不是表格也不是文档，设置页里暂不预览这种文件",
-            info.name
-        ));
-    }
-    if info.size > LINK_MAX_BYTES {
-        return Err(format!(
-            "「{}」有 {} MB，超过预览上限（{} MB）—— 在 WPS 里直接看吧",
-            info.name,
-            info.size / 1024 / 1024,
-            LINK_MAX_BYTES / 1024 / 1024
-        ));
-    }
-
-    let temp = import_copy(&token, &space_kuid, &info.file_id).await?;
-
-    let mut note = String::new();
-    let outcome = read_temp(&token, &temp).await;
-    // 读失败也要删：留着它就是给用户的知识库添乱
-    match delete(&token, &temp.kuid).await {
-        Ok(_) => note.push_str("临时副本已删除（进知识库回收站，7 天内可恢复）"),
-        Err(e) => note.push_str(&format!(
-            "⚠️ 临时副本没删掉（{e}）—— 知识库里多了一份「{}」，请手动删",
-            temp.title
-        )),
-    }
-
-    let (header, rows, text) = outcome?;
-    Ok(WpsLinkContent {
-        name: info.name,
-        kind: info.kind,
-        header,
-        rows,
-        text,
-        note,
-    })
-}
-
-/// 读临时副本。优先走 `file/content`（智能文档只能这么读），
-/// 拿不到正文再下载原始包按 zip 条目分流。
-async fn read_temp(
-    token: &str,
-    file: &WpsFile,
-) -> Result<(Vec<String>, Vec<Vec<String>>, String), String> {
-    if let Ok(data) = get(token, "/skill/file/content", &[("kuid", file.kuid.as_str())]).await {
-        let text = data.get("content").and_then(Json::as_str).unwrap_or("");
-        if !text.trim().is_empty() {
-            return Ok((Vec::new(), Vec::new(), text.to_string()));
-        }
-    }
-
-    let raw = download(token, &file.kuid).await.map_err(|e| {
-        format!("{e} —— 智能文档（.otl）只能抽正文，正文还没同步好时请过一会儿再试")
-    })?;
-
-    if raw.starts_with(b"PK") {
-        if has_zip_entry(&raw, "xl/workbook.xml") {
-            let (header, rows) = parse_sheet(&raw)?;
-            return Ok((header, rows, String::new()));
-        }
-        if has_zip_entry(&raw, "word/document.xml") {
-            return Ok((Vec::new(), Vec::new(), docx_text(&raw)?));
-        }
-    }
-    Err("这个文件既不是 xlsx 也不是 docx —— 暂不支持在设置页里预览".into())
 }
 
 fn has_zip_entry(raw: &[u8], name: &str) -> bool {
@@ -1199,296 +1107,6 @@ fn docx_text(raw: &[u8]) -> Result<String, String> {
         return Err("docx 里没抽到文字（可能是空文档，或正文都在图片里）".into());
     }
     Ok(out)
-}
-
-/* ------------------------------------------------------------------ */
-/* 云端表格直连（AirScript webhook）                                     */
-/* ------------------------------------------------------------------ */
-
-/**
- * 为什么不走下载/上传，而走 AirScript。
- *
- * 用户要的是「直接对着自己那张云表格读写」—— 不是往知识库里再放一份。
- * 但 WPS 对个人账号**没有**任何直接写云文档的开放接口（金山文档开放平台
- * developer.kdocs.cn 只对企业资质开放，2026-10-13 查证）。个人号能用的
- * 唯一一条路是 **AirScript 脚本令牌**：
- *
- *   表格里建一个脚本 → 脚本暴露 webhook → 外部 POST `{Context:{argv:…}}`
- *   → 脚本在**那张表里**执行，读写它自己的单元格。
- *
- * 于是：
- *   · 令牌/脚本都在用户自己手里，程序不碰账号密码；
- *   · 不需要登录、不需要知识库、不产生任何副本；
- *   · 代价是**一次性**在表里建个脚本（设置页给出现成代码，复制粘贴）。
- *
- * 协议（与设置页展示的脚本严格对应，改一边必须改另一边）：
- *   ping      → {ok, sheet, sheets, rows, cols, header}
- *   read      → {ok, rows: [[...]]}            整张表（A1 到最后有内容的格子）
- *   write     → {ok}     argv.cols=[{col,values}], argv.clear=[{col,from,to}]
- *   writeGrid → {ok, rows}              argv.rows 整张表覆盖（WPS 绑定文件用）
- */
-const AIRSCRIPT_TIMEOUT: Duration = Duration::from_secs(90);
-
-#[derive(Debug, Serialize)]
-pub struct WpsCloudInfo {
-    /// 当前工作表名。推送/拉取时原样带回去，免得用户切了 sheet 就写错地方
-    pub sheet: String,
-    pub sheets: usize,
-    pub rows: usize,
-    pub cols: usize,
-    /// 第一行（表头），原样给界面看
-    pub header: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct WpsCloudPush {
-    pub count: usize,
-    /// 写了几列（含补在末尾的新列）
-    pub columns: usize,
-    /// 末尾补了几列（表里原来没有的台账列）
-    pub appended: usize,
-    pub file_kuid: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct WpsCloudSheet {
-    pub sheet: String,
-    pub header: Vec<String>,
-    pub rows: Vec<Vec<String>>,
-}
-
-/// 把用户填的 webhook / 令牌先挡一道 —— 错了在这里说清楚，别等服务端回一句
-/// `404 page not found` 让人猜。
-fn cloud_args(webhook: &str, token: &str) -> Result<(String, String), String> {
-    let url = webhook.trim().to_string();
-    if !url.starts_with("https://") {
-        return Err("Webhook 要以 https:// 开头".into());
-    }
-    if !url.contains("kdocs.cn/api/v3/ide/file/") || !url.contains("/script/") {
-        return Err(
-            "Webhook 地址不对 —— 它长这样：https://www.kdocs.cn/api/v3/ide/file/<文件id>/script/<脚本id>/sync_task"
-                .into(),
-        );
-    }
-    if !url.ends_with("/sync_task") {
-        return Err("Webhook 要以 /sync_task 结尾 —— 在脚本的「更多」菜单里复制「脚本 webhook」".into());
-    }
-    let t = token.trim().to_string();
-    if t.is_empty() {
-        return Err("还没填 AirScript 令牌 —— 在脚本编辑器里点「脚本令牌」创建".into());
-    }
-    Ok((url, t))
-}
-
-/// POST 一次脚本。返回脚本里 `return` 出来的对象。
-async fn airscript_call(webhook: &str, token: &str, argv: Json) -> Result<Json, String> {
-    let (url, tok) = cloud_args(webhook, token)?;
-    let client = reqwest::Client::builder()
-        .timeout(AIRSCRIPT_TIMEOUT)
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
-    let resp = client
-        .post(&url)
-        .header("AirScript-Token", tok)
-        .json(&json!({ "Context": { "argv": argv } }))
-        .send()
-        .await
-        .map_err(|e| format!("连不上金山文档：{e} —— 检查网络/代理"))?;
-    let status = resp.status();
-    let text = resp.text().await.map_err(|e| format!("读返回失败：{e}"))?;
-    if !status.is_success() {
-        let hint = match status.as_u16() {
-            401 | 403 => "（令牌不对或过期了 —— 重新建一个脚本令牌再填进来）",
-            404 => "（webhook 找不到这个脚本 —— 脚本可能被删了，或者链接复制少了一段）",
-            _ => "",
-        };
-        return Err(format!("AirScript 返回 {status}：{}{}", clip(&text, 300), hint));
-    }
-    let v: Json = serde_json::from_str(&text)
-        .map_err(|e| format!("AirScript 返回的不是 JSON（{e}）：{}", clip(&text, 300)))?;
-    if let Some(err) = v.get("error").and_then(Json::as_str) {
-        if !err.trim().is_empty() {
-            return Err(format!("脚本报错：{err}"));
-        }
-    }
-    let mut result = v
-        .get("data")
-        .and_then(|d| d.get("result"))
-        .cloned()
-        .ok_or_else(|| {
-            format!(
-                "脚本没返回结果 —— 确认脚本最后有 return，且没有语法错误：{}",
-                clip(&text, 300)
-            )
-        })?;
-    // 兼容用户把返回值 JSON.stringify 了的情况（网上教程常这么写）
-    if let Json::String(s) = &result {
-        if s.trim_start().starts_with('{') {
-            if let Ok(parsed) = serde_json::from_str::<Json>(s) {
-                result = parsed;
-            }
-        }
-    }
-    if result.get("ok").and_then(Json::as_bool) == Some(false) {
-        return Err(format!(
-            "脚本说：{}",
-            result
-                .get("error")
-                .and_then(Json::as_str)
-                .unwrap_or("执行失败（脚本没给原因）")
-        ));
-    }
-    Ok(result)
-}
-
-
-fn cloud_str_array(v: Option<&Json>) -> Vec<String> {
-    v.and_then(Json::as_array)
-        .map(|a| a.iter().map(cell_text).collect())
-        .unwrap_or_default()
-}
-
-/// 试一下：脚本通不通、是哪张 sheet、表头长什么样。
-#[tauri::command]
-pub async fn wps_cloud_probe(webhook: String, token: String) -> Result<WpsCloudInfo, String> {
-    let r = airscript_call(&webhook, &token, json!({ "op": "ping" })).await?;
-    Ok(WpsCloudInfo {
-        sheet: str_field(&r, "sheet").unwrap_or_default(),
-        sheets: r.get("sheets").and_then(Json::as_u64).unwrap_or(1) as usize,
-        rows: r.get("rows").and_then(Json::as_u64).unwrap_or(0) as usize,
-        cols: r.get("cols").and_then(Json::as_u64).unwrap_or(0) as usize,
-        header: cloud_str_array(r.get("header")),
-    })
-}
-
-/// 整表读一遍（原样二维数组，不认列名）—— 「WPS 绑定文件」用。
-#[tauri::command]
-pub async fn wps_cloud_sheet_read(
-    webhook: String,
-    token: String,
-    sheet: Option<String>,
-) -> Result<WpsCloudSheet, String> {
-    let argv = json!({ "op": "read", "sheet": sheet.unwrap_or_default() });
-    let r = airscript_call(&webhook, &token, argv).await?;
-    let grid = cloud_grid(&r);
-    let header = grid.first().cloned().unwrap_or_default();
-    let rows = if grid.len() > 1 { grid[1..].to_vec() } else { Vec::new() };
-    Ok(WpsCloudSheet {
-        sheet: str_field(&r, "sheet").unwrap_or_default(),
-        header,
-        rows,
-    })
-}
-
-/// 整表覆盖写（保留格式，只改值）—— 「WPS 绑定文件」用。
-///
-/// 这是**用户显式编辑整张表**的入口：表格编辑器里看到什么就写什么。
-/// 台账同步不走这里（它只写自己那几列，见 `wps_cloud_push`）。
-#[tauri::command]
-pub async fn wps_cloud_sheet_write(
-    webhook: String,
-    token: String,
-    sheet: Option<String>,
-    header: Vec<String>,
-    rows: Vec<Vec<String>>,
-) -> Result<usize, String> {
-    let mut grid: Vec<Json> = Vec::with_capacity(rows.len() + 1);
-    grid.push(Json::Array(
-        header.iter().map(|h| Json::String(h.clone())).collect(),
-    ));
-    for r in &rows {
-        grid.push(Json::Array(
-            r.iter().map(|c| Json::String(c.clone())).collect(),
-        ));
-    }
-    let argv = json!({
-        "op": "writeGrid",
-        "sheet": sheet.unwrap_or_default(),
-        "rows": Json::Array(grid),
-    });
-    airscript_call(&webhook, &token, argv).await?;
-    Ok(rows.len())
-}
-
-/// 拉取台账：整表读回来，按表头换成 SQLite 列名（与 `wps_pull` 同一套映射）。
-#[tauri::command]
-pub async fn wps_cloud_pull(
-    webhook: String,
-    token: String,
-    sheet: Option<String>,
-) -> Result<WpsPull, String> {
-    let argv = json!({ "op": "read", "sheet": sheet.unwrap_or_default() });
-    let r = airscript_call(&webhook, &token, argv).await?;
-    let grid = cloud_grid(&r);
-    if grid.is_empty() {
-        return Ok(WpsPull {
-            file_kuid: "cloud".into(),
-            header: Vec::new(),
-            rows: Vec::new(),
-        });
-    }
-    let header = grid[0].clone();
-    let colmap: std::collections::HashMap<&str, &str> =
-        COLUMNS.iter().map(|(c, h)| (*h, *c)).collect();
-    let mut rows = Vec::with_capacity(grid.len().saturating_sub(1));
-    for line in grid.iter().skip(1) {
-        // 整行全空的行直接跳过：表格底部常有一堆"看着空、其实有格式"的行
-        if line.iter().all(|c| c.trim().is_empty()) {
-            continue;
-        }
-        let mut m = JsonMap::new();
-        for (j, h) in header.iter().enumerate() {
-            if let Some(col) = colmap.get(h.trim()) {
-                m.insert(
-                    (*col).to_string(),
-                    Json::String(line.get(j).cloned().unwrap_or_default()),
-                );
-            }
-        }
-        rows.push(m);
-    }
-    Ok(WpsPull {
-        file_kuid: "cloud".into(),
-        header,
-        rows,
-    })
-}
-
-
-/// 推送台账：**只写台账那几列**，表里其它列（用户自己的备注/公式）不动。
-///
-/// 步骤：读一遍表头 → 按中文列名找列号 → 没有的列补在末尾 → 按列写值
-/// → 比新数据多的旧行清空。全程只碰这 14 列。
-#[tauri::command]
-pub async fn wps_cloud_push(
-    webhook: String,
-    token: String,
-    sheet: Option<String>,
-    rows: Vec<JsonMap<String, Json>>,
-) -> Result<WpsCloudPush, String> {
-    // 两次调用都要带 sheet，先收成一个 String 再 clone
-    let sheet = sheet.unwrap_or_default();
-    let argv = json!({ "op": "read", "sheet": sheet.clone() });
-    let r = airscript_call(&webhook, &token, argv).await?;
-    let grid = cloud_grid(&r);
-    let header: Vec<String> = grid.first().cloned().unwrap_or_default();
-    let old_rows = if grid.len() > 1 { grid.len() - 1 } else { 0 };
-
-    let (cols, clear, appended) = plan_cloud_write(&header, old_rows, &rows)?;
-
-    let argv = json!({
-        "op": "write",
-        "sheet": sheet,
-        "cols": cols,
-        "clear": clear,
-    });
-    airscript_call(&webhook, &token, argv).await?;
-    Ok(WpsCloudPush {
-        count: rows.len(),
-        columns: COLUMNS.len(),
-        appended,
-        file_kuid: "cloud".into(),
-    })
 }
 
 /* ------------------------------------------------------------------ */
