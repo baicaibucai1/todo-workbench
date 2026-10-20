@@ -26,6 +26,8 @@
     --fg: #2c2c2a; --fg2: #5f5e5b; --dim: #918f89;
     --line: #e6e4dd; --chip: #eceadf;
     --accent: #378add; --danger: #a32d2d; --ok: #2f9e63; --warn: #c9820b;
+    /* 点缀色板：四个页签各一套（登记蓝 / 查看青 / 表格紫 / 设置灰），只用在细线和图标上 */
+    --teal: #2f9e8f; --violet: #7a6fd0;
     --sel: #eef4fe;
     --ring: rgba(55,138,221,.16);
     --mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
@@ -38,6 +40,7 @@
     /* 深色里边框必须比面板**亮**，否则整条线看不见 */
     --line: #3a3932; --chip: #2f2e28;
     --accent: #5b9de8; --danger: #e07272; --ok: #4ec78a; --warn: #e0b458;
+    --teal: #4ecfb4; --violet: #9c93e8;
     --sel: #24303f;
     --ring: rgba(91,157,232,.22);
     color-scheme: dark;
@@ -253,28 +256,61 @@
     white-space: pre-wrap; word-break: break-all; margin: 0;
   }
 
-  /* ---------- 装饰：一律中性灰，只拉层次，不抢内容（无阴影、无渐变） ---------- */
+  /* ---------- 装饰：中性灰打底 + 一点色彩，只拉层次，不抢内容（无阴影、无渐变） ---------- */
+  /* 每个页签一套点缀色（--tint），页内的标题竖条、分区小条、表头线都跟着它走。
+     换页签时整页色调微变 —— 比每处随手挑个颜色克制得多。 */
+  .tabs button[data-tab="create"],
+  #view-create { --tint: var(--accent); }
+  .tabs button[data-tab="browse"],
+  #view-browse { --tint: var(--teal); }
+  .tabs button[data-tab="table"],
+  #view-table { --tint: var(--violet); }
+  .tabs button[data-tab="settings"],
+  #view-settings { --tint: var(--dim); }
+
+  /* 页头：底边一条 2px 的色条（四段硬边拼色，不是渐变），呼应四个页签 */
+  header { position: relative; }
+  header::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+    background: linear-gradient(90deg,
+      var(--accent) 0 25%, var(--teal) 25% 50%, var(--violet) 50% 75%, var(--dim) 75% 100%);
+    opacity: .75;
+  }
   /* 页头小标：圆角方块里三条横线，跟 favicon 一个形状 */
   .brand {
     width: 18px; height: 18px; flex: 0 0 auto;
-    fill: none; stroke: var(--dim); stroke-width: 1.5;
-    stroke-linecap: round; stroke-linejoin: round;
+    fill: none; stroke: var(--accent); stroke-width: 1.5;
+    stroke-linecap: round; stroke-linejoin: round; opacity: .9;
   }
-  /* 页签：图标跟着选中态走，未选中灰、选中深 */
+  /* 页签：图标跟着选中态走，未选中灰、选中用自己那套色 */
   .tabs button { display: flex; align-items: center; gap: 5px; }
   .tabs button .ico { width: 13px; height: 13px; color: var(--dim); }
-  .tabs button[aria-selected="true"] .ico { color: var(--fg); }
-  /* 卡片标题：左边一条 2px 中灰竖条 */
+  .tabs button[aria-selected="true"] .ico { color: var(--tint); }
+  /* 卡片标题：左边一条 2px 竖条，用当前页的点缀色 */
   .card h2 { display: flex; align-items: center; gap: 7px; }
   .card h2::before {
     content: ""; flex: 0 0 auto; width: 2px; height: 12px;
-    border-radius: 2px; background: var(--dim);
+    border-radius: 2px; background: var(--tint, var(--dim));
   }
-  /* 分区标题：右边接一条细线，把这一节"托"起来 */
+  /* 分区标题：前面一个小色条 + 右边接一条细线，把这一节"托"起来 */
+  .sect > h3::before {
+    content: ""; flex: 0 0 auto; width: 3px; height: 11px;
+    border-radius: 2px; background: var(--tint, var(--dim)); opacity: .75;
+  }
   .sect > h3::after {
     content: ""; flex: 1 1 auto; height: 1px; background: var(--line); margin-left: 6px;
   }
   button .ico { width: 13px; height: 13px; }
+  /* 订单号大横条：左边缘一条点缀色，聚焦时整条亮起来 */
+  .bigbar { box-shadow: inset 3px 0 0 var(--tint, var(--dim)); }
+  .bigbar:focus-within { box-shadow: inset 3px 0 0 var(--tint, var(--dim)), 0 0 0 3px var(--ring); }
+  /* 表格表头：底部一条点缀色细线（表头本身是 sticky 的，只染色不改高） */
+  thead th { border-bottom-color: var(--tint, var(--line)); }
+  /* 列表行：左边缘 3px 状态条（待处理黄 / 处理中蓝 / 已关闭绿）——颜色带语义，不只是好看 */
+  .ticket { box-shadow: inset 3px 0 0 transparent; }
+  .ticket.s0 { box-shadow: inset 3px 0 0 var(--warn); }
+  .ticket.s1 { box-shadow: inset 3px 0 0 var(--accent); }
+  .ticket.s2 { box-shadow: inset 3px 0 0 var(--ok); }
   /* 空态：一张描边插画（虚线单据 + 放大镜），比干一句灰字好认 */
   .empty {
     display: flex; flex-direction: column; align-items: center; gap: 8px;
@@ -285,6 +321,7 @@
     fill: none; stroke: var(--dim); stroke-width: 1.2;
     stroke-linecap: round; stroke-linejoin: round; opacity: .75;
   }
+  .empty .art .lens { fill: rgba(55, 138, 221, .12); stroke: var(--accent); }
   .empty .t { font-size: 12px; }
   .empty.sm { padding: 14px 10px; gap: 6px; }
   .empty.sm .art { width: 34px; height: 34px; }
@@ -568,7 +605,7 @@
     + '<path d="M9 8.5h16.5l7.5 7.5V39a1.5 1.5 0 0 1-1.5 1.5H9A1.5 1.5 0 0 1 7.5 39V10A1.5 1.5 0 0 1 9 8.5z" stroke-dasharray="3 3"/>'
     + '<path d="M25 8.5v7.5h7.5"/>'
     + '<path d="M13.5 20h13M13.5 25.5h9" />'
-    + '<circle cx="31" cy="31" r="7.5"/><path d="M36.5 36.5 42 42"/>'
+    + '<circle class="lens" cx="31" cy="31" r="7.5"/><path d="M36.5 36.5 42 42"/>'
     + "</svg>";
   function emptyBlock(text, small) {
     return '<div class="empty' + (small ? " sm" : "") + '">' + EMPTY_ART
@@ -1164,7 +1201,7 @@
       var r = list[i];
       var st = statusOf(r);
       var sn = txt(r.order_sn) || txt(r.tracking_no) || "（没有单号）";
-      html += '<div class="ticket' + (r.id === selectedId ? " on" : "") + '" data-id="' + esc(r.id) + '">'
+      html += '<div class="ticket ' + statusClass(st) + (r.id === selectedId ? " on" : "") + '" data-id="' + esc(r.id) + '">'
         + '<div class="line1"><span class="sn">' + esc(sn) + '</span>'
         + '<span class="spacer"></span>'
         + '<span class="badge ' + statusClass(st) + '">' + esc(st) + "</span></div>"
