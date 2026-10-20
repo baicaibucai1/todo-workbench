@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.1.5）——整本重写过一次，之后按反馈迭代。
+  异常单号登记（v1.1.6）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -210,9 +210,13 @@
     background: transparent; border-style: dashed; border-color: var(--line);
     color: var(--fg); opacity: 1; -webkit-text-fill-color: var(--fg); cursor: default;
   }
+  .sect.base input:disabled::placeholder, .sect.base textarea:disabled::placeholder {
+    color: var(--dim); -webkit-text-fill-color: var(--dim); opacity: 1;
+  }
   .sect.base.locked .lbl { color: var(--dim); }
-  .sect.base .pill:disabled { opacity: 1; color: var(--fg2); cursor: default; }
-  .sect.base .pill:disabled.on { opacity: 1; }
+  /* 锁态胶囊只剩"当前值"一个，显示成中性的标签而不是按钮 —— 蓝色高亮带着"可点"的暗示 */
+  .pill.ro { cursor: default; background: var(--chip); color: var(--fg2); border-color: var(--line); }
+  .sect.base.locked .pills .note { font-size: 12px; }
   .basehint { font-size: 11.5px; color: var(--dim); }
   .flowrow { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
   .flowrow .t { color: var(--dim); font-family: var(--mono); font-size: 11.5px; }
@@ -677,9 +681,18 @@
 
   /* ---------- 胶囊选项（店铺 / 快递公司 / 情况） ----------
      值存在容器的 data-value 上：DOM 重建（换配置、重画详情）时不丢已选。
-     ★ 再点一次同一个 = 取消选择 —— 选错了不用翻设置页。 */
-  function renderPills(el, list, cur, onPick) {
+     ★ 再点一次同一个 = 取消选择 —— 选错了不用翻设置页。
+     ★ locked=true：只摆当前值一个标签，不把所有选项铺出来。选项是"要改的时候"才需要的东西，
+       锁着还铺 6 个店铺 6 个快递公司，一屏全是没用的东西，反而看不清这条单到底选了啥。 */
+  function renderPills(el, list, cur, onPick, locked) {
     if (!el) return;
+    el.setAttribute("data-value", txt(cur));
+    if (locked) {
+      el.innerHTML = txt(cur)
+        ? '<span class="pill on ro">' + esc(txt(cur)) + "</span>"
+        : '<span class="note">未填</span>';
+      return;
+    }
     var html = "";
     for (var i = 0; i < list.length; i++) {
       var v = txt(list[i]);
@@ -687,11 +700,10 @@
       html += '<button type="button" class="pill' + (v === cur ? " on" : "") + '" data-v="' + esc(v) + '">' + esc(v) + "</button>";
     }
     el.innerHTML = html || '<span class="note">（还没配选项 —— 去「设置 → 下拉选项」加）</span>';
-    el.setAttribute("data-value", txt(cur));
     var bs = el.querySelectorAll(".pill");
     for (var k = 0; k < bs.length; k++) {
       bs[k].onclick = function () {
-        if (this.disabled) return;   // 锁态兜一层：jsdom 会给 disabled 按钮派 click，真浏览器不会
+        if (this.disabled) return;   // 防御：jsdom 会给 disabled 按钮派 click，真浏览器不会
         var v = this.getAttribute("data-v");
         pillSet(el, el.getAttribute("data-value") === v ? "" : v);
         if (onPick) onPick(el.getAttribute("data-value"));
@@ -720,14 +732,17 @@
 
   /**
    * 详情「基本信息」的锁：锁态把所有输入框和胶囊 disable 掉。
-   * 虚线边框只是观感，真正拦手的是 disabled（键盘 Tab 也跳不进去）；
-   * 胶囊同理 —— 容器加 pointer-events 挡不住 Tab，得逐个 disable。
+   * 虚线边框只是观感，真正拦手的是 disabled（键盘 Tab 也跳不进去）。
+   * 空着的格在锁态写个灰「未填」—— 一排空虚线框看不出"是没填"还是"加载失败"。
    */
   function setBaseLock(locked) {
     var sect = $("sectBase");
     if (!sect) return;
     var flds = sect.querySelectorAll("input, textarea, select");
-    for (var i = 0; i < flds.length; i++) flds[i].disabled = !!locked;
+    for (var i = 0; i < flds.length; i++) {
+      flds[i].disabled = !!locked;
+      flds[i].placeholder = locked && !txt(flds[i].value) ? "未填" : "";
+    }
     var pills = sect.querySelectorAll(".pill");
     for (var j = 0; j < pills.length; j++) pills[j].disabled = !!locked;
     if (locked) sect.classList.add("locked"); else sect.classList.remove("locked");
@@ -1657,9 +1672,9 @@
     $("dDate").value = txt(r.shipped_at);
     $("dTitle").value = txt(r.title);
     $("dNote").value = txt(r.note);
-    renderPills($("dCourier"), cfg.couriers, txt(r.courier));
-    renderPills($("dStore"), cfg.stores.map(function (s) { return s.name; }), txt(r.store));
-    renderPills($("dCategory"), cfg.situations, txt(r.category));
+    renderPills($("dCourier"), cfg.couriers, txt(r.courier), null, !editingBase);
+    renderPills($("dStore"), cfg.stores.map(function (s) { return s.name; }), txt(r.store), null, !editingBase);
+    renderPills($("dCategory"), cfg.situations, txt(r.category), null, !editingBase);
     setBaseLock(!editingBase);
     $("dDate").onfocus = function () { openDp(this); };
     $("dDate").onclick = function () { openDp(this); };

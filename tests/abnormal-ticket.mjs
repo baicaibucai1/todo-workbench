@@ -270,10 +270,17 @@ check("订单号预填的是这条的原值", doc.getElementById("dOrder").value
   doc.getElementById("dOrder").value);
 check("快递单号也预填了", doc.getElementById("dTrack").value === "YT9988776655",
   doc.getElementById("dTrack").value);
-check("快递公司 / 店铺 / 情况在查看页也是胶囊",
-  doc.getElementById("dCourier").querySelectorAll(".pill").length > 0 &&
-  doc.getElementById("dStore").querySelectorAll(".pill").length > 0 &&
-  doc.getElementById("dCategory").querySelectorAll(".pill").length > 0);
+/* 锁态下这三格只摆值：有值 = 一个只读标签，没值 = 灰字「未填」。
+   （这条单的「情况」本来就没填 —— 正好覆盖"未填"这一支） */
+check("锁态的快递公司 / 店铺 / 情况都给出了可见的值",
+  ["dCourier", "dStore", "dCategory"].every((id) => {
+    const el = doc.getElementById(id);
+    return el.querySelectorAll(".pill.ro").length === 1 || /未填/.test(el.textContent || "");
+  }), ["dCourier", "dStore", "dCategory"].map((id) => id + "=" +
+    (doc.getElementById(id).textContent || "").trim()).join(" | "));
+check("没填的那格显示「未填」（不是一片空框）",
+  /未填/.test(doc.getElementById("dCategory").textContent || ""),
+  doc.getElementById("dCategory").textContent);
 check("店铺胶囊高亮在这条的店铺上",
   doc.getElementById("dStore").getAttribute("data-value") === "拼5" &&
   !!doc.getElementById("dStore").querySelector(".pill.on"),
@@ -281,8 +288,14 @@ check("店铺胶囊高亮在这条的店铺上",
 
 /* ★ 默认锁着：不让顺手改单号（单号一改，推给 WPS 的表也跟着变） */
 check("基本信息默认锁着", doc.getElementById("dOrder").disabled === true);
-check("快递公司胶囊也点不动", Array.from(doc.getElementById("dCourier").querySelectorAll(".pill"))
-  .every((b) => b.disabled === true));
+check("锁态只摆已选值，不铺所有选项",
+  doc.getElementById("dCourier").querySelectorAll("button.pill").length === 0
+  && doc.getElementById("dCourier").querySelectorAll(".pill.ro").length === 1,
+  "button=" + doc.getElementById("dCourier").querySelectorAll("button.pill").length
+  + " 只读标签=" + doc.getElementById("dCourier").querySelectorAll(".pill.ro").length);
+check("锁态标签就是这条的值", /^申通|^顺丰|^中通|^圆通|^韵达|^邮政|^京东/.test(
+  (doc.getElementById("dCourier").textContent || "").trim()),
+  doc.getElementById("dCourier").textContent);
 check("锁着时不给保存按钮", !doc.getElementById("btnEdit"));
 check("标题上挂着「编辑」按钮", /编辑/.test(doc.getElementById("btnBaseToggle").textContent || ""),
   doc.getElementById("btnBaseToggle").textContent);
@@ -293,7 +306,7 @@ check("锁着时有句说明", /锁着/.test(doc.querySelector("#sectBase .baseh
   const keep = doc.getElementById("dCourier").getAttribute("data-value");
   doc.querySelector("#dCourier .pill").click();
   await sleep(20);
-  check("锁态点胶囊不生效", args.filter((a) => a.op === "row.update").length === beforeUpd
+  check("锁态点那个只读标签不生效", args.filter((a) => a.op === "row.update").length === beforeUpd
     && doc.getElementById("dCourier").getAttribute("data-value") === keep,
     "点完还是 " + doc.getElementById("dCourier").getAttribute("data-value") + "（原 " + keep + "）");
 }
@@ -301,6 +314,8 @@ check("锁着时有句说明", /锁着/.test(doc.querySelector("#sectBase .baseh
 doc.getElementById("btnBaseToggle").click();
 await sleep(80);
 check("点「编辑」解锁了", doc.getElementById("dOrder").disabled === false);
+check("解锁后选项才铺出来", doc.getElementById("dCourier").querySelectorAll("button.pill").length >= 3,
+  "选项数=" + doc.getElementById("dCourier").querySelectorAll("button.pill").length);
 check("解锁后胶囊能点", Array.from(doc.getElementById("dCourier").querySelectorAll(".pill"))
   .every((b) => b.disabled === false));
 check("解锁后才有保存 / 撤掉", !!doc.getElementById("btnEdit") && !!doc.getElementById("btnEditUndo"));
