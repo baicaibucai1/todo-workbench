@@ -178,7 +178,31 @@ for (const [tab, view] of [["browse", "view-browse"], ["table", "view-table"], [
 console.log("\n3. 登记一条（ERP 链接识别 + 19 位纯数字不拦）");
 doc.getElementById("tab-create").click();
 await sleep(30);
-check("店铺下拉有选项", doc.getElementById("fStore").options.length > 0);
+check("订单号在最上面那条大横条里", !!doc.querySelector(".bigbar > #fOrder"),
+  doc.getElementById("fOrder") ? doc.getElementById("fOrder").parentNode.className : "没有 fOrder");
+check("店铺是胶囊选项（不是下拉）", doc.getElementById("fStore").querySelectorAll(".pill").length > 0,
+  String(doc.getElementById("fStore").querySelectorAll(".pill").length));
+check("快递公司 / 情况也是胶囊", doc.getElementById("fCourier").querySelectorAll(".pill").length > 0 &&
+  doc.getElementById("fCategory").querySelectorAll(".pill").length > 0);
+check("标签上画了图标", doc.querySelectorAll(".lbl svg.ico").length >= 4,
+  String(doc.querySelectorAll(".lbl svg.ico").length));
+
+// 胶囊：点一下选中，再点一下取消
+{
+  const courier = doc.getElementById("fCourier");
+  const p0 = courier.querySelectorAll(".pill")[0];
+  const v0 = p0.getAttribute("data-v");
+  p0.click();
+  await sleep(20);
+  check("点胶囊选中了", courier.getAttribute("data-value") === v0 && p0.classList.contains("on"),
+    courier.getAttribute("data-value"));
+  p0.click();
+  await sleep(20);
+  check("再点一次取消（选错了不用翻设置页）", courier.getAttribute("data-value") === "",
+    JSON.stringify(courier.getAttribute("data-value")));
+  p0.click();
+  await sleep(20);
+}
 
 const fOrder = doc.getElementById("fOrder");
 fOrder.value = "https://mobile.pdd.com/?mallcsid=987654&ordersn=6931234567890123456";
@@ -186,16 +210,14 @@ fOrder.dispatchEvent(new win.Event("paste", { bubbles: true }));   // 粘贴要�
 await sleep(120);
 check("整条 ERP 链接被拆成订单号", doc.getElementById("fOrder").value === "6931234567890123456",
   doc.getElementById("fOrder").value);
-check("链接里的客服 ID 反查出了店铺（不用手选）", doc.getElementById("fStore").value === "拼5",
-  doc.getElementById("fStore").value);
+check("链接里的客服 ID 反查出了店铺（不用手选）", doc.getElementById("fStore").getAttribute("data-value") === "拼5",
+  doc.getElementById("fStore").getAttribute("data-value"));
 // ★ 用户库里真实存在的就是 16/19 位纯数字，不是 YYMMDD-数字 —— 形状存疑只许提示，不许拦
 const hint1 = doc.getElementById("addMsg").textContent || "";
 check("形状存疑只提示（提示条有字）", /格式存疑|定位不到/.test(hint1), hint1.slice(0, 90));
 
 doc.getElementById("fTrack").value = "YT9988776655";
 doc.getElementById("fTitle").value = "包裹破损，客户要求赔偿";
-const fCourier = doc.getElementById("fCourier");
-if (fCourier.options.length > 1) fCourier.value = fCourier.options[1].value;
 doc.getElementById("btnAdd").click();
 await sleep(200);
 check("19 位纯数字照样登记进去了（没被形状拦住）", store.length === 1, JSON.stringify(store.length));
@@ -227,6 +249,56 @@ check("表格渲染出行", body.querySelectorAll("tr").length >= 1, String(body
 check("表格里能搜到这条单号", (body.textContent || "").includes("6931234567890123456"));
 check("表头 14 列", doc.getElementById("tableHead").querySelectorAll("th").length === 14,
   String(doc.getElementById("tableHead").querySelectorAll("th").length));
+
+console.log("\n5b. 查看页能补全 / 改信息（不用回登记页重录）");
+doc.getElementById("tab-browse").click();
+await sleep(80);
+doc.querySelector("#list .ticket").click();
+await sleep(80);
+check("详情里有能改的订单号框", !!doc.getElementById("dOrder"));
+check("订单号预填的是这条的原值", doc.getElementById("dOrder").value === "6931234567890123456",
+  doc.getElementById("dOrder").value);
+check("快递单号也预填了", doc.getElementById("dTrack").value === "YT9988776655",
+  doc.getElementById("dTrack").value);
+check("快递公司 / 店铺 / 情况在查看页也是胶囊",
+  doc.getElementById("dCourier").querySelectorAll(".pill").length > 0 &&
+  doc.getElementById("dStore").querySelectorAll(".pill").length > 0 &&
+  doc.getElementById("dCategory").querySelectorAll(".pill").length > 0);
+check("店铺胶囊高亮在这条的店铺上",
+  doc.getElementById("dStore").getAttribute("data-value") === "拼5" &&
+  !!doc.getElementById("dStore").querySelector(".pill.on"),
+  doc.getElementById("dStore").getAttribute("data-value"));
+
+{ // 补全：快递公司换一个（登记页那次选的会带过来，所以挑个跟当前值不同的）；描述改一句
+  const dCourier = doc.getElementById("dCourier");
+  const cur = dCourier.getAttribute("data-value") || "";
+  const pills = Array.from(dCourier.querySelectorAll(".pill"));
+  const target = pills.find((b) => b.getAttribute("data-v") !== cur) || pills[0];
+  const pick = target.getAttribute("data-v");
+  target.click();
+  await sleep(20);
+  check("胶囊跟着点了换（不是取消了）", dCourier.getAttribute("data-value") === pick,
+    dCourier.getAttribute("data-value"));
+  doc.getElementById("dTitle").value = "客户确认破损，走赔付";
+  const before = args.filter((a) => a.op === "row.update").length;
+  doc.getElementById("btnEdit").click();
+  await sleep(220);
+  check("保存走了 row.update", args.filter((a) => a.op === "row.update").length === before + 1,
+    String(args.filter((a) => a.op === "row.update").length));
+  const up = args.filter((a) => a.op === "row.update").pop();
+  check("补全的快递公司写进去了", up.payload.patch.courier === pick,
+    JSON.stringify(up.payload.patch));
+  check("改过的描述写进去了", up.payload.patch.title === "客户确认破损，走赔付");
+  check("订单号 / 快递单号原样带上（没被清空）",
+    up.payload.patch.order_sn === "6931234567890123456" && up.payload.patch.tracking_no === "YT9988776655",
+    JSON.stringify(up.payload.patch));
+  check("库里那条真的变了", store.find((r) => r.id === up.payload.id)?.courier === pick,
+    String(store.find((r) => r.id === up.payload.id)?.courier));
+  check("重画后框里是改后的值", doc.getElementById("dTitle").value === "客户确认破损，走赔付",
+    doc.getElementById("dTitle").value);
+  check("改完给了回显", /已保存/.test(doc.getElementById("editMsg").textContent || ""),
+    doc.getElementById("editMsg").textContent);
+}
 
 console.log("\n6. 绑定在线表格（分享链路）");
 doc.getElementById("tab-settings").click();

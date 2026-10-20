@@ -126,6 +126,48 @@
     .c12 { grid-column: span 24; }
   }
 
+  /* ---------- 图标：一律描边，颜色跟着文字走（深色模式自动反色） ---------- */
+  .ico {
+    width: 14px; height: 14px; flex: 0 0 auto;
+    fill: none; stroke: currentColor; stroke-width: 1.5;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  .ico-lg { width: 18px; height: 18px; }
+  .lbl { display: flex; align-items: center; gap: 4px; }
+  .lbl .ico { color: var(--dim); }
+
+  /* ---------- 登记页：订单号大横条（整页最显眼的一条） ---------- */
+  .bigbar {
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid var(--line); border-radius: 10px; background: var(--field);
+    padding: 13px 14px; transition: border-color .12s, box-shadow .12s;
+  }
+  .bigbar .ico { color: var(--dim); }
+  .bigbar:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
+  .bigbar:focus-within .ico { color: var(--accent); }
+  .bigbar input {
+    flex: 1 1 auto; width: auto; min-width: 0; border: none; background: transparent; padding: 0;
+    font-family: var(--mono); font-size: 17px; letter-spacing: .4px;
+  }
+  .bigbar input:focus { box-shadow: none; }
+  .bigbar input::placeholder { font-family: inherit; font-size: 13.5px; letter-spacing: 0; }
+
+  /* ---------- 胶囊选项：店铺 / 快递公司 / 情况 ----------
+     点一下选中，再点一下取消（不用"待选"占位，没选就是都不亮） */
+  /* min-height 对齐同排的输入框高度（33px），不然胶囊那格比旁边矮一截 */
+  .pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 33px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    border-radius: 999px; padding: 4px 13px; font-size: 12.5px; line-height: 1.5;
+    background: var(--bg); color: var(--fg2);
+  }
+  .pill .ico { width: 12px; height: 12px; opacity: .75; }
+  .pill:hover:not(.on) { border-color: var(--dim); color: var(--fg); }
+  .pill.on {
+    background: var(--sel); border-color: var(--accent); color: var(--accent); font-weight: 600;
+  }
+  .pill.on .ico { opacity: 1; }
+
   /* ---------- 查看页：左右分栏 ---------- */
   .split { display: flex; gap: 10px; height: 100%; min-height: 0; }
   .split > .left { flex: 0 0 320px; display: flex; flex-direction: column; min-height: 0; }
@@ -153,7 +195,11 @@
   .kv > span { color: var(--dim); }
   .kv > div { min-width: 0; word-break: break-all; }
   .sect { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
-  .sect > h3 { font-size: 12px; margin: 0 0 6px; color: var(--fg2); font-weight: 600; }
+  .sect > h3 {
+    font-size: 12px; margin: 0 0 6px; color: var(--fg2); font-weight: 600;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .sect > h3 .ico { width: 13px; height: 13px; color: var(--dim); }
   .flowrow { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
   .flowrow .t { color: var(--dim); font-family: var(--mono); font-size: 11.5px; }
 
@@ -232,20 +278,36 @@
   <section class="view" id="view-create">
     <div class="card" style="max-width:1100px">
       <h2>登记一条异常</h2>
-      <div class="grid24">
-        <label class="f c4"><span>店铺</span><select id="fStore"></select></label>
-        <label class="f c6"><span>订单号</span><input id="fOrder" placeholder="粘单号，或整条 ERP 链接" autocomplete="off" spellcheck="false" /></label>
-        <label class="f c6"><span>快递单号</span><input id="fTrack" placeholder="没有订单号时至少填这个" autocomplete="off" spellcheck="false" /></label>
-        <label class="f c4"><span>快递公司</span><select id="fCourier"></select></label>
-        <label class="f c4"><span>登记时间</span><input id="fDate" placeholder="点这里选（今天 / 昨天 / 前天）" autocomplete="off" spellcheck="false" /></label>
-        <label class="f c4"><span>情况</span><select id="fCategory"></select></label>
-        <label class="f c24"><span>详细描述</span><textarea id="fTitle" rows="2" placeholder="发生了什么"></textarea></label>
+
+      <!-- 订单号：整页最显眼的一条横条。整条 ERP 链接也能粘 —— 链接里的客服 ID 会自己认成店铺 -->
+      <div class="bigbar">
+        <svg class="ico ico-lg" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M4 2.2h8a1.2 1.2 0 0 1 1.2 1.2v9.2a1.2 1.2 0 0 1-1.2 1.2H4a1.2 1.2 0 0 1-1.2-1.2V3.4A1.2 1.2 0 0 1 4 2.2z" />
+          <path d="M5.6 5.4h4.8M5.6 8h4.8M5.6 10.6h2.8" />
+        </svg>
+        <input id="fOrder" placeholder="订单号 —— 整条 ERP 链接也可以直接粘，店铺会自己认出来" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="hint" id="addMsg"></div>
+
+      <div class="grid24" style="margin-top:12px">
+        <label class="f c8"><span class="lbl" data-ico="box">快递单号</span>
+          <input id="fTrack" placeholder="没有订单号时至少填这个" autocomplete="off" spellcheck="false" /></label>
+        <div class="f c8"><span class="lbl" data-ico="truck">快递公司</span>
+          <div class="pills" id="fCourier"></div></div>
+        <label class="f c8"><span class="lbl" data-ico="cal">登记时间</span>
+          <input id="fDate" placeholder="点这里选（今天 / 昨天 / 前天）" autocomplete="off" spellcheck="false" /></label>
+
+        <div class="f c24"><span class="lbl" data-ico="shop">店铺</span>
+          <div class="pills" id="fStore"></div></div>
+        <div class="f c24"><span class="lbl" data-ico="alert">情况</span>
+          <div class="pills" id="fCategory"></div></div>
+        <label class="f c24"><span class="lbl" data-ico="pen">详细描述</span>
+          <textarea id="fTitle" rows="2" placeholder="发生了什么"></textarea></label>
       </div>
       <div class="r" style="margin-top:10px">
         <button class="primary" id="btnAdd">登记</button>
         <span class="note">订单号和快递单号至少填一个。登记后店铺 / 快递公司 / 登记时间会留着，方便连着录下一条。</span>
       </div>
-      <div class="hint" id="addMsg"></div>
     </div>
   </section>
 
@@ -441,6 +503,74 @@
     if (!sel.value) sel.classList.add("is-empty");
     else sel.classList.remove("is-empty");
   }
+  /* ---------- 图标：一份描边 SVG，页面各处共用 ----------
+     颜色不写死，靠 stroke:currentColor 跟着文字走（深色模式自动反色）。 */
+  var ICO = {
+    doc: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.2h8a1.2 1.2 0 0 1 1.2 1.2v9.2a1.2 1.2 0 0 1-1.2 1.2H4a1.2 1.2 0 0 1-1.2-1.2V3.4A1.2 1.2 0 0 1 4 2.2z"/><path d="M5.6 5.4h4.8M5.6 8h4.8M5.6 10.6h2.8"/></svg>',
+    box: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.9 14 5v6l-6 3.1L2 11V5z"/><path d="M2 5l6 3.1L14 5"/><path d="M8 8.1V14"/></svg>',
+    truck: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 4.5h7.5v6H1.5z"/><path d="M9 7h2.6l2.4 2.3v1.2H9z"/><circle cx="4.3" cy="11.8" r="1.2"/><circle cx="11.6" cy="11.8" r="1.2"/></svg>',
+    shop: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.6 6.4 4 3.2h8l1.4 3.2"/><path d="M3.6 6.4v7h8.8v-7"/><path d="M6.6 13.4V9.6h2.8v3.8"/></svg>',
+    cal: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.6" y="3.6" width="10.8" height="9.8" rx="1.4"/><path d="M2.6 6.6h10.8M5.4 2.2v2.6M10.6 2.2v2.6"/></svg>',
+    alert: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.6 14.4 13.4H1.6z"/><path d="M8 6.4v3M8 11v.4"/></svg>',
+    pen: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.8 13.2 3.2 10.4l7.4-7.4 2.6 2.6-7.4 7.4z"/><path d="M10.4 4.6l2.6 2.6"/></svg>',
+    chat: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.6 3.4h10.8v7.2H7.4l-3.2 2.4v-2.4H2.6z"/></svg>',
+    gear: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.9v1.5M8 12.6v1.5M1.9 8h1.5M12.6 8h1.5M3.7 3.7l1.1 1.1M11.2 11.2l1.1 1.1M12.3 3.7l-1.1 1.1M4.8 11.2l-1.1 1.1"/></svg>',
+    flow: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.4" cy="4" r="1.3"/><circle cx="3.4" cy="12" r="1.3"/><path d="M3.4 5.3v5.4M5.6 4h7M5.6 12h7"/></svg>',
+    bell: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 11.2V7.2a3.6 3.6 0 1 1 7.2 0v4"/><path d="M3 11.2h10M6.6 13.2h2.8"/></svg>',
+  };
+  /** 把图标画进标了 data-ico 的标签里（SSR 免了：静态 HTML 与动态渲染共用一份） */
+  function paintIcos(root) {
+    var els = (root || document).querySelectorAll("[data-ico]");
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.querySelector("svg")) continue;
+      var svg = ICO[el.getAttribute("data-ico")];
+      if (svg) el.insertAdjacentHTML("afterbegin", svg);
+    }
+  }
+
+  /* ---------- 胶囊选项（店铺 / 快递公司 / 情况） ----------
+     值存在容器的 data-value 上：DOM 重建（换配置、重画详情）时不丢已选。
+     ★ 再点一次同一个 = 取消选择 —— 选错了不用翻设置页。 */
+  function renderPills(el, list, cur, onPick) {
+    if (!el) return;
+    var html = "";
+    for (var i = 0; i < list.length; i++) {
+      var v = txt(list[i]);
+      if (!v) continue;
+      html += '<button type="button" class="pill' + (v === cur ? " on" : "") + '" data-v="' + esc(v) + '">' + esc(v) + "</button>";
+    }
+    el.innerHTML = html || '<span class="note">（还没配选项 —— 去「设置 → 下拉选项」加）</span>';
+    el.setAttribute("data-value", txt(cur));
+    var bs = el.querySelectorAll(".pill");
+    for (var k = 0; k < bs.length; k++) {
+      bs[k].onclick = function () {
+        var v = this.getAttribute("data-v");
+        pillSet(el, el.getAttribute("data-value") === v ? "" : v);
+        if (onPick) onPick(el.getAttribute("data-value"));
+      };
+    }
+  }
+  function pillVal(el) { return el ? txt(el.getAttribute("data-value")) : ""; }
+  function pillSet(el, v) {
+    if (!el) return;
+    var next = txt(v);
+    el.setAttribute("data-value", next);
+    var bs = el.querySelectorAll(".pill");
+    for (var i = 0; i < bs.length; i++) {
+      var on = bs[i].getAttribute("data-v") === next;
+      if (on) bs[i].classList.add("on"); else bs[i].classList.remove("on");
+    }
+  }
+
+  /** 写提示条。bad=true 显成警示色；目标刚被重画过（load 之后）也照样写得上 */
+  function setHint(id, text, bad) {
+    var el = $(id);
+    if (!el) return;
+    el.className = bad ? "hint bad" : "hint";
+    el.textContent = txt(text);
+  }
+
   /** 给下拉填选项。首格是空值（显示「待选」），value 是它的原样文本 */
   function fillSelect(sel, list, keepValue) {
     var html = '<option value="">待选</option>';
@@ -765,10 +895,11 @@
    * ================================================================== */
   function renderCreateForm() {
     var names = cfg.stores.map(function (s) { return s.name; });
-    fillSelect($("fStore"), names, "");
-    fillSelect($("fCourier"), cfg.couriers, "");
-    fillSelect($("fCategory"), cfg.situations, "");
-    $("fDate").value = todayStr();
+    // ★ 店铺 / 快递公司**留着上次选的**（连着录下一条不用重选）；「情况」是这一条才有的，每录完清空
+    renderPills($("fStore"), names, pillVal($("fStore")));
+    renderPills($("fCourier"), cfg.couriers, pillVal($("fCourier")));
+    renderPills($("fCategory"), cfg.situations, pillVal($("fCategory")));
+    $("fDate").value = $("fDate").value || todayStr();
     $("todayCount").textContent = "今日已登记 " + rows.filter(function (r) {
       return txt(r.created_at).slice(0, 10) === todayStr();
     }).length + " 条";
@@ -867,8 +998,7 @@
           if (cfg.stores[i].mallcsid === hit.mallcsid) { found = cfg.stores[i]; break; }
         }
         if (found) {
-          $("fStore").value = found.name;
-          markSel($("fStore"));
+          pillSet($("fStore"), found.name);
           toast("认出来了：" + (hit.order ? "订单号 " + hit.order + " · " : "") + "店铺 " + found.name);
         } else {
           toast("链接里写着客服 ID " + hit.mallcsid + "，店铺表里没对上 —— 去「设置」把它填进对应店铺");
@@ -890,10 +1020,10 @@
     var erp = readErp(rawOrder);
     var order = washOrder(erp.order || rawOrder);
     var track = washOrder($("fTrack").value);
-    var store = $("fStore").value;
-    var courier = $("fCourier").value;
+    var store = pillVal($("fStore"));
+    var courier = pillVal($("fCourier"));
     var date = $("fDate").value.trim();
-    var category = $("fCategory").value;
+    var category = pillVal($("fCategory"));
     var title = $("fTitle").value.trim();
     var msg = $("addMsg");
 
@@ -942,11 +1072,10 @@
     msg.textContent = "已登记「" + (order || track) + "」"
       + (order && !orderLooksRight(order) ? "（这个单号形状不像拼多多单号，客户端可能定位不到那张订单）" : "")
       + " —— 店铺 / 快递公司 / 登记时间留着了，可以接着录下一条";
-    // 连着录：只清掉"这一条才有的东西"
+    // 连着录：只清掉"这一条才有的东西"（订单号 / 快递单号 / 情况 / 描述），店铺快递公司留着
     $("fOrder").value = "";
     $("fTrack").value = "";
-    $("fCategory").value = "";
-    markSel($("fCategory"));
+    pillSet($("fCategory"), "");
     $("fTitle").value = "";
     await load();
     $("fOrder").focus();
@@ -1021,17 +1150,38 @@
       + '<button class="mini" id="btnCall">呼起客户端</button>'
       + '<button class="mini" id="btnCopy">复制单号</button>'
       + '<button class="mini danger" id="btnDel">删除</button></div>'
-      + '<div class="kv" style="margin-top:10px">'
-      + "<span>店铺</span><div>" + esc(txt(r.store) || "—") + (store && store.mallcsid ? ' <span class="note">(' + esc(store.mallcsid) + ")</span>" : "") + "</div>"
-      + "<span>快递单号</span><div>" + esc(txt(r.tracking_no) || "—") + "</div>"
-      + "<span>快递公司</span><div>" + esc(txt(r.courier) || "—") + "</div>"
-      + "<span>登记时间</span><div>" + esc(txt(r.shipped_at) || "—") + "</div>"
-      + "<span>情况</span><div>" + esc(txt(r.category) || "—") + "</div>"
-      + "<span>详细描述</span><div>" + esc(txt(r.title) || "—") + "</div>"
+      + '<div class="note" style="margin-top:4px">'
+      + (store && store.mallcsid ? "店铺客服 ID " + esc(store.mallcsid) + " · " : "")
+      + "登记于 " + esc(txt(r.created_at).slice(0, 10) || "—")
+      + (r.updated_at ? " · 最后改动 " + esc(txt(r.updated_at).slice(0, 16).replace("T", " ")) : "")
       + "</div>";
 
+    /* 基本信息：**都能改**。登记时漏填的（快递单号、快递公司…）在这儿补，
+       填错了也在这儿改 —— 改完点「保存修改」，一改就落库。 */
+    html += '<div class="sect"><h3 data-ico="doc">基本信息（都能改）</h3><div class="grid24">'
+      + '<label class="f c12"><span class="lbl" data-ico="doc">订单号</span>'
+      + '<input id="dOrder" autocomplete="off" spellcheck="false" /></label>'
+      + '<label class="f c12"><span class="lbl" data-ico="box">快递单号</span>'
+      + '<input id="dTrack" autocomplete="off" spellcheck="false" /></label>'
+      + '<div class="f c12"><span class="lbl" data-ico="truck">快递公司</span>'
+      + '<div class="pills" id="dCourier"></div></div>'
+      + '<label class="f c12"><span class="lbl" data-ico="cal">登记时间</span>'
+      + '<input id="dDate" autocomplete="off" spellcheck="false" /></label>'
+      + '<div class="f c24"><span class="lbl" data-ico="shop">店铺</span>'
+      + '<div class="pills" id="dStore"></div></div>'
+      + '<div class="f c24"><span class="lbl" data-ico="alert">情况</span>'
+      + '<div class="pills" id="dCategory"></div></div>'
+      + '<label class="f c24"><span class="lbl" data-ico="pen">详细描述</span>'
+      + '<textarea id="dTitle" rows="2"></textarea></label>'
+      + '<label class="f c24"><span class="lbl" data-ico="chat">处理情况</span>'
+      + '<input id="dNote" autocomplete="off" spellcheck="false" /></label>'
+      + "</div>"
+      + '<div class="r" style="margin-top:8px"><button class="primary" id="btnEdit">保存修改</button>'
+      + '<button id="btnEditUndo">撤掉改动</button>'
+      + '<span class="hint" id="editMsg" style="margin:0"></span></div></div>';
+
     /* 处理区：处理方式 / 结果 / 结账 —— 一改就落库 */
-    html += '<div class="sect"><h3>处理</h3><div class="grid24">'
+    html += '<div class="sect"><h3 data-ico="gear">处理</h3><div class="grid24">'
       + '<label class="f c8"><span>处理方式</span><select id="dHandling"></select></label>'
       + '<label class="f c8"><span>结果</span><select id="dResult"></select></label>'
       + '<label class="f c8"><span>结账</span><select id="dSettled"></select></label>'
@@ -1040,7 +1190,7 @@
       + '<span class="hint" id="procMsg" style="margin:0"></span></div></div>';
 
     /* 流程：每一步 = 名称 + 时刻，最后一步就是当前状态。完结之后封口 */
-    html += '<div class="sect"><h3>流程状态</h3>';
+    html += '<div class="sect"><h3 data-ico="flow">流程状态</h3>';
     if (!flow.length) html += '<div class="note">还没记 —— 现在的状态由上面的「处理」派生。</div>';
     for (var j = 0; j < flow.length; j++) {
       html += '<div class="flowrow"><span>' + esc(flow[j].n) + '</span>'
@@ -1057,7 +1207,7 @@
     html += "</div>";
 
     /* 提醒：落到宿主待办上，带来源标记 */
-    html += '<div class="sect"><h3>提醒</h3>';
+    html += '<div class="sect"><h3 data-ico="bell">提醒</h3>';
     if (r.remind_at) {
       html += '<div class="r"><span>已设：' + esc(r.remind_at.replace("T", " ")) + "</span>"
         + '<button class="mini" id="btnUnRemind">取消提醒</button></div>';
@@ -1069,6 +1219,39 @@
     html += "</div>";
 
     box.innerHTML = html;
+    paintIcos(box);
+
+    /* 基本信息：填进当前值 —— 空的那些格就是「等着补」 */
+    $("dOrder").value = txt(r.order_sn);
+    $("dTrack").value = txt(r.tracking_no);
+    $("dDate").value = txt(r.shipped_at);
+    $("dTitle").value = txt(r.title);
+    $("dNote").value = txt(r.note);
+    renderPills($("dCourier"), cfg.couriers, txt(r.courier));
+    renderPills($("dStore"), cfg.stores.map(function (s) { return s.name; }), txt(r.store));
+    renderPills($("dCategory"), cfg.situations, txt(r.category));
+    $("dDate").onfocus = function () { openDp(this); };
+    $("dDate").onclick = function () { openDp(this); };
+    $("btnEdit").onclick = function () {
+      void (async function () {
+        var order = washOrder(readErp($("dOrder").value).order || $("dOrder").value);
+        var track = washOrder($("dTrack").value);
+        if (!order && !track) { setHint("editMsg", "订单号和快递单号不能都空", true); return; }
+        await update(r.id, {
+          order_sn: order,
+          tracking_no: track,
+          courier: pillVal($("dCourier")),
+          shipped_at: $("dDate").value.trim(),
+          store: pillVal($("dStore")),
+          category: pillVal($("dCategory")),
+          title: $("dTitle").value.trim(),
+          note: $("dNote").value.trim(),
+        });
+        await load();     // ★ 重画会把提示条冲掉 —— 回显必须在 load 之后写
+        setHint("editMsg", "已保存「" + (order || track) + "」");
+      })();
+    };
+    $("btnEditUndo").onclick = function () { renderDetail(); };
 
     fillSelect($("dHandling"), cfg.handlings, r.handling);
     fillSelect($("dResult"), cfg.results, r.result);
@@ -1082,8 +1265,8 @@
           result: $("dResult").value,
           settled: $("dSettled").value,
         });
-        $("procMsg").textContent = "已保存";
-        await load();
+        await load();     // 同上：回显必须在重画之后写，否则刚写完就被冲掉
+        setHint("procMsg", "已保存");
       })();
     };
     if ($("btnFlow")) {
@@ -1658,8 +1841,9 @@
   $("fDate").onfocus = function () { openDp(this); };
   $("fDate").onclick = function () { openDp(this); };
   // 失焦收起：有的 webview 点按钮不给焦点，所以再加一条"鼠标还在面板里就不收"
+  // ★ 认的是"当前正在用面板的那个框"，不写死 fDate —— 查看页的登记时间也用同一个面板
   document.addEventListener("focusin", function (e) {
-    if (!$("dp").hidden && e.target !== $("fDate") && !$("dp").contains(e.target)) closeDp();
+    if (!$("dp").hidden && e.target !== dpFor && !$("dp").contains(e.target)) closeDp();
   });
   document.addEventListener("click", function (e) {
     var p = $("colPanel");
@@ -1715,6 +1899,8 @@
         document.documentElement.dataset.theme = "dark";
       }
     } catch (err) { /* 老浏览器没有 matchMedia，保持浅色 */ }
+
+    paintIcos();          // 静态标签上的图标（登记页那几个）
 
     // 1.2 秒还没等到上下文：按"在不在 iframe 里"分类
     setTimeout(function () {
