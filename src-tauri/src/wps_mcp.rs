@@ -26,7 +26,7 @@ use serde_json::{json, Map as JsonMap, Value as Json};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::wps::WpsPull;
-use crate::wps_cloud_plan::{plan_cloud_write, COLUMNS};
+use crate::wps_cloud_plan::{formula_for, plan_cloud_write, COLUMNS};
 
 const MCP_URL: &str = "https://mcp-center.wps.cn/skill_hub/mcp";
 const AUTH_GUIDE: &str = "https://mcp-center.wps.cn/kdocs-auth/auth-guide?auth_code=";
@@ -76,6 +76,14 @@ pub struct WpsMcpPush {
     pub appended: usize,
     /// 推到哪个文件（就是绑定的 file_id）
     pub file_kuid: String,
+    /// 表上原本有的数据行里，会被这次推送**整行覆盖**的行数。
+    /// 推送是"以本地为准"的：这些行原来的值会被本地的值顶掉。
+    pub overwrites: usize,
+    /// 本地比表上少 → 多出来的旧行会被**清空**的行数（0 表示不用删）。
+    /// 非空时前端必须先问一句再写。
+    pub cleared: usize,
+    /// true 表示这只是"先算一遍"，一格都没写（用来做推送前确认）
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -770,14 +778,6 @@ fn grid_of(cells: &[Json], row_to: usize, col_to: usize) -> Vec<Vec<String>> {
 ///
 /// 实测（2026-10-19）：直写 `6931234567890123456` → 读回 `6.93123E+18`；
 /// 前导单引号之后读回一字不差。前导零同理（"007" 当数字写就变 7）。
-fn formula_of(v: &str) -> String {
-    let digits = !v.is_empty() && v.chars().all(|c| c.is_ascii_digit());
-    if digits && (v.len() >= 15 || (v.len() > 1 && v.starts_with('0'))) {
-        return format!("'{v}");
-    }
-    v.to_string()
-}
-
 /// 一次批量写的格数上限。一次几万格会让请求变大，失败就得整批重来
 const WRITE_BATCH: usize = 5000;
 
@@ -1006,6 +1006,7 @@ pub async fn wps_mcp_sheet_push(
     file_id: String,
     sheet: Option<String>,
     rows: Vec<JsonMap<String, Json>>,
+    dry_run: Option<bool>,
 ) -> Result<WpsMcpPush, String> {
     let (token, client_id) = (token.trim(), client_id.trim());
     if token.is_empty() || client_id.is_empty() {
@@ -1028,11 +1029,39 @@ pub async fn wps_mcp_sheet_push(
     let old_rows = if grid.len() > 1 { grid.len() - 1 } else { 0 };
     let (cols, clear, appended) = plan_cloud_write(&header, old_rows, &rows)?;
 
+    // 「推送前确认」要用的两个数字，先看清楚再动手写：
+    //  · overwrites 表上已有的行会被本地顶掉多少条（以本地为准）
+    //  · cleared    本地比表上少，多出来的旧行会被清空多少行
+    let overwrites = old_rows.min(rows.len());
+    let cleared = clear
+        .iter()
+        .map(|c| {
+            let from = c.get("from").and_then(Json::as_i64).unwrap_or(1) as usize;
+            let to = c.get("to").and_then(Json::as_i64).unwrap_or(0) as usize;
+            to.saturating_sub(from) + 1
+        })
+        .max()
+        .unwrap_or(0);
+
+    // 只算不写：把对账结果原样带回去，让前端先问一句"要删 N 行，确定？"
+    if dry_run.unwrap_or(false) {
+        return Ok(WpsMcpPush {
+            count: rows.len(),
+            columns: COLUMNS.len(),
+            appended,
+            file_kuid: file_id.to_string(),
+            overwrites,
+            cleared,
+            dry_run: true,
+        });
+    }
+
     // 一个格一条 op：MCP 这边的形状是 (rowFrom..rowTo, colFrom..colTo, formula)，
     // 而 plan 给的是"按列 + 1-based 行号"，这里做一次翻译
     let mut ops: Vec<Json> = Vec::new();
     for col in &cols {
         let c0 = col.get("col").and_then(Json::as_i64).unwrap_or(1) - 1;
+        let key = col.get("key").and_then(Json::as_str).unwrap_or("");
         let values = col.get("values").and_then(Json::as_array).cloned().unwrap_or_default();
         for (i, v) in values.iter().enumerate() {
             let s = v.as_str().unwrap_or("");
@@ -1040,7 +1069,7 @@ pub async fn wps_mcp_sheet_push(
                 "opType": "formula",
                 "rowFrom": i, "rowTo": i,
                 "colFrom": c0, "colTo": c0,
-                "formula": if s.is_empty() { String::new() } else { formula_of(s) },
+                "formula": if s.is_empty() { String::new() } else { formula_for(key, s) },
             }));
         }
     }
@@ -1085,6 +1114,9 @@ pub async fn wps_mcp_sheet_push(
         columns: COLUMNS.len(),
         appended,
         file_kuid: file_id.to_string(),
+        overwrites,
+        cleared,
+        dry_run: false,
     })
 }
 

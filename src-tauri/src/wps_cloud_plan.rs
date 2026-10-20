@@ -116,9 +116,40 @@ pub fn plan_cloud_write(
                 "to": old_rows + 1,
             }));
         }
-        cols.push(json!({ "col": col, "values": values }));
+        // key 一起带出去：写格时得知道这一列是不是"单号列"
+        // （那两列必须当文本写，不然 WPS 会把运单号存成数字）
+        cols.push(json!({ "col": col, "key": *key, "values": values }));
     }
     Ok((cols, clear, appended))
+}
+
+/// 一个格最终写进在线表格的文本。
+///
+/// 长数字必须**当文本写**：服务端按 double 存，19 位订单号末尾直接丢了。
+/// 实测（2026-10-19）：直写 `6931234567890123456` → 读回 `6.93123E+18`；
+/// 前导单引号之后读回一字不差。前导零同理（"007" 当数字写就变 7）。
+pub fn formula_of(v: &str) -> String {
+    let digits = !v.is_empty() && v.chars().all(|c| c.is_ascii_digit());
+    if digits && (v.len() >= 15 || (v.len() > 1 && v.starts_with('0'))) {
+        return format!("'{v}");
+    }
+    v.to_string()
+}
+
+/// 按**列**决定要不要前置单引号。
+///
+/// 单号列（订单号 / 快递单号）一律当文本：2026-10-20 实测，12~14 位的纯数字
+/// 运单号（中通、韵达都是这个长度）虽然没到 15 位不会被丢精度，但 WPS 把它
+/// 当数字存，列一窄就显示成 `4.37249E+12` —— 用户看到的就是"科学计数法"。
+/// 只要是纯数字就加引号，跟长度无关；带字母的单号（SF…、YT…）本来就是文本。
+pub fn formula_for(key: &str, v: &str) -> String {
+    if (key == "order_sn" || key == "tracking_no") && !v.is_empty() {
+        if v.chars().all(|c| c.is_ascii_digit()) {
+            return format!("'{v}");
+        }
+        return v.to_string();
+    }
+    formula_of(v)
 }
 
 /// 按字符截断，别把 UTF-8 切断（错误提示可能是中文）。
@@ -156,6 +187,25 @@ mod tests {
         assert_eq!(cols[0]["values"][0], "订单号");
         assert_eq!(cols[0]["values"][1], rows[0]["order_sn"]);
         assert_eq!(cols[COLUMNS.len() - 1]["col"], COLUMNS.len());
+        // 每列都带 key —— 写格那边要靠它认「单号列」（见 formula_for）
+        assert_eq!(cols[0]["key"], "order_sn");
+        assert_eq!(cols[1]["key"], "tracking_no");
+    }
+
+    /// 单号列一律当文本写：纯数字运单号哪怕只有 12 位也要加前导单引号，
+    /// 不然 WPS 按数字存，列一窄就显示成科学计数法（2026-10-20 实测）。
+    #[test]
+    fn cloud_plan_writes_tracking_numbers_as_text() {
+        // 12 位纯数字运单号（中通/韵达长度）—— 加引号
+        assert_eq!(formula_for("tracking_no", "4372493024839"), "'4372493024839");
+        // 19 位订单号 —— 加引号
+        assert_eq!(formula_for("order_sn", "6931234567890123456"), "'6931234567890123456");
+        // 带字母的单号本来就是文本，原样
+        assert_eq!(formula_for("tracking_no", "SF7392016458"), "SF7392016458");
+        assert_eq!(formula_for("order_sn", "261010-123"), "261010-123");
+        // 其它列不受影响：短数字还是数字，15 位以上才升文本
+        assert_eq!(formula_for("title", "123"), "123");
+        assert_eq!(formula_for("note", "6931234567890123456"), "'6931234567890123456");
     }
 
     /// 用户表里已有部分列（顺序还不一样）：认出来的按原位写，别动人家的列序；

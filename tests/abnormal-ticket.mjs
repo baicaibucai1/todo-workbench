@@ -41,6 +41,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const store = [];          // 台账行
 const kv = {};             // 工具 kv
 const ops = [];            // 收到的 op 流水
+const args = [];           // 每个 op 的参数（要看推送第一步是不是 dryRun）
 
 // 预置店铺表：其中一个挂着客服 ID 987654 —— ERP 链接里就写这个，
 // 好验证「粘链接 → 店铺自动认出来」这条路。
@@ -64,6 +65,7 @@ function host(win, e) {
   if (!m || m.source !== "workbench-tool" || m.type !== "tool:request") return;
   ops.push(m.op);
   const p = m.payload || {};
+  args.push({ op: m.op, payload: p });
   switch (m.op) {
     case "row.select":
       reply(win, m.id, true, { rows: store.slice() });
@@ -108,7 +110,14 @@ function host(win, e) {
       });
       return;
     case "wps.mcpPush":
-      reply(win, m.id, true, { count: store.length, appended: 0 });
+      // 表上原本有 2 行会被顶掉、还多出 1 行要清掉 —— 逼出"确认"那一屏
+      reply(win, m.id, true, {
+        count: store.length,
+        appended: 0,
+        overwrites: 2,
+        cleared: 1,
+        dryRun: p.dryRun === true,
+      });
       return;
     case "wps.mcpPull":
       // 与 toolBridge.ts 的 mcpPull 回包同形：{ header, adds:[{key,store,status}], updates:[{…,changes}] }
@@ -224,17 +233,44 @@ await sleep(60);
 doc.getElementById("wpsLink").value = "https://www.kdocs.cn/l/ca1BaaQrrGVT";
 doc.getElementById("wpsBind").click();
 await sleep(200);
-check("认出了表名", (doc.getElementById("wpsName").textContent || "").includes("测试异常单"),
-  doc.getElementById("wpsName").textContent);
+check("认出了表名", (doc.getElementById("wpsTitle").textContent || "").includes("测试异常单"),
+  doc.getElementById("wpsTitle").textContent);
+check("显示出了创建人", (doc.getElementById("wpsOwner").textContent || "").includes("大苏打"),
+  doc.getElementById("wpsOwner").textContent);
+check("绑定信息块露出来了", doc.getElementById("wpsBound").hidden === false);
 check("绑定写进了宿主 kv（wps.sheet）", !!kv["wps.sheet"], Object.keys(kv).join(","));
+check("创建人也一起存下来了",
+  /"owner":"大苏打"/.test(String(kv["wps.sheet"] || "")), String(kv["wps.sheet"]).slice(0, 120));
 check("绑定后推/拉按钮解禁",
   doc.getElementById("wpsPush").disabled === false && doc.getElementById("wpsPull").disabled === false);
+doc.getElementById("tab-table").click();
+await sleep(60);
+check("表格页也有推 / 拉（跟着数据走，不用回设置页）",
+  doc.getElementById("tblPush") && doc.getElementById("tblPull") &&
+  doc.getElementById("tblPush").disabled === false,
+  doc.getElementById("tblPush") ? String(doc.getElementById("tblPush").disabled) : "没有这个按钮");
+doc.getElementById("tab-settings").click();
+await sleep(60);
 
-console.log("\n7. 推 / 拉 只喊宿主，不自己算");
+console.log("\n7. 推送会改表 → 先摆出来，确认了才写");
 doc.getElementById("wpsPush").click();
 await sleep(200);
-check("推送走了 wps.mcpPush", ops.includes("wps.mcpPush"));
-check("推送结果有回显", (doc.getElementById("wpsMsg").textContent || "").length > 0);
+const push1 = args.filter((a) => a.op === "wps.mcpPush");
+check("推送第一步是 dryRun（只看不写）", push1.length === 1 && push1[0].payload.dryRun === true,
+  JSON.stringify(push1.map((a) => a.payload)));
+check("弹出了确认屏", doc.getElementById("wpsPushPreview").hidden === false);
+check("确认屏写清了会覆盖 2 行",
+  /覆盖表上已有的 2 行/.test(doc.getElementById("wpsPushText").textContent || ""),
+  (doc.getElementById("wpsPushText").textContent || "").slice(0, 120));
+check("确认屏写清了会清掉 1 行",
+  /清掉表上多出来的 1 行/.test(doc.getElementById("wpsPushText").textContent || ""));
+check("没确认前没有真写", args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== true).length === 0);
+doc.getElementById("wpsPushGo").click();
+await sleep(200);
+const push2 = args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== true);
+check("确认后才真推", push2.length === 1, JSON.stringify(args.filter((a) => a.op === "wps.mcpPush").map((a) => a.payload)));
+check("推送结果有回显", /已推送/.test(doc.getElementById("wpsMsg").textContent || ""),
+  doc.getElementById("wpsMsg").textContent);
 
 doc.getElementById("wpsPull").click();
 await sleep(250);

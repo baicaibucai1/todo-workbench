@@ -272,6 +272,9 @@
       <input id="tableSearch" placeholder="搜订单号 / 快递单号 / 店铺 / 描述 / 处理" />
       <span class="meta" id="tableStats"></span>
       <span class="spacer"></span>
+      <!-- 推 / 拉就放在台账旁边：在哪看数据，就在哪同步（只能在宿主里跑） -->
+      <button id="tblPush" data-host-only disabled>推送到表格</button>
+      <button id="tblPull" data-host-only disabled>从表格拉取</button>
       <div style="position:relative">
         <button id="colBtn">列 · <span id="colCount">14/14</span></button>
         <div class="colpanel" id="colPanel" hidden></div>
@@ -304,11 +307,26 @@
         <button id="wpsUnbind" hidden>解绑</button>
         <span class="hint" id="wpsName" style="margin:0">还没绑定</span>
       </div>
-      <div class="r" style="margin-top:8px">
-        <button id="wpsPush" disabled>推送到表格</button>
-        <button id="wpsPull" disabled>从表格拉取</button>
+      <!-- 绑定好了才露出来：表名 + 创建人，推 / 拉两个按钮跟着它走 -->
+      <div id="wpsBound" hidden style="margin-top:8px">
+        <div class="r">
+          <b id="wpsTitle" style="font-size:13px">—</b>
+          <span class="hint" id="wpsOwner" style="margin:0"></span>
+        </div>
+        <div class="r" style="margin-top:8px">
+          <button id="wpsPush" disabled>推送到表格</button>
+          <button id="wpsPull" disabled>从表格拉取</button>
+        </div>
       </div>
       <div class="hint" id="wpsMsg"></div>
+      <!-- 推送前的确认：会覆盖 / 会删除多少行，先摆出来 -->
+      <div id="wpsPushPreview" hidden style="margin-top:8px">
+        <div class="hint bad" id="wpsPushText" style="white-space:pre-line"></div>
+        <div class="r" style="margin-top:6px">
+          <button class="primary" id="wpsPushGo">确认推送</button>
+          <button id="wpsPushCancel">取消</button>
+        </div>
+      </div>
       <div id="wpsPreview" hidden style="margin-top:8px">
         <div class="hint" id="wpsPreviewText" style="white-space:pre-line"></div>
         <div class="r" style="margin-top:6px">
@@ -631,7 +649,7 @@
     flows: DEFAULT_FLOWS.slice(),
   };
   var tableCols = null;       // { order:[key…], hidden:[key…] } —— 空 = 全显示、按 COLS 顺序
-  var wps = { link: "", fileId: "", name: "", sheet: "" };
+  var wps = { link: "", fileId: "", name: "", sheet: "", owner: "" };
 
   function parseList(raw) {
     if (!raw) return null;
@@ -686,7 +704,10 @@
     var w = await cfgGet("wps.sheet");
     try {
       var o = w ? JSON.parse(w) : null;
-      if (o && o.fileId) wps = { link: txt(o.link), fileId: txt(o.fileId), name: txt(o.name), sheet: txt(o.sheet) };
+      if (o && o.fileId) wps = {
+        link: txt(o.link), fileId: txt(o.fileId), name: txt(o.name),
+        sheet: txt(o.sheet), owner: txt(o.owner),
+      };
     } catch (e) { /* 坏数据当没绑过 */ }
     renderSettings();
     renderCreateForm();
@@ -1305,14 +1326,26 @@
     $("optResults").value = cfg.results.join("\n");
     $("optFlows").value = cfg.flows.join("\n");
 
-    /* 在线表格 */
+    /* 在线表格：绑定了就把表名和创建人摆出来，推 / 拉跟着它走 */
     var on = !!wps.fileId;
-    $("wpsName").textContent = on ? "已绑定：" + (wps.name || wps.fileId) : "还没绑定";
+    $("wpsName").textContent = on ? "已绑定" : "还没绑定";
     $("wpsUnbind").hidden = !on;
     $("wpsBind").textContent = on ? "换一张表" : "绑定";
+    $("wpsBound").hidden = !on;
+    if (on) {
+      $("wpsTitle").textContent = wps.name || wps.fileId;
+      $("wpsOwner").textContent = wps.owner ? "创建人 " + wps.owner : "创建人没读到";
+      $("wpsLink").value = wps.link;
+    }
     $("wpsPush").disabled = !on || wpsBusy;
     $("wpsPull").disabled = !on || wpsBusy;
-    if (on) $("wpsLink").value = wps.link;
+    var tblPush = $("tblPush");
+    if (tblPush) {
+      tblPush.disabled = !on || wpsBusy;
+      tblPush.textContent = on ? "推送到表格" : "推送到表格（先绑定）";
+    }
+    var tblPull = $("tblPull");
+    if (tblPull) tblPull.disabled = !on || wpsBusy;
   }
 
   /* ==================================================================
@@ -1334,6 +1367,9 @@
     wpsPlan = null;
     $("wpsPreview").hidden = true;
   }
+  function hidePushPreview() {
+    $("wpsPushPreview").hidden = true;
+  }
   async function saveWps() {
     var payload = JSON.stringify(wps);
     try { localStorage.setItem(LS_CFG + "wps.sheet", payload); } catch (e) { /* ignore */ }
@@ -1351,40 +1387,77 @@
     setWpsMsg("正在认这张表…");
     call("wps.mcpLink", { link: link }, 60000).then(function (r) {
       var f = (r && r.file) || {};
-      wps = { link: link, fileId: txt(f.id), name: txt(f.name), sheet: "" };
+      wps = { link: link, fileId: txt(f.id), name: txt(f.name), sheet: "", owner: txt(f.owner) };
       return saveWps().then(function () { setWpsMsg("已绑定「" + (wps.name || wps.fileId) + "」"); });
     }).catch(function (err) {
       setWpsMsg(txt(err && err.message ? err.message : err), true);
     }).then(function () { wpsBusy = false; renderSettings(); });
   };
   $("wpsUnbind").onclick = function () {
-    wps = { link: "", fileId: "", name: "", sheet: "" };
+    wps = { link: "", fileId: "", name: "", sheet: "", owner: "" };
     $("wpsLink").value = "";
     hideWpsPreview();
+    hidePushPreview();
     setWpsMsg("已解绑");
     void saveWps();
   };
-  $("wpsPush").onclick = function () {
+
+  /* 推送分两步：先 dryRun 问出「会覆盖 / 会清掉几行」，确认了才真写。
+   * 表上是空的、或者本地只多不少时（cl=0 且 ov=0 → 其实 ov>0 就说明会覆盖）
+   * 也要问：只要表上已经有数据行会被顶掉，就摆出来。 */
+  async function doPush(confirmed) {
     if (wpsBusy || !wps.fileId) return;
     wpsBusy = true;
     renderSettings();
     hideWpsPreview();
-    setWpsMsg("正在推送…（整本台账，稍等）");
-    call("wps.mcpPush", { fileId: wps.fileId, sheet: wps.sheet }, 120000).then(function (r) {
+    hidePushPreview();
+    setWpsMsg(confirmed ? "正在推送…（整本台账，稍等）" : "正在看这张表现在有什么…");
+    try {
+      var r = await call("wps.mcpPush", { fileId: wps.fileId, sheet: wps.sheet, dryRun: !confirmed }, 120000);
       var res = r || {};
+      if (!confirmed && res.dryRun) {
+        var ov = res.overwrites || 0, cl = res.cleared || 0;
+        if (!ov && !cl) { wpsBusy = false; await doPush(true); return; }
+        var lines = ["推送会改这张表（" + (wps.name || "在线表格") + "）："];
+        if (ov) lines.push("· 覆盖表上已有的 " + ov + " 行 —— 以本地为准，这些行原来的值会被本地顶掉");
+        if (cl) lines.push("· 清掉表上多出来的 " + cl + " 行 —— 本地没那么多条，多出来的行会被清空");
+        if (res.appended) lines.push("· 末尾补 " + res.appended + " 列台账表头");
+        lines.push("你自己加的其它列（备注、公式）不动 —— 但上面这些改动撤不回来。");
+        $("wpsPushText").textContent = lines.join("\n");
+        $("wpsPushPreview").hidden = false;
+        setWpsMsg("先看清楚，确认了才写");
+        return;
+      }
       setWpsMsg("已推送 " + res.count + " 条到「" + (wps.name || "在线表格") + "」"
         + (res.appended ? "（末尾补了 " + res.appended + " 列台账表头）" : ""));
-    }).catch(function (err) {
+    } catch (err) {
       setWpsMsg(txt(err && err.message ? err.message : err), true);
-    }).then(function () { wpsBusy = false; renderSettings(); });
+    } finally {
+      wpsBusy = false;
+      renderSettings();
+    }
+  }
+  function bindPush(el) { if (el) el.onclick = function () { void doPush(false); }; }
+  bindPush($("wpsPush"));
+  bindPush($("tblPush"));
+  $("wpsPushGo").onclick = function () { void doPush(true); };
+  $("wpsPushCancel").onclick = function () {
+    hidePushPreview();
+    setWpsMsg("已取消，表上一格没动");
   };
-  $("wpsPull").onclick = function () {
+
+  function bindPull(el) { if (el) el.onclick = function () { void doPull(); }; }
+  bindPull($("wpsPull"));
+  bindPull($("tblPull"));
+  async function doPull() {
     if (wpsBusy || !wps.fileId) return;
     wpsBusy = true;
     renderSettings();
     hideWpsPreview();
+    hidePushPreview();
     setWpsMsg("正在拉取…");
-    call("wps.mcpPull", { fileId: wps.fileId, sheet: wps.sheet }, 120000).then(function (r) {
+    try {
+      var r = await call("wps.mcpPull", { fileId: wps.fileId, sheet: wps.sheet }, 120000);
       var res = r || {};
       var adds = res.adds || [], ups = res.updates || [];
       wpsPlan = res;
@@ -1401,10 +1474,13 @@
       $("wpsPreviewText").textContent = "将新增 " + adds.length + " 条、更新 " + ups.length + " 条\n" + lines.join("\n");
       $("wpsPreview").hidden = false;
       setWpsMsg("确认了才写库 —— 本地已有的行只补空格，不改已有的值");
-    }).catch(function (err) {
+    } catch (err) {
       setWpsMsg(txt(err && err.message ? err.message : err), true);
-    }).then(function () { wpsBusy = false; renderSettings(); });
-  };
+    } finally {
+      wpsBusy = false;
+      renderSettings();
+    }
+  }
   $("wpsCancel").onclick = function () {
     hideWpsPreview();
     setWpsMsg("已取消，什么都没改");

@@ -461,6 +461,8 @@ interface ToolRequest {
     mode?: string;
     /** 文档：正文纯文本 */
     text?: string;
+    /** wps.mcpPush：true = 只算对账、一格都不写（推送前先看会改掉什么） */
+    dryRun?: boolean;
   };
 }
 
@@ -1652,14 +1654,24 @@ export function createToolBridge(
             if (!pFileId) return reply(id, false, "还没绑定表格 —— 先在工具设置里粘一条分享链接");
             const rows = await readLedger();
             if (!rows.length) return reply(id, false, "本地一条异常单都没有 —— 先登记几例再推");
+            // dryRun：先算一遍对账（会覆盖几行、会清空几行），一格都不写。
+            // 工具拿到这两个数字，要删东西时先问一句再真推。
+            const dry = payload?.dryRun === true;
             const r = await mcpSheetPush(
               pFileId,
               pSheet,
               rows as unknown as Array<Record<string, unknown>>,
               mcpToken,
               mcpClientId,
+              dry,
             );
-            return reply(id, true, { count: r.count, appended: r.appended });
+            return reply(id, true, {
+              count: r.count,
+              appended: r.appended,
+              overwrites: r.overwrites,
+              cleared: r.cleared,
+              dryRun: r.dry_run,
+            });
           }
 
           if (op === "wps.mcpPull") {

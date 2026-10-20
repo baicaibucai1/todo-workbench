@@ -161,13 +161,18 @@ section("2. COLUMNS 与 Rust 侧逐条一致");
     "监听后调了 load()（不是只弹个提示）",
     /m\.event === "kwiki:pulled"[\s\S]{0,200}load\(\)/.test(html),
   );
-  check(
-    "manifest 与 BUILTIN_TOOLS 都到了 1.0.0",
-    JSON.parse(read("tools/abnormal-ticket/manifest.json")).version === "1.0.0" &&
-      /id: "abnormal-ticket",\s*\n\s*name: "异常单号登记",\s*\n\s*version: "1.0.0"/.test(
-        read("src/lib/tools.ts"),
-      ),
-  );
+  // 不写死版本号（改一次版本就得改一次测试，没意义）—— 只看两边**一致**
+  {
+    const ver = JSON.parse(read("tools/abnormal-ticket/manifest.json")).version;
+    const hit = /id: "abnormal-ticket",\s*\n\s*name: "异常单号登记",\s*\n\s*version: "([^"]+)"/.exec(
+      read("src/lib/tools.ts"),
+    );
+    check(
+      "manifest 与 BUILTIN_TOOLS 的版本一致",
+      !!hit && hit[1] === ver,
+      "manifest=" + ver + " / BUILTIN_TOOLS=" + (hit ? hit[1] : "没找到"),
+    );
+  }
 
   /* ---- 工具自带 WPS 接入（2026-10-19 起） ----
    * 认表只靠分享链接，推 / 拉都走宿主那套 14 列对账。
@@ -564,8 +569,23 @@ section("8. AirScript 那套已经不在了（静态检查，防回潮）");
   const mcp = read("src-tauri/src/wps_mcp.rs");
   check("MCP 侧有硬白名单", /BRIDGE_TOOLS/.test(mcp));
   check("白名单里有读表和写表", /sheet\.get_range_data/.test(mcp) && /sheet\.update_range_data/.test(mcp));
-  // 19 位订单号走 formula 会被 double 吃掉末尾几位 —— 写值时必须前置单引号
-  check("长数字 / 前导零写回时前置单引号（不然 19 位订单号会变科学计数）", /format!\("'\{\}"|"'/.test(mcp), /formula_of[\s\S]{0,400}/.exec(mcp)?.[0] || "");
+  /* 写格时的文本化规则（2026-10-20 实测过一次真表）：
+   * 19 位订单号会被 double 吃掉末尾；**13 位纯数字运单号也会被显示成
+   * 4.37249E+12** —— 所以单号列不看长度，只要是纯数字就前置单引号。 */
+  check(
+    "单号列一律前置单引号（不看长度）",
+    /fn formula_for\(/.test(plan) && /format!\("'\{v\}"\)/.test(plan),
+    /fn formula_for[\s\S]{0,300}/.exec(plan)?.[0] || "没找到 formula_for",
+  );
+  check(
+    "写格时按列的 key 走这条规则",
+    /formula_for\(key, s\)/.test(mcp),
+    /formula_for\([^)]*\)/.exec(mcp)?.[0] || "没找到调用点",
+  );
+  check(
+    "计划里带上了列名 key（写格靠它认单号列）",
+    /"key": \*key/.test(plan),
+  );
 
   const wps = read("src-tauri/src/wps.rs");
   check("wps.rs 里没有 AirScript 调用点了", !/airscript/i.test(wps));

@@ -148,6 +148,12 @@ export type McpPush = {
   /** 末尾补了几列（表里原来没有的台账列） */
   appended: number;
   file_kuid: string;
+  /** 表上已有数据行里会被整行覆盖掉的行数（以本地为准） */
+  overwrites: number;
+  /** 本地比表上少 → 多出来的旧行会被清空的行数 */
+  cleared: number;
+  /** true = 只是先算了一遍，一格没写 */
+  dry_run: boolean;
 };
 
 /** 云文档根目录里的一份文件（挑表格时列出来给人选） */
@@ -222,6 +228,7 @@ export async function mcpSheetPush(
   rows: Array<Record<string, unknown>>,
   token: string,
   clientId: string,
+  dryRun = false,
 ): Promise<McpPush> {
   if (!isTauri()) desktopOnly();
   return invoke<McpPush>("wps_mcp_sheet_push", {
@@ -230,6 +237,7 @@ export async function mcpSheetPush(
     fileId,
     sheet: sheet || null,
     rows,
+    dryRun,
   });
 }
 
