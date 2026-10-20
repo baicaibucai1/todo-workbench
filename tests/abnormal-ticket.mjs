@@ -36,6 +36,16 @@ function check(name, ok, extra) {
   console.log("  FAIL  " + name + (extra ? "  → " + extra : ""));
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** 等界面真的变过来 —— 记一步流程要 cancel + book + update + load 好几个来回，
+    固定 sleep 很容易在"还没重画"的时候点到旧 DOM（旧闭包里的 flow 会把新加的步覆盖掉）。 */
+async function waitFor(fn, ms = 3000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    if (fn()) return true;
+    await sleep(30);
+  }
+  return false;
+}
 
 /* ---------------- 假宿主 ---------------- */
 const store = [];          // 台账行
@@ -298,6 +308,102 @@ check("店铺胶囊高亮在这条的店铺上",
     doc.getElementById("dTitle").value);
   check("改完给了回显", /已保存/.test(doc.getElementById("editMsg").textContent || ""),
     doc.getElementById("editMsg").textContent);
+}
+
+console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
+{
+  /* ① 登记那一刻就订上了 —— 不用用户再去点一次「设提醒」 */
+  const r0 = store[0];
+  const created = new Date(r0.created_at).getTime();
+  const at0 = new Date(r0.remind_at).getTime();
+  check("登记后就写了提醒时刻（自动派发）", !!r0.remind_at, JSON.stringify(r0.remind_at));
+  check("默认是登记后 24 小时", Math.abs(at0 - (created + 24 * 3600000)) < 60000,
+    ((at0 - created) / 3600000).toFixed(2) + " 小时");
+  const booked = args.filter((a) => a.op === "task.remind" && a.payload.action !== "cancel");
+  check("提醒落到了宿主待办（task.remind）", booked.length >= 1, String(booked.length));
+  check("待办标题带单号", /异常单跟进/.test(booked[0]?.payload.title || ""), booked[0]?.payload.title);
+  check("备注说清了为什么是这个时刻", /登记后 24 小时|流程停在/.test(booked[0]?.payload.note || ""),
+    booked[0]?.payload.note);
+  check("待办 id 记回了本地行", !!r0.remind_task, JSON.stringify(r0.remind_task));
+
+  /* ② 详情页顺序：流程、提醒提到最前（用户要的就是这两块先看见） */
+  doc.getElementById("tab-browse").click();
+  await sleep(60);
+  doc.querySelector("#list .ticket").click();
+  await sleep(80);
+  const sects = Array.from(doc.querySelectorAll("#detail .sect > h3")).map((h) => h.textContent.trim());
+  check("流程 / 提醒提到了基本信息前面", sects[0] === "流程状态" && sects[1] === "跟进提醒", sects.join(" / "));
+  const why0 = doc.querySelector("#detail .remindbox .why")?.textContent || "";
+  check("提醒区说清了是按流程派发", /按流程派发/.test(why0), why0.slice(0, 120));
+
+  /* ③ 间隔改 1 小时 + 记一步流程 → 提醒顺延（旧待办撤掉，按新基准重订） */
+  doc.getElementById("tab-settings").click();
+  await sleep(60);
+  doc.getElementById("optRemindHours").value = "1";
+  doc.getElementById("saveRemind").click();
+  await sleep(120);
+  check("间隔存进了宿主 kv", kv["remindHours"] === "1", String(kv["remindHours"]));
+
+  doc.getElementById("tab-browse").click();
+  await sleep(60);
+  doc.querySelector("#list .ticket").click();
+  await sleep(60);
+  const cancelsBefore = args.filter((a) => a.op === "task.remind" && a.payload.action === "cancel").length;
+  doc.getElementById("dFlow").value = "已联系快递";
+  doc.getElementById("btnFlow").click();
+  await waitFor(() => doc.querySelectorAll("#detail .flowrow").length === 1);
+  await sleep(60);
+  const r1 = store.find((x) => x.id === r0.id);
+  const at1 = new Date(r1.remind_at).getTime();
+  check("记一步流程 → 提醒按新基准重算（1 小时）",
+    Math.abs(at1 - (Date.now() + 3600000)) < 90000,
+    ((at1 - Date.now()) / 3600000).toFixed(2) + " 小时");
+  check("换时刻 = 先撤旧待办",
+    args.filter((a) => a.op === "task.remind" && a.payload.action === "cancel").length > cancelsBefore);
+  check("流程步里存了机器可读时刻 at", /"at":"\d{4}-\d\d-\d\dT/.test(r1.flow), r1.flow.slice(0, 110));
+  const lastBook = args.filter((a) => a.op === "task.remind" && a.payload.action !== "cancel").pop();
+  check("备注改成「流程停在…」", /流程停在「已联系快递」/.test(lastBook?.payload.note || ""),
+    lastBook?.payload.note);
+
+  /* ④ 记到「完结」→ 提醒自动撤掉 */
+  doc.getElementById("dFlow").value = "完结";
+  doc.getElementById("btnFlow").click();
+  await waitFor(() => /已完结/.test(doc.querySelector("#detail .remindbox")?.textContent || ""));
+  await sleep(60);
+  const r2 = store.find((x) => x.id === r0.id);
+  check("完结后提醒时刻清空", r2.remind_at === "", JSON.stringify(r2.remind_at));
+  check("完结后待办 id 也清空", r2.remind_task === "", JSON.stringify(r2.remind_task));
+  const box2 = doc.querySelector("#detail .remindbox")?.textContent || "";
+  check("详情页说「已完结，提醒撤了」", /已完结/.test(box2), box2.slice(0, 90));
+
+  /* ⑤ 删掉完结步 → 重新派发；再试「不用提醒 / 恢复提醒」 */
+  await waitFor(() => doc.querySelectorAll("#detail [data-delflow]").length >= 2);
+  const delBtns = doc.querySelectorAll("#detail [data-delflow]");
+  delBtns[delBtns.length - 1].click();
+  await waitFor(() => !!store.find((x) => x.id === r0.id).remind_at);
+  await sleep(60);
+  const r3 = store.find((x) => x.id === r0.id);
+  check("删掉完结步 → 提醒又派上了", !!r3.remind_at, JSON.stringify(r3.remind_at));
+  doc.getElementById("btnUnRemind").click();
+  await waitFor(() => store.find((x) => x.id === r0.id).remind_at === "");
+  await sleep(60);
+  const r4 = store.find((x) => x.id === r0.id);
+  check("「不用提醒」清掉了时刻", r4.remind_at === "", JSON.stringify(r4.remind_at));
+  check("关掉名单存进了 kv", /remindOff/.test(Object.keys(kv).join(",")) &&
+    String(kv["remindOff"]).includes(r0.id), String(kv["remindOff"]).slice(0, 80));
+  doc.getElementById("btnRemindOn").click();
+  await waitFor(() => !!store.find((x) => x.id === r0.id).remind_task);
+  await sleep(60);
+  const r5 = store.find((x) => x.id === r0.id);
+  check("「恢复提醒」又订回来了", !!r5.remind_at && !!r5.remind_task,
+    JSON.stringify({ at: r5.remind_at, task: r5.remind_task }));
+
+  // 后面的段落还要用 24 小时的口径（推送等无关，但别把设置留在 1）
+  doc.getElementById("tab-settings").click();
+  await sleep(40);
+  doc.getElementById("optRemindHours").value = "24";
+  doc.getElementById("saveRemind").click();
+  await sleep(120);
 }
 
 console.log("\n6. 绑定在线表格（分享链路）");

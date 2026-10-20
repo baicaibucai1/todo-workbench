@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.1.1）——整本重写过一次，之后按反馈迭代。
+  异常单号登记（v1.1.3）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -206,6 +206,25 @@
   .flowrow { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
   .flowrow .t { color: var(--dim); font-family: var(--mono); font-size: 11.5px; }
 
+  /* ---------- 跟进提醒 ----------
+     提醒不是"单独设的一个闹钟"，而是**流程的看门狗**：基准时刻 + N 小时。
+     所以列表里只需要一个很小的标记，别做成大红块。 */
+  .tag.due { color: var(--warn); }
+  .tag.late { color: var(--danger); }
+  .remindbox {
+    border: 1px solid var(--line); border-left: 3px solid var(--dim);
+    border-radius: 8px; padding: 8px 10px; background: var(--chip);
+  }
+  .remindbox.due { border-left-color: var(--warn); }
+  .remindbox.late { border-left-color: var(--danger); }
+  .remindbox.done { border-left-color: var(--ok); }
+  .remindbox .big { font-size: 13px; font-family: var(--mono); }
+  .remindbox .why { font-size: 11.5px; color: var(--dim); margin-top: 4px; line-height: 1.55; }
+  /* 设置页的开关：原生 checkbox 太小，配一句说明才好读 */
+  .sw { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; line-height: 1.5; }
+  .sw input { margin: 2px 0 0; flex: 0 0 auto; }
+  .sw .d { color: var(--dim); font-size: 11.5px; display: block; }
+
   /* ---------- 表格页 ---------- */
   .tblbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
   .tblbar input { flex: 1 1 220px; width: auto; }
@@ -384,7 +403,7 @@
       </div>
       <div class="r" style="margin-top:10px">
         <button class="primary" id="btnAdd" data-ico="pen">登记</button>
-        <span class="note">订单号和快递单号至少填一个。登记后店铺 / 快递公司 / 登记时间会留着，方便连着录下一条。</span>
+        <span class="note" id="addNote">订单号和快递单号至少填一个。登记后店铺 / 快递公司 / 登记时间会留着，方便连着录下一条。</span>
       </div>
     </div>
   </section>
@@ -510,6 +529,28 @@
       <div class="r" style="margin-top:8px">
         <button class="primary" id="saveOpts">保存选项</button>
         <span class="hint" id="optMsg" style="margin:0"></span>
+      </div>
+    </div>
+
+    <div class="card" style="max-width:720px">
+      <h2>跟进提醒</h2>
+      <p class="note" style="margin:0 0 8px">
+        提醒是<b>流程的看门狗</b>，不用一条条去设 —— <b>登记一条就自动订上</b>，
+        之后每记一步流程自动往后顺延，记到「完结」自动撤掉。
+      </p>
+      <div class="grid24">
+        <label class="f c8"><span>多久没更新就提醒（小时）</span>
+          <input id="optRemindHours" type="number" min="1" max="720" step="1" /></label>
+        <div class="f c16"><span>怎么算的</span>
+          <div class="note" style="margin:0">
+            到期时刻 = <b>最后一次流程时刻 + N 小时</b>；还没记流程就用登记时刻。
+            到点后工作台待办里会多一条带「异常单号登记」标记的待办，弹提醒卡。
+            改这个数只影响<b>之后的派发</b>，已经订着的不会回溯重算。
+          </div></div>
+      </div>
+      <div class="r" style="margin-top:8px">
+        <button class="primary" id="saveRemind">保存</button>
+        <span class="hint" id="remindMsg" style="margin:0"></span>
       </div>
     </div>
 
@@ -690,6 +731,13 @@
   var FLOW_DONE = "完结";
   var FLOW_DONE_RE = /^(?:完结|已解决|已关闭|已完成)$/;
   function isDoneName(n) { return FLOW_DONE_RE.test(txt(n).trim()); }
+
+  /* 跟进提醒：**由流程派发**，不是单独设的闹钟。
+     基准 = 最后一次记录流程的时刻（没记流程就用登记时刻），到期 = 基准 + N 小时。
+     于是"流程很久没更新"这件事自己就会冒出来 —— 记一步流程，提醒自动往后顺延；
+     记到「完结」就撤掉，不再烦人。N 可在设置里改，出厂 24。 */
+  var REMIND_HOURS = 24;
+  var REMIND_GAP_MS = 60 * 1000;   // 派生时刻与实际订的时刻差在这以内就算一致（幂等）
 
   /** 台账 14 列：与宿主 Rust 那份 COLUMNS 同序同列（推送给在线表格就按这个排） */
   var COLS = [
@@ -874,6 +922,8 @@
     handlings: DEFAULT_HANDLINGS.slice(),
     results: DEFAULT_RESULTS.slice(),
     flows: DEFAULT_FLOWS.slice(),
+    remindHours: REMIND_HOURS,     // 跟进提醒的间隔（小时）
+    remindOff: [],                 // 用户点名「不用提醒」的单子 id
   };
   var tableCols = null;       // { order:[key…], hidden:[key…] } —— 空 = 全显示、按 COLS 顺序
   var wps = { link: "", fileId: "", name: "", sheet: "", owner: "" };
@@ -925,6 +975,11 @@
       cfg.stores = [];
       for (var s = 1; s <= 8; s++) cfg.stores.push({ name: "店铺 " + s, mallcsid: "" });
     }
+    // 提醒间隔：kv 里是字符串，读出来转数字；非法值回落到出厂 24
+    var rh = Number(await cfgGet("remindHours"));
+    cfg.remindHours = rh > 0 && isFinite(rh) ? rh : REMIND_HOURS;
+    var ro = parseList(await cfgGet("remindOff"));
+    cfg.remindOff = ro || [];
     // 列配置：存的是「全量顺序 + 隐藏名单」，新增列自动可见（不用每次改代码补名单）
     var tc = await cfgGet("tableCols");
     try { tableCols = tc ? JSON.parse(tc) : null; } catch (e) { tableCols = null; }
@@ -952,7 +1007,8 @@
         var st = arr[i] || {};
         var n = txt(st.n).trim();
         if (!n) continue;
-        out.push({ n: n, t: txt(st.t) });
+        // at = ISO 时刻（新数据都有），t = 给人看的那串。提醒算时差用 at，没有 at 才退回去解析 t
+        out.push({ n: n, t: txt(st.t), at: txt(st.at) });
       }
       return out;
     } catch (e) { return []; }
@@ -983,6 +1039,183 @@
     return mid.concat([FLOW_DONE]);
   }
 
+  /* ---------- 时刻：解析 / 显示 / 人话 ---------- */
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+  function fmtMin(d) {
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
+      + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+  }
+  /** 兼容三种写法：ISO、旧数据的「2026/10/20 14:30:00」、datetime-local 的「2026-10-20T14:30」 */
+  function parseTime(v) {
+    var s = txt(v).trim();
+    if (!s) return null;
+    var d = new Date(s);
+    if (!isNaN(d.getTime())) return d;
+    var m = s.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (m) {
+      d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+      if (!isNaN(d.getTime())) return d;
+    }
+    return null;
+  }
+  /** 人话时距：3 天 / 6 小时 / 20 分钟 */
+  function spanText(ms) {
+    var m = Math.round(Math.abs(ms) / 60000);
+    if (m < 60) return m + " 分钟";
+    if (m < 60 * 48) return Math.round(m / 60) + " 小时";
+    return Math.round(m / 1440) + " 天";
+  }
+
+  /** 最后一步流程（含时刻）；一条都没记就是 null */
+  function flowLast(r) {
+    var flow = parseFlow(r.flow);
+    for (var i = flow.length - 1; i >= 0; i--) {
+      var d = parseTime(flow[i].at) || parseTime(flow[i].t);
+      if (d) return { at: d, name: flow[i].n, step: i };
+    }
+    return flow.length ? { at: null, name: flow[flow.length - 1].n, step: flow.length - 1 } : null;
+  }
+  /** 这条算不算收尾了：流程末步是完结，或没记流程但填了「结果」 */
+  function isClosed(r) {
+    var last = flowLast(r);
+    if (last) return isDoneName(last.name);
+    return !!txt(r.result).trim();
+  }
+  function remindHours() {
+    var h = Number(cfg.remindHours);
+    return h > 0 && isFinite(h) ? h : REMIND_HOURS;
+  }
+  /**
+   * 提醒计划 —— **只算，不写**。
+   *   base  = 最后一次流程时刻；没记流程就用登记时刻
+   *   due   = base + N 小时
+   *   state = done（完结，不用提醒）/ late（已过点，还没跟进）/ due（N 小时内）/ idle（没基准）
+   */
+  function remindPlan(r) {
+    var hours = remindHours();
+    var last = flowLast(r);
+    var base = last && last.at ? last.at : parseTime(r.created_at);
+    var closed = isClosed(r);
+    var due = base ? new Date(base.getTime() + hours * 3600000) : null;
+    var left = due ? due.getTime() - Date.now() : 0;
+    var state = closed ? "done"
+      : !due ? "idle"
+        : left < 0 ? "late"
+          : "due";
+    return {
+      hours: hours, base: base, due: due, left: left, state: state,
+      fromFlow: !!(last && last.at), step: last ? last.name : "",
+      off: remindOff(r.id),
+    };
+  }
+  /**
+   * 一条单子**当前实际**的提醒状态。
+   *
+   * 派生值（plan.due）是"按流程该什么时候提醒"；实际生效的是 remind_at
+   * （用户可能手改过 / 点过"再等一天"）。所以状态按实际生效的时刻算，
+   * 派生值只在没有实际值时兜底 —— 否则手改之后界面还喊"已到点"，自相矛盾。
+   */
+  function remindView(r) {
+    var plan = remindPlan(r);
+    var manual = parseTime(r.remind_at);
+    var eff = plan.off || plan.state === "done" ? null : (manual || plan.due);
+    var left = eff ? eff.getTime() - Date.now() : 0;
+    var state = plan.off ? "off"
+      : plan.state === "done" ? "done"
+        : !eff ? "idle"
+          : left < 0 ? "late" : "due";
+    return { plan: plan, eff: eff, left: left, state: state, manual: !!manual };
+  }
+  /** 一条单子的提醒文案（列表标记 / 详情区共用，免得两处口径不一致） */
+  function remindText(v) {
+    if (v.state === "off") return "已关掉提醒";
+    if (v.state === "done") return "已完结，不再提醒";
+    if (v.state === "idle") return "没有可用的基准时刻";
+    if (v.state === "late") return "逾期 " + spanText(v.left);
+    return "还有 " + spanText(v.left);
+  }
+  function remindBadgeClass(v) {
+    if (v.state === "done") return "s2";
+    if (v.state === "late") return "s0";
+    return "s1";
+  }
+
+  /* 用户手点「这条不用提醒」—— 记在 kv 里的一串 id，不往台账加列（推送只认 14 列）。
+     ★ 流程一变又想提醒了，就从这串里拿掉（见 syncRemind）。 */
+  function remindOff(id) {
+    return (cfg.remindOff || []).indexOf(id) >= 0;
+  }
+  function setRemindOff(id, off) {
+    var list = (cfg.remindOff || []).filter(function (x) { return x !== id; });
+    if (off) list.push(id);
+    cfg.remindOff = list;
+    return cfgSet("remindOff", JSON.stringify(list));
+  }
+
+  /**
+   * 订/改一条提醒：宿主只收 book 与 cancel，没有"改这条"，所以换时刻 = 撤旧 + 订新。
+   * 不在宿主里（或能力没开）就只把时刻写在本地行上 —— 界面照样显示，只是没有待办。
+   */
+  async function bookRemindAt(r, when, why) {
+    var taskId = txt(r.remind_task);
+    if (taskId && bound()) {
+      try { await call("task.remind", { action: "cancel", taskId: taskId }); } catch (e) { /* 那条可能已没了 */ }
+    }
+    var newTask = "";
+    if (bound()) {
+      try {
+        var res = await call("task.remind", {
+          title: "异常单跟进：" + (txt(r.order_sn) || txt(r.tracking_no) || "（没有单号）"),
+          dueAt: when.toISOString(),
+          note: why + (txt(r.title) ? " · " + txt(r.title) : ""),
+          ref: r.id,
+        });
+        newTask = (res && res.taskId) || "";
+      } catch (e) {
+        newTask = "";     // 能力关着 / 宿主失败 —— 界面仍显示时刻，只是没落待办
+      }
+    }
+    await update(r.id, { remind_at: when.toISOString(), remind_task: newTask });
+    return { at: when, taskId: newTask };
+  }
+
+  /**
+   * 把「派生出来的提醒」落到实际：本地行 + 宿主待办。
+   *
+   * 幂等：算出来的时刻跟已经订的差不到 1 分钟就不动（否则每改一个字都要 cancel+book 一次，
+   * 待办列表会抖）。所以记一步流程 → 顺延；记到完结 → 撤掉；同一状态重复调用 → 无事发生。
+   */
+  async function syncRemind(r, force) {
+    if (!r) return null;
+    var plan = remindPlan(r);
+    var want = plan.off ? null
+      : plan.state === "due" || plan.state === "late" ? plan.due : null;
+    var wantIso = want ? want.toISOString() : "";
+    var cur = txt(r.remind_at);
+    var taskId = txt(r.remind_task);
+
+    // 已经不需要提醒（完结 / 关掉 / 没基准）
+    if (!wantIso) {
+      if (taskId && bound()) {
+        try { await call("task.remind", { action: "cancel", taskId: taskId }); } catch (e) { /* 那条可能已没了 */ }
+      }
+      if (cur || taskId) await update(r.id, { remind_at: "", remind_task: "" });
+      return null;
+    }
+
+    // 幂等：时刻没变就不动。force = 流程刚动过一步 —— 基准换了，哪怕差不到 1 分钟也要按新的来
+    var curAt = parseTime(cur);
+    if (!force && curAt && Math.abs(curAt.getTime() - want.getTime()) < REMIND_GAP_MS) {
+      return { at: curAt, taskId: taskId, same: true };
+    }
+
+    var why = plan.fromFlow
+      ? "流程停在「" + plan.step + "」，" + plan.hours + " 小时没更新"
+      : "登记后 " + plan.hours + " 小时还没跟进";
+    var got = await bookRemindAt(r, want, why);
+    return { at: got.at, taskId: got.taskId, same: false };
+  }
+
   /* ==================================================================
    * 6. 登记页
    * ================================================================== */
@@ -993,6 +1226,11 @@
     renderPills($("fCourier"), cfg.couriers, pillVal($("fCourier")));
     renderPills($("fCategory"), cfg.situations, pillVal($("fCategory")));
     $("fDate").value = $("fDate").value || todayStr();
+    var noteEl = $("addNote");
+    if (noteEl) {
+      noteEl.textContent = "订单号和快递单号至少填一个。登记后店铺 / 快递公司 / 登记时间会留着，"
+        + "方便连着录下一条；同时自动订 " + remindHours() + " 小时后的跟进提醒（记一步流程会自动顺延）。";
+    }
     $("todayCount").textContent = "今日已登记 " + rows.filter(function (r) {
       return txt(r.created_at).slice(0, 10) === todayStr();
     }).length + " 条";
@@ -1159,11 +1397,15 @@
       created_at: now,
       updated_at: now,
     };
-    await insert(row);
+    var saved = await insert(row);
+    // ★ 登记即派发：默认 N 小时后提醒跟进（N 在设置里，出厂 24）
+    var rm = await syncRemind(saved);
     dupAck = "";
     msg.className = "hint";
     msg.textContent = "已登记「" + (order || track) + "」"
       + (order && !orderLooksRight(order) ? "（这个单号形状不像拼多多单号，客户端可能定位不到那张订单）" : "")
+      + (rm && rm.at ? " · 已订 " + remindHours() + " 小时后的跟进提醒（" + fmtMin(rm.at) + "）"
+        : " · 跟进提醒没订上（检查一下工具提醒是否开着）")
       + " —— 店铺 / 快递公司 / 登记时间留着了，可以接着录下一条";
     // 连着录：只清掉"这一条才有的东西"（订单号 / 快递单号 / 情况 / 描述），店铺快递公司留着
     $("fOrder").value = "";
@@ -1189,6 +1431,13 @@
     });
   }
 
+  /** 列表里的提醒标记：**只标逾期的** —— 每条都挂「还有 23 小时」就是噪音 */
+  function remindTag(r) {
+    var v = remindView(r);
+    if (v.state !== "late") return "";
+    return '<span class="tag late" title="按流程派发，到点还没更新">' + esc(remindText(v)) + "</span>";
+  }
+
   function renderList() {
     var list = filtered();
     var box = $("list");
@@ -1209,6 +1458,7 @@
         + (r.store ? '<span class="tag">' + esc(r.store) + "</span>" : "")
         + (r.courier ? '<span class="tag">' + esc(r.courier) + "</span>" : "")
         + (r.category ? '<span class="tag">' + esc(r.category) + "</span>" : "")
+        + remindTag(r)
         + "</div></div>";
     }
     box.innerHTML = html;
@@ -1249,6 +1499,78 @@
       + (r.updated_at ? " · 最后改动 " + esc(txt(r.updated_at).slice(0, 16).replace("T", " ")) : "")
       + "</div>";
 
+    /* ★ 流程和提醒提到最前面：翻一条异常单，先要回答的就是"到哪一步了""什么时候该再跟"。
+       提醒是流程的看门狗，所以紧贴在流程下面 —— 记一步流程，提醒自己会后移。 */
+    var v = remindView(r);
+    var plan = v.plan;
+    var last = flowLast(r);
+
+    html += '<div class="sect"><h3 data-ico="flow">流程状态</h3>';
+    if (!flow.length) {
+      html += '<div class="note">还没记 —— 状态先由下面的「处理」派生；提醒按<b>登记时刻 + '
+        + plan.hours + ' 小时</b>算。</div>';
+    } else if (last && last.at) {
+      var idle = Date.now() - last.at.getTime();
+      var lateFlow = idle > plan.hours * 3600000 && !isClosed(r);
+      html += '<div class="note"' + (lateFlow ? ' style="color:var(--warn)"' : "") + ">"
+        + "最后一步「" + esc(last.name) + "」在 " + esc(fmtMin(last.at))
+        + "，已经 " + spanText(idle) + "没更新"
+        + (lateFlow ? " —— 过了 " + plan.hours + " 小时，该跟一下了" : "") + "。</div>";
+    }
+    for (var j = 0; j < flow.length; j++) {
+      var cur = j === flow.length - 1;
+      html += '<div class="flowrow"><span' + (cur ? ' style="font-weight:600"' : "") + ">"
+        + esc(flow[j].n) + "</span>"
+        + '<span class="t">' + esc(flow[j].t) + "</span>"
+        + (cur ? '<span class="badge s1" style="font-size:10px;padding:0 6px">当前</span>' : "")
+        + '<span class="spacer"></span>'
+        + '<button class="mini" data-delflow="' + j + '">删</button></div>';
+    }
+    if (!done) {
+      html += '<div class="r" style="margin-top:8px"><select id="dFlow" style="flex:1 1 auto"></select>'
+        + '<button class="primary" id="btnFlow">记一步</button></div>';
+    } else {
+      html += '<div class="note" style="margin-top:6px">已「完结」封口 —— 要继续先删掉那一步。</div>';
+    }
+    html += "</div>";
+
+    /* 提醒：由流程派发，落到宿主待办上（带来源标记） */
+    html += '<div class="sect"><h3 data-ico="bell">跟进提醒</h3>';
+    var boxCls = v.state === "late" ? "late" : v.state === "done" ? "done"
+      : v.state === "due" ? "due" : "";
+    html += '<div class="remindbox ' + boxCls + '">';
+
+    if (v.state === "off") {
+      html += '<div class="r"><span class="big">这条的提醒关掉了</span><span class="spacer"></span>'
+        + '<button class="mini" id="btnRemindOn">恢复提醒</button></div>'
+        + '<div class="why">流程再记一步时会自动恢复。</div>';
+    } else if (v.state === "done") {
+      html += '<div class="r"><span class="big">已完结，提醒撤了</span><span class="spacer"></span>'
+        + '<span class="badge s2">不用再跟</span></div>'
+        + '<div class="why">流程记到「完结」就自动撤掉；要从头跟，删掉那一步再来。</div>';
+    } else if (v.state === "idle") {
+      html += '<div class="r"><span class="big">没有基准时刻</span><span class="spacer"></span>'
+        + '<button class="mini" id="btnSnooze">从现在起 ' + plan.hours + ' 小时</button></div>'
+        + '<div class="why">这条既没有流程记录，登记时间也读不出来 —— 手动给个起点。</div>';
+    } else {
+      html += '<div class="r"><span class="big">' + esc(remindText(v)) + "</span>"
+        + '<span class="spacer"></span>'
+        + '<span class="badge ' + remindBadgeClass(v) + '">'
+        + (v.state === "late" ? "已到点" : "待提醒") + "</span></div>"
+        + '<div class="r" style="margin-top:8px">'
+        + '<button class="mini" id="btnSnooze">再等 ' + plan.hours + ' 小时</button>'
+        + '<input id="dRemind" type="datetime-local" style="flex:0 1 200px" />'
+        + '<button class="mini" id="btnRemind">改成这个时刻</button>'
+        + '<button class="mini" id="btnUnRemind">不用提醒</button></div>'
+        + '<div class="why">按流程派发：<b>'
+        + (plan.fromFlow ? "最后一步「" + esc(plan.step) + "」" : "登记时刻")
+        + "（" + esc(plan.base ? fmtMin(plan.base) : "—") + "）</b> + " + plan.hours + " 小时 = <b>"
+        + esc(plan.due ? fmtMin(plan.due) : "—") + "</b>。"
+        + (v.manual ? "现在是手改的 <b>" + esc(fmtMin(v.eff)) + "</b>，记一步流程会按流程重算。"
+          : "记一步流程会自动顺延，记到「完结」自动撤掉。") + "</div>";
+    }
+    html += "</div></div>";
+
     /* 基本信息：**都能改**。登记时漏填的（快递单号、快递公司…）在这儿补，
        填错了也在这儿改 —— 改完点「保存修改」，一改就落库。 */
     html += '<div class="sect"><h3 data-ico="doc">基本信息（都能改）</h3><div class="grid24">'
@@ -1282,34 +1604,7 @@
       + '<div class="r" style="margin-top:8px"><button class="primary" id="btnProc">保存处理</button>'
       + '<span class="hint" id="procMsg" style="margin:0"></span></div></div>';
 
-    /* 流程：每一步 = 名称 + 时刻，最后一步就是当前状态。完结之后封口 */
-    html += '<div class="sect"><h3 data-ico="flow">流程状态</h3>';
-    if (!flow.length) html += '<div class="note">还没记 —— 现在的状态由上面的「处理」派生。</div>';
-    for (var j = 0; j < flow.length; j++) {
-      html += '<div class="flowrow"><span>' + esc(flow[j].n) + '</span>'
-        + '<span class="t">' + esc(flow[j].t) + "</span>"
-        + '<span class="spacer"></span>'
-        + '<button class="mini" data-delflow="' + j + '">删</button></div>';
-    }
-    if (!done) {
-      html += '<div class="r" style="margin-top:8px"><select id="dFlow" style="flex:1 1 auto"></select>'
-        + '<button class="primary" id="btnFlow">记一步</button></div>';
-    } else {
-      html += '<div class="note" style="margin-top:6px">已「完结」封口 —— 要继续先删掉那一步。</div>';
-    }
-    html += "</div>";
-
-    /* 提醒：落到宿主待办上，带来源标记 */
-    html += '<div class="sect"><h3 data-ico="bell">提醒</h3>';
-    if (r.remind_at) {
-      html += '<div class="r"><span>已设：' + esc(r.remind_at.replace("T", " ")) + "</span>"
-        + '<button class="mini" id="btnUnRemind">取消提醒</button></div>';
-    } else {
-      html += '<div class="r"><input id="dRemind" type="datetime-local" style="flex:1 1 auto" />'
-        + '<button class="primary" id="btnRemind">设提醒</button></div>'
-        + '<div class="note">到点后工作台待办里会多一条带「异常单号登记」标记的待办，并弹提醒卡。</div>';
-    }
-    html += "</div>";
+    /* 流程 / 提醒已经在最上面 —— 这里不再重复。 */
 
     box.innerHTML = html;
     paintIcos(box);
@@ -1367,9 +1662,15 @@
         void (async function () {
           var n = $("dFlow").value;
           if (!n) return;
-          var next = flow.concat([{ n: n, t: new Date().toLocaleString("zh-CN") }]);
+          var now = new Date();
+          // t 给人看，at 给提醒算时差 —— 两个都存，别拿显示串去解析
+          var next = flow.concat([{ n: n, t: now.toLocaleString("zh-CN"), at: now.toISOString() }]);
           await update(r.id, { flow: JSON.stringify(next) });
+          await setRemindOff(r.id, false);      // 又动了一步 = 还得跟，提醒恢复
+          await syncRemind(findRow(r.id), true); // 顺延；记到「完结」则撤掉
           await load();
+          toast("已记「" + n + "」"
+            + (isDoneName(n) ? " —— 完结了，提醒已撤" : " —— 提醒顺延 " + remindHours() + " 小时"));
         })();
       };
     }
@@ -1381,6 +1682,7 @@
           var next = flow.slice();
           next.splice(idx, 1);
           await update(r.id, { flow: JSON.stringify(next) });
+          await syncRemind(findRow(r.id), true);
           await load();
         })();
       };
@@ -1408,35 +1710,46 @@
         await load();
       })();
     };
+    /* 提醒：都在派生值上做文章 —— 顺延 = 从现在起再给 N 小时；不合意的时刻也能手改。 */
+    if ($("dRemind") && v.eff) $("dRemind").value = fmtMin(v.eff).replace(" ", "T");
+    if ($("btnSnooze")) {
+      $("btnSnooze").onclick = function () {
+        void (async function () {
+          var when = new Date(Date.now() + remindHours() * 3600000);
+          await bookRemindAt(r, when, "手动再等 " + remindHours() + " 小时");
+          toast("提醒改到 " + fmtMin(when));
+          await load();
+        })();
+      };
+    }
     if ($("btnRemind")) {
       $("btnRemind").onclick = function () {
         void (async function () {
-          var v = $("dRemind").value;
-          if (!v) { toast("先选一个时刻"); return; }
-          try {
-            var res = await call("task.remind", {
-              title: "异常单跟进：" + sn,
-              dueAt: new Date(v).toISOString(),
-              note: txt(r.title),
-              ref: r.id,
-            });
-            await update(r.id, { remind_at: v, remind_task: (res && res.taskId) || "" });
-            toast("提醒已设 —— 到点会在待办里出现");
-            await load();
-          } catch (err) {
-            toast(String(err && err.message ? err.message : err));
-          }
+          var raw = $("dRemind").value;
+          var when = parseTime(raw);
+          if (!when) { toast("先选一个时刻"); return; }
+          await bookRemindAt(r, when, "手动指定的提醒时刻");
+          toast("提醒改到 " + fmtMin(when));
+          await load();
         })();
       };
     }
     if ($("btnUnRemind")) {
       $("btnUnRemind").onclick = function () {
         void (async function () {
-          if (r.remind_task) {
-            try { await call("task.remind", { action: "cancel", taskId: r.remind_task }); } catch (e) { /* 那条可能已被删 */ }
-          }
-          await update(r.id, { remind_at: "", remind_task: "" });
-          toast("提醒已取消");
+          await setRemindOff(r.id, true);
+          await syncRemind(findRow(r.id));    // off → 撤掉待办、清掉时刻
+          toast("这条不再提醒 —— 记一步流程会恢复");
+          await load();
+        })();
+      };
+    }
+    if ($("btnRemindOn")) {
+      $("btnRemindOn").onclick = function () {
+        void (async function () {
+          await setRemindOff(r.id, false);
+          var got = await syncRemind(findRow(r.id));
+          toast(got && got.at ? "提醒恢复：" + fmtMin(got.at) : "提醒恢复了，但没算出时刻");
           await load();
         })();
       };
@@ -1606,6 +1919,9 @@
     $("optHandlings").value = cfg.handlings.join("\n");
     $("optResults").value = cfg.results.join("\n");
     $("optFlows").value = cfg.flows.join("\n");
+
+    /* 跟进提醒：间隔（小时） */
+    $("optRemindHours").value = String(remindHours());
 
     /* 在线表格：绑定了就把表名和创建人摆出来，推 / 拉跟着它走 */
     var on = !!wps.fileId;
@@ -1972,6 +2288,16 @@
       await cfgSet("optFlows", JSON.stringify(cfg.flows));
       $("optMsg").textContent = "已保存";
       renderCreateForm();
+      renderDetail();
+    })();
+  };
+  $("saveRemind").onclick = function () {
+    void (async function () {
+      var n = Number($("optRemindHours").value);
+      if (!(n > 0) || !isFinite(n)) { $("remindMsg").textContent = "填一个大于 0 的小时数"; return; }
+      cfg.remindHours = n;
+      await cfgSet("remindHours", String(n));
+      $("remindMsg").textContent = "已保存 —— 之后登记 / 记流程按 " + n + " 小时算";
       renderDetail();
     })();
   };
