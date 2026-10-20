@@ -249,6 +249,9 @@ check("表格页也有推 / 拉（跟着数据走，不用回设置页）",
   doc.getElementById("tblPush") && doc.getElementById("tblPull") &&
   doc.getElementById("tblPush").disabled === false,
   doc.getElementById("tblPush") ? String(doc.getElementById("tblPush").disabled) : "没有这个按钮");
+check("右上角钉了推送按钮（哪个页签都在）",
+  !!doc.getElementById("hdrPush") && doc.getElementById("hdrPush").disabled === false,
+  doc.getElementById("hdrPush") ? String(doc.getElementById("hdrPush").disabled) : "没有这个按钮");
 doc.getElementById("tab-settings").click();
 await sleep(60);
 
@@ -271,6 +274,18 @@ const push2 = args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== 
 check("确认后才真推", push2.length === 1, JSON.stringify(args.filter((a) => a.op === "wps.mcpPush").map((a) => a.payload)));
 check("推送结果有回显", /已推送/.test(doc.getElementById("wpsMsg").textContent || ""),
   doc.getElementById("wpsMsg").textContent);
+
+console.log("\n7b. 右上角按钮同样走两步确认");
+doc.getElementById("hdrPush").click();
+await sleep(200);
+check("右上角按钮的第一步也是 dryRun",
+  args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun === true).length >= 1);
+check("又弹出了确认屏", doc.getElementById("wpsPushPreview").hidden === false);
+doc.getElementById("wpsPushCancel").click();
+await sleep(60);
+check("取消后表上一格没动（没有第二次真写）",
+  args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== true).length === 1,
+  String(args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== true).length));
 
 doc.getElementById("wpsPull").click();
 await sleep(250);

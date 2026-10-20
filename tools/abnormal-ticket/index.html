@@ -216,6 +216,8 @@
   <span class="meta" id="meta"></span>
   <span class="spacer"></span>
   <span class="meta" id="todayCount"></span>
+  <!-- 推送按钮钉在右上角：哪个页签都看得见、够得着 -->
+  <button id="hdrPush" data-host-only disabled style="margin-left:10px">推送到表格</button>
 </header>
 
 <div class="tabs" role="tablist">
@@ -1346,6 +1348,11 @@
     }
     var tblPull = $("tblPull");
     if (tblPull) tblPull.disabled = !on || wpsBusy;
+    var hdrPush = $("hdrPush");
+    if (hdrPush) {
+      hdrPush.disabled = !on || wpsBusy;
+      hdrPush.textContent = on ? "推送到表格" : "推送到表格（先绑定）";
+    }
   }
 
   /* ==================================================================
@@ -1440,6 +1447,7 @@
   function bindPush(el) { if (el) el.onclick = function () { void doPush(false); }; }
   bindPush($("wpsPush"));
   bindPush($("tblPush"));
+  bindPush($("hdrPush"));
   $("wpsPushGo").onclick = function () { void doPush(true); };
   $("wpsPushCancel").onclick = function () {
     hidePushPreview();
