@@ -479,6 +479,39 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   await sleep(120);
 }
 
+console.log("\n5d. 布局：分栏能拖、列宽按权重");
+{
+  doc.getElementById("tab-browse").click();
+  await sleep(80);
+  const gut = doc.getElementById("splitGutter");
+  check("左右分栏之间有拖杆", !!gut);
+  const split = gut && gut.parentElement;
+  const left = gut && gut.previousElementSibling;
+  check("拖杆夹在列表和详情之间", !!split && !!left
+    && split.classList.contains("split") && left.classList.contains("left"));
+  const before = split.style.getPropertyValue("--listw");
+  const mev = (type, x) => new win.MouseEvent(type, { bubbles: true, clientX: x, clientY: 200 });
+  gut.dispatchEvent(mev("mousedown", 300));
+  // jsdom 里 getBoundingClientRect 全是 0 —— 拖到 500 会撞上「右边留 420」的上限，
+  // 所以这里只断言拖杆真的接住了事件并回写了宽度
+  win.dispatchEvent(mev("mousemove", 500));
+  const after = split.style.getPropertyValue("--listw");
+  check("拖动改写了列表宽度", after !== before && /px$/.test(after), before + " → " + after);
+  win.dispatchEvent(mev("mouseup", 500));
+  check("松手后宽度记下来了", /px$/.test(win.localStorage.getItem("wbtool:abnormal-ticket:listw") || ""),
+    String(win.localStorage.getItem("wbtool:abnormal-ticket:listw")));
+  check("松手后没把光标锁死", doc.body.style.cursor === "");
+
+  doc.getElementById("tab-table").click();
+  await sleep(80);
+  const ths = Array.from(doc.querySelectorAll("#tableHead th"));
+  check("表头各列都带建议宽度", ths.length > 0 && ths.every((th) => /width:/.test(th.getAttribute("style") || "")),
+    ths.map((th) => th.getAttribute("style")).join(" | ").slice(0, 120));
+  const w = ths.map((th) => parseFloat(/([\d.]+)%/.exec(th.getAttribute("style") || "")?.[1] || "0"));
+  const sum = w.reduce((a, b) => a + b, 0);
+  check("列宽百分比加起来是 100", Math.abs(sum - 100) < 0.5, String(sum));
+}
+
 console.log("\n6. 绑定在线表格（分享链路）");
 doc.getElementById("tab-settings").click();
 await sleep(60);

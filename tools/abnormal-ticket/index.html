@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.1.6）——整本重写过一次，之后按反馈迭代。
+  异常单号登记（v1.2.0）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -31,6 +31,14 @@
     --sel: #eef4fe;
     --ring: rgba(55,138,221,.16);
     --mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+    /* 布局三把尺，全局只认这三个数：
+       --pad  页面左右留白 / 卡片内边距
+       --gap  卡片之间、栅格里的间距
+       --maxw 内容最大宽度 —— 窗口再宽也不抻成一长条（一行文字太长，控件也散） */
+    --pad: 16px;
+    --gap: 10px;
+    --maxw: 1320px;
+    --formw: 760px;   /* 设置页那种一列到底的窄表单 */
     color-scheme: light;
   }
   html[data-theme="dark"] {
@@ -102,15 +110,18 @@
   .tabs button[aria-selected="true"] {
     background: var(--bg); color: var(--fg); border-color: var(--line); font-weight: 600;
   }
-  main { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 14px 20px; }
+  /* 页面：左右用 --pad，内容居中且不超过 --maxw —— 窗口再宽也不抻成一长条 */
+  main { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px var(--pad) 20px; }
   .view { height: 100%; }
+  .view > * { max-width: var(--maxw); margin-inline: auto; }
 
   /* ---------- 通用块 ---------- */
   .card {
     background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
-    padding: 12px 14px;
+    padding: 12px var(--pad);
   }
-  .card + .card { margin-top: 10px; }
+  .card + .card { margin-top: var(--gap); }
+  .card.narrow { max-width: var(--formw); }
   .card h2 { font-size: 13px; margin: 0 0 8px; font-weight: 600; }
   .r { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .hint { color: var(--dim); font-size: 11.5px; margin-top: 8px; }
@@ -124,6 +135,8 @@
   .f > span { font-size: 11.5px; color: var(--fg2); padding-left: 2px; }
   .c4 { grid-column: span 4; } .c6 { grid-column: span 6; } .c8 { grid-column: span 8; }
   .c12 { grid-column: span 12; } .c24 { grid-column: span 24; }
+  /* 单号类的格用等宽 —— 数字位数一眼数清，也跟登记页的大横条一致 */
+  input.mono { font-family: var(--mono); letter-spacing: .2px; }
   @media (max-width: 900px) {
     .c4, .c6, .c8 { grid-column: span 12; }
     .c12 { grid-column: span 24; }
@@ -173,8 +186,25 @@
 
   /* ---------- 查看页：左右分栏 ---------- */
   .split { display: flex; gap: 10px; height: 100%; min-height: 0; }
-  .split > .left { flex: 0 0 320px; display: flex; flex-direction: column; min-height: 0; }
+  .split > .left { flex: 0 0 var(--listw, 320px); display: flex; flex-direction: column; min-height: 0; }
   .split > .right { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; }
+  /* 右栏就那么几行字段 —— 跟着窗口无限拉宽只会把输入框和胶囊抻散 */
+  .split > .right > .card { max-width: 980px; }
+  /* 拖杆：左右分栏之间的一条细线，拖它改列表宽度 */
+  .gutter { flex: 0 0 7px; cursor: col-resize; position: relative; }
+  .gutter::after {
+    content: ""; position: absolute; top: 12px; bottom: 12px; left: 2px; width: 3px;
+    border-radius: 2px; background: var(--line);
+  }
+  .gutter:hover::after, .gutter.on::after { background: var(--accent); }
+  /* 窗口窄下来：列表先让位（320 在 1000 宽里要占三分之一），再窄就上下排 */
+  @media (max-width: 1080px) { .split > .left { flex-basis: 268px; } }
+  @media (max-width: 820px) {
+    .split { flex-direction: column; }
+    .split > .left { flex: 0 0 auto; max-height: 38vh; }
+    .gutter { display: none; }
+    .split > .right > .card { max-width: none; }
+  }
   .listwrap { flex: 1 1 auto; min-height: 0; overflow: auto; border-top: 1px solid var(--line); }
   .ticket {
     display: flex; flex-direction: column; gap: 2px; padding: 8px 10px;
@@ -197,7 +227,8 @@
   .kv { display: grid; grid-template-columns: 88px 1fr; gap: 6px 10px; font-size: 12.5px; }
   .kv > span { color: var(--dim); }
   .kv > div { min-width: 0; word-break: break-all; }
-  .sect { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+  /* 分区间距跟全局同一个数：卡片里几块内容之间不出现第三种间距 */
+  .sect { margin-top: var(--gap); padding-top: var(--gap); border-top: 1px solid var(--line); }
   .sect > h3 {
     font-size: 12px; margin: 0 0 6px; color: var(--fg2); font-weight: 600;
     display: flex; align-items: center; gap: 5px;
@@ -249,6 +280,14 @@
   th { position: sticky; top: 0; background: var(--chip); color: var(--dim); font-weight: 400; font-size: 11.5px; }
   tbody tr:hover { background: var(--chip); }
   td { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  /* 14 列横着滚的时候，第一列（单号）冻在左边 —— 不然滚过去就不知道在看哪条 */
+  th:first-child, td:first-child {
+    position: sticky; left: 0; z-index: 1;
+    box-shadow: inset -1px 0 0 var(--line);
+  }
+  th:first-child { background: var(--chip); z-index: 2; }
+  td:first-child { background: var(--bg); font-family: var(--mono); }
+  tbody tr:hover td:first-child { background: var(--chip); }
   .colpanel {
     position: absolute; z-index: 20; background: var(--bg);
     border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-width: 220px;
@@ -388,7 +427,7 @@
 <main>
   <!-- ==================== 登记 ==================== -->
   <section class="view" id="view-create">
-    <div class="card" style="max-width:1100px">
+    <div class="card">
       <h2>登记一条异常</h2>
 
       <!-- 订单号：整页最显眼的一条横条。整条 ERP 链接也能粘 —— 链接里的客服 ID 会自己认成店铺 -->
@@ -416,9 +455,12 @@
         <label class="f c24"><span class="lbl" data-ico="pen">详细描述</span>
           <textarea id="fTitle" rows="2" placeholder="发生了什么"></textarea></label>
       </div>
+      <!-- 按钮独占一行，说明放它下面 —— 挤在按钮右边时，宽屏下会被拉成一条长缝 -->
       <div class="r" style="margin-top:10px">
         <button class="primary" id="btnAdd" data-ico="pen">登记</button>
-        <span class="note" id="addNote">订单号和快递单号至少填一个。登记后店铺 / 快递公司 / 登记时间会留着，方便连着录下一条。</span>
+      </div>
+      <div class="note" id="addNote" style="margin-top:6px">
+        订单号和快递单号至少填一个。登记后店铺 / 快递公司 / 登记时间会留着，方便连着录下一条。
       </div>
     </div>
   </section>
@@ -436,6 +478,7 @@
         </div>
         <div class="listwrap" id="list"></div>
       </div>
+      <div class="gutter" id="splitGutter" title="拖动调整列表宽度"></div>
       <div class="right">
         <div class="card" id="detail"><div class="note">左边选一条 —— 这里看它的全部内容。</div></div>
       </div>
@@ -469,7 +512,7 @@
     <!-- 在线表格（WPS）：粘一条分享链接 → 认出那张表 → 推 / 拉。
          整张卡标 data-host-only：这几个 op 只能宿主跑（令牌、数据库都在那边），
          独立运行时露出来只会让人点了个必然失败的按钮。 -->
-    <div class="card" data-host-only style="max-width:720px">
+    <div class="card narrow" data-host-only>
       <h2>在线表格（WPS）</h2>
       <p class="note" style="margin:0 0 8px">
         每张 WPS 授权都有<b>一条分享链接</b> —— 粘一条进来就认出是哪张表，之后就在本工具里
@@ -514,7 +557,7 @@
       </div>
     </div>
 
-    <div class="card" style="max-width:720px">
+    <div class="card narrow">
       <h2>店铺表</h2>
       <p class="note" style="margin:0 0 8px">
         每个店铺一个客服 ID —— 呼起客户端时按它定位。<b>把 ERP 给的一条链接粘进「客服 ID」那格</b>，
@@ -528,7 +571,7 @@
       <div class="hint" id="storeMsg"></div>
     </div>
 
-    <div class="card" style="max-width:720px">
+    <div class="card narrow">
       <h2>下拉选项</h2>
       <p class="note" style="margin:0 0 8px">
         五个下拉的选项<b>一行一个</b>，改完点保存。已经在单子上的旧值不受影响。
@@ -547,7 +590,7 @@
       </div>
     </div>
 
-    <div class="card" style="max-width:720px">
+    <div class="card narrow">
       <h2>跟进提醒</h2>
       <p class="note" style="margin:0 0 8px">
         提醒是<b>流程的看门狗</b>，不用一条条去设 —— <b>登记一条就自动订上</b>，
@@ -569,7 +612,7 @@
       </div>
     </div>
 
-    <details data-host-only style="max-width:720px">
+    <details data-host-only style="max-width:var(--formw)">
       <summary>这张表在数据库里是什么样</summary>
       <pre class="schema" id="schema">…</pre>
     </details>
@@ -1559,18 +1602,19 @@
       + '<h3 data-ico="doc">' + (editingBase ? "基本信息（编辑中）" : "基本信息")
       + '<button class="mini" id="btnBaseToggle" data-ico="' + (editingBase ? "lock" : "pen") + '">'
       + (editingBase ? "取消编辑" : "编辑") + "</button></h3><div class=\"grid24\">"
-      + '<label class="f c12"><span class="lbl" data-ico="doc">订单号</span>'
-      + '<input id="dOrder" autocomplete="off" spellcheck="false" /></label>'
+      /* 订单号独占一行：它是这条单的身份，别的都围着它排 */
+      + '<label class="f c24"><span class="lbl" data-ico="doc">订单号</span>'
+      + '<input id="dOrder" autocomplete="off" spellcheck="false" class="mono" /></label>'
       + '<label class="f c12"><span class="lbl" data-ico="box">快递单号</span>'
-      + '<input id="dTrack" autocomplete="off" spellcheck="false" /></label>'
+      + '<input id="dTrack" autocomplete="off" spellcheck="false" class="mono" /></label>'
       + '<div class="f c12"><span class="lbl" data-ico="truck">快递公司</span>'
       + '<div class="pills" id="dCourier"></div></div>'
+      + '<div class="f c12"><span class="lbl" data-ico="shop">店铺</span>'
+      + '<div class="pills" id="dStore"></div></div>'
+      + '<div class="f c12"><span class="lbl" data-ico="alert">情况</span>'
+      + '<div class="pills" id="dCategory"></div></div>'
       + '<label class="f c12"><span class="lbl" data-ico="cal">登记时间</span>'
       + '<input id="dDate" autocomplete="off" spellcheck="false" /></label>'
-      + '<div class="f c24"><span class="lbl" data-ico="shop">店铺</span>'
-      + '<div class="pills" id="dStore"></div></div>'
-      + '<div class="f c24"><span class="lbl" data-ico="alert">情况</span>'
-      + '<div class="pills" id="dCategory"></div></div>'
       + '<label class="f c24"><span class="lbl" data-ico="pen">详细描述</span>'
       + '<textarea id="dTitle" rows="2"></textarea></label>'
       + '<label class="f c24"><span class="lbl" data-ico="chat">处理情况</span>'
@@ -1843,6 +1887,12 @@
     if (key === "_status") return statusOf(r);
     return txt(r[key]);
   }
+  /* 列宽：COLS 第三个数是权重，按可见列的总权重分百分比。
+     不给每列写死像素 —— 列可以隐藏 / 调序，写死的一会儿就不对了。 */
+  function colWeight(key) {
+    for (var i = 0; i < COLS.length; i++) if (COLS[i][0] === key) return COLS[i][2] || 4;
+    return 4;
+  }
   function renderTable() {
     var q = txt($("tableSearch").value).trim().toLowerCase();
     var list = rows.filter(function (r) {
@@ -1853,8 +1903,13 @@
     $("colCount").textContent = keys.length + "/" + COLS.length;
     $("tableStats").textContent = "共 " + rows.length + " 条" + (list.length !== rows.length ? "（筛出 " + list.length + "）" : "");
 
+    var total = 0;
+    for (var i = 0; i < keys.length; i++) total += colWeight(keys[i]);
     var head = "<tr>";
-    for (var i = 0; i < keys.length; i++) head += "<th>" + esc(colLabel(keys[i])) + "</th>";
+    for (var i = 0; i < keys.length; i++) {
+      head += '<th style="width:' + (colWeight(keys[i]) / total * 100).toFixed(2) + '%">'
+        + esc(colLabel(keys[i])) + "</th>";
+    }
     head += "</tr>";
     $("tableHead").innerHTML = head;
 
@@ -2295,6 +2350,47 @@
     fillSelect($("fltStatus"), STATUSES, $("fltStatus").value);
   }
 
+  /**
+   * 查看页左右分栏：中间那条细线能拖。
+   * 宽度记在本地（跟工具自己的数据放一处）—— 这只是观感，丢了也不影响数据。
+   * 拖拽期间给 body 换光标 + 关掉选中，不然会一路刷蓝一片。
+   */
+  var LS_LISTW = "wbtool:" + TOOL_ID + ":listw";
+  function initSplitDrag() {
+    var gut = $("splitGutter");
+    if (!gut) return;
+    var left = gut.previousElementSibling;
+    var split = gut.parentElement;
+    try {
+      var saved = parseInt(localStorage.getItem(LS_LISTW) || "", 10);
+      if (saved >= 220) split.style.setProperty("--listw", saved + "px");
+    } catch (e) { /* 无痕模式读不到，用默认 320 */ }
+
+    var dragging = false;
+    gut.addEventListener("mousedown", function (e) {
+      dragging = true;
+      gut.classList.add("on");
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      e.preventDefault();
+    });
+    window.addEventListener("mousemove", function (e) {
+      if (!dragging) return;
+      var box = split.getBoundingClientRect();
+      var w = e.clientX - box.left;
+      w = Math.max(220, Math.min(box.width - 420, w));   // 右边至少留 420 给详情
+      split.style.setProperty("--listw", Math.round(w) + "px");
+    });
+    window.addEventListener("mouseup", function () {
+      if (!dragging) return;
+      dragging = false;
+      gut.classList.remove("on");
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      try { localStorage.setItem(LS_LISTW, split.style.getPropertyValue("--listw")); } catch (e) {}
+    });
+  }
+
   /* ==================================================================
    * 13. 事件绑定与启动
    * ================================================================== */
@@ -2390,6 +2486,7 @@
     } catch (err) { /* 老浏览器没有 matchMedia，保持浅色 */ }
 
     paintIcos();          // 静态标签上的图标（登记页那几个）
+    initSplitDrag();      // 查看页：左右分栏之间那条能拖的细线
 
     // 1.2 秒还没等到上下文：按"在不在 iframe 里"分类
     setTimeout(function () {
