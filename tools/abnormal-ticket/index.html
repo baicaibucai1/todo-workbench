@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.2.1）——整本重写过一次，之后按反馈迭代。
+  异常单号登记（v1.3.0）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -189,7 +189,18 @@
   .split > .left { flex: 0 0 var(--listw, 320px); display: flex; flex-direction: column; min-height: 0; }
   .split > .right { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; }
   /* 右栏就那么几行字段 —— 跟着窗口无限拉宽只会把输入框和胶囊抻散 */
-  .split > .right > .card { max-width: 980px; }
+  .split > .right > .panes { max-width: 1320px; margin-inline: auto; }
+  /* 右栏两分：主信息 + 流程栏。流程栏定宽（时间线竖着长，给它一条窄长的地方），
+     主信息吃掉剩下的 —— 两栏都 min-width:0，否则长单号会把栅格顶宽。 */
+  .panes { display: flex; gap: var(--gap); align-items: flex-start; }
+  .paneMain { flex: 1 1 auto; min-width: 0; }
+  .paneMain > .card { max-width: 900px; }
+  .paneFlow { flex: 0 0 320px; max-width: 42%; min-width: 0; }
+  /* 窄了就上下排：主信息在上，流程在下（时间线横着也不吃亏） */
+  @media (max-width: 1180px) {
+    .panes { flex-direction: column; }
+    .paneFlow { flex: 1 1 auto; width: 100%; max-width: 900px; }
+  }
   /* 拖杆：左右分栏之间的一条细线，拖它改列表宽度 */
   .gutter { flex: 0 0 7px; cursor: col-resize; position: relative; }
   .gutter::after {
@@ -203,7 +214,7 @@
     .split { flex-direction: column; }
     .split > .left { flex: 0 0 auto; max-height: 38vh; }
     .gutter { display: none; }
-    .split > .right > .card { max-width: none; }
+    .split > .right > .panes, .paneMain > .card, .paneFlow { max-width: none; }
   }
   .listwrap { flex: 1 1 auto; min-height: 0; overflow: auto; border-top: 1px solid var(--line); }
   .ticket {
@@ -502,7 +513,16 @@
       </div>
       <div class="gutter" id="splitGutter" title="拖动调整列表宽度"></div>
       <div class="right">
-        <div class="card" id="detail"><div class="note">左边选一条 —— 这里看它的全部内容。</div></div>
+        <!-- 右栏再一分为二：左边主信息，右边**流程时间线独占一栏**（它竖着长，
+             跟字段表单混在一起容易被挤扁，也不好顺着往下读） -->
+        <div class="panes">
+          <div class="paneMain">
+            <div class="card" id="detail"><div class="note">左边选一条 —— 这里看它的全部内容。</div></div>
+          </div>
+          <div class="paneFlow">
+            <div class="card" id="flowPane"><div class="note">选一条单子 —— 这里看它的流程进度。</div></div>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -1587,9 +1607,11 @@
 
   function renderDetail() {
     var box = $("detail");
+    var flowBox = $("flowPane");
     var r = findRow(selectedId);
     if (!r) {
       box.innerHTML = emptyBlock("左边选一条 —— 这里看它的全部内容", true);
+      if (flowBox) flowBox.innerHTML = '<div class="note">选一条单子 —— 这里看它的流程进度。</div>';
       return;
     }
     var st = statusOf(r);
@@ -1654,48 +1676,47 @@
           + '<span class="hint" id="editMsg" style="margin:0"></span></div>')
       + "</div>";
 
-    /* 流程 + 提醒：确认完「是哪张单」，接着回答「到哪一步了」「什么时候该再跟」。
-       这两块是同一件事的两面 —— 流程停了多久，提醒就什么时候响。
+    /* ★ 流程**不在主栏里** —— 它单独占右栏那一格（见 .paneFlow）。理由：时间线竖着长，
+         跟字段表单挤在一列会被压扁，也不好顺着往下读；单开一栏后它能从头竖到底。
        ★ 时间线**最新一步在最上面**（跟工单系统的「服务进度」一个读法：打开先看现在到哪了），
          最新那颗点用页签点缀色点亮，名字加粗。折叠只收时间线，逾期警告一直亮着。 */
-    html += '<div class="sect"><h3 data-ico="flow">流程状态'
-      + (flow.length ? '<button class="mini" id="btnFlowFold">'
+    var flowHtml = '<h2>流程状态'
+      + (flow.length ? '<button class="mini" id="btnFlowFold" style="margin-left:auto">'
         + (flowFolded ? "展开" : "收起") + "</button>" : "")
-      + "</h3>";
+      + "</h2>";
     if (!flow.length) {
-      html += '<div class="note">还没记 —— 状态先由下面的「处理」派生；提醒按<b>登记时刻 + '
+      flowHtml += '<div class="note">还没记 —— 状态先由主栏的「处理」派生；提醒按<b>登记时刻 + '
         + plan.hours + ' 小时</b>算。</div>';
     } else {
       if (last && last.at) {
         var idle = Date.now() - last.at.getTime();
         var lateFlow = idle > plan.hours * 3600000 && !isClosed(r);
-        html += '<div class="note"' + (lateFlow ? ' style="color:var(--warn)"' : "") + ">"
+        flowHtml += '<div class="note"' + (lateFlow ? ' style="color:var(--warn)"' : "") + ">"
           + "最后一步「" + esc(last.name) + "」在 " + esc(fmtMin(last.at))
           + "，已经 " + spanText(idle) + "没更新"
           + (lateFlow ? " —— 过了 " + plan.hours + " 小时，该跟一下了" : "") + "。</div>";
       }
       if (flowFolded) {
-        html += '<div class="note">已收起 ' + flow.length + " 步，点右上「展开」看全部。</div>";
+        flowHtml += '<div class="note">已收起 ' + flow.length + " 步，点右上「展开」看全部。</div>";
       } else {
-        html += '<div class="tl">';
+        flowHtml += '<div class="tl">';
         for (var j = flow.length - 1; j >= 0; j--) {
           var cur = j === flow.length - 1;
-          html += '<div class="tlitem' + (cur ? " cur" : "") + (cur && done ? " done" : "") + '">'
+          flowHtml += '<div class="tlitem' + (cur ? " cur" : "") + (cur && done ? " done" : "") + '">'
             + '<div class="nm">' + esc(flow[j].n) + "</div>"
             + '<div class="tm">' + esc(flow[j].t)
             + '<button class="mini" data-delflow="' + j + '">删</button></div>'
             + "</div>";
         }
-        html += "</div>";
+        flowHtml += "</div>";
       }
     }
     if (!done && !flowFolded) {
-      html += '<div class="r" style="margin-top:8px"><select id="dFlow" style="flex:1 1 auto"></select>'
+      flowHtml += '<div class="r" style="margin-top:8px"><select id="dFlow" style="flex:1 1 auto"></select>'
         + '<button class="primary" id="btnFlow">记一步</button></div>';
     } else if (done && !flowFolded) {
-      html += '<div class="note" style="margin-top:6px">已「完结」封口 —— 要继续先删掉那一步。</div>';
+      flowHtml += '<div class="note" style="margin-top:6px">已「完结」封口 —— 要继续先删掉那一步。</div>';
     }
-    html += "</div>";
 
     /* 提醒：由流程派发，落到宿主待办上（带来源标记） */
     html += '<div class="sect"><h3 data-ico="bell">跟进提醒</h3>';
@@ -1745,6 +1766,11 @@
 
     box.innerHTML = html;
     paintIcos(box);
+    /* 流程栏是另一张卡（#flowPane）：内容单独写，图标也要单独画一遍 */
+    if (flowBox) {
+      flowBox.innerHTML = flowHtml;
+      paintIcos(flowBox);
+    }
     /* 流程时间线折叠 / 展开：重画一遍，折叠状态留在本轮浏览里 */
     var foldBtn = $("btnFlowFold");
     if (foldBtn) foldBtn.onclick = function () { flowFolded = !flowFolded; renderDetail(); };
@@ -1826,7 +1852,8 @@
         })();
       };
     }
-    var delBtns = box.querySelectorAll("[data-delflow]");
+    // 流程步的「删」现在在另一张卡里 —— 两张卡都要扫到
+    var delBtns = (flowBox || box).querySelectorAll("[data-delflow]");
     for (var d = 0; d < delBtns.length; d++) {
       delBtns[d].onclick = function () {
         var idx = Number(this.getAttribute("data-delflow"));
