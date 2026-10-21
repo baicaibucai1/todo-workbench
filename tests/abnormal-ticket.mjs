@@ -424,8 +424,10 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   const cancelsBefore = args.filter((a) => a.op === "task.remind" && a.payload.action === "cancel").length;
   doc.getElementById("dFlow").value = "已联系快递";
   doc.getElementById("btnFlow").click();
-  await waitFor(() => doc.querySelectorAll("#detail .flowrow").length === 1);
+  await waitFor(() => doc.querySelectorAll("#detail .tlitem").length === 1);
   await sleep(60);
+  check("流程时间线：单步就点亮（cur）",
+    doc.querySelector("#detail .tlitem")?.classList.contains("cur") === true);
   const r1 = store.find((x) => x.id === r0.id);
   const at1 = new Date(r1.remind_at).getTime();
   check("记一步流程 → 提醒按新基准重算（1 小时）",
@@ -449,10 +451,25 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   const box2 = doc.querySelector("#detail .remindbox")?.textContent || "";
   check("详情页说「已完结，提醒撤了」", /已完结/.test(box2), box2.slice(0, 90));
 
+  /* ④½ 时间线读法：最新一步在最上面 + 收起 / 展开 */
+  const tlItems = [...doc.querySelectorAll("#detail .tlitem")];
+  check("时间线最新一步排在最上面", /完结/.test(tlItems[0]?.textContent || "") &&
+    !/完结/.test(tlItems[1]?.textContent || ""), tlItems.map((x) => x.textContent.slice(0, 20)).join(" | "));
+  check("完结步的点亮成绿色（done）",
+    tlItems[0]?.classList.contains("done") === true);
+  doc.getElementById("btnFlowFold").click();
+  await sleep(60);
+  check("收起后时间线藏了、提示还剩一句",
+    doc.querySelectorAll("#detail .tlitem").length === 0 &&
+    /已收起 2 步/.test(doc.getElementById("detail").textContent));
+  doc.getElementById("btnFlowFold").click();
+  await sleep(60);
+  check("展开又回来了", doc.querySelectorAll("#detail .tlitem").length === 2);
+
   /* ⑤ 删掉完结步 → 重新派发；再试「不用提醒 / 恢复提醒」 */
   await waitFor(() => doc.querySelectorAll("#detail [data-delflow]").length >= 2);
   const delBtns = doc.querySelectorAll("#detail [data-delflow]");
-  delBtns[delBtns.length - 1].click();
+  delBtns[0].click();     // 时间线最新一步在最上面 —— 第一颗删的就是「完结」
   await waitFor(() => !!store.find((x) => x.id === r0.id).remind_at);
   await sleep(60);
   const r3 = store.find((x) => x.id === r0.id);

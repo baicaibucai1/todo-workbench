@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.2.0）——整本重写过一次，之后按反馈迭代。
+  异常单号登记（v1.2.1）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -249,8 +249,30 @@
   .pill.ro { cursor: default; background: var(--chip); color: var(--fg2); border-color: var(--line); }
   .sect.base.locked .pills .note { font-size: 12px; }
   .basehint { font-size: 11.5px; color: var(--dim); }
-  .flowrow { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
-  .flowrow .t { color: var(--dim); font-family: var(--mono); font-size: 11.5px; }
+  /* ---------- 流程时间线：竖线串圆点，最新一步点亮 ----------
+     圆点和连线都用伪元素画：::before 是点，::after 是往下那段线，
+     最后一个节点不画线（display:none）——线只在两步之间有。 */
+  .tl { margin: 2px 0 0; }
+  .tlitem { position: relative; padding: 0 0 12px 20px; }
+  .tlitem:last-child { padding-bottom: 2px; }
+  .tlitem::before {
+    content: ""; position: absolute; left: 3px; top: 5px; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--line);
+  }
+  .tlitem.cur::before { background: var(--tint, var(--accent)); box-shadow: 0 0 0 3px var(--ring); }
+  .tlitem.cur.done::before { background: var(--ok); }
+  .tlitem::after {
+    content: ""; position: absolute; left: 6.5px; top: 16px; bottom: 0; width: 1px;
+    background: var(--line);
+  }
+  .tlitem:last-child::after { display: none; }
+  .tlitem .nm { font-size: 12.5px; font-weight: 500; color: var(--fg2); }
+  .tlitem.cur .nm { font-weight: 600; color: var(--fg); }
+  .tlitem .tm {
+    display: flex; align-items: center; gap: 6px; margin-top: 1px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--dim);
+  }
+  .tlitem .tm .mini { font-family: inherit; }
 
   /* ---------- 跟进提醒 ----------
      提醒不是"单独设的一个闹钟"，而是**流程的看门狗**：基准时刻 + N 小时。
@@ -921,6 +943,8 @@
   /* 详情「基本信息」解锁的那一条的 id —— 只对这一条生效，切走 / 存完都自动回锁。
      存行 id 而不是布尔值，是为了换一条单子时它自己就是锁的（不然手滑改的是新那条）。 */
   var baseEditId = "";
+  /* 流程时间线折叠：只对当前这次浏览生效（不落库 —— 折叠是临时动作，不是配置） */
+  var flowFolded = false;
   var LS_ROWS = "wbtool:" + TOOL_ID + ":rows";
 
   async function load() {
@@ -1631,32 +1655,44 @@
       + "</div>";
 
     /* 流程 + 提醒：确认完「是哪张单」，接着回答「到哪一步了」「什么时候该再跟」。
-       这两块是同一件事的两面 —— 流程停了多久，提醒就什么时候响。 */
-    html += '<div class="sect"><h3 data-ico="flow">流程状态</h3>';
+       这两块是同一件事的两面 —— 流程停了多久，提醒就什么时候响。
+       ★ 时间线**最新一步在最上面**（跟工单系统的「服务进度」一个读法：打开先看现在到哪了），
+         最新那颗点用页签点缀色点亮，名字加粗。折叠只收时间线，逾期警告一直亮着。 */
+    html += '<div class="sect"><h3 data-ico="flow">流程状态'
+      + (flow.length ? '<button class="mini" id="btnFlowFold">'
+        + (flowFolded ? "展开" : "收起") + "</button>" : "")
+      + "</h3>";
     if (!flow.length) {
       html += '<div class="note">还没记 —— 状态先由下面的「处理」派生；提醒按<b>登记时刻 + '
         + plan.hours + ' 小时</b>算。</div>';
-    } else if (last && last.at) {
-      var idle = Date.now() - last.at.getTime();
-      var lateFlow = idle > plan.hours * 3600000 && !isClosed(r);
-      html += '<div class="note"' + (lateFlow ? ' style="color:var(--warn)"' : "") + ">"
-        + "最后一步「" + esc(last.name) + "」在 " + esc(fmtMin(last.at))
-        + "，已经 " + spanText(idle) + "没更新"
-        + (lateFlow ? " —— 过了 " + plan.hours + " 小时，该跟一下了" : "") + "。</div>";
+    } else {
+      if (last && last.at) {
+        var idle = Date.now() - last.at.getTime();
+        var lateFlow = idle > plan.hours * 3600000 && !isClosed(r);
+        html += '<div class="note"' + (lateFlow ? ' style="color:var(--warn)"' : "") + ">"
+          + "最后一步「" + esc(last.name) + "」在 " + esc(fmtMin(last.at))
+          + "，已经 " + spanText(idle) + "没更新"
+          + (lateFlow ? " —— 过了 " + plan.hours + " 小时，该跟一下了" : "") + "。</div>";
+      }
+      if (flowFolded) {
+        html += '<div class="note">已收起 ' + flow.length + " 步，点右上「展开」看全部。</div>";
+      } else {
+        html += '<div class="tl">';
+        for (var j = flow.length - 1; j >= 0; j--) {
+          var cur = j === flow.length - 1;
+          html += '<div class="tlitem' + (cur ? " cur" : "") + (cur && done ? " done" : "") + '">'
+            + '<div class="nm">' + esc(flow[j].n) + "</div>"
+            + '<div class="tm">' + esc(flow[j].t)
+            + '<button class="mini" data-delflow="' + j + '">删</button></div>'
+            + "</div>";
+        }
+        html += "</div>";
+      }
     }
-    for (var j = 0; j < flow.length; j++) {
-      var cur = j === flow.length - 1;
-      html += '<div class="flowrow"><span' + (cur ? ' style="font-weight:600"' : "") + ">"
-        + esc(flow[j].n) + "</span>"
-        + '<span class="t">' + esc(flow[j].t) + "</span>"
-        + (cur ? '<span class="badge s1" style="font-size:10px;padding:0 6px">当前</span>' : "")
-        + '<span class="spacer"></span>'
-        + '<button class="mini" data-delflow="' + j + '">删</button></div>';
-    }
-    if (!done) {
+    if (!done && !flowFolded) {
       html += '<div class="r" style="margin-top:8px"><select id="dFlow" style="flex:1 1 auto"></select>'
         + '<button class="primary" id="btnFlow">记一步</button></div>';
-    } else {
+    } else if (done && !flowFolded) {
       html += '<div class="note" style="margin-top:6px">已「完结」封口 —— 要继续先删掉那一步。</div>';
     }
     html += "</div>";
@@ -1709,6 +1745,9 @@
 
     box.innerHTML = html;
     paintIcos(box);
+    /* 流程时间线折叠 / 展开：重画一遍，折叠状态留在本轮浏览里 */
+    var foldBtn = $("btnFlowFold");
+    if (foldBtn) foldBtn.onclick = function () { flowFolded = !flowFolded; renderDetail(); };
 
     /* 基本信息：填进当前值 —— 空的那些格就是「等着补」 */
     $("dOrder").value = txt(r.order_sn);
