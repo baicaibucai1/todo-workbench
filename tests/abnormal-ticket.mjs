@@ -446,12 +446,16 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   check("备注改成「流程停在…」", /流程停在「已联系快递」/.test(lastBook?.payload.note || ""),
     lastBook?.payload.note);
 
-  /* ④ 记到「完结」→ 提醒自动撤掉 */
+  /* ④ 记到「完结」→ 提醒自动撤掉；这一步带上描述（v1.3.1：每步可有描述性内容） */
   doc.getElementById("dFlow").value = "完结";
+  doc.getElementById("dFlowNote").value = "客户同意补发，赠品已补寄并签收，双方无异议";
   doc.getElementById("btnFlow").click();
   await waitFor(() => /已完结/.test(doc.querySelector("#detail .remindbox")?.textContent || ""));
   await sleep(60);
   const r2 = store.find((x) => x.id === r0.id);
+  check("描述跟着这一步存进了 flow", /"d":"客户同意补发/.test(r2.flow), r2.flow.slice(0, 160));
+  check("时间线里显示了这一步的描述",
+    /客户同意补发/.test(doc.querySelector("#flowPane .tlitem .ds")?.textContent || ""));
   check("完结后提醒时刻清空", r2.remind_at === "", JSON.stringify(r2.remind_at));
   check("完结后待办 id 也清空", r2.remind_task === "", JSON.stringify(r2.remind_task));
   const box2 = doc.querySelector("#detail .remindbox")?.textContent || "";

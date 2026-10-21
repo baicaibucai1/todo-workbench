@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.3.0）——整本重写过一次，之后按反馈迭代。
+  异常单号登记（v1.3.1）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -279,6 +279,12 @@
   .tlitem:last-child::after { display: none; }
   .tlitem .nm { font-size: 12.5px; font-weight: 500; color: var(--fg2); }
   .tlitem.cur .nm { font-weight: 600; color: var(--fg); }
+  /* 步骤描述：跟着那一步显示的正文，比名字次要但要有（pre-wrap 保留手打的换行） */
+  .tlitem .ds {
+    font-size: 12px; line-height: 1.55; color: var(--fg2);
+    margin-top: 2px; white-space: pre-wrap; word-break: break-word;
+  }
+  .tlitem.cur .ds { color: var(--fg); }
   .tlitem .tm {
     display: flex; align-items: center; gap: 6px; margin-top: 1px;
     font-family: var(--mono); font-size: 11.5px; color: var(--dim);
@@ -1141,7 +1147,8 @@
         var n = txt(st.n).trim();
         if (!n) continue;
         // at = ISO 时刻（新数据都有），t = 给人看的那串。提醒算时差用 at，没有 at 才退回去解析 t
-        out.push({ n: n, t: txt(st.t), at: txt(st.at) });
+        // d = 这一步的描述性内容（v1.3.1 加）—— 老数据没有，取空串即可
+        out.push({ n: n, t: txt(st.t), at: txt(st.at), d: txt(st.d) });
       }
       return out;
     } catch (e) { return []; }
@@ -1704,6 +1711,7 @@
           var cur = j === flow.length - 1;
           flowHtml += '<div class="tlitem' + (cur ? " cur" : "") + (cur && done ? " done" : "") + '">'
             + '<div class="nm">' + esc(flow[j].n) + "</div>"
+            + (flow[j].d ? '<div class="ds">' + esc(flow[j].d) + "</div>" : "")
             + '<div class="tm">' + esc(flow[j].t)
             + '<button class="mini" data-delflow="' + j + '">删</button></div>'
             + "</div>";
@@ -1712,8 +1720,11 @@
       }
     }
     if (!done && !flowFolded) {
+      // 描述跟这一步走（存进 flow 的 d）—— 时间线里紧跟着步骤名显示
       flowHtml += '<div class="r" style="margin-top:8px"><select id="dFlow" style="flex:1 1 auto"></select>'
-        + '<button class="primary" id="btnFlow">记一步</button></div>';
+        + '<button class="primary" id="btnFlow">记一步</button></div>'
+        + '<textarea id="dFlowNote" rows="2" style="margin-top:6px"'
+        + ' placeholder="这一步发生了什么（可选，会跟着时间线一直显示）"></textarea>';
     } else if (done && !flowFolded) {
       flowHtml += '<div class="note" style="margin-top:6px">已「完结」封口 —— 要继续先删掉那一步。</div>';
     }
@@ -1842,7 +1853,8 @@
           if (!n) return;
           var now = new Date();
           // t 给人看，at 给提醒算时差 —— 两个都存，别拿显示串去解析
-          var next = flow.concat([{ n: n, t: now.toLocaleString("zh-CN"), at: now.toISOString() }]);
+          var note = $("dFlowNote") ? $("dFlowNote").value.trim() : "";
+          var next = flow.concat([{ n: n, t: now.toLocaleString("zh-CN"), at: now.toISOString(), d: note }]);
           await update(r.id, { flow: JSON.stringify(next) });
           await setRemindOff(r.id, false);      // 又动了一步 = 还得跟，提醒恢复
           await syncRemind(findRow(r.id), true); // 顺延；记到「完结」则撤掉
