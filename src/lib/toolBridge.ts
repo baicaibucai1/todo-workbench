@@ -723,6 +723,9 @@ const TOOL_ORIGIN: Record<string, ImagebedOrigin> = {
   "ai-gen": "ai-gen",
   "image-crop": "image-crop",
   "size-chart": "size-chart",
+  // 订单附图单独一档：图床里能只筛出这批「证据图」，
+  // 而不是跟着几十张手动素材混在一起
+  "abnormal-ticket": "abnormal-ticket",
 };
 
 function originForTool(toolId: string): ImagebedOrigin {

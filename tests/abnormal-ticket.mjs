@@ -50,6 +50,8 @@ async function waitFor(fn, ms = 3000) {
 /* ---------------- 假宿主 ---------------- */
 const store = [];          // 台账行
 const pushLog = [];        // 推送记录（工具只会 insert / select 它）
+const imgStore = [];       // 订单附图关联（工具只会 insert / select / delete）
+const gallery = [];        // 假图床：gallery.put 往里放，gallery.get 从里取
 let pushLogDeletes = 0;    // 断言「只增不删」：这里必须一直是 0
 let pushFail = "";         // 非空 = 下一次推送直接失败（测失败也留痕）
 const kv = {};             // 工具 kv
@@ -81,22 +83,29 @@ function host(win, e) {
   args.push({ op: m.op, payload: p });
   switch (m.op) {
     case "row.select": {
-      // 两张表：台账用 store，推送记录用 pushLog。真宿主按 orderBy 排，
-      // 这里只实现日志用到的 id desc（id 以时间打头，字典序=时间序）
-      let rows = p.table === "push_log" ? pushLog.slice() : store.slice();
+      // 三张表：台账 store / 推送记录 pushLog / 附图关联 imgStore。
+      // 真宿主单次最多给 200 行，工具会按 total 翻页 —— 这里也照做（offset + total）
+      let rows = p.table === "push_log" ? pushLog.slice()
+        : p.table === "ticket_images" ? imgStore.slice()
+        : store.slice();
       if (p.table === "push_log") {
         if (p.where && p.where.push_result) {
           rows = rows.filter((r) => r.push_result === p.where.push_result);
         }
         rows.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
       }
+      if (p.table === "ticket_images") {
+        rows.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      }
       const total = rows.length;
+      const offset = Math.max(0, Number(p.offset) || 0);
+      if (offset) rows = rows.slice(offset);
       if (p.limit) rows = rows.slice(0, p.limit);
       reply(win, m.id, true, { rows, total });
       return;
     }
     case "row.count": {
-      let rows = p.table === "push_log" ? pushLog : store;
+      let rows = p.table === "push_log" ? pushLog : p.table === "ticket_images" ? imgStore : store;
       if (p.where) {
         rows = rows.filter((r) => Object.keys(p.where).every((k) => String(r[k]) === String(p.where[k])));
       }
@@ -104,7 +113,7 @@ function host(win, e) {
       return;
     }
     case "row.insert": {
-      const target = p.table === "push_log" ? pushLog : store;
+      const target = p.table === "push_log" ? pushLog : p.table === "ticket_images" ? imgStore : store;
       const row = Object.assign({ id: newId(), created_at: new Date().toISOString() }, p.row || {});
       target.push(row);
       reply(win, m.id, true, { row });
@@ -118,9 +127,30 @@ function host(win, e) {
     }
     case "row.delete": {
       if (p.table === "push_log") pushLogDeletes++;
-      const i = store.findIndex((r) => r.id === p.id);
-      if (i >= 0) store.splice(i, 1);
+      const arr = p.table === "push_log" ? pushLog : p.table === "ticket_images" ? imgStore : store;
+      const i = arr.findIndex((r) => r.id === p.id);
+      if (i >= 0) arr.splice(i, 1);
       reply(win, m.id, true, { ok: true });
+      return;
+    }
+    /* ---- 图床（工具只碰 gallery.put / get） ---- */
+    case "gallery.put": {
+      const id = "g" + (gallery.length + 1);
+      const item = {
+        id,
+        title: p.title || "",
+        kind: "image",
+        // 缩略图随便给一段可辨识的 data URL：断言里只关心它有没有被透传
+        thumb: "data:image/png;base64,THUMB" + id,
+      };
+      gallery.push(item);
+      reply(win, m.id, true, item);
+      return;
+    }
+    case "gallery.get": {
+      const it = gallery.find((g) => g.id === p.id) || null;
+      if (!it) { reply(win, m.id, false, null, "这条记录不在图床里（可能已被删除）"); return; }
+      reply(win, m.id, true, { id: it.id, title: it.title, kind: "image", dataUrl: it.thumb, mime: "image/png", width: 10, height: 10 });
       return;
     }
     case "kv.get":
@@ -192,7 +222,8 @@ win.addEventListener("message", (e) => host(win, e));
 win.addEventListener("error", (e) => errors.push("window.error: " + (e.message || e)));
 
 await sleep(120);
-win.postMessage({ source: "workbench-host", type: "tool:context", data: { theme: "light", gallery: false } }, "*");
+// gallery: true —— 附图区靠它在页面上显形（body[data-gallery="on"]）
+win.postMessage({ source: "workbench-host", type: "tool:context", data: { theme: "light", gallery: true } }, "*");
 await sleep(200);
 
 console.log("1. 页面起得来");
@@ -441,8 +472,9 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   doc.querySelector('#list .ticket[data-id="' + store[0].id + '"]').click();
   await sleep(80);
   const sects = Array.from(doc.querySelectorAll("#detail .sect > h3")).map((h) => h.textContent.trim());
-  check("主栏分区顺序是 基本信息 → 提醒（处理区已移除）",
-    sects.length === 2 && /^基本信息/.test(sects[0]) && sects[1] === "跟进提醒", sects.join(" / "));
+  check("主栏分区顺序是 基本信息 → 图片 → 提醒（处理区已移除）",
+    sects.length === 3 && /^基本信息/.test(sects[0]) && /^图片/.test(sects[1]) && sects[2] === "跟进提醒",
+    sects.join(" / "));
   check("处理区不再渲染（处理方式/结果/结账都没有）",
     doc.getElementById("dHandling") === null && doc.getElementById("dResult") === null &&
     doc.getElementById("dSettled") === null && doc.getElementById("btnProc") === null);
@@ -1214,6 +1246,95 @@ console.log("\n9. 旧版工作台（表里没 indemnity 列）→ 赔款数降�
   check("旧宿主：保存真的落库了", store3[0].title === "旧宿主改一句", store3[0].title);
   check("旧宿主：全程无未捕获报错", errs3.length === 0, errs3.join(" | "));
   d3.window.close();
+}
+
+console.log("\n11. 订单附图：字节进图床，工具只记关联");
+{
+  const before = store.length;
+  const gBefore = gallery.length;
+  doc.getElementById("tab-create").click();
+  await sleep(60);
+
+  doc.getElementById("fOrder").value = "261022-777777777777";
+  doc.getElementById("fOrder").dispatchEvent(new win.Event("input", { bubbles: true }));
+
+  /* 两张图：jsdom 没有 canvas，readImageFile 会退回"原样交上去"这条路
+     —— 正好覆盖"压不了也不能把图丢了"那个分支 */
+  const f1 = new win.File([new Uint8Array([137, 80, 78, 71])], "破损.png", { type: "image/png" });
+  const f2 = new win.File([new Uint8Array([137, 80, 78, 71])], "面单.png", { type: "image/png" });
+  const fin = doc.getElementById("fImgFile");
+  Object.defineProperty(fin, "files", { value: [f1, f2], configurable: true });
+  fin.dispatchEvent(new win.Event("change", { bubbles: true }));
+  await waitFor(() => doc.querySelectorAll("#fImgDrop .imgcell").length === 2);
+  check("登记页选两张 → 出现两个待传格",
+    doc.querySelectorAll("#fImgDrop .imgcell").length === 2,
+    String(doc.querySelectorAll("#fImgDrop .imgcell").length));
+  check("待传格点开看的是手里那份原图（还没进图床）",
+    !!doc.querySelector("#fImgDrop .imgcell[data-pv]"));
+
+  doc.getElementById("btnAdd").click();
+  await waitFor(() => imgStore.length === 2 && store.length === before + 1, 5000);
+  check("登记成功、两张图都挂上",
+    store.length === before + 1 && imgStore.length === 2,
+    store.length + " 单 / " + imgStore.length + " 图");
+  check("两张图都进了图床", gallery.length === gBefore + 2, String(gallery.length - gBefore));
+  check("图床里的标题带单号（翻图床时认得出来）",
+    /异常单 261022-777777777777 附图/.test(gallery[gBefore]?.title || ""),
+    gallery[gBefore]?.title);
+  check("工具表里只有关联 + 缩略图，没有原图字节",
+    imgStore.every((r) => /^data:image\//.test(r.thumb || "") && r.gallery_id && r.thumb.length < 200),
+    JSON.stringify(imgStore.map((r) => ({ g: r.gallery_id, t: (r.thumb || "").length }))));
+  check("登记完待传区清空（下一单不会把这批图再挂一次）",
+    doc.querySelectorAll("#fImgDrop .imgcell").length === 0);
+
+  /* 详情页：独立一块「图片」，不受基本信息那把锁影响 */
+  doc.getElementById("tab-browse").click();
+  await sleep(80);
+  const row = store.find((r) => r.order_sn === "261022-777777777777");
+  doc.querySelector('#list .ticket[data-id="' + row.id + '"]').click();
+  await sleep(100);
+  check("详情页图片区有 2 格，标题写了张数",
+    doc.querySelectorAll("#dImgDrop .imgcell").length === 2 &&
+    /2 张/.test(doc.querySelector("#sectImgs h3")?.textContent || ""),
+    doc.querySelector("#sectImgs h3")?.textContent);
+  check("锁态下也能加图（加图不算改单号）",
+    doc.getElementById("sectBase").classList.contains("locked") &&
+    !!doc.getElementById("btnImgPick"));
+
+  /* 点缩略图 → 整屏看原图（原图回图床取） */
+  doc.querySelector("#dImgDrop .imgcell").click();
+  await waitFor(() => doc.getElementById("vw").hidden === false);
+  await sleep(60);
+  check("点缩略图打开整屏看图", doc.getElementById("vw").hidden === false);
+  check("大图是从图床取的",
+    /^data:image\//.test(doc.getElementById("vwImg").getAttribute("src") || ""),
+    doc.getElementById("vwImg").getAttribute("src"));
+  doc.getElementById("vw").click();
+  check("点一下遮罩就关", doc.getElementById("vw").hidden === true);
+
+  /* × 去掉一张：要问一句，且只解除关联（图床那条不动） */
+  doc.querySelector("#dImgDrop .imgcell .del").click();
+  await sleep(80);
+  check("去掉一张也要先确认", !!doc.querySelector(".dlgm"), doc.querySelector(".dlgm") ? "有框" : "没框");
+  check("确认框说明「只解除关联，原图还在」",
+    /图床里那张原图还在/.test(doc.querySelector(".dlgm")?.textContent || ""));
+  const gNow = gallery.length;
+  doc.getElementById("dlgYes").click();
+  await waitFor(() => imgStore.length === 1);
+  check("去掉后只剩 1 条关联", imgStore.length === 1, String(imgStore.length));
+  check("图床里那张图没被删", gallery.length === gNow, gallery.length + " vs " + gNow);
+
+  /* 删整条单子 → 它的图片关联一起清掉（别留孤儿行） */
+  doc.getElementById("btnDel").click();
+  await sleep(80);
+  check("删整条时告诉用户图只解除关联",
+    /图只解除关联/.test(doc.querySelector(".dlgm")?.textContent || ""),
+    doc.querySelector(".dlgm")?.textContent?.slice(0, 80));
+  doc.getElementById("dlgYes").click();
+  await waitFor(() => !store.find((r) => r.id === row.id));
+  check("单子删了、它的图片关联也清了",
+    imgStore.length === 0 && !store.find((r) => r.id === row.id),
+    imgStore.length + " 条残留");
 }
 
 console.log("\n====================================================");

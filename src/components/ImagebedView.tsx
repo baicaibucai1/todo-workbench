@@ -31,6 +31,7 @@ import {
   Crop,
   Ruler,
   Upload,
+  Receipt,
 } from "lucide-react";
 import { useStore } from "../store";
 import {
@@ -52,6 +53,7 @@ const ORIGIN_ICON: Record<ImagebedOrigin, typeof Images> = {
   "ai-gen": Sparkles,
   "image-crop": Crop,
   "size-chart": Ruler,
+  "abnormal-ticket": Receipt,
 };
 
 type KindFilter = ImagebedKind | "all";
@@ -251,7 +253,7 @@ export default function ImagebedView() {
           <Chip active={origin === "all"} onClick={() => setOrigin("all")} navKey="origin-all">
             所有来源
           </Chip>
-          {(["ai-gen", "image-crop", "size-chart", "manual"] as ImagebedOrigin[]).map((o) => (
+          {(["abnormal-ticket", "ai-gen", "image-crop", "size-chart", "manual"] as ImagebedOrigin[]).map((o) => (
             <Chip key={o} active={origin === o} onClick={() => setOrigin(o)} navKey={`origin-${o}`}>
               <span
                 className="mr-1 inline-block size-1.5 rounded-full align-middle"

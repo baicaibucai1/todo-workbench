@@ -403,7 +403,20 @@ export type ImagebedKind = "image" | "video";
  *   2. 工具写入的内容出问题时，能一眼看出是从哪条路径进来的。
  * 所以它必须落在数据里，而不是只在界面上推导。
  */
-export type ImagebedOrigin = "manual" | "ai-gen" | "image-crop" | "size-chart";
+export type ImagebedOrigin =
+  | "manual"
+  | "ai-gen"
+  | "image-crop"
+  | "size-chart"
+  /**
+   * 异常单号登记的订单附图。
+   *
+   * 单独一档而不是混进 manual：那批图是**订单的证据**（破损、少件、面单），
+   * 在图床里要能一键只看它们，不要跟随手存的素材混在一起。
+   * 反向也成立：订单里删掉一张图只是解除关联，图床里这条记录还在，
+   * 靠这个 origin 也找得回来。
+   */
+  | "abnormal-ticket";
 
 /**
  * 图床条目。

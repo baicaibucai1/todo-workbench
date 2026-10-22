@@ -200,6 +200,55 @@
   }
   .pill.on .ico { opacity: 1; }
 
+  /* ---------- 订单附图 ----------
+     一格 84px 正方形：缩略图铺满、右上角 × 只在悬停时冒出来（平时让图自己说话）。
+     ★ 图片**字节在图床**，这里只有一张 320px 的 data URL —— 所以格子里不依赖
+     任何网络/跨源加载，消息能到图就能显示。大图另点另取（见 openViewer）。 */
+  .imgwrap { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+  .imgcell {
+    position: relative; width: 84px; height: 84px; flex: 0 0 auto;
+    border: 1px solid var(--line); border-radius: 4px; overflow: hidden;
+    background: var(--chip); cursor: zoom-in;
+  }
+  .imgcell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* 图床里那条被删了 / 缩略图没存下：留一个灰格子，不要破图 */
+  .imgcell .noimg {
+    width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+    color: var(--dim); font-size: 11px;
+  }
+  .imgcell .del {
+    position: absolute; top: 3px; right: 3px; width: 19px; height: 19px; min-width: 0;
+    padding: 0; line-height: 1; font-size: 13px; border-radius: 4px;
+    background: rgba(24, 24, 24, .62); color: #fff; border: 0; opacity: 0;
+  }
+  .imgcell:hover .del, .imgcell .del:focus { opacity: 1; }
+  .imgadd {
+    width: 84px; height: 84px; flex: 0 0 auto; padding: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    border: 1px dashed var(--line); border-radius: 4px; background: transparent;
+    color: var(--fg2); font-size: 11px; line-height: 1.3;
+  }
+  .imgadd:hover { border-color: var(--accent); color: var(--accent); }
+  .imgadd .ico { width: 18px; height: 18px; opacity: .8; }
+  /* 拖着图片进窗口时给整块加个描边 —— 不然用户不知道能不能往这儿放 */
+  .imgdrop.on { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: 6px; }
+  .imgdrop.on .imgadd { border-color: var(--accent); color: var(--accent); }
+  /* 登记页那一格是 .f（display:flex）—— [hidden] 属性压不住它（老坑），得显式写一条 */
+  #fImgSect[hidden] { display: none; }
+
+  /* 看图：整屏遮罩，点哪儿都关。 ★ 必须显式写 [hidden] —— 这条的 display 是 flex，
+     光靠 hidden 属性压不住（老坑） */
+  .vw {
+    position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center;
+    padding: 40px 24px; background: rgba(16, 16, 16, .84);
+  }
+  .vw[hidden] { display: none; }
+  .vw img { max-width: 100%; max-height: 100%; border-radius: 6px; background: #fff; }
+  .vw .cap {
+    position: absolute; left: 0; right: 0; bottom: 14px; text-align: center;
+    color: #e8e8e8; font-size: 12px; padding: 0 24px;
+  }
+
   /* ---------- 查看页：左右分栏 ---------- */
   .split { display: flex; gap: 10px; height: 100%; min-height: 0; }
   .split > .left { flex: 0 0 var(--listw, 320px); display: flex; flex-direction: column; min-height: 0; }
@@ -594,6 +643,16 @@
           <div class="pills" id="fCategory"></div></div>
         <label class="f c24"><span class="lbl" data-ico="pen">详细描述</span>
           <textarea id="fTitle" rows="2" placeholder="发生了什么"></textarea></label>
+        <!-- 附图：一次可选多张，也可以把图直接拖进这块。图片进图床的「异常单号登记」分类 -->
+        <div class="f c24" data-host-gallery id="fImgSect">
+          <span class="lbl" data-ico="img">图片（可选，可多张）</span>
+          <div class="imgwrap imgdrop" id="fImgDrop" tabindex="0"
+               title="点「添加图片」选，或者把图片直接拖到这里">
+            <button class="imgadd" id="fImgPick" type="button" data-ico="img">添加图片</button>
+            <input type="file" id="fImgFile" accept="image/*" multiple hidden />
+          </div>
+          <div class="hint" id="fImgMsg"></div>
+        </div>
       </div>
       <!-- 按钮独占一行，说明放它下面 —— 挤在按钮右边时，宽屏下会被拉成一条长缝 -->
       <div class="r" style="margin-top:10px">
@@ -861,6 +920,11 @@
     <button type="button" data-tquick="clear">清除</button>
   </div>
 </div>
+<!-- 看图：整屏遮罩，点哪儿都关（ESC 也关） -->
+<div class="vw" id="vw" hidden role="dialog" aria-label="查看图片">
+  <img id="vwImg" alt="" />
+  <div class="cap" id="vwCap"></div>
+</div>
 <div id="toast"></div>
 
 <script>
@@ -871,6 +935,10 @@
   var TOOL_SOURCE = "workbench-tool";
   var HOST_SOURCE = "workbench-host";
   var TABLE = "tickets";               // 裸表名，宿主拼成 tool_abnormal_ticket_tickets
+  /* 订单附图：**只存关联**，字节在图床（宿主的内容寻址仓库）。
+     一行 = 某条单子挂了图床里的哪一张（gallery_id），外加一张 320px 缩略图
+     （thumb，data URL）—— 缩略图跟着行走，工具渲染时不用回宿主一张张取。 */
+  var TABLE_IMG = "ticket_images";
 
   /* ==================================================================
    * 0. 小工具
@@ -993,6 +1061,7 @@
     lock: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.4" rx="1.4"/><path d="M5.8 7V5.4a2.2 2.2 0 0 1 4.4 0V7"/></svg>',
     cash: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.9" y="4.4" width="12.2" height="7.2" rx="1.2"/><circle cx="8" cy="8" r="1.8"/><path d="M4.3 6.4v.1M11.7 9.5v.1"/></svg>',
     hist: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.6"/><path d="M8 4.6V8l2.6 1.7"/></svg>',
+    img: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.2" y="3.2" width="11.6" height="9.6" rx="1.4"/><circle cx="5.9" cy="6.6" r="1"/><path d="M2.6 11.4 6.6 7.8l1.9 1.8 2.1-2.2 2.8 2.9"/></svg>',
   };
 
   /* 空态插画：一张虚线单据 + 一个放大镜。描边、中性灰、跟着主题反色。
@@ -1263,17 +1332,65 @@
   /* 流程时间线折叠：只对当前这次浏览生效（不落库 —— 折叠是临时动作，不是配置） */
   var flowFolded = false;
   var LS_ROWS = "wbtool:" + TOOL_ID + ":rows";
+  /* 订单附图（见 TABLE_IMG）。一次全读进内存（图不会多到需要分页），
+     按 ticket_id 分组给渲染用 —— 详情页每切一条都要用，回宿主查一次会闪。
+     ★ 独立态（没有宿主）没有图床，图片功能整块不出现，所以这里只留空数组。 */
+  var imgs = [];                       // 全部 ticket_images 行
+  var hasImages = true;                // 宿主有没有这张表（旧工作台 → false，整块禁用）
+  var pendingImgs = [];                // 登记页选了还没提交的图 [{dataUrl,name}]
+  var imgBusy = false;                 // 正在上传 / 删除，防连点
+  var LS_IMG = "wbtool:" + TOOL_ID + ":imgs";
 
   async function load() {
     if (bound()) {
-      var res = await call("row.select", { table: TABLE, orderBy: "created_at", orderDir: "desc", limit: 20000 });
-      rows = (res && res.rows) || [];
+      rows = await selectAll(TABLE, "created_at", "desc");
     } else {
       try { rows = JSON.parse(localStorage.getItem(LS_ROWS) || "[]"); } catch (e) { rows = []; }
     }
     rows = rows.map(norm);
+    /* 附图：读不到（旧工作台的清单里没有这张表 / 宿主还没建）就整块收起来，
+       不能让它把台账也带崩 —— select 失败只影响图片。 */
+    if (bound()) {
+      try {
+        imgs = await selectAll(TABLE_IMG, "created_at", "asc");
+        hasImages = true;
+      } catch (e) {
+        imgs = [];
+        hasImages = false;
+      }
+    } else {
+      try { imgs = JSON.parse(localStorage.getItem(LS_IMG) || "[]") || []; } catch (e) { imgs = []; }
+      hasImages = false;      // 独立态没有图床，图片没办法落盘
+    }
+    // 旧工作台（清单里没有 ticket_images）把登记页那整块收起来 ——
+    // 摆了也存不上，不如不摆（.f 是 flex，hidden 得靠 CSS 那条规则压）
+    if ($("fImgSect")) $("fImgSect").hidden = !hasImages;
     renderAll();
     void normalizeTimes(rows.slice());   // 老数据的时间写法就地统一（只写变了的）
+  }
+
+  /** 一次把一张表整本读回来。
+   *
+   *  ★ 宿主那边 `row.select` **单次最多给 200 行**（ROW_SELECT_MAX，夹在桥里）。
+   *  以前台账直接传 limit:20000，看着像"全读"，其实超过 200 条就只剩 200 条；
+   *  图片更密（一单好几张），不翻页的话后面的单子会"图凭空消失"。
+   *  所以这里按 total 翻到底。翻页途中若有人插行，offset 会漂 ——
+   *  漏掉的那几条下一次 load 会补上，不影响已经拿到的。 */
+  async function selectAll(table, orderBy, orderDir) {
+    var out = [], offset = 0, total = null;
+    for (var guard = 0; guard < 500; guard++) {
+      var res = await call("row.select", {
+        table: table, orderBy: orderBy, orderDir: orderDir || "asc",
+        limit: 200, offset: offset,
+      });
+      var got = (res && res.rows) || [];
+      out = out.concat(got);
+      if (typeof (res && res.total) === "number") total = res.total;
+      if (!got.length) break;
+      offset += got.length;
+      if (total !== null && offset >= total) break;
+    }
+    return out;
   }
 
   /** 老数据的时间写法统一成「YYYY-MM-DD HH:mm」。
@@ -1343,6 +1460,259 @@
   function findRow(id) {
     for (var i = 0; i < rows.length; i++) if (rows[i].id === id) return rows[i];
     return null;
+  }
+
+  /* ==================================================================
+   * 3b. 订单附图 —— 字节进图床，这里只记「哪条单子挂了哪一张」
+   * ==================================================================
+   * 为什么不在工具里存图：
+   *   1. 工具是单 HTML，没有文件系统；它只能把 base64 塞进自己的表，
+   *      几张之后表和消息都会变沉，而且这些图在图床里根本看不见。
+   *   2. 图床是工作台里所有图片的**共同落点**（见 lib/imagebed.ts），
+   *      订单附图天然属于那里 —— 同一张图跟别处引用同一份字节，磁盘只有一份。
+   *   3. 图床里按来源分了一档「异常单号登记」：那批图能被单独筛出来，
+   *      不会跟随手存的素材混在一起（这就是用户要的"特殊文件夹"）。
+   * 所以这里只存 gallery_id + 一张缩略图。删关联不等于删图：原图还在图床里。
+   */
+
+  /** 某条单子的图，按加入顺序 */
+  function imgsOf(ticketId) {
+    var out = [];
+    for (var i = 0; i < imgs.length; i++) {
+      if (txt(imgs[i].ticket_id) === txt(ticketId)) out.push(imgs[i]);
+    }
+    out.sort(function (a, b) { return (Number(a.sort) || 0) - (Number(b.sort) || 0); });
+    return out;
+  }
+  function saveImgs() {
+    if (bound()) return;
+    try { localStorage.setItem(LS_IMG, JSON.stringify(imgs)); } catch (e) { /* 满了就算了 */ }
+  }
+  async function insertImg(row) {
+    if (bound()) {
+      var res = await call("row.insert", { table: TABLE_IMG, row: row });
+      var got = (res && res.row) || row;
+      imgs.push(got);
+      return got;
+    }
+    imgs.push(row);
+    saveImgs();
+    return row;
+  }
+  async function deleteImg(id) {
+    if (bound()) await call("row.delete", { table: TABLE_IMG, id: id });
+    imgs = imgs.filter(function (r) { return txt(r.id) !== txt(id); });
+    if (!bound()) saveImgs();
+  }
+  /** 删整条单子前先清它的图片关联 —— 否则那几行会永远挂在一条不存在的单子上 */
+  async function removeImgsOf(ticketId) {
+    var list = imgsOf(ticketId);
+    for (var i = 0; i < list.length; i++) {
+      try { await deleteImg(list[i].id); } catch (e) { /* 单条删不掉不该挡住整条删除 */ }
+    }
+  }
+
+  /** 当前环境能不能用 canvas 压缩。jsdom / 老 webview 里 getContext 返回 null，直接跳过 */
+  function canCanvas() {
+    try { return !!document.createElement("canvas").getContext("2d"); } catch (e) { return false; }
+  }
+
+  /** 长边缩到 2000、JPEG 0.86。
+   *
+   *  为什么压：gallery.put 走 postMessage，一张 8 MB 的手机照片会变成
+   *  11 MB 的 base64 字符串，传一次界面能明显顿一下；而订单图是给人看面单
+   *  和破损的，长边 2000 已经够。
+   *  压不了（没有 canvas / 解码失败 / 3 秒没结果）就**用原图** ——
+   *  宁可大一点，不能把用户的图弄丢。 */
+  function shrinkImage(src) {
+    return new Promise(function (resolve) {
+      if (!canCanvas()) { resolve(src); return; }
+      var img = new Image();
+      var settled = false;
+      var done = function (v) { if (!settled) { settled = true; resolve(v); } };
+      img.onload = function () {
+        try {
+          var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+          var scale = Math.min(1, 2000 / Math.max(w, h));
+          // 本来就小：原样交上去，别为省几十 KB 白转一次（还会掉画质）
+          if (scale >= 1 && src.length < 1400000) { done(src); return; }
+          var cv = document.createElement("canvas");
+          cv.width = Math.max(1, Math.round(w * scale));
+          cv.height = Math.max(1, Math.round(h * scale));
+          var ctx = cv.getContext("2d");
+          if (!ctx) { done(src); return; }
+          ctx.fillStyle = "#fff";              // PNG 的透明转 JPEG 会发黑，先铺白底
+          ctx.fillRect(0, 0, cv.width, cv.height);
+          ctx.drawImage(img, 0, 0, cv.width, cv.height);
+          done(cv.toDataURL("image/jpeg", 0.86));
+        } catch (e) { done(src); }
+      };
+      img.onerror = function () { done(src); };
+      setTimeout(function () { done(src); }, 3000);   // 有的环境 onload 永不触发
+      img.src = src;
+    });
+  }
+
+  function readImageFile(file) {
+    return new Promise(function (resolve, reject) {
+      if (!file || !/^image\//.test(txt(file.type))) {
+        reject(new Error(txt(file && file.name) ? "「" + txt(file.name) + "」不是图片" : "不是图片文件"));
+        return;
+      }
+      var fr = new FileReader();
+      fr.onload = function () {
+        shrinkImage(txt(fr.result)).then(function (u) {
+          resolve({ dataUrl: u, name: txt(file.name) || "图片" });
+        });
+      };
+      fr.onerror = function () { reject(new Error("读不了「" + (txt(file.name) || "这个文件") + "」")); };
+      fr.readAsDataURL(file);
+    });
+  }
+
+  /** 把一张图放进图床，拿回它的 id 和缩略图。
+   *  **不传 dedupe**：用户亲手挂的图，同一张挂两次也该是两条关联
+   *  （比如同一批破损图分别挂在两张单子上，那不是重复，是两个案子）。 */
+  async function putGallery(pic, label) {
+    var got = await call("gallery.put", { dataUrl: pic.dataUrl, title: label }, 60000);
+    var gid = txt(got && got.id);
+    if (!gid) throw new Error("图床没有返回这张图的 id");
+    return { galleryId: gid, thumb: txt(got && got.thumb) };
+  }
+
+  /** 一串图挂到某条单子上。逐张来 —— 一张失败不该让剩下的都不存 */
+  async function attachImages(ticketId, pics, labelBase) {
+    var base = imgsOf(ticketId).length;
+    var ok = 0, fail = [];
+    for (var i = 0; i < pics.length; i++) {
+      try {
+        var label = labelBase + (pics.length > 1 ? " · " + (i + 1) : "");
+        var put = await putGallery(pics[i], label);
+        await insertImg({
+          id: newId(),
+          ticket_id: txt(ticketId),
+          gallery_id: put.galleryId,
+          thumb: put.thumb,
+          name: pics[i].name,
+          sort: base + ok,
+          created_at: nowMinStr(),
+        });
+        ok++;
+      } catch (e) {
+        fail.push("「" + pics[i].name + "」" + txt(e && e.message ? e.message : e));
+      }
+    }
+    return { ok: ok, fail: fail };
+  }
+
+  /** 缩略图格。`canDel` 决定右上角有没有 ×（详情页一直有；登记页的待传图也有）
+   *  `opts.pending`：这批还没进图床（登记页刚选的），所以没有 gallery_id，
+   *  点开看大图直接用手里那份 data URL。 */
+  function imgGridHtml(list, canDel, opts) {
+    var o = opts || {};
+    var h = "";
+    for (var i = 0; i < list.length; i++) {
+      var it = list[i];
+      var viewId = o.pending ? "" : txt(it.gallery_id);
+      h += '<div class="imgcell"' + (viewId ? ' data-view="' + esc(viewId) + '"' : "")
+        + (o.pending ? ' data-pv="' + esc(txt(it.id)) + '"' : "")
+        + ' data-name="' + esc(txt(it.name)) + '"'
+        + ' title="' + esc(txt(it.name) || "点一下看大图") + '">'
+        + (txt(it.thumb) ? '<img src="' + esc(txt(it.thumb)) + '" alt="" />' : '<span class="noimg">无预览</span>')
+        + (canDel ? '<button class="del" data-drop="' + esc(txt(it.id)) + '" title="去掉这张">×</button>' : "")
+        + "</div>";
+    }
+    return h;
+  }
+
+  function openViewerRaw(src, name) {
+    var vw = $("vw"), im = $("vwImg"), cap = $("vwCap");
+    if (!vw || !im || !src) return;
+    vw.hidden = false;
+    im.src = src;
+    cap.textContent = name || "";
+  }
+
+  /** 点缩略图 → 整屏看原图。原图要回图床取（缩略图只有 320px） */
+  async function openViewer(gid, name) {
+    if (!gid) return;
+    var vw = $("vw"), im = $("vwImg"), cap = $("vwCap");
+    if (!vw || !im) return;
+    vw.hidden = false;
+    im.removeAttribute("src");
+    cap.textContent = (name ? name + " · " : "") + "正在取原图…";
+    if (!bound()) { cap.textContent = "独立运行时没有图床，看不了大图"; return; }
+    try {
+      var got = await call("gallery.get", { id: gid }, 30000);
+      im.src = txt(got && got.dataUrl);
+      cap.textContent = (name ? name + " · " : "")
+        + (got && got.width ? got.width + "×" + got.height : "");
+    } catch (e) {
+      cap.textContent = "取不到原图：" + txt(e && e.message ? e.message : e);
+    }
+  }
+  function closeViewer() {
+    var vw = $("vw");
+    if (!vw || vw.hidden) return;
+    vw.hidden = true;
+    var im = $("vwImg");
+    if (im) im.removeAttribute("src");
+  }
+
+  /** 选中 / 拖进来的一批文件 → 待上传列表。读图是异步的，一次最多收 12 张 */
+  async function takeFiles(files, cb) {
+    var arr = [];
+    for (var i = 0; i < files.length && arr.length < 12; i++) arr.push(files[i]);
+    if (!arr.length) return;
+    var out = [], bad = [];
+    for (var j = 0; j < arr.length; j++) {
+      try { out.push(await readImageFile(arr[j])); }
+      catch (e) { bad.push(txt(e && e.message ? e.message : e)); }
+    }
+    cb(out, bad);
+  }
+
+  /** 把一个元素变成投放区：拖图进去就能收。
+   *  dragover 必须 preventDefault —— 不拦的话浏览器会拿图去导航（整页跳成那张图）。 */
+  function bindDrop(el, cb) {
+    if (!el) return;
+    var over = function (e) { e.preventDefault(); el.classList.add("on"); };
+    el.addEventListener("dragover", over);
+    el.addEventListener("dragenter", over);
+    el.addEventListener("dragleave", function () { el.classList.remove("on"); });
+    el.addEventListener("drop", function (e) {
+      e.preventDefault();
+      el.classList.remove("on");
+      var fs = e.dataTransfer && e.dataTransfer.files;
+      if (!fs || !fs.length) return;
+      void takeFiles(fs, cb);
+    });
+  }
+
+  /** 图床里这张图的标题：带上单号，在图床里翻到时不至于全是「未命名」 */
+  function attachLabel(row) {
+    var sn = row ? (txt(row.order_sn) || txt(row.tracking_no)) : "";
+    return sn ? "异常单 " + sn + " 附图" : "异常单附图";
+  }
+
+  /** 往一条单子上挂图：逐张进图床 → 记关联 → 重画详情。失败不打断剩下的 */
+  async function doAttach(ticketId, pics) {
+    if (imgBusy || !pics.length) return;
+    imgBusy = true;
+    setHint("imgMsg", "正在存 " + pics.length + " 张图…");
+    try {
+      var got = await attachImages(ticketId, pics, attachLabel(findRow(ticketId)));
+      await load();                                  // 重画会把提示条冲掉，回显写在后面
+      if (got.fail.length) {
+        setHint("imgMsg", "存上 " + got.ok + " 张，" + got.fail.length + " 张失败：" + got.fail[0], true);
+      } else {
+        setHint("imgMsg", "已存 " + got.ok + " 张进图床");
+      }
+    } catch (e) {
+      setHint("imgMsg", "没存上：" + txt(e && e.message ? e.message : e), true);
+    } finally {
+      imgBusy = false;
+    }
   }
 
   /* kv：宿主那一份 + 本地镜像。
@@ -1877,11 +2247,22 @@
       ? await bookRemindAt(saved, wantAt,
         remindManual ? "登记时手定的提醒时刻" : "登记后 " + remindHours() + " 小时还没跟进")
       : await syncRemind(saved);
+    /* 附图：选了就一起进图床（**逐张**存，一张失败不影响别的）。
+       图上不去也算登记成功 —— 单号是主，图是附，别把整条记录卡在这儿。 */
+    var imgLine = "";
+    if (pendingImgs.length && hasImages) {
+      var ig = await attachImages(saved.id, pendingImgs, attachLabel(saved));
+      if (ig.ok) imgLine = " · " + ig.ok + " 张图已存进图床";
+      if (ig.fail.length) imgLine += " · " + ig.fail.length + " 张图没存上";
+      pendingImgs = [];
+      renderPendingImgs();
+    }
     dupAck = "";
     msg.className = "hint";
     msg.textContent = "已登记「" + (order || track) + "」"
       + (order && !orderLooksRight(order) ? "（这个单号形状不像拼多多单号，客户端可能定位不到那张订单）" : "")
       + (rm && rm.at ? " · 跟进提醒 " + fmtMin(rm.at) : " · 跟进提醒没订上（检查一下工具提醒是否开着）")
+      + imgLine
       + " —— 店铺 / 快递公司留着了，可以接着录下一条";
     // 连着录：只清掉"这一条才有的东西"（订单号 / 快递单号 / 情况 / 描述），店铺快递公司留着
     $("fOrder").value = "";
@@ -2132,6 +2513,24 @@
       flowHtml += '<div class="note" style="margin-top:6px">已「完结」封口 —— 要继续先删掉那一步。</div>';
     }
 
+    /* 附图：单独一块，**不受基本信息那把锁限制** ——
+       加图不算"改单号"，而出事的时候往往正是打开这条单子顺手补两张照片。 */
+    if (hasImages) {
+      var pics = imgsOf(r.id);
+      html += '<div class="sect" id="sectImgs" data-host-gallery>'
+        + '<h3 data-ico="img">图片'
+        + (pics.length ? '<span class="hint" style="margin:0 0 0 6px">' + pics.length + " 张</span>" : "")
+        + '<button class="mini" id="btnImgPick" data-ico="img" style="margin-left:auto">添加</button></h3>'
+        + '<div class="imgwrap imgdrop" id="dImgDrop">'
+        + (pics.length
+          ? imgGridHtml(pics, true)
+          : '<div class="note" style="margin:0">这条还没挂图 —— 点右上「添加」，或者把图拖到这块</div>')
+        + "</div>"
+        + '<input type="file" id="dImgFile" accept="image/*" multiple hidden />'
+        + '<div class="hint" id="imgMsg"></div>'
+        + "</div>";
+    }
+
     /* 提醒：由流程派发，落到宿主待办上（带来源标记） */
     html += '<div class="sect"><h3 data-ico="bell">跟进提醒</h3>';
     var boxCls = v.state === "late" ? "late" : v.state === "done" ? "done"
@@ -2303,13 +2702,16 @@
     };
     $("btnDel").onclick = function () {
       void (async function () {
+        var picCount = hasImages ? imgsOf(r.id).length : 0;
         var yes = await ask({
           title: "删除这条记录？",
           mark: sn,
-          body: "删掉就找不回来了 —— 流程和提醒会一起撤掉。",
+          body: "删掉就找不回来了 —— 流程和提醒会一起撤掉。"
+            + (picCount ? "它的 " + picCount + " 张图只解除关联，图床里的原图还在。" : ""),
           ok: "删除",
         });
         if (!yes) return;
+        if (picCount) await removeImgsOf(r.id);   // 先清关联，别留孤儿行
         await remove(r.id);
         selectedId = null;
         toast("已删除");
@@ -2359,6 +2761,64 @@
           await load();
         })();
       };
+    }
+    if (hasImages) bindDetailImgs(r);
+  }
+
+  /** 详情页附图的事件：加上传 / 拖 / 点开大图 / × 去掉。
+   *  每次 renderDetail 都会重画这块，所以绑定点也在这儿 —— 不绑在启动里。 */
+  function bindDetailImgs(r) {
+    var pick = $("btnImgPick"), fileEl = $("dImgFile"), drop = $("dImgDrop");
+    if (pick && fileEl) pick.onclick = function () { fileEl.click(); };
+    if (fileEl) {
+      fileEl.onchange = function () {
+        var fs = this.files;
+        this.value = "";
+        if (!fs || !fs.length) return;
+        void takeFiles(fs, function (pics, bad) {
+          if (bad.length) toast(bad[0]);
+          if (pics.length) void doAttach(r.id, pics);
+        });
+      };
+    }
+    bindDrop(drop, function (pics, bad) {
+      if (bad.length) toast(bad[0]);
+      if (pics.length) void doAttach(r.id, pics);
+    });
+    var cells = drop ? drop.querySelectorAll(".imgcell") : [];
+    for (var i = 0; i < cells.length; i++) {
+      cells[i].onclick = function (e) {
+        var t = e.target;
+        var dropId = t && t.getAttribute ? t.getAttribute("data-drop") : null;
+        if (dropId) { void dropImage(dropId); return; }   // × 不冒到"看大图"
+        var gid = this.getAttribute("data-view");
+        if (gid) void openViewer(gid, this.getAttribute("data-name") || "");
+      };
+    }
+  }
+
+  /** 从这条单子上去掉一张图。**只解除关联** —— 图床里那张原图不动，
+   *  所以文案要说清楚，别让人以为原图被删了。 */
+  async function dropImage(id) {
+    if (imgBusy) return;
+    var it = null;
+    for (var i = 0; i < imgs.length; i++) if (txt(imgs[i].id) === txt(id)) it = imgs[i];
+    var yes = await ask({
+      title: "从这条单子去掉这张图？",
+      mark: it ? txt(it.name) : "",
+      body: "只解除这条单子和它的关联 —— 图床里那张原图还在，在「异常单号登记」分类里能找到。",
+      ok: "去掉",
+    });
+    if (!yes) return;
+    imgBusy = true;
+    try {
+      await deleteImg(id);
+      await load();
+      setHint("imgMsg", "已去掉这张");
+    } catch (e) {
+      setHint("imgMsg", "没去掉：" + txt(e && e.message ? e.message : e), true);
+    } finally {
+      imgBusy = false;
     }
   }
 
@@ -3214,7 +3674,72 @@
   ["create", "browse", "table", "log", "settings"].forEach(function (n) {
     $("tab-" + n).onclick = function () { setTab(n); };
   });
+  /* 看图遮罩：点哪儿都关，ESC 也关。
+     ★ 用 capture 阶段的 keydown：日期面板也在这个阶段收 ESC，
+     两个都收没有冲突（各自检查自己是不是开着）。 */
+  if ($("vw")) {
+    $("vw").onclick = function () { closeViewer(); };
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeViewer();
+    }, true);
+  }
   $("btnAdd").onclick = function () { void add(); };
+
+  /* ---- 登记页附图：选 / 拖 / 去掉，提交前都还在内存里 ---- */
+  function renderPendingImgs() {
+    var drop = $("fImgDrop");
+    if (!drop) return;
+    var old = drop.querySelectorAll(".imgcell");
+    for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
+    var add = $("fImgPick");
+    if (!add) return;
+    if (pendingImgs.length) {
+      add.insertAdjacentHTML("beforebegin", imgGridHtml(pendingImgs.map(function (p, k) {
+        return { id: "p" + k, name: p.name, thumb: p.dataUrl };
+      }), true, { pending: true }));
+    }
+    var hint = $("fImgMsg");
+    if (hint) hint.textContent = pendingImgs.length
+      ? "选了 " + pendingImgs.length + " 张 —— 点「登记」时一起存进图床"
+      : "";
+  }
+  function pendingIndex(raw) {
+    var n = Number(txt(raw).replace(/^p/, ""));
+    return isNaN(n) ? -1 : n;
+  }
+  if ($("fImgPick")) {
+    $("fImgPick").onclick = function () { $("fImgFile").click(); };
+    $("fImgFile").onchange = function () {
+      var fs = this.files;
+      this.value = "";                 // 同一个文件再选一次也要能触发 change
+      if (!fs || !fs.length) return;
+      void takeFiles(fs, function (pics, bad) {
+        if (bad.length) toast(bad[0]);
+        pendingImgs = pendingImgs.concat(pics);
+        renderPendingImgs();
+      });
+    };
+    bindDrop($("fImgDrop"), function (pics, bad) {
+      if (bad.length) toast(bad[0]);
+      pendingImgs = pendingImgs.concat(pics);
+      renderPendingImgs();
+    });
+    $("fImgDrop").onclick = function (e) {
+      var t = e.target;
+      var drop = t && t.getAttribute ? t.getAttribute("data-drop") : null;
+      if (drop) {                      // × 去掉一张还没提交的
+        var i = pendingIndex(drop);
+        if (i >= 0) { pendingImgs.splice(i, 1); renderPendingImgs(); }
+        return;
+      }
+      var cell = t && t.closest ? t.closest(".imgcell") : null;
+      var pv = cell && cell.getAttribute("data-pv");
+      if (pv) {
+        var k = pendingIndex(pv);
+        if (pendingImgs[k]) openViewerRaw(pendingImgs[k].dataUrl, pendingImgs[k].name);
+      }
+    };
+  }
   // 订单号框：一动输入就重置重复确认位；粘链接 / 失焦时就地收拾（把链接换成单号、认店铺）
   $("fOrder").oninput = function () { dupAck = ""; showOrderHint(); };
   $("fOrder").onpaste = function () { setTimeout(cleanOrderField, 0); };  // 粘贴要先等浏览器把值写进去

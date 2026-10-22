@@ -438,6 +438,7 @@ const ORIGIN_LABEL: Record<ImagebedOrigin, string> = {
   "ai-gen": "AI 生成",
   "image-crop": "图片裁剪",
   "size-chart": "尺码表",
+  "abnormal-ticket": "异常单号登记",
 };
 
 export function originLabel(o: ImagebedOrigin): string {
@@ -450,6 +451,8 @@ export const ORIGIN_COLOR: Record<ImagebedOrigin, string> = {
   "ai-gen": "#7c5cff",
   "image-crop": "#378add",
   "size-chart": "#1d9e75",
+  // 与工具里「异常」的警示橙同色，一眼能从图床里认出来
+  "abnormal-ticket": "#c9820b",
 };
 
 /** 一键摘要，给卡片底部那行小字用 */
