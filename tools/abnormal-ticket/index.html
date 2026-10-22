@@ -390,6 +390,26 @@
     background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
     padding: 7px 14px; font-size: 12.5px; color: var(--fg);
   }
+  /* ---------- 确认框 ----------
+     WebView2 里 window.confirm 不保证弹出来（Tauri 默认不接管脚本对话框），
+     所以删除这类真会丢数据的动作，得自己画一个「确定」。
+     风格跟工具其它地方一致：白底、2px 中灰外框、圆角、不用阴影。 */
+  .dlgm {
+    position: fixed; inset: 0; z-index: 90;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(24, 24, 22, .32); padding: 24px;
+  }
+  .dlg {
+    width: min(360px, 100%); background: var(--bg);
+    border: 2px solid var(--line); border-radius: 10px; padding: 16px 18px 14px;
+  }
+  .dlg-t { font-size: 14px; font-weight: 600; }
+  .dlg-b { margin-top: 6px; font-size: 13px; color: var(--fg2); line-height: 1.65; }
+  .dlg-b .sn { font-family: var(--mono); color: var(--fg); font-weight: 600; }
+  .dlg-r { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .dlg-r button { min-width: 72px; }
+  .dlg-r button.danger { border-color: var(--danger); color: var(--danger); }
+  .dlg-r button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
   pre.schema {
     font-family: var(--mono); font-size: 11px; color: var(--dim);
     white-space: pre-wrap; word-break: break-all; margin: 0;
@@ -773,6 +793,54 @@
     d.textContent = text;
     box.appendChild(d);
     setTimeout(function () { if (d.parentNode) d.parentNode.removeChild(d); }, 2600);
+  }
+  /**
+   * 要人点一下「确定」才继续的确认框。返回 Promise<boolean>。
+   *
+   * 不用 window.confirm：Tauri 的 WebView2 默认不接管脚本对话框，
+   * 真删数据前那一下确认会**静默变成"不删"**（或者干脆没反应），
+   * 用户只会觉得按钮坏了。所以自己画。
+   *
+   * 交互约定：ESC / 点遮罩 / 点取消 = 不干；焦点默认落在「取消」上
+   * （手快回车删除是最常见的误删方式）。
+   *
+   * @param {{title:string, body:string, mark?:string, ok?:string, cancel?:string}} o
+   */
+  function ask(o) {
+    o = o || {};
+    return new Promise(function (resolve) {
+      var mask = document.createElement("div");
+      mask.className = "dlgm";
+      mask.innerHTML =
+        '<div class="dlg" role="dialog" aria-modal="true">'
+        + '<div class="dlg-t">' + esc(o.title || "确定继续？") + "</div>"
+        + '<div class="dlg-b">'
+        + (o.mark ? '<span class="sn">' + esc(o.mark) + "</span> · " : "")
+        + esc(o.body || "") + "</div>"
+        + '<div class="dlg-r">'
+        + '<button id="dlgNo" autofocus>' + esc(o.cancel || "取消") + "</button>"
+        + '<button class="danger" id="dlgYes">' + esc(o.ok || "确定") + "</button>"
+        + "</div></div>";
+      document.body.appendChild(mask);
+
+      var settled = false;
+      function close(v) {
+        if (settled) return;
+        settled = true;
+        document.removeEventListener("keydown", onKey, true);
+        if (mask.parentNode) mask.parentNode.removeChild(mask);
+        resolve(v);
+      }
+      // 捕获阶段：别让页面自己的 ESC / 方向键逻辑（日期面板、列表导航）抢走
+      function onKey(e) {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(false); }
+      }
+      document.addEventListener("keydown", onKey, true);
+      mask.querySelector("#dlgNo").onclick = function () { close(false); };
+      mask.querySelector("#dlgYes").onclick = function () { close(true); };
+      mask.onclick = function (e) { if (e.target === mask) close(false); };
+      mask.querySelector("#dlgNo").focus();
+    });
   }
   /** 空下拉显成灰的「待选」。右栏是动态重建的，逐个绑监听必漏 —— 挂 document 上 */
   function markSel(sel) {
@@ -2050,6 +2118,14 @@
       delBtns[d].onclick = function () {
         var idx = Number(this.getAttribute("data-delflow"));
         void (async function () {
+          var step = flow[idx] || {};
+          var yes = await ask({
+            title: "删掉这一步？",
+            mark: txt(step.n),
+            body: "这一步会从流程里去掉，提醒按剩下的重新算。",
+            ok: "删除",
+          });
+          if (!yes) return;
           var next = flow.slice();
           next.splice(idx, 1);
           await update(r.id, { flow: JSON.stringify(next) });
@@ -2073,8 +2149,14 @@
       document.body.removeChild(ta);
     };
     $("btnDel").onclick = function () {
-      if (!window.confirm("删掉这条「" + sn + "」？删了就找不回来了。")) return;
       void (async function () {
+        var yes = await ask({
+          title: "删除这条记录？",
+          mark: sn,
+          body: "删掉就找不回来了 —— 流程和提醒会一起撤掉。",
+          ok: "删除",
+        });
+        if (!yes) return;
         await remove(r.id);
         selectedId = null;
         toast("已删除");

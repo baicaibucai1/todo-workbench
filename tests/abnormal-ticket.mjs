@@ -513,6 +513,8 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   await waitFor(() => doc.querySelectorAll("#flowPane [data-delflow]").length >= 2);
   const delBtns = doc.querySelectorAll("#flowPane [data-delflow]");
   delBtns[0].click();     // 时间线最新一步在最上面 —— 第一颗删的就是「完结」
+  await sleep(80);
+  doc.getElementById("dlgYes").click();   // 现在删流程步要先按一下「删除」（自绘确认框）
   await waitFor(() => !!store.find((x) => x.id === r0.id).remind_at);
   await sleep(60);
   const r3 = store.find((x) => x.id === r0.id);
@@ -854,6 +856,90 @@ console.log("\n8. 独立打开也还是个能用的网页（不连宿主）");
     saved.slice(0, 120));
   check("独立运行也没有未捕获报错", errs2.length === 0, errs2.join(" | "));
   d2.window.close();
+}
+
+console.log("\n10. 删除要按确定键（自绘确认框，不靠 window.confirm）");
+{
+  doc.getElementById("tab-browse").click();
+  await sleep(60);
+
+  /* 先挑出一条「留着不删」的带流程单 —— 整条删除要避开它，否则后面没东西可测 */
+  let withFlow = null, flowN = 0;
+  for (const r of store) {
+    try {
+      const f = JSON.parse(r.flow || "[]");
+      if (f.length >= 1) { withFlow = r; flowN = f.length; break; }
+    } catch (e) { /* 坏数据跳过 */ }
+  }
+  const total0 = store.length;
+  const target = store.find((r) => r.id !== (withFlow && withFlow.id)) || store[0];
+  doc.querySelector('#list .ticket[data-id="' + target.id + '"]').click();
+  await sleep(100);
+
+  doc.getElementById("btnDel").click();
+  await sleep(80);
+  check("点「删除」先弹确认框，不直接删",
+    !!doc.querySelector(".dlgm") && store.length === total0,
+    (doc.querySelector(".dlgm") ? "有框 " : "没框 ") + store.length + " vs " + total0);
+  check("确认框里写清删的是哪条单",
+    (doc.querySelector(".dlgm")?.textContent || "").indexOf(target.order_sn || target.tracking_no) >= 0,
+    doc.querySelector(".dlgm")?.textContent);
+
+  doc.getElementById("dlgNo").click();
+  await sleep(60);
+  check("点「取消」→ 框收起、记录还在",
+    !doc.querySelector(".dlgm") && store.length === total0,
+    store.length + " vs " + total0);
+
+  /* ESC 等同于取消 */
+  doc.getElementById("btnDel").click();
+  await sleep(60);
+  doc.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await sleep(60);
+  check("按 ESC 也取消",
+    !doc.querySelector(".dlgm") && store.length === total0,
+    (doc.querySelector(".dlgm") ? "框还在" : "框收了") + " / " + store.length);
+
+  /* 点遮罩 = 取消 */
+  doc.getElementById("btnDel").click();
+  await sleep(60);
+  const m = doc.querySelector(".dlgm");
+  m.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+  await sleep(60);
+  check("点遮罩也取消", !doc.querySelector(".dlgm") && store.length === total0);
+
+  /* 真删 */
+  doc.getElementById("btnDel").click();
+  await sleep(60);
+  doc.getElementById("dlgYes").click();
+  await sleep(300);
+  check("点「删除」才真的删掉",
+    store.length === total0 - 1 && !store.find((r) => r.id === target.id),
+    store.length + " vs " + (total0 - 1));
+
+  /* 流程步的「删」同样要问一句 */
+  if (withFlow) {
+    doc.querySelector('#list .ticket[data-id="' + withFlow.id + '"]').click();
+    await sleep(120);
+    const d0 = doc.querySelector("[data-delflow]");
+    check("详情里能看到流程步的「删」", !!d0);
+    d0.click();
+    await sleep(80);
+    check("删流程步也先弹确认框", !!doc.querySelector(".dlgm"));
+    doc.getElementById("dlgNo").click();
+    await sleep(100);
+    const n1 = JSON.parse(store.find((r) => r.id === withFlow.id).flow).length;
+    check("取消 → 流程步一步没少", n1 === flowN, n1 + " vs " + flowN);
+
+    doc.querySelector("[data-delflow]").click();
+    await sleep(80);
+    doc.getElementById("dlgYes").click();
+    await sleep(350);
+    const n2 = JSON.parse(store.find((r) => r.id === withFlow.id).flow || "[]").length;
+    check("确定 → 流程真的少一步", n2 === flowN - 1, n2 + " vs " + flowN);
+  } else {
+    check("有带流程的单子可测", false, "没找到 flow 非空的记录");
+  }
 }
 
 console.log("\n9. 旧版工作台（表里没 indemnity 列）→ 赔款数降级、其余照常");
