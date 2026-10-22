@@ -359,6 +359,16 @@
   }
   .tlitem .tm { display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 11.5px; color: var(--dim); }
   .tlitem .tm .ts { font-family: var(--mono); }
+  /* 记在某一步上的图：比整单图小一号（流程栏就那么宽），贴着这一步的时刻排。
+     「+图」也在这一行的时刻旁边 —— 历史步骤照样能补。 */
+  .tlpic { margin-top: 5px; gap: 5px; }
+  .tlpic .imgcell { width: 62px; height: 62px; }
+  .tlpic .imgcell .del { width: 17px; height: 17px; font-size: 12px; }
+  /* 记一步时先选的待传图：跟输入框同宽，不把流程栏撑开 */
+  .flowpick { margin-top: 6px; gap: 6px; }
+  .flowpick .imgadd, .flowpick .imgcell { width: 62px; height: 62px; }
+  .flowpick .imgadd { font-size: 10.5px; gap: 1px; }
+  .flowpick .imgadd .ico { width: 15px; height: 15px; }
 
   /* ---------- 跟进提醒 ----------
      提醒不是"单独设的一个闹钟"，而是**流程的看门狗**：基准时刻 + N 小时。
@@ -1326,6 +1336,19 @@
       return false;
     }
   }
+  /* 流程步附图要往 ticket_images 写 step_uid 列（v1.10.0 加的）。
+     旧宿主没有这列：探不到就把「记一步带图 / 给某步补图」收起来，
+     整单图片照旧可用 —— 别让人点了半天全是失败。 */
+  var hasStepCol = true;
+  async function probeStepCol() {
+    if (!bound()) return false;
+    try {
+      await call("row.update", { table: TABLE_IMG, id: "__probe_step__", patch: { step_uid: "" } });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
   /* 详情「基本信息」解锁的那一条的 id —— 只对这一条生效，切走 / 存完都自动回锁。
      存行 id 而不是布尔值，是为了换一条单子时它自己就是锁的（不然手滑改的是新那条）。 */
   var baseEditId = "";
@@ -1338,6 +1361,11 @@
   var imgs = [];                       // 全部 ticket_images 行
   var hasImages = true;                // 宿主有没有这张表（旧工作台 → false，整块禁用）
   var pendingImgs = [];                // 登记页选了还没提交的图 [{dataUrl,name}]
+  /* 记一步流程时选了还没提交的图（v1.10.0）。存在内存里，重画详情不会丢 ——
+     但换一条单子必须清掉，否则会把上一单的图挂到这一单的流程上。 */
+  var pendingFlowImgs = [];
+  var pendingFlowFor = "";              // 这批待传图属于哪条单子（切走即清）
+  var pendingStepIdx = -1;              // 「+图」点的是第几步（等文件选完才知道）
   var imgBusy = false;                 // 正在上传 / 删除，防连点
   var LS_IMG = "wbtool:" + TOOL_ID + ":imgs";
 
@@ -1407,9 +1435,27 @@
       if (c && c !== txt(r.created_at)) patch.created_at = c;
       if (u && u !== txt(r.updated_at)) patch.updated_at = u;
       if (s && s !== txt(r.shipped_at)) patch.shipped_at = s;
+      // 老流程步骤没有 u（v1.10.0 之后才有）—— 补上，附图才能稳当地挂在某一步上
+      var f = ensureFlowUids(r.flow);
+      if (f) patch.flow = f;
       if (!Object.keys(patch).length) continue;
       try { await update(r.id, patch, false); } catch (e) { return; }
     }
+  }
+  /** 给没有 u 的流程步骤补一个稳定 id；一条都不缺就返回 null（不写库）。
+   *  ★ 直接在原始 JSON 元素上加，不走 parseFlow —— 后者会丢掉不认识的字段，
+   *  重写一遍等于把别人（或未来版本）写进去的东西抹了。 */
+  function ensureFlowUids(raw) {
+    var arr;
+    try { arr = JSON.parse(txt(raw) || "[]"); } catch (e) { return null; }
+    if (!arr || !arr.length) return null;
+    var changed = false;
+    for (var i = 0; i < arr.length; i++) {
+      var st = arr[i];
+      if (!st || typeof st !== "object") continue;
+      if (!txt(st.u)) { st.u = newId(); changed = true; }
+    }
+    return changed ? JSON.stringify(arr) : null;
   }
   function saveLocal() {
     try { localStorage.setItem(LS_ROWS, JSON.stringify(rows)); } catch (e) { /* 满了就算了 */ }
@@ -1484,6 +1530,23 @@
     out.sort(function (a, b) { return (Number(a.sort) || 0) - (Number(b.sort) || 0); });
     return out;
   }
+  /** 一条单子的图按归属拆开：`plain` = 挂在整条单子上的（详情「图片」区），
+   *  `byStep` = 挂在某一步流程上的（时间线里跟在那一步下面），键是步骤的 u。
+   *  step_uid 是 v1.10.0 加的列；老数据（以及刚升级还没重存的行）没有它，
+   *  当空串处理 = 整单图，跟以前一样。 */
+  function imgGroups(ticketId) {
+    var plain = [], byStep = {}, all = imgsOf(ticketId);
+    for (var i = 0; i < all.length; i++) {
+      var uid = txt(all[i].step_uid);
+      if (uid) (byStep[uid] = byStep[uid] || []).push(all[i]);
+      else plain.push(all[i]);
+    }
+    return { plain: plain, byStep: byStep, total: all.length };
+  }
+  function stepImgs(ticketId, uid) {
+    if (!uid) return [];
+    return imgGroups(ticketId).byStep[uid] || [];
+  }
   function saveImgs() {
     if (bound()) return;
     try { localStorage.setItem(LS_IMG, JSON.stringify(imgs)); } catch (e) { /* 满了就算了 */ }
@@ -1510,6 +1573,15 @@
     for (var i = 0; i < list.length; i++) {
       try { await deleteImg(list[i].id); } catch (e) { /* 单条删不掉不该挡住整条删除 */ }
     }
+  }
+  /** 删流程里的一步时，把它名下那几张图的关联一起解除。
+   *  不删图床里的原图（跟整单删图一个口径）；返回解除了几张，好写进确认框。 */
+  async function removeStepImgs(ticketId, stepUid) {
+    var list = stepImgs(ticketId, stepUid), n = 0;
+    for (var i = 0; i < list.length; i++) {
+      try { await deleteImg(list[i].id); n++; } catch (e) { /* 同上，不挡住删步骤 */ }
+    }
+    return n;
   }
 
   /** 当前环境能不能用 canvas 压缩。jsdom / 老 webview 里 getContext 返回 null，直接跳过 */
@@ -1580,15 +1652,18 @@
     return { galleryId: gid, thumb: txt(got && got.thumb) };
   }
 
-  /** 一串图挂到某条单子上。逐张来 —— 一张失败不该让剩下的都不存 */
-  async function attachImages(ticketId, pics, labelBase) {
-    var base = imgsOf(ticketId).length;
+  /** 一串图挂到某条单子上。逐张来 —— 一张失败不该让剩下的都不存。
+   *  `stepUid` 给了就是挂在那一步流程上（时间线里显示），空 = 整条单子的图。 */
+  async function attachImages(ticketId, pics, labelBase, stepUid) {
+    var uid = txt(stepUid);
+    var grp = imgGroups(ticketId);
+    var base = (uid ? (grp.byStep[uid] || []) : grp.plain).length;
     var ok = 0, fail = [];
     for (var i = 0; i < pics.length; i++) {
       try {
         var label = labelBase + (pics.length > 1 ? " · " + (i + 1) : "");
         var put = await putGallery(pics[i], label);
-        await insertImg({
+        var row = {
           id: newId(),
           ticket_id: txt(ticketId),
           gallery_id: put.galleryId,
@@ -1596,7 +1671,9 @@
           name: pics[i].name,
           sort: base + ok,
           created_at: nowMinStr(),
-        });
+        };
+        if (uid) row.step_uid = uid;    // 旧宿主没有这列：整单图不带它，照旧能存
+        await insertImg(row);
         ok++;
       } catch (e) {
         fail.push("「" + pics[i].name + "」" + txt(e && e.message ? e.message : e));
@@ -1695,21 +1772,32 @@
     return sn ? "异常单 " + sn + " 附图" : "异常单附图";
   }
 
-  /** 往一条单子上挂图：逐张进图床 → 记关联 → 重画详情。失败不打断剩下的 */
-  async function doAttach(ticketId, pics) {
+  /** 往一条单子上挂图：逐张进图床 → 记关联 → 重画详情。失败不打断剩下的。
+   *  `stepUid` 非空 = 挂到那一既流程上（时间线里跟在那一步下面）；
+   *  `msgId` 决定结果回显在哪条提示上（整单图 / 流程步图各有一块）。 */
+  async function doAttach(ticketId, pics, stepUid, msgId) {
     if (imgBusy || !pics.length) return;
     imgBusy = true;
-    setHint("imgMsg", "正在存 " + pics.length + " 张图…");
+    var hintId = msgId || "imgMsg";
+    setHint(hintId, "正在存 " + pics.length + " 张图…");
     try {
-      var got = await attachImages(ticketId, pics, attachLabel(findRow(ticketId)));
+      var r = findRow(ticketId);
+      var label = attachLabel(r);
+      if (stepUid) {
+        var fl = parseFlow(r && r.flow);
+        for (var i = 0; i < fl.length; i++) {
+          if (fl[i].u === stepUid && fl[i].n) { label += " · " + fl[i].n; break; }
+        }
+      }
+      var got = await attachImages(ticketId, pics, label, stepUid);
       await load();                                  // 重画会把提示条冲掉，回显写在后面
       if (got.fail.length) {
-        setHint("imgMsg", "存上 " + got.ok + " 张，" + got.fail.length + " 张失败：" + got.fail[0], true);
+        setHint(hintId, "存上 " + got.ok + " 张，" + got.fail.length + " 张失败：" + got.fail[0], true);
       } else {
-        setHint("imgMsg", "已存 " + got.ok + " 张进图床");
+        setHint(hintId, "已存 " + got.ok + " 张进图床");
       }
     } catch (e) {
-      setHint("imgMsg", "没存上：" + txt(e && e.message ? e.message : e), true);
+      setHint(hintId, "没存上：" + txt(e && e.message ? e.message : e), true);
     } finally {
       imgBusy = false;
     }
@@ -1827,7 +1915,8 @@
         if (!n) continue;
         // at = ISO 时刻（新数据都有），t = 给人看的那串。提醒算时差用 at，没有 at 才退回去解析 t
         // d = 这一步的记录正文（v1.3.1 加）—— 老数据没有，取空串即可
-        out.push({ n: n, t: txt(st.t), at: txt(st.at), d: txt(st.d) });
+        // u = 这一步的稳定 id（v1.10.0 加）—— 附图按它挂，删中间某步不会把图挪到别的步上
+        out.push({ n: n, t: txt(st.t), at: txt(st.at), d: txt(st.d), u: txt(st.u) });
       }
       return out;
     } catch (e) { return []; }
@@ -2417,6 +2506,13 @@
     var v = remindView(r);
     var plan = v.plan;
     var last = flowLast(r);
+    /* 换一条单子：上一单选了还没提交的流程图要清掉，别挂到这一单上 */
+    if (pendingFlowFor !== String(r.id)) {
+      pendingFlowImgs = [];
+      pendingFlowFor = String(r.id);
+    }
+    // 图片一次分组：整单图（plain）与各流程步的图（byStep[u]）
+    var grp = hasImages ? imgGroups(r.id) : { plain: [], byStep: {}, total: 0 };
 
     /* 先基本信息：打开一条单子第一眼要确认「是哪张单」。
        ★ 默认锁着 —— 点标题上的「编辑」才开。多数时候翻详情是"看看它是啥"，
@@ -2489,34 +2585,55 @@
       if (flowFolded) {
         flowHtml += '<div class="note">已收起 ' + flow.length + " 步，点右上「展开」看全部。</div>";
       } else {
-        flowHtml += '<div class="tl">';
+        flowHtml += '<div class="tl" id="flowTl">';
         for (var j = flow.length - 1; j >= 0; j--) {
           var cur = j === flow.length - 1;
-          /* 结构：进度标题（阶段名）→ 标题底下灰色小字描述情况 → 时刻 + 删 */
+          var spics = grp.byStep[flow[j].u] || [];
+          /* 结构：进度标题（阶段名）→ 标题底下灰色小字描述情况 → 时刻 + 图 + 删
+             → 这一步自己的附图（有就排在最下面，跟这一步贴在一起） */
           flowHtml += '<div class="tlitem' + (cur ? " cur" : "") + (cur && done ? " done" : "") + '">'
             + '<div class="nm">' + esc(flow[j].n) + "</div>"
             + (flow[j].d ? '<div class="ds">' + esc(flow[j].d) + "</div>" : "")
             + '<div class="tm"><span class="ts">' + esc(flow[j].t) + "</span>"
+            /* 附图按钮：一步一个，历史步骤也能补（事后找到照片才想起来是常事） */
+            + (hasImages && hasStepCol
+              ? '<button class="mini" data-stepimg="' + j + '" title="给这一步附图">+图</button>' : "")
             + '<button class="mini" data-delflow="' + j + '">删</button></div>'
+            + (spics.length ? '<div class="imgwrap tlpic">' + imgGridHtml(spics, true) + "</div>" : "")
             + "</div>";
         }
         flowHtml += "</div>";
       }
     }
     if (!done && !flowFolded) {
-      // 顺序：选阶段 → 写记录 → 记一步（按钮放大放最后，一竖条从上到下顺完）
+      // 顺序：选阶段 → 写记录 → 加图 → 记一步（按钮放大放最后，一竖条从上到下顺完）
       flowHtml += '<select id="dFlow" style="margin-top:8px"></select>'
         + '<textarea id="dFlowNote" rows="2" style="margin-top:6px"'
         + ' placeholder="这一步的情况描述（灰色小字显示在这一步标题下，可不填）"></textarea>'
+        + (hasImages && hasStepCol
+          ? '<div class="imgwrap imgdrop flowpick" id="dFlowPick"'
+            + ' title="这一步的照片，可以多张；也能直接拖进来">'
+            + '<button class="imgadd" id="btnFlowPick" type="button" data-ico="img">加图</button>'
+            + '<input type="file" id="dFlowFile" accept="image/*" multiple hidden />'
+            + "</div>"
+          : "")
         + '<button class="primary" id="btnFlow" style="margin-top:8px;width:100%;padding:9px 12px;font-size:13px">记一步</button>';
     } else if (done && !flowFolded) {
       flowHtml += '<div class="note" style="margin-top:6px">已「完结」封口 —— 要继续先删掉那一步。</div>';
     }
+    /* 图床提示条 + 给某一步补图用的隐藏文件框：不管折没折叠、完没完结都在场
+       —— 「+图」在历史步骤上也能点，结果得有地方写。 */
+    if (hasImages) {
+      flowHtml += '<div class="hint" id="flowImgMsg"></div>'
+        + (hasStepCol ? '<input type="file" id="dStepFile" accept="image/*" multiple hidden />' : "");
+    }
 
     /* 附图：单独一块，**不受基本信息那把锁限制** ——
-       加图不算"改单号"，而出事的时候往往正是打开这条单子顺手补两张照片。 */
+       加图不算"改单号"，而出事的时候往往正是打开这条单子顺手补两张照片。
+       这里只放**整条单子的图**；记在某一步上的图在流程时间线里跟着那一步。 */
     if (hasImages) {
-      var pics = imgsOf(r.id);
+      var pics = grp.plain;
+      var onSteps = grp.total - pics.length;
       html += '<div class="sect" id="sectImgs" data-host-gallery>'
         + '<h3 data-ico="img">图片'
         + (pics.length ? '<span class="hint" style="margin:0 0 0 6px">' + pics.length + " 张</span>" : "")
@@ -2528,6 +2645,9 @@
         + "</div>"
         + '<input type="file" id="dImgFile" accept="image/*" multiple hidden />'
         + '<div class="hint" id="imgMsg"></div>'
+        /* 步骤图不在这一块里 —— 说一句去哪儿找，别让人以为图丢了 */
+        + (onSteps ? '<div class="note" style="margin-top:6px">另有 ' + onSteps
+          + " 张记在流程步骤上 —— 在「流程状态」里跟着那一步排着。</div>" : "")
         + "</div>";
     }
 
@@ -2654,13 +2774,30 @@
           var now = new Date();
           // t 给人看，at 给提醒算时差 —— 两个都存，别拿显示串去解析
           var note = $("dFlowNote") ? $("dFlowNote").value.trim() : "";
-          var next = flow.concat([{ n: n, t: now.toLocaleString("zh-CN"), at: now.toISOString(), d: note }]);
+          /* u = 这一步的稳定 id（v1.10.0）：附图按它挂，删掉中间某步也不会把图挪到别的步上 */
+          var uid = newId();
+          var next = flow.concat([{ n: n, t: now.toLocaleString("zh-CN"), at: now.toISOString(), d: note, u: uid }]);
           await update(r.id, { flow: JSON.stringify(next) });
           await setRemindOff(r.id, false);      // 又动了一步 = 还得跟，提醒恢复
           await syncRemind(findRow(r.id), true); // 顺延；记到「完结」则撤掉
-          await load();
+          /* 图跟着这一步一起存：**先落步骤再传图**，图才有地方挂。
+             图没存上不影响这一步 —— 进度记上了才是最要紧的。 */
+          var pics = pendingFlowImgs.slice();
+          pendingFlowImgs = [];
+          var imgNote = "", imgBad = false;
+          if (pics.length && hasImages && hasStepCol) {
+            var ig = await attachImages(r.id, pics, attachLabel(findRow(r.id)) + " · " + n, uid);
+            if (ig.ok) imgNote = ig.ok + " 张图已存进图床";
+            if (ig.fail.length) {
+              imgBad = true;
+              imgNote += (imgNote ? "，" : "") + ig.fail.length + " 张没存上：" + ig.fail[0];
+            }
+          }
+          await load();                         // 重画会把提示冲掉，回显写在后面
+          if (imgNote) setHint("flowImgMsg", imgNote, imgBad);
           toast("已记「" + n + "」"
-            + (isDoneName(n) ? " —— 完结了，提醒已撤" : " —— 提醒顺延 " + remindHours() + " 小时"));
+            + (isDoneName(n) ? " —— 完结了，提醒已撤" : " —— 提醒顺延 " + remindHours() + " 小时")
+            + (imgNote ? " · " + imgNote : ""));
         })();
       };
     }
@@ -2671,15 +2808,19 @@
         var idx = Number(this.getAttribute("data-delflow"));
         void (async function () {
           var step = flow[idx] || {};
+          var uid = txt(step.u);
+          var spics = (hasImages && uid) ? stepImgs(r.id, uid) : [];
           var yes = await ask({
             title: "删掉这一步？",
             mark: txt(step.n),
-            body: "这一步会从流程里去掉，提醒按剩下的重新算。",
+            body: "这一步会从流程里去掉，提醒按剩下的重新算。"
+              + (spics.length ? "它的 " + spics.length + " 张图只解除关联，图床里的原图还在。" : ""),
             ok: "删除",
           });
           if (!yes) return;
           var next = flow.slice();
           next.splice(idx, 1);
+          if (spics.length) await removeStepImgs(r.id, uid);   // 先清图片关联，别留孤儿行
           await update(r.id, { flow: JSON.stringify(next) });
           await syncRemind(findRow(r.id), true);
           await load();
@@ -2762,7 +2903,10 @@
         })();
       };
     }
-    if (hasImages) bindDetailImgs(r);
+    if (hasImages) {
+      bindDetailImgs(r);
+      bindFlowImgs(r);
+    }
   }
 
   /** 详情页附图的事件：加上传 / 拖 / 点开大图 / × 去掉。
@@ -2785,22 +2929,136 @@
       if (bad.length) toast(bad[0]);
       if (pics.length) void doAttach(r.id, pics);
     });
-    var cells = drop ? drop.querySelectorAll(".imgcell") : [];
+    bindImgCells(drop, "imgMsg");
+  }
+
+  /** 一组缩略图格的事件：× 去掉 / 点开大图。整单图和流程步图共用一套。 */
+  function bindImgCells(root, hintId) {
+    if (!root) return;
+    var cells = root.querySelectorAll(".imgcell");
     for (var i = 0; i < cells.length; i++) {
       cells[i].onclick = function (e) {
         var t = e.target;
         var dropId = t && t.getAttribute ? t.getAttribute("data-drop") : null;
-        if (dropId) { void dropImage(dropId); return; }   // × 不冒到"看大图"
+        if (dropId) { void dropImage(dropId, hintId); return; }   // × 不冒到"看大图"
         var gid = this.getAttribute("data-view");
         if (gid) void openViewer(gid, this.getAttribute("data-name") || "");
       };
     }
   }
 
+  /** 流程栏里跟图有关的事件（v1.10.0）：
+   *  ① 记一步时先选好的待传图（存在 pendingFlowImgs，重画不丢）
+   *  ② 任意历史步骤的「+图」→ 直接挂到那一步上，不用先编辑这一步
+   *  ③ 步骤缩略图的 × / 点开大图（跟整单图同一套，提示写 flowImgMsg） */
+  function bindFlowImgs(r) {
+    var pick = $("btnFlowPick"), fileEl = $("dFlowFile"), drop = $("dFlowPick");
+    if (pick && fileEl) pick.onclick = function () { fileEl.click(); };
+    if (fileEl) {
+      fileEl.onchange = function () {
+        var fs = this.files;
+        this.value = "";
+        if (!fs || !fs.length) return;
+        void takeFiles(fs, function (pics, bad) {
+          if (bad.length) toast(bad[0]);
+          pendingFlowImgs = pendingFlowImgs.concat(pics);
+          renderFlowPending();
+        });
+      };
+    }
+    if (drop) {
+      bindDrop(drop, function (pics, bad) {
+        if (bad.length) toast(bad[0]);
+        pendingFlowImgs = pendingFlowImgs.concat(pics);
+        renderFlowPending();
+      });
+      drop.onclick = function (e) {
+        var t = e.target;
+        var dropId = t && t.getAttribute ? t.getAttribute("data-drop") : null;
+        if (dropId) {
+          var i = pendingIndex(dropId);
+          if (i >= 0) { pendingFlowImgs.splice(i, 1); renderFlowPending(); }
+          return;
+        }
+        var cell = t && t.closest ? t.closest(".imgcell") : null;
+        var pv = cell && cell.getAttribute("data-pv");
+        if (pv) {
+          var k = pendingIndex(pv);
+          if (pendingFlowImgs[k]) openViewerRaw(pendingFlowImgs[k].dataUrl, pendingFlowImgs[k].name);
+        }
+      };
+    }
+    renderFlowPending();        // 重画之后把还没提交的那几张摆回去
+
+    var tl = $("flowTl");
+    bindImgCells(tl, "flowImgMsg");
+
+    /* 历史步骤「+图」：点的是哪一步记在心里，选完文件再回宿主补 uid、传图 */
+    var stepFile = $("dStepFile");
+    var ibtns = tl ? tl.querySelectorAll("[data-stepimg]") : [];
+    for (var b = 0; b < ibtns.length; b++) {
+      ibtns[b].onclick = function () {
+        if (!stepFile) return;
+        pendingStepIdx = Number(this.getAttribute("data-stepimg"));
+        stepFile.click();
+      };
+    }
+    if (stepFile) {
+      stepFile.onchange = function () {
+        var fs = this.files;
+        this.value = "";
+        if (!fs || !fs.length) return;
+        var idx = pendingStepIdx;
+        void takeFiles(fs, function (pics, bad) {
+          if (bad.length) toast(bad[0]);
+          if (!pics.length) return;
+          void (async function () {
+            // 老数据的步骤可能还没有 u（归一写库是异步的）—— 这里现补一个再挂
+            var uid = await ensureStepUid(findRow(r.id), idx);
+            if (!uid) { setHint("flowImgMsg", "这一步已经不在流程里了，图没存上", true); return; }
+            await doAttach(r.id, pics, uid, "flowImgMsg");
+          })();
+        });
+      };
+    }
+  }
+
+  /** 记一步时先选好的那几张图：重画时摆回「加图」按钮旁边 */
+  function renderFlowPending() {
+    var drop = $("dFlowPick");
+    if (!drop) return;
+    var old = drop.querySelectorAll(".imgcell");
+    for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
+    var add = $("btnFlowPick");
+    if (!add) return;
+    if (pendingFlowImgs.length) {
+      add.insertAdjacentHTML("beforebegin", imgGridHtml(pendingFlowImgs.map(function (p, k) {
+        return { id: "p" + k, name: p.name, thumb: p.dataUrl };
+      }), true, { pending: true }));
+    }
+    setHint("flowImgMsg", pendingFlowImgs.length
+      ? "选了 " + pendingFlowImgs.length + " 张 —— 点「记一步」时一起存进图床" : "");
+  }
+
+  /** 给第 idx 步补一个稳定 id（只补缺的）。返回 id；那一步已经没了返回 ""。
+   *  动的是原始 JSON 数组（不经过 parseFlow），别把别人写的字段抹掉。 */
+  async function ensureStepUid(r, idx) {
+    if (!r) return "";
+    var raw;
+    try { raw = JSON.parse(txt(r.flow) || "[]"); } catch (e) { return ""; }
+    if (!Array.isArray(raw) || !raw[idx] || typeof raw[idx] !== "object") return "";
+    if (txt(raw[idx].u)) return txt(raw[idx].u);
+    raw[idx].u = newId();
+    try { await update(r.id, { flow: JSON.stringify(raw) }, false); } catch (e) { return ""; }
+    return raw[idx].u;
+  }
+
   /** 从这条单子上去掉一张图。**只解除关联** —— 图床里那张原图不动，
-   *  所以文案要说清楚，别让人以为原图被删了。 */
-  async function dropImage(id) {
+   *  所以文案要说清楚，别让人以为原图被删了。
+   *  `hintId`：结果回显写哪条提示（整单图 imgMsg / 流程步图 flowImgMsg）。 */
+  async function dropImage(id, hintId) {
     if (imgBusy) return;
+    var hint = hintId || "imgMsg";
     var it = null;
     for (var i = 0; i < imgs.length; i++) if (txt(imgs[i].id) === txt(id)) it = imgs[i];
     var yes = await ask({
@@ -2814,9 +3072,9 @@
     try {
       await deleteImg(id);
       await load();
-      setHint("imgMsg", "已去掉这张");
+      setHint(hint, "已去掉这张");
     } catch (e) {
-      setHint("imgMsg", "没去掉：" + txt(e && e.message ? e.message : e), true);
+      setHint(hint, "没去掉：" + txt(e && e.message ? e.message : e), true);
     } finally {
       imgBusy = false;
     }
@@ -3834,8 +4092,11 @@
     /* 赔款数列探一次（旧版工作台会缺）：探不到就降级 —— 详情里的输入禁用、
        写库时不带这个字段。探完重画一遍，让界面马上反映出来。 */
     hasIndemnity = await probeIndemnity();
+    /* 流程步附图的 step_uid 列同样探一次：没有就只留下整单图，
+       「记一步带图 / 给某步补图」整块不摆（摆了也存不上）。 */
+    hasStepCol = await probeStepCol();
     await load();
-    if (!hasIndemnity) {
+    if (!hasIndemnity || !hasStepCol) {
       renderDetail();
       renderTable();
     }

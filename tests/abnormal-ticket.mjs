@@ -1344,6 +1344,116 @@ console.log("\n11. 订单附图：字节进图床，工具只记关联");
     imgStore.length + " 条残留");
 }
 
+console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）");
+{
+  const before = store.length;
+  const gBefore = gallery.length;
+  const iBefore = imgStore.length;
+  doc.getElementById("tab-create").click();
+  await sleep(60);
+  doc.getElementById("fOrder").value = "261022-888888888888";
+  doc.getElementById("fOrder").dispatchEvent(new win.Event("input", { bubbles: true }));
+  doc.getElementById("btnAdd").click();
+  await waitFor(() => store.length === before + 1, 3000);
+  const row = store.find((r) => r.order_sn === "261022-888888888888");
+
+  doc.getElementById("tab-browse").click();
+  await sleep(80);
+  doc.querySelector('#list .ticket[data-id="' + row.id + '"]').click();
+  await sleep(140);
+
+  const sel = doc.getElementById("dFlow");
+  check("记一步的表单里有阶段下拉", !!sel);
+  sel.value = "已联系快递";     // 跟第 7 节同一套阶段名（选项来自默认流程）
+
+  /* 先在「记一步」的表单里选两张图 —— 这一步提交前不该进图床 */
+  const g1 = new win.File([new Uint8Array([137, 80, 78, 71])], "补发单.png", { type: "image/png" });
+  const g2 = new win.File([new Uint8Array([137, 80, 78, 71])], "聊天记录.png", { type: "image/png" });
+  const fin = doc.getElementById("dFlowFile");
+  Object.defineProperty(fin, "files", { value: [g1, g2], configurable: true });
+  fin.dispatchEvent(new win.Event("change", { bubbles: true }));
+  await waitFor(() => doc.querySelectorAll("#dFlowPick .imgcell").length === 2);
+  check("记一步之前能先选图，两张都排成待传格",
+    doc.querySelectorAll("#dFlowPick .imgcell").length === 2 &&
+    imgStore.length === iBefore,
+    doc.querySelectorAll("#dFlowPick .imgcell").length + " 格 / " + (imgStore.length - iBefore) + " 条关联");
+
+  doc.getElementById("dFlowNote").value = "已补发，单号发在聊天里";
+  doc.getElementById("btnFlow").click();
+  await waitFor(() => imgStore.length === iBefore + 2, 6000);
+
+  const flow = JSON.parse(row.flow || "[]");
+  const sid = flow[0] && flow[0].u;
+  check("记一步时给这一步生成了稳定 id（u）", flow.length === 1 && !!sid, JSON.stringify(flow));
+  const mine = imgStore.filter((r) => r.ticket_id === row.id);
+  check("两张图都挂在这一步上（step_uid = 那一步的 u）",
+    mine.length === 2 && mine.every((r) => r.step_uid === sid),
+    JSON.stringify(mine.map((r) => r.step_uid)) + " vs " + sid);
+  check("图床里也存下了这两张", gallery.length === gBefore + 2, String(gallery.length - gBefore));
+  check("图床标题带上单号和阶段名（翻图床时认得出）",
+    /异常单 261022-888888888888 附图 · /.test(gallery[gBefore]?.title || ""),
+    gallery[gBefore]?.title);
+
+  /* 时间线：这一步下面直接排着它的缩略图；整单「图片」区不混进来 */
+  check("时间线上这一步下面排着两张缩略图",
+    doc.querySelectorAll("#flowTl .tlpic .imgcell").length === 2,
+    String(doc.querySelectorAll("#flowTl .tlpic .imgcell").length));
+  check("整单「图片」区不混步骤图",
+    doc.querySelectorAll("#dImgDrop .imgcell").length === 0,
+    String(doc.querySelectorAll("#dImgDrop .imgcell").length));
+  check("「图片」区注明另有几张记在流程步骤上",
+    /另有 2 张记在流程步骤上/.test(doc.querySelector("#sectImgs")?.textContent || ""),
+    doc.querySelector("#sectImgs")?.textContent?.slice(0, 80));
+
+  /* 历史步骤补图：不用"编辑这一步"，点时刻旁边的「+图」就行 */
+  const addBtn = doc.querySelector('#flowTl [data-stepimg="0"]');
+  check("每一步的时刻旁边都有「+图」", !!addBtn);
+  addBtn.click();
+  const sFile = doc.getElementById("dStepFile");
+  const g3 = new win.File([new Uint8Array([137, 80, 78, 71])], "后来找到的.png", { type: "image/png" });
+  Object.defineProperty(sFile, "files", { value: [g3], configurable: true });
+  sFile.dispatchEvent(new win.Event("change", { bubbles: true }));
+  await waitFor(() => imgStore.length === iBefore + 3, 6000);
+  check("历史步骤能补图，挂的还是原来那一步",
+    imgStore.filter((r) => r.ticket_id === row.id).length === 3 &&
+    imgStore.filter((r) => r.ticket_id === row.id).every((r) => r.step_uid === sid),
+    JSON.stringify(imgStore.filter((r) => r.ticket_id === row.id).map((r) => r.step_uid)));
+
+  /* 删掉这一步：名下图的关联一起清（原图留在图床） */
+  doc.querySelector('#flowTl [data-delflow="0"]').click();
+  await sleep(100);
+  check("删步骤的确认框说明它的图只解除关联",
+    /3 张图只解除关联/.test(doc.querySelector(".dlgm")?.textContent || ""),
+    doc.querySelector(".dlgm")?.textContent?.slice(0, 90));
+  const gKeep = gallery.length;
+  doc.getElementById("dlgYes").click();
+  await waitFor(() => imgStore.filter((r) => r.ticket_id === row.id).length === 0, 5000);
+  check("删掉这一步 → 它名下的图关联也清了",
+    imgStore.filter((r) => r.ticket_id === row.id).length === 0,
+    String(imgStore.filter((r) => r.ticket_id === row.id).length));
+  check("图床里的原图一张没删", gallery.length === gKeep, gallery.length + " vs " + gKeep);
+
+  /* 老流程（v1.10.0 之前的步骤没有 u）：load 时静默补上 —— 不补的话图挂不住 */
+  store.push({
+    id: "legacy-flow-1", order_sn: "261022-999999999999", tracking_no: "",
+    courier: "", shipped_at: "2026-10-20 09:00", store: "拼5", title: "",
+    category: "", handling: "", result: "", settled: "", note: "",
+    flow: JSON.stringify([{ n: "待处理", t: "2026/10/20 09:00:00", at: "2026-10-20T01:00:00.000Z" }]),
+    remind_at: "", remind_task: "", created_at: "2026-10-20 09:00", updated_at: "2026-10-20 09:00",
+  });
+  doc.getElementById("tab-create").click();
+  await sleep(60);
+  doc.getElementById("fOrder").value = "261022-111122223333";
+  doc.getElementById("btnAdd").click();
+  await waitFor(() => {
+    const lr = store.find((r) => r.id === "legacy-flow-1");
+    try { return !!JSON.parse(lr.flow)[0].u; } catch (e) { return false; }
+  }, 3000);
+  const lf = JSON.parse(store.find((r) => r.id === "legacy-flow-1").flow);
+  check("老流程步骤 load 时静默补上 u（界面上的图才有地方挂）",
+    !!lf[0].u && lf[0].n === "待处理", JSON.stringify(lf));
+}
+
 console.log("\n====================================================");
 console.log(`    通过 ${pass} / 失败 ${fail}`);
 if (failures.length) {
