@@ -37,7 +37,8 @@
        --maxw 内容最大宽度 —— 窗口再宽也不抻成一长条（一行文字太长，控件也散） */
     --pad: 16px;
     --gap: 10px;
-    --maxw: 1320px;
+    --maxw: 1560px;   /* 宽屏：三栏（列表 320 + 主信息 900 + 流程 320 + 缝）刚好吃满 */
+    --maxw-table: 1800px;  /* 台账 15 列，比正文页再宽一档，宽屏下不用横着滚 */
     --formw: 760px;   /* 设置页那种一列到底的窄表单 */
     color-scheme: light;
   }
@@ -123,6 +124,12 @@
   main { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px var(--pad) 20px; }
   .view { height: 100%; }
   .view > * { max-width: var(--maxw); margin-inline: auto; }
+  /* 登记页是表单：宽屏下别跟着拉到 1560 —— 一行里字段隔太远，眼睛要来回跑 */
+  #view-create > .card { max-width: 1320px; }
+  /* 表格页反过来：列越多越该用满屏。★ 不设 table-layout:fixed —— 定死列宽会把
+     单号 / ISO 时刻这种"一个字符都不能少"的列挤成省略号；让内容撑、只是把
+     容器的宽度上限提上来，宽屏下自然就不横滚了。 */
+  #view-table > .tblbar, #view-table > .tblscroll { max-width: var(--maxw-table); }
 
   /* ---------- 通用块 ---------- */
   .card {
@@ -197,8 +204,10 @@
   .split { display: flex; gap: 10px; height: 100%; min-height: 0; }
   .split > .left { flex: 0 0 var(--listw, 320px); display: flex; flex-direction: column; min-height: 0; }
   .split > .right { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; }
-  /* 右栏就那么几行字段 —— 跟着窗口无限拉宽只会把输入框和胶囊抻散 */
-  .split > .right > .panes { max-width: 1320px; margin-inline: auto; }
+  /* 右栏就那么几行字段 —— 跟着窗口无限拉宽只会把输入框和胶囊抻散。
+     1230 = 主信息卡上限 900 + 缝 10 + 流程栏 320：再多出来的是**纯空白**，
+     会让主栏和流程栏之间裂开一道沟，所以对着内容定宽，不跟 --maxw 走。 */
+  .split > .right > .panes { max-width: 1230px; margin-inline: auto; }
   /* 右栏两分：主信息 + 流程栏。流程栏定宽（时间线竖着长，给它一条窄长的地方），
      主信息吃掉剩下的 —— 两栏都 min-width:0，否则长单号会把栅格顶宽。 */
   .panes { display: flex; gap: var(--gap); align-items: flex-start; }
