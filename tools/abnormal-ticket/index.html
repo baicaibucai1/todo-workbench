@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.3.3）——整本重写过一次，之后按反馈迭代。
+  异常单号登记（v1.3.4）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -277,17 +277,15 @@
     background: var(--line);
   }
   .tlitem:last-child::after { display: none; }
-  /* 主行 = 这一步的记录正文（没记录时是阶段名）—— 像工单系统的「服务进度」：
-     正文是人话，时刻和处理人退到下面的小字 */
+  /* 进度标题 = 阶段名；描述情况用灰色小字缀在标题底下，时刻再往下 */
   .tlitem .nm { font-size: 12.5px; font-weight: 500; color: var(--fg); line-height: 1.5; }
   .tlitem.cur .nm { font-weight: 600; }
+  .tlitem .ds {
+    font-size: 12px; line-height: 1.55; color: var(--fg2);
+    margin-top: 1px; white-space: pre-wrap; word-break: break-word;
+  }
   .tlitem .tm { display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 11.5px; color: var(--dim); }
   .tlitem .tm .ts { font-family: var(--mono); }
-  /* 阶段名：有记录时缩成一个小灰标签，别跟正文抢戏 */
-  .tlitem .tm .stage {
-    font-size: 11px; background: var(--chip); border-radius: 4px;
-    padding: 0 6px; color: var(--fg2); white-space: nowrap;
-  }
 
   /* ---------- 跟进提醒 ----------
      提醒不是"单独设的一个闹钟"，而是**流程的看门狗**：基准时刻 + N 小时。
@@ -1707,14 +1705,11 @@
         flowHtml += '<div class="tl">';
         for (var j = flow.length - 1; j >= 0; j--) {
           var cur = j === flow.length - 1;
-          /* 主行 = 记录正文（像工单系统那种「物流签收消费者反馈没拿到货」）；
-             没写记录就退回阶段名。meta 行 = [阶段标签] 时刻 删。 */
-          var rec = flow[j].d;
+          /* 结构：进度标题（阶段名）→ 标题底下灰色小字描述情况 → 时刻 + 删 */
           flowHtml += '<div class="tlitem' + (cur ? " cur" : "") + (cur && done ? " done" : "") + '">'
-            + '<div class="nm">' + esc(rec || flow[j].n) + "</div>"
-            + '<div class="tm">'
-            + (rec ? '<span class="stage">' + esc(flow[j].n) + "</span>" : "")
-            + '<span class="ts">' + esc(flow[j].t) + "</span>"
+            + '<div class="nm">' + esc(flow[j].n) + "</div>"
+            + (flow[j].d ? '<div class="ds">' + esc(flow[j].d) + "</div>" : "")
+            + '<div class="tm"><span class="ts">' + esc(flow[j].t) + "</span>"
             + '<button class="mini" data-delflow="' + j + '">删</button></div>'
             + "</div>";
         }
@@ -1722,11 +1717,11 @@
       }
     }
     if (!done && !flowFolded) {
-      // 记录跟这一步走（存进 flow 的 d）—— **它就是这一步的正文**（时间线主行）
-      flowHtml += '<div class="r" style="margin-top:8px"><select id="dFlow" style="flex:1 1 auto"></select>'
-        + '<button class="primary" id="btnFlow">记一步</button></div>'
+      // 顺序：选阶段 → 写记录 → 记一步（按钮放大放最后，一竖条从上到下顺完）
+      flowHtml += '<select id="dFlow" style="margin-top:8px"></select>'
         + '<textarea id="dFlowNote" rows="2" style="margin-top:6px"'
-        + ' placeholder="这一步的记录（会成为时间线这一步的正文，不填就只显示阶段名）"></textarea>';
+        + ' placeholder="这一步的情况描述（灰色小字显示在这一步标题下，可不填）"></textarea>'
+        + '<button class="primary" id="btnFlow" style="margin-top:8px;width:100%;padding:9px 12px;font-size:13px">记一步</button>';
     } else if (done && !flowFolded) {
       flowHtml += '<div class="note" style="margin-top:6px">已「完结」封口 —— 要继续先删掉那一步。</div>';
     }

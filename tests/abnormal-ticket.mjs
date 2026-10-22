@@ -434,6 +434,14 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   await sleep(60);
   check("流程时间线：单步就点亮（cur）",
     doc.querySelector("#flowPane .tlitem")?.classList.contains("cur") === true);
+  /* 「记一步」按钮在描述框下面（DOM 顺序），且是整行宽的大按钮 */
+  const note3 = doc.getElementById("dFlowNote"), btn3 = doc.getElementById("btnFlow");
+  check("记一步按钮在描述框下面",
+    !!(note3 && btn3 && (btn3.compareDocumentPosition(note3) & 2)), // 2 = PRECEDING：描述框在按钮前面
+    "note=" + !!note3 + " btn=" + !!btn3);
+  check("记一步按钮是整行宽的大按钮",
+    (btn3?.getAttribute("style") || "").replace(/\s/g, "").includes("width:100%"),
+    btn3?.getAttribute("style"));
   const r1 = store.find((x) => x.id === r0.id);
   const at1 = new Date(r1.remind_at).getTime();
   check("记一步流程 → 提醒按新基准重算（1 小时）",
@@ -466,13 +474,13 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   const r2 = store.find((x) => x.id === r0.id);
   check("记录跟着这一步存进了 flow", /"d":"客户同意补发/.test(r2.flow) && !/"by":/.test(r2.flow),
     r2.flow.slice(0, 200));
-  /* 记录是这一步的**主行**（像工单系统「服务进度」的正文），阶段名缩成小标签 */
+  /* 结构：进度标题（阶段名）→ 标题下灰色小字描述 → 时刻 */
   const topItem = doc.querySelector("#flowPane .tlitem");
-  check("记录成了时间线这一步的主行", /客户同意补发/.test(topItem?.querySelector(".nm")?.textContent || ""),
+  check("进度标题是阶段名", /完结/.test(topItem?.querySelector(".nm")?.textContent || ""),
     topItem?.textContent.slice(0, 80));
-  check("阶段名缩成小标签、meta 行没有处理人",
-    /完结/.test(topItem?.querySelector(".stage")?.textContent || "") &&
-    topItem?.querySelector(".by") === null);
+  check("记录以灰色小字显示在标题下", /客户同意补发/.test(topItem?.querySelector(".ds")?.textContent || ""));
+  check("meta 行没有处理人", topItem?.querySelector(".by") === null &&
+    /"by"/.test(r2.flow) === false);
   check("完结后提醒时刻清空", r2.remind_at === "", JSON.stringify(r2.remind_at));
   check("完结后待办 id 也清空", r2.remind_task === "", JSON.stringify(r2.remind_task));
   const box2 = doc.querySelector("#detail .remindbox")?.textContent || "";
