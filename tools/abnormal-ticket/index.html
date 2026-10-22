@@ -798,6 +798,30 @@
   function pad2(n) { return n < 10 ? "0" + n : "" + n; }
   function ymd(d) { return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()); }
   function todayStr() { return ymd(new Date()); }
+  /** 本地时刻，精确到分钟：`2026-10-22 17:23`。
+      登记时间 / 登记时刻 / 更新时刻都存这一串 —— 它们会被原样推给在线表格，
+      ISO 的 `T` `Z` 摆进表里既刺眼又把 UTC 时刻露出来（差 8 小时）。 */
+  function nowMinStr() { return fmtMin(new Date()); }
+  /** 存量数据统一成分钟写法。
+      老数据里 created_at 是 ISO、shipped_at 只有日期：ISO 转成本地分钟；
+      **只有日期的原样留着**，不替它编一个 00:00。 */
+  function minText(v) {
+    var s = txt(v).trim();
+    if (!s) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    var d = parseTime(s);
+    return d ? fmtMin(d) : s;
+  }
+  /** 登记时间：老单子只有日期时，用登记时刻（created_at）补出分钟 ——
+      登记时间本来就是"登记那一刻"，两者是一回事。日期对不上的（手改过的
+      历史单）保留原样，不硬凑。 */
+  function regTimeText(r) {
+    var s = minText(r.shipped_at);
+    if (s && s.length > 10) return s;
+    var c = parseTime(r.created_at);
+    if (c && (!s || fmtMin(c).slice(0, 10) === s.slice(0, 10))) return fmtMin(c);
+    return s;
+  }
   function newId() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
@@ -1161,6 +1185,26 @@
     }
     rows = rows.map(norm);
     renderAll();
+    void normalizeTimes(rows.slice());   // 老数据的时间写法就地统一（只写变了的）
+  }
+
+  /** 老数据的时间写法统一成「YYYY-MM-DD HH:mm」。
+   *
+   *  ISO（`…T09:23:52.123Z`）既刺眼又是 UTC 时刻 —— 推给在线表格就照这样
+   *  摆进表里，比本地时间差 8 小时。只有日期的登记时间借登记时刻补上分钟
+   *  （同一天才补，见 regTimeText）。写的时候**不动 updated_at**：这是整理，
+   *  不是"这条被改过"；一条都没变就一条都不写。旧宿主写不进去就停手，
+   *  下次启动再试，不弹错。 */
+  async function normalizeTimes(list) {
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i], patch = {};
+      var c = minText(r.created_at), u = minText(r.updated_at), s = regTimeText(r);
+      if (c && c !== txt(r.created_at)) patch.created_at = c;
+      if (u && u !== txt(r.updated_at)) patch.updated_at = u;
+      if (s && s !== txt(r.shipped_at)) patch.shipped_at = s;
+      if (!Object.keys(patch).length) continue;
+      try { await update(r.id, patch, false); } catch (e) { return; }
+    }
   }
   function saveLocal() {
     try { localStorage.setItem(LS_ROWS, JSON.stringify(rows)); } catch (e) { /* 满了就算了 */ }
@@ -1187,8 +1231,10 @@
     saveLocal();
     return rows[0];
   }
-  async function update(id, patch) {
-    patch.updated_at = new Date().toISOString();
+  /** `touch === false`：只改值、不动「更新时刻」—— 数据整理（时间写法归一）用它，
+      别让整本台账看起来都"刚被改过"。 */
+  async function update(id, patch, touch) {
+    if (touch !== false) patch.updated_at = nowMinStr();   // 更新时刻也精确到分钟（推表时人眼看的就是它）
     if (bound()) {
       var res = await call("row.update", { table: TABLE, id: id, patch: patch });
       var got = res && res.row ? norm(res.row) : null;
@@ -1707,13 +1753,13 @@
       return;
     }
 
-    var now = new Date().toISOString();
+    var now = nowMinStr();          // 本地时刻、精确到分钟
     var row = {
       id: newId(),
       order_sn: order,
       tracking_no: track,
       courier: courier,
-      shipped_at: todayStr(),      // 登记时间 = 当下，不再手填
+      shipped_at: now,               // 登记时间 = 当下（到分钟），不再手填
       store: store,
       category: category,
       title: title,
@@ -1891,8 +1937,8 @@
       + '<button class="mini danger" id="btnDel">删除</button></div>'
       + '<div class="note" style="margin-top:4px">'
       + (store && store.mallcsid ? "店铺客服 ID " + esc(store.mallcsid) + " · " : "")
-      + "登记于 " + esc(txt(r.created_at).slice(0, 10) || "—")
-      + (r.updated_at ? " · 最后改动 " + esc(txt(r.updated_at).slice(0, 16).replace("T", " ")) : "")
+      + "登记于 " + esc(minText(r.created_at) || "—")
+      + (r.updated_at ? " · 最后改动 " + esc(minText(r.updated_at)) : "")
       + "</div>";
 
     /* 下面几段共用的派生量，先算好 */
@@ -2048,7 +2094,7 @@
     /* 基本信息：填进当前值 —— 空的那些格就是「等着补」 */
     $("dOrder").value = txt(r.order_sn);
     $("dTrack").value = txt(r.tracking_no);
-    $("dDate").value = txt(r.shipped_at);
+    $("dDate").value = regTimeText(r);   // 到分钟；只有日期的老单子借登记时刻补上
     $("dIndemnity").value = txt(r.indemnity);
     $("dTitle").value = txt(r.title);
     $("dNote").value = txt(r.note);
@@ -2061,8 +2107,8 @@
       $("dIndemnity").disabled = true;
       $("dIndemnity").placeholder = "旧版工作台不支持 —— 升级后可用";
     }
-    $("dDate").onfocus = function () { openDp(this); };
-    $("dDate").onclick = function () { openDp(this); };
+    $("dDate").onfocus = function () { openDp(this, true); };   // 登记时间也改到分钟
+    $("dDate").onclick = function () { openDp(this, true); };
     if ($("dRemind")) {
       $("dRemind").onfocus = function () { openDp(this, true); };
       $("dRemind").onclick = function () { openDp(this, true); };
@@ -2086,7 +2132,7 @@
             order_sn: order,
             tracking_no: track,
             courier: pillVal($("dCourier")),
-            shipped_at: $("dDate").value.trim(),
+            shipped_at: minText($("dDate").value),   // 手改也只认到分钟
             store: pillVal($("dStore")),
             category: pillVal($("dCategory")),
             title: $("dTitle").value.trim(),
@@ -2246,8 +2292,14 @@
     for (var i = 0; i < COLS.length; i++) if (COLS[i][0] === key) return COLS[i][1];
     return key;
   }
+  /** 表格里时间列一律显示到分钟（老数据的 ISO 也转成本地时刻） */
+  function isTimeCol(key) {
+    return key === "shipped_at" || key === "created_at" || key === "updated_at";
+  }
   function cellText(r, key) {
     if (key === "_status") return statusOf(r);
+    if (key === "shipped_at") return regTimeText(r);
+    if (isTimeCol(key)) return minText(r[key]);
     return txt(r[key]);
   }
   /* 列宽：COLS 第三个数是权重，按可见列的总权重分百分比。
@@ -2651,7 +2703,7 @@
    * ================================================================== */
   var dpFor = null;        // 当前是哪个输入框在用
   var dpYear = 0, dpMonth = 0;
-  var dpTimeMode = false;  // true = 带时刻（改提醒时刻）；false = 纯日期（登记时间）
+  var dpTimeMode = false;  // true = 带时刻（登记时间 / 提醒时刻都是）；false = 纯日期（留给只认日期的框）
 
   function dpClamp(n, lo, hi) {
     n = Math.round(Number(n));

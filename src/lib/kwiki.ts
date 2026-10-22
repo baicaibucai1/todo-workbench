@@ -146,6 +146,49 @@ export function keyOf(row: Partial<LedgerRow>): string {
 
 const txt = (v: unknown): string => (v == null ? "" : String(v));
 
+/* ---------- 时刻：推表前统一成「YYYY-MM-DD HH:mm」 ---------- */
+
+/** 台账里的三列时刻 */
+const TIME_COLS = new Set(["shipped_at", "created_at", "updated_at"]);
+
+/**
+ * 时刻 → `2026-10-22 17:23`（本地时间，精确到分钟）。
+ *
+ * 老数据有两种写法：ISO（`2026-10-22T09:23:52.123Z`，是 **UTC** 时刻）和只有
+ * 日期。原样推进在线表格，人看到的时间比本地差 8 小时，还拖着一串毫秒 ——
+ * 表是给人看的，这里统一成本地分钟写法。只有日期的**不编造时刻**，原样留着。
+ */
+export function ledgerTimeText(v: unknown): string {
+  const s = txt(v).trim();
+  if (!s) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/**
+ * 推出前的一份拷贝：时间列换成分钟写法。
+ *
+ * 只改**推上去的那份**，数据库里不动 —— 拉取时拿表上的值跟本地比，
+ * 本地这一侧要是被改写过，一次拉取就会把库里的原值当成"有改动"。
+ *
+ * 「发货时间」老数据只有日期时，用登记时间补出分钟：两者本来就是同一刻
+ * （登记时间 = 登记那一刻），日期对不上的（手改过的历史单）保留原样。
+ */
+export function sheetRows(rows: LedgerRow[]): LedgerRow[] {
+  return rows.map((r) => {
+    const o: LedgerRow = { ...r };
+    for (const c of TIME_COLS) if (c in o) o[c] = ledgerTimeText(o[c]);
+    const shipped = o.shipped_at;
+    if (shipped && shipped.length === 10 && o.created_at && o.created_at.slice(0, 10) === shipped) {
+      o.shipped_at = o.created_at;
+    }
+    return o;
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* 读本地台账                                                          */
 /* ------------------------------------------------------------------ */
@@ -352,7 +395,7 @@ export async function pushLedger(
   need(spaceKuid, "还没选知识库");
   need(driveId, "这个知识库没给出 drive_id，没法上传");
   need(title, "表格标题不能为空");
-  const body = rows ?? (await readLedger());
+  const body = sheetRows(rows ?? (await readLedger()));
   return invoke<WpsPushResult>("wps_push", {
     token,
     spaceKuid,

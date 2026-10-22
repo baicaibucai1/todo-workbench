@@ -181,7 +181,7 @@ section("2. COLUMNS 与 Rust 侧逐条一致");
   check("工具声明了 wps 能力", (mf.capabilities || []).includes("wps"));
   check(
     "工具设置页有「在线表格」那张卡，且标了 data-host-only",
-    /id="wpsLink"/.test(html) && /<div class="card" data-host-only[^>]*>\s*\n\s*<h2>在线表格/.test(html),
+    /id="wpsLink"/.test(html) && /<div class="card[^"]*"[^>]*data-host-only[^>]*>\s*\n\s*<h2>在线表格/.test(html),
   );
   check(
     "工具只喊推 / 拉 / 确认，自己不做比对",

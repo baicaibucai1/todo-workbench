@@ -155,6 +155,7 @@ import {
   applyPull,
   planPull,
   readLedger,
+  sheetRows,
   type LedgerRow,
   type PullPlan,
 } from "./kwiki";
@@ -1663,7 +1664,9 @@ export function createToolBridge(
             const r = await mcpSheetPush(
               pFileId,
               pSheet,
-              rows as unknown as Array<Record<string, unknown>>,
+              // 时间列先统一成「YYYY-MM-DD HH:mm」：老数据的 ISO 摆进表里
+              // 既刺眼又是 UTC 时刻（差 8 小时），见 kwiki.sheetRows
+              sheetRows(rows) as unknown as Array<Record<string, unknown>>,
               mcpToken,
               mcpClientId,
               dry,

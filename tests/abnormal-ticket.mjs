@@ -261,6 +261,14 @@ check("表格渲染出行", body.querySelectorAll("tr").length >= 1, String(body
 check("表格里能搜到这条单号", (body.textContent || "").includes("6931234567890123456"));
 check("表头 15 列（台账 14 列 + 赔款数）", doc.getElementById("tableHead").querySelectorAll("th").length === 15,
   String(doc.getElementById("tableHead").querySelectorAll("th").length));
+/* 时间列一律到分钟：老数据的 ISO（带 T/Z、还是 UTC）也要转成本地写法 */
+{
+  const heads = Array.from(doc.getElementById("tableHead").querySelectorAll("th")).map((th) => th.textContent.trim());
+  const cells = Array.from(body.querySelectorAll("tr")[0].querySelectorAll("td")).map((td) => td.textContent.trim());
+  const at = (name) => cells[heads.indexOf(name)] || "";
+  check("表格「登记时间」精确到分钟", /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(at("登记时间")), at("登记时间"));
+  check("表格「登记时刻」到分钟、不带 T/Z", /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(at("登记时刻")), at("登记时刻"));
+}
 
 console.log("\n5b. 查看页能补全 / 改信息（默认锁着，点「编辑」才开）");
 doc.getElementById("tab-browse").click();
@@ -560,21 +568,28 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   check("「此刻」写回当前时刻并收起",
     doc.getElementById("dp").hidden === true && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(dr.value),
     dr.value);
-  /* 日期模式回归：详情页的登记时间还是纯日期，点日期即收
-     （登记页已经没有手填的日期框了 —— 登记时间就是当下） */
+  /* 时刻模式回归：详情页的「登记时间」也精确到分钟 —— 点日期只换日期、留时刻，
+     面板留着继续调；「此刻」一键落当前时刻并收起。 */
   doc.getElementById("tab-browse").click();
   await sleep(60);
   doc.getElementById("btnBaseToggle").click();     // 解锁基本信息才能点日期框
   await sleep(60);
   const fd = doc.getElementById("dDate");
+  check("详情页登记时间具体到分钟",
+    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(fd.value), fd.value);
   fd.onfocus.call(fd);
   await sleep(30);
-  check("日期模式：时刻行隐藏、日期快捷键在",
-    doc.getElementById("dpTime").hidden === true && doc.getElementById("dpFootDate").hidden === false);
+  check("时刻模式：时刻行在、日期快捷键收起",
+    doc.getElementById("dpTime").hidden === false && doc.getElementById("dpFootDate").hidden === true);
   doc.querySelector("#dpGrid [data-day]").click();
   await sleep(30);
-  check("点日期 → 只写 YYYY-MM-DD 并收起",
-    /^\d{4}-\d{2}-\d{2}$/.test(fd.value) && doc.getElementById("dp").hidden === true, fd.value);
+  check("点日期只换日期、时刻留着、面板不收",
+    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(fd.value) && doc.getElementById("dp").hidden === false, fd.value);
+  doc.querySelector("[data-tquick='now']").click();
+  await sleep(30);
+  check("「此刻」写回当前时刻并收起",
+    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(fd.value) && doc.getElementById("dp").hidden === true, fd.value);
+  /* 只改了输入框、没有点「保存修改」—— 库里那条不受影响，后面的段落照常跑 */
 
   // 后面的段落还要用 24 小时的口径（推送等无关，但别把设置留在 1）
   doc.getElementById("tab-settings").click();
@@ -599,6 +614,7 @@ console.log("\n5c2. 登记时间自动 / 提醒时间可改可清");
 
   const nd = new Date();
   const td = nd.getFullYear() + "-" + String(nd.getMonth() + 1).padStart(2, "0") + "-" + String(nd.getDate()).padStart(2, "0");
+  const tdm = td + " " + String(nd.getHours()).padStart(2, "0") + ":" + String(nd.getMinutes()).padStart(2, "0");
 
   // 手选一个时刻 → 登记，提醒就按手选的
   fr.value = "2030-01-02 09:30";
@@ -609,7 +625,12 @@ console.log("\n5c2. 登记时间自动 / 提醒时间可改可清");
   await sleep(250);
   const rx = store[store.length - 1];
   check("手选时刻后能登记", rx && rx.title === "手选提醒时刻这条", JSON.stringify(rx && rx.order_sn));
-  check("登记时间自动 = 今天（不是手填的）", rx.shipped_at === td, rx && rx.shipped_at);
+  const shipOk = rx && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(rx.shipped_at);
+  const shipNear = shipOk && Math.abs(new Date(rx.shipped_at.replace(" ", "T")).getTime() - Date.now()) < 180000;
+  check("登记时间自动 = 今天、精确到分钟", shipOk && rx.shipped_at.slice(0, 10) === td && shipNear,
+    (rx && rx.shipped_at) + "（应为 " + tdm + " 左右）");
+  check("登记时刻也存成分钟写法（不是 ISO 的 T/Z）",
+    rx && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(rx.created_at), rx && rx.created_at);
   check("提醒就订在手选的时刻",
     Math.abs(new Date(rx.remind_at).getTime() - new Date("2030-01-02T09:30:00").getTime()) < 60000,
     rx && rx.remind_at);
