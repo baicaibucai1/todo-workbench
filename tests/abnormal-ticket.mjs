@@ -449,13 +449,24 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   /* ④ 记到「完结」→ 提醒自动撤掉；这一步带上描述（v1.3.1：每步可有描述性内容） */
   doc.getElementById("dFlow").value = "完结";
   doc.getElementById("dFlowNote").value = "客户同意补发，赠品已补寄并签收，双方无异议";
+  doc.getElementById("dFlowBy").value = "小店客服";
   doc.getElementById("btnFlow").click();
   await waitFor(() => /已完结/.test(doc.querySelector("#detail .remindbox")?.textContent || ""));
   await sleep(60);
   const r2 = store.find((x) => x.id === r0.id);
-  check("描述跟着这一步存进了 flow", /"d":"客户同意补发/.test(r2.flow), r2.flow.slice(0, 160));
-  check("时间线里显示了这一步的描述",
-    /客户同意补发/.test(doc.querySelector("#flowPane .tlitem .ds")?.textContent || ""));
+  check("记录和处理人跟着这一步存进了 flow",
+    /"d":"客户同意补发/.test(r2.flow) && /"by":"小店客服/.test(r2.flow), r2.flow.slice(0, 200));
+  /* 记录是这一步的**主行**（像工单系统「服务进度」的正文），阶段名缩成小标签 */
+  const topItem = doc.querySelector("#flowPane .tlitem");
+  check("记录成了时间线这一步的主行", /客户同意补发/.test(topItem?.querySelector(".nm")?.textContent || ""),
+    topItem?.textContent.slice(0, 80));
+  check("阶段名缩成小标签、处理人显示在 meta 行",
+    /完结/.test(topItem?.querySelector(".stage")?.textContent || "") &&
+    /处理人：小店客服/.test(topItem?.querySelector(".by")?.textContent || ""));
+  check("处理人记住了，下一笔回填",
+    doc.getElementById("dFlowBy") === null ||
+    doc.getElementById("dFlowBy").value === "小店客服",
+    String(doc.getElementById("dFlowBy")?.value));
   check("完结后提醒时刻清空", r2.remind_at === "", JSON.stringify(r2.remind_at));
   check("完结后待办 id 也清空", r2.remind_task === "", JSON.stringify(r2.remind_task));
   const box2 = doc.querySelector("#detail .remindbox")?.textContent || "";
