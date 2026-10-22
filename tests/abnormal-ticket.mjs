@@ -396,16 +396,18 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
     booked[0]?.payload.note);
   check("待办 id 记回了本地行", !!r0.remind_task, JSON.stringify(r0.remind_task));
 
-  /* ② 详情页顺序：基本信息 → 提醒 → 处理；流程**单开右栏一栏**
-       （用户定的：先确认是哪张单，再看提醒 / 处理；流程时间线竖着长，单独占一列） */
+  /* ② 详情页顺序：基本信息 → 提醒（「处理」区已移除 —— 处理是流程的一部分，状态由流程派生）；
+       流程**单开右栏一栏**（时间线竖着长，单独占一列） */
   doc.getElementById("tab-browse").click();
   await sleep(60);
   doc.querySelector("#list .ticket").click();
   await sleep(80);
   const sects = Array.from(doc.querySelectorAll("#detail .sect > h3")).map((h) => h.textContent.trim());
-  check("主栏分区顺序是 基本信息 → 提醒 → 处理",
-    sects.length === 3 && /^基本信息/.test(sects[0])
-      && sects[1] === "跟进提醒" && sects[2] === "处理", sects.join(" / "));
+  check("主栏分区顺序是 基本信息 → 提醒（处理区已移除）",
+    sects.length === 2 && /^基本信息/.test(sects[0]) && sects[1] === "跟进提醒", sects.join(" / "));
+  check("处理区不再渲染（处理方式/结果/结账都没有）",
+    doc.getElementById("dHandling") === null && doc.getElementById("dResult") === null &&
+    doc.getElementById("dSettled") === null && doc.getElementById("btnProc") === null);
   check("流程状态在右栏单独一张卡",
     /流程状态/.test(doc.querySelector("#flowPane h2")?.textContent || ""),
     doc.querySelector("#flowPane h2")?.textContent);

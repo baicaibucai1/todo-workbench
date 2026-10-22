@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.3.5）——整本重写过一次，之后按反馈迭代。
+  异常单号登记（v1.4.0）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -630,8 +630,6 @@
       <div class="grid24">
         <label class="f c12"><span>快递公司</span><textarea id="optCouriers" rows="5"></textarea></label>
         <label class="f c12"><span>情况</span><textarea id="optSituations" rows="5"></textarea></label>
-        <label class="f c12"><span>处理方式</span><textarea id="optHandlings" rows="5"></textarea></label>
-        <label class="f c12"><span>结果</span><textarea id="optResults" rows="5"></textarea></label>
         <label class="f c12"><span>流程状态（中间步骤）</span><textarea id="optFlows" rows="5"></textarea></label>
       </div>
       <div class="r" style="margin-top:8px">
@@ -859,8 +857,6 @@
    * ================================================================== */
   var DEFAULT_COURIERS = ["申通", "中通", "圆通"];
   var DEFAULT_SITUATIONS = ["平台自动退款", "退件标注", "未揽收拦截", "途中拦截", "运单未达", "退件中转（空包）", "缺少物流"];
-  var DEFAULT_HANDLINGS = ["平台申诉", "越级申诉", "快递来源"];
-  var DEFAULT_RESULTS = ["开仓中转"];
   var DEFAULT_FLOWS = ["已联系快递", "平台申诉中"];
   var STATUSES = ["待处理", "处理中", "已关闭"];
   /** 流程的收尾步**固定叫「完结」**：记上就封口，不能再加步（要继续先删掉它） */
@@ -1060,8 +1056,6 @@
     stores: [],
     couriers: DEFAULT_COURIERS.slice(),
     situations: DEFAULT_SITUATIONS.slice(),
-    handlings: DEFAULT_HANDLINGS.slice(),
-    results: DEFAULT_RESULTS.slice(),
     flows: DEFAULT_FLOWS.slice(),
     remindHours: REMIND_HOURS,     // 跟进提醒的间隔（小时）
     remindOff: [],                 // 用户点名「不用提醒」的单子 id
@@ -1103,8 +1097,6 @@
       ["stores", "stores", parseStores],
       ["couriers", "optCouriers", parseList],
       ["situations", "optSituations", parseList],
-      ["handlings", "optHandlings", parseList],
-      ["results", "optResults", parseList],
       ["flows", "optFlows", parseList],
     ];
     for (var i = 0; i < defs.length; i++) {
@@ -1777,15 +1769,8 @@
     }
     html += "</div></div>";
 
-    /* 处理区放最后：处理方式 / 结果 / 结账 —— 一改就落库 */
-    html += '<div class="sect"><h3 data-ico="gear">处理</h3><div class="grid24">'
-      + '<label class="f c8"><span>处理方式</span><select id="dHandling"></select></label>'
-      + '<label class="f c8"><span>结果</span><select id="dResult"></select></label>'
-      + '<label class="f c8"><span>结账</span><select id="dSettled"></select></label>'
-      + "</div>"
-      + '<div class="r" style="margin-top:8px"><button class="primary" id="btnProc">保存处理</button>'
-      + '<span class="hint" id="procMsg" style="margin:0"></span></div></div>';
-
+    /* 「处理」区（处理方式/结果/结账）已移除 —— 处理是流程的一部分，状态由流程派生。
+       台账里那三列还在（14 列契约不动），老数据照常显示，只是不再从这里改。 */
     box.innerHTML = html;
     paintIcos(box);
     /* 流程栏是另一张卡（#flowPane）：内容单独写，图标也要单独画一遍 */
@@ -1841,22 +1826,8 @@
       };
     }
 
-    fillSelect($("dHandling"), cfg.handlings, r.handling);
-    fillSelect($("dResult"), cfg.results, r.result);
-    fillSelect($("dSettled"), ["未结账", "已结账"], r.settled);
     if ($("dFlow")) fillSelect($("dFlow"), flowOptions(), "");
 
-    $("btnProc").onclick = function () {
-      void (async function () {
-        await update(r.id, {
-          handling: $("dHandling").value,
-          result: $("dResult").value,
-          settled: $("dSettled").value,
-        });
-        await load();     // 同上：回显必须在重画之后写，否则刚写完就被冲掉
-        setHint("procMsg", "已保存");
-      })();
-    };
     if ($("btnFlow")) {
       $("btnFlow").onclick = function () {
         void (async function () {
@@ -2136,8 +2107,6 @@
     /* 下拉选项 */
     $("optCouriers").value = cfg.couriers.join("\n");
     $("optSituations").value = cfg.situations.join("\n");
-    $("optHandlings").value = cfg.handlings.join("\n");
-    $("optResults").value = cfg.results.join("\n");
     $("optFlows").value = cfg.flows.join("\n");
 
     /* 跟进提醒：间隔（小时） */
@@ -2539,13 +2508,9 @@
     void (async function () {
       cfg.couriers = parseList($("optCouriers").value) || [];
       cfg.situations = parseList($("optSituations").value) || [];
-      cfg.handlings = parseList($("optHandlings").value) || [];
-      cfg.results = parseList($("optResults").value) || [];
       cfg.flows = parseList($("optFlows").value) || [];
       await cfgSet("optCouriers", JSON.stringify(cfg.couriers));
       await cfgSet("optSituations", JSON.stringify(cfg.situations));
-      await cfgSet("optHandlings", JSON.stringify(cfg.handlings));
-      await cfgSet("optResults", JSON.stringify(cfg.results));
       await cfgSet("optFlows", JSON.stringify(cfg.flows));
       $("optMsg").textContent = "已保存";
       renderCreateForm();
