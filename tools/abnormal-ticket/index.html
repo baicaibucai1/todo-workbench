@@ -352,9 +352,15 @@
   .colpanel {
     position: absolute; z-index: 20; background: var(--bg);
     border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-width: 220px;
+    /* 面板挂在「列」按钮上 —— 按钮靠右，就从按钮右边往左展开，别顶出窗口；
+       15 列竖着排比工具栏高，给它一个上限，多了自己滚 */
+    right: 0; max-height: calc(100vh - 120px); overflow: auto;
   }
-  .colpanel label { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
-  .colpanel .updown { display: flex; gap: 4px; margin-left: auto; }
+  /* ★ 列名是裸文本节点，在 flex 里会变成**可压缩**的匿名项：
+     面板窄一点，它就被挤成「订/单/号」三条竖排 —— 中文的最小内容宽度就是一个字。
+     nowrap 把最小宽度抬回整串，面板才会按最长列名撑开。 */
+  .colpanel label { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; white-space: nowrap; }
+  .colpanel .updown { display: flex; gap: 4px; margin-left: auto; flex: 0 0 auto; }
 
   /* ---------- 日期选择（自绘：原生 date 弹窗不跟主题走） ---------- */
   .dp {
