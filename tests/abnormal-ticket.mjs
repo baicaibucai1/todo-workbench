@@ -446,27 +446,33 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   check("备注改成「流程停在…」", /流程停在「已联系快递」/.test(lastBook?.payload.note || ""),
     lastBook?.payload.note);
 
-  /* ④ 记到「完结」→ 提醒自动撤掉；这一步带上描述（v1.3.1：每步可有描述性内容） */
+  /* ③½ 没选阶段就点「记一步」→ 当场提示，不静默吞掉（记录丢失的真凶就是这个静默返回） */
+  doc.getElementById("dFlow").value = "";
+  doc.getElementById("dFlowNote").value = "只有记录、没选阶段";
+  const toastsBefore = doc.getElementById("toast").children.length;
+  doc.getElementById("btnFlow").click();
+  await sleep(60);
+  check("没选阶段就记一步 → 当场提示而不是静默吞掉",
+    doc.getElementById("toast").children.length > toastsBefore,
+    doc.getElementById("toast").textContent);
+  check("这条记录没有被存进 flow", !/"d":"只有记录/.test(store.find((x) => x.id === r0.id).flow));
+
+  /* ④ 记到「完结」→ 提醒自动撤掉；这一步带上记录（记录=这一步的正文） */
   doc.getElementById("dFlow").value = "完结";
   doc.getElementById("dFlowNote").value = "客户同意补发，赠品已补寄并签收，双方无异议";
-  doc.getElementById("dFlowBy").value = "小店客服";
   doc.getElementById("btnFlow").click();
   await waitFor(() => /已完结/.test(doc.querySelector("#detail .remindbox")?.textContent || ""));
   await sleep(60);
   const r2 = store.find((x) => x.id === r0.id);
-  check("记录和处理人跟着这一步存进了 flow",
-    /"d":"客户同意补发/.test(r2.flow) && /"by":"小店客服/.test(r2.flow), r2.flow.slice(0, 200));
+  check("记录跟着这一步存进了 flow", /"d":"客户同意补发/.test(r2.flow) && !/"by":/.test(r2.flow),
+    r2.flow.slice(0, 200));
   /* 记录是这一步的**主行**（像工单系统「服务进度」的正文），阶段名缩成小标签 */
   const topItem = doc.querySelector("#flowPane .tlitem");
   check("记录成了时间线这一步的主行", /客户同意补发/.test(topItem?.querySelector(".nm")?.textContent || ""),
     topItem?.textContent.slice(0, 80));
-  check("阶段名缩成小标签、处理人显示在 meta 行",
+  check("阶段名缩成小标签、meta 行没有处理人",
     /完结/.test(topItem?.querySelector(".stage")?.textContent || "") &&
-    /处理人：小店客服/.test(topItem?.querySelector(".by")?.textContent || ""));
-  check("处理人记住了，下一笔回填",
-    doc.getElementById("dFlowBy") === null ||
-    doc.getElementById("dFlowBy").value === "小店客服",
-    String(doc.getElementById("dFlowBy")?.value));
+    topItem?.querySelector(".by") === null);
   check("完结后提醒时刻清空", r2.remind_at === "", JSON.stringify(r2.remind_at));
   check("完结后待办 id 也清空", r2.remind_task === "", JSON.stringify(r2.remind_task));
   const box2 = doc.querySelector("#detail .remindbox")?.textContent || "";
