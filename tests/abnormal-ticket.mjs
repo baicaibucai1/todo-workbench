@@ -120,13 +120,15 @@ function host(win, e) {
       });
       return;
     case "wps.mcpPush":
-      // 增量口径：新增 1 行、改 2 个格，表上还有 1 行本地没有（留着不动）
+      // 增量口径：新增 1 行、改 2 个格，表上还有 1 行本地没有（默认留着不动）
+      // force：那一行会被清空 → removed=1
       reply(win, m.id, true, {
         count: store.length,
         appended: 0,
         added: 1,
         changed: 2,
         orphanRows: 1,
+        removed: p.force === true ? 1 : 0,
         dryRun: p.dryRun === true,
       });
       return;
@@ -776,41 +778,74 @@ check("右上角钉了推送按钮（哪个页签都在）",
 doc.getElementById("tab-settings").click();
 await sleep(60);
 
-console.log("\n7. 推送会改表 → 先摆出来，确认了才写");
+console.log("\n7. 推送：先弹窗确认，确定才写（默认只推增量）");
 doc.getElementById("wpsPush").click();
-await sleep(200);
+await sleep(250);
 const push1 = args.filter((a) => a.op === "wps.mcpPush");
 check("推送第一步是 dryRun（只看不写）", push1.length === 1 && push1[0].payload.dryRun === true,
   JSON.stringify(push1.map((a) => a.payload)));
-check("弹出了确认屏", doc.getElementById("wpsPushPreview").hidden === false);
-check("确认屏说清了新增 1 行",
-  /新增 1 行/.test(doc.getElementById("wpsPushText").textContent || ""),
-  (doc.getElementById("wpsPushText").textContent || "").slice(0, 140));
-check("确认屏说清了改 2 个格",
-  /改 2 个格/.test(doc.getElementById("wpsPushText").textContent || ""));
-check("确认屏说明了表上多出来的行留着不动",
-  /留着不动|留着没动/.test(doc.getElementById("wpsPushText").textContent || ""));
+check("默认推送不带 force（只推增量）", push1[0].payload.force !== true,
+  JSON.stringify(push1[0].payload));
+const dlg1 = doc.querySelector(".dlgm");
+check("点推送弹出了确认框（不再是设置页里那块预览）", !!dlg1);
+check("确认框说清了新增 1 行", /新增 1 行/.test(dlg1 ? dlg1.textContent : ""),
+  (dlg1 ? dlg1.textContent : "").slice(0, 140));
+check("确认框说清了改 2 个格", /改 2 个格/.test(dlg1 ? dlg1.textContent : ""));
+check("确认框说明了表上多出来的行留着不动", /留着不动/.test(dlg1 ? dlg1.textContent : ""));
+check("确认按钮是主色（不是删除那种红）", !!doc.querySelector(".dlgm #dlgYes.primary"));
 check("没确认前没有真写", args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== true).length === 0);
-doc.getElementById("wpsPushGo").click();
-await sleep(200);
+doc.getElementById("dlgYes").click();
+await sleep(300);
 const push2 = args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== true);
-check("确认后才真推", push2.length === 1, JSON.stringify(args.filter((a) => a.op === "wps.mcpPush").map((a) => a.payload)));
+check("点确认后才真推", push2.length === 1,
+  JSON.stringify(args.filter((a) => a.op === "wps.mcpPush").map((a) => a.payload)));
+check("真推也是非强制的", push2[0].payload.force !== true, JSON.stringify(push2[0].payload));
+check("确认框收起来了", !doc.querySelector(".dlgm"));
 check("推送结果有回显（说清写了几行几格）",
   /已推送/.test(doc.getElementById("wpsMsg").textContent || "") &&
   /新增 1 行/.test(doc.getElementById("wpsMsg").textContent || ""),
   doc.getElementById("wpsMsg").textContent);
 
-console.log("\n7b. 右上角按钮同样走两步确认");
+console.log("\n7b. 右上角那个按钮也弹窗（以前只往设置页写消息，看着像没反应）");
+doc.getElementById("tab-table").click();          // 换个页签点，证明弹窗不依赖设置页
+await sleep(80);
 doc.getElementById("hdrPush").click();
-await sleep(200);
+await sleep(250);
 check("右上角按钮的第一步也是 dryRun",
-  args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun === true).length >= 1);
-check("又弹出了确认屏", doc.getElementById("wpsPushPreview").hidden === false);
-doc.getElementById("wpsPushCancel").click();
-await sleep(60);
+  args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun === true).length >= 2);
+check("在表格页也弹出了确认框", !!doc.querySelector(".dlgm"));
+doc.getElementById("dlgNo").click();
+await sleep(80);
 check("取消后表上一格没动（没有第二次真写）",
   args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== true).length === 1,
   String(args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== true).length));
+check("取消也给了回执", /已取消/.test(doc.getElementById("wpsMsg").textContent || ""));
+
+console.log("\n7c. 强制推送：连表上多出来的行一起清空");
+doc.getElementById("tab-settings").click();
+await sleep(80);
+const beforeForce = args.filter((a) => a.op === "wps.mcpPush").length;
+doc.getElementById("wpsPushForce").click();
+await sleep(250);
+const dry3 = args.filter((a) => a.op === "wps.mcpPush")[beforeForce];
+check("强制推送的 dryRun 带 force: true",
+  dry3 && dry3.payload.dryRun === true && dry3.payload.force === true,
+  JSON.stringify(dry3 && dry3.payload));
+const dlg3 = doc.querySelector(".dlgm");
+check("弹出了强制推送的确认框", !!dlg3);
+check("确认框写明会清空 1 行", /清空 1 行/.test(dlg3 ? dlg3.textContent : ""),
+  (dlg3 ? dlg3.textContent : "").slice(0, 160));
+check("确认框提醒清空了找不回来", /没法从表上找回/.test(dlg3 ? dlg3.textContent : ""));
+check("强制推送的确认按钮是危险样式", !!doc.querySelector(".dlgm #dlgYes.danger"));
+check("强制推送同样没确认前不写",
+  args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== true).length === 1);
+doc.getElementById("dlgYes").click();
+await sleep(300);
+const real3 = args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== true);
+check("确认后真推且带 force", real3.length === 2 && real3[1].payload.force === true,
+  JSON.stringify(real3.map((a) => a.payload)));
+check("结果里说清了清空 1 行", /清空 1 行/.test(doc.getElementById("wpsMsg").textContent || ""),
+  doc.getElementById("wpsMsg").textContent);
 
 doc.getElementById("wpsPull").click();
 await sleep(250);

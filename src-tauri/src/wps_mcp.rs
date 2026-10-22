@@ -80,8 +80,11 @@ pub struct WpsMcpPush {
     pub added: usize,
     /// 这次改了几个格（两边都有这条单，值不一样）
     pub changed: usize,
-    /// 表上有、本地没有的行数 —— **不会删**，只报出来
+    /// 表上有、本地没有的行数 —— 普通推送**不会删**，只报出来；
+    /// 强制推送时这些行会被清空（见 removed）
     pub orphan_rows: usize,
+    /// 这次**清空**了几行（只有强制推送才有值）
+    pub removed: usize,
     /// true 表示这只是"先算一遍"，一格都没写（用来做推送前确认）
     pub dry_run: bool,
 }
@@ -999,8 +1002,13 @@ pub async fn wps_mcp_sheet_pull(
 /// 对账是**增量**的（2026-10-20 改成）：按单号比对表上和本地，
 ///   · 本地有、表上没有   → 追加一行
 ///   · 两边都有、值不一样 → 只写变了的那些格
-///   · 表上有、本地没有   → 不动（可能是别人手工加的，删了就找不回来）
-/// 只写台账这 14 列，表上其它列（备注 / 公式）一个都不碰。
+///   · 表上有、本地没有   → 默认不动（可能是别人手工加的，删了就找不回来）
+///
+/// `force = true`（设置页的「强制推送」）才把第三类**清空**：
+/// 让在线表格回到"和本机数据库一模一样"的状态。MCP 那三个工具里没有删行接口，
+/// 所以这里的"删"是**把整行内容清空**（含用户自己加的备注列）；行号还占着位置，
+/// 但下次推送会把这些空行当"洞"复用，不会越推越空。
+///
 /// 纯逻辑在 `plan_cloud_sync`（带 6 条断言，含"再推一次什么都不写"的幂等），
 /// 这里只负责把它翻译成 `sheet.update_range_data` 的一批 op。
 #[tauri::command]
@@ -1011,6 +1019,7 @@ pub async fn wps_mcp_sheet_push(
     sheet: Option<String>,
     rows: Vec<JsonMap<String, Json>>,
     dry_run: Option<bool>,
+    force: Option<bool>,
 ) -> Result<WpsMcpPush, String> {
     let (token, client_id) = (token.trim(), client_id.trim());
     if token.is_empty() || client_id.is_empty() {
@@ -1038,6 +1047,9 @@ pub async fn wps_mcp_sheet_push(
     let changed = plan.updates.len();
     let orphan_rows = plan.orphans.len();
     let appended = plan.appended;
+    // 强制推送才清空多余的行；普通推送一个都不动
+    let force = force.unwrap_or(false);
+    let removed = if force { orphan_rows } else { 0 };
 
     // 只算不写：把对账结果原样带回去，让前端先摆一句"要写什么"再动手
     if dry_run.unwrap_or(false) {
@@ -1049,6 +1061,7 @@ pub async fn wps_mcp_sheet_push(
             added,
             changed,
             orphan_rows,
+            removed,
             dry_run: true,
         });
     }
@@ -1069,6 +1082,16 @@ pub async fn wps_mcp_sheet_push(
             ops.push(cell_op(r, col - 1, &formula_for(key, v)));
         }
     }
+    // 4) 强制推送：把表上有、本地没有的行清空。
+    //    ★ 清的是**整行**（到这张表用到的最大列），不只是台账 14 列 ——
+    //    "强制同步"的意思就是让表格回到本地库的样子，留着半行备注更像 bug。
+    //    写空串是这个接口里唯一能清除格子的办法；WPS MCP 没有删行工具。
+    if force {
+        let width = grid.iter().map(|r| r.len()).max().unwrap_or(0);
+        for (row, col) in crate::wps_cloud_plan::clear_cells(&plan.orphans, width) {
+            ops.push(cell_op(row - 1, col, ""));
+        }
+    }
     if ops.is_empty() {
         return Ok(WpsMcpPush {
             count: rows.len(),
@@ -1078,6 +1101,7 @@ pub async fn wps_mcp_sheet_push(
             added: 0,
             changed: 0,
             orphan_rows,
+            removed: 0,
             dry_run: false,
         });
     }
@@ -1112,6 +1136,7 @@ pub async fn wps_mcp_sheet_push(
         added,
         changed,
         orphan_rows,
+        removed,
         dry_run: false,
     })
 }

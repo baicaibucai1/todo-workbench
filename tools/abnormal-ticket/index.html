@@ -415,11 +415,12 @@
     background: rgba(24, 24, 22, .32); padding: 24px;
   }
   .dlg {
-    width: min(360px, 100%); background: var(--bg);
+    width: min(400px, 100%); background: var(--bg);
     border: 2px solid var(--line); border-radius: 10px; padding: 16px 18px 14px;
   }
   .dlg-t { font-size: 14px; font-weight: 600; }
-  .dlg-b { margin-top: 6px; font-size: 13px; color: var(--fg2); line-height: 1.65; }
+  /* pre-line：call 方给的 body 里带 \n 就换行（推送明细是一行一条） */
+  .dlg-b { margin-top: 6px; font-size: 13px; color: var(--fg2); line-height: 1.65; white-space: pre-line; }
   .dlg-b .sn { font-family: var(--mono); color: var(--fg); font-weight: 600; }
   .dlg-r { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   .dlg-r button { min-width: 72px; }
@@ -663,17 +664,15 @@
         <div class="r" style="margin-top:8px">
           <button id="wpsPush" disabled>推送到表格</button>
           <button id="wpsPull" disabled>从表格拉取</button>
+          <button id="wpsPushForce" disabled title="连删除一起同步：表上有、本地没有的行会被清空">强制推送</button>
+        </div>
+        <!-- 两个推送的区别要写在这儿：默认增量，强制才删 -->
+        <div class="hint" style="margin-top:6px">
+          推送只写<b>新增和改动</b>，表上多出来的行留着不动；
+          <b>强制推送</b>会把表格变成和本机一样 —— 表上有、本地没有的记录会被<b>清空</b>（连你自己加的备注列）。
         </div>
       </div>
       <div class="hint" id="wpsMsg"></div>
-      <!-- 推送前的确认：会覆盖 / 会删除多少行，先摆出来 -->
-      <div id="wpsPushPreview" hidden style="margin-top:8px">
-        <div class="hint bad" id="wpsPushText" style="white-space:pre-line"></div>
-        <div class="r" style="margin-top:6px">
-          <button class="primary" id="wpsPushGo">确认推送</button>
-          <button id="wpsPushCancel">取消</button>
-        </div>
-      </div>
       <div id="wpsPreview" hidden style="margin-top:8px">
         <div class="hint" id="wpsPreviewText" style="white-space:pre-line"></div>
         <div class="r" style="margin-top:6px">
@@ -834,7 +833,9 @@
         + esc(o.body || "") + "</div>"
         + '<div class="dlg-r">'
         + '<button id="dlgNo" autofocus>' + esc(o.cancel || "取消") + "</button>"
-        + '<button class="danger" id="dlgYes">' + esc(o.ok || "确定") + "</button>"
+        // 默认是红色（删除这类不可逆操作）；动表格的推送是"常规但重要"，用主色
+        + '<button class="' + (o.okTone === "primary" ? "primary" : "danger") + '" id="dlgYes">'
+        + esc(o.ok || "确定") + "</button>"
         + "</div></div>";
       document.body.appendChild(mask);
 
@@ -2426,6 +2427,7 @@
     }
     $("wpsPush").disabled = !on || wpsBusy;
     $("wpsPull").disabled = !on || wpsBusy;
+    $("wpsPushForce").disabled = !on || wpsBusy;
     var tblPush = $("tblPush");
     if (tblPush) {
       tblPush.disabled = !on || wpsBusy;
@@ -2459,9 +2461,6 @@
     wpsPlan = null;
     $("wpsPreview").hidden = true;
   }
-  function hidePushPreview() {
-    $("wpsPushPreview").hidden = true;
-  }
   async function saveWps() {
     var payload = JSON.stringify(wps);
     try { localStorage.setItem(LS_CFG + "wps.sheet", payload); } catch (e) { /* ignore */ }
@@ -2489,65 +2488,110 @@
     wps = { link: "", fileId: "", name: "", sheet: "", owner: "" };
     $("wpsLink").value = "";
     hideWpsPreview();
-    hidePushPreview();
     setWpsMsg("已解绑");
     void saveWps();
   };
 
-  /* 推送分两步：先 dryRun 问出「会覆盖 / 会清掉几行」，确认了才真写。
-   * 表上是空的、或者本地只多不少时（cl=0 且 ov=0 → 其实 ov>0 就说明会覆盖）
-   * 也要问：只要表上已经有数据行会被顶掉，就摆出来。 */
-  async function doPush(confirmed) {
-    if (wpsBusy || !wps.fileId) return;
+  /* 推送统一走这一条：先 dryRun 看清"会改什么" → 弹确认 → 才真写。
+   *
+   * ★ 三个入口（设置页 / 表格页工具栏 / 页头右上角）都走这里。
+   *   以前它们只把结果写进设置页的 wpsMsg，人在表格页或查看页点，
+   *   屏幕上什么都不变 —— 看着就是"按钮不生效"。现在一律弹窗，哪个页都在。
+   *
+   * force = 设置页那个「强制推送」：连"表上有、本地没有"的行一起清掉。
+   * 普通推送只写增量（新增行 + 变了的格），表上多出来的行留着不动。
+   */
+  async function pushFlow(force) {
+    if (wpsBusy) return;
+    if (!wps.fileId) {
+      toast("还没绑定表格 —— 先去设置里粘一条分享链接");
+      return;
+    }
     wpsBusy = true;
     renderSettings();
     hideWpsPreview();
-    hidePushPreview();
-    setWpsMsg(confirmed ? "正在推送…（整本台账，稍等）" : "正在看这张表现在有什么…");
+    setWpsMsg(force ? "正在核对（强制推送）…" : "正在看两边差多少…");
+    var dry;
     try {
-      var r = await call("wps.mcpPush", { fileId: wps.fileId, sheet: wps.sheet, dryRun: !confirmed }, 120000);
-      var res = r || {};
-      if (!confirmed && res.dryRun) {
-        var add = res.added || 0, chg = res.changed || 0, orph = res.orphanRows || 0;
-        if (!add && !chg && !res.appended) {
-          setWpsMsg("两边一样 —— 表上一格不用改" + (orph ? "（表上有 " + orph + " 行本地没有，留着没动）" : ""));
-          return;
-        }
-        // ★ 只写差量：不是整本覆盖，所以措辞要说清"动哪几格"
-        var lines = ["只写对不上的部分（" + (wps.name || "在线表格") + "）："];
-        if (add) lines.push("· 新增 " + add + " 行 —— 本地有、表上没有的");
-        if (chg) lines.push("· 改 " + chg + " 个格 —— 两边都有这条单、值不一样的那些列");
-        if (res.appended) lines.push("· 末尾补 " + res.appended + " 列台账表头");
-        if (orph) lines.push("· 表上有 " + orph + " 行本地没有 —— 留着不动");
-        lines.push("表上已有的其它行、你自己加的列（备注、公式）一个都不碰。");
-        $("wpsPushText").textContent = lines.join("\n");
-        $("wpsPushPreview").hidden = false;
-        setWpsMsg("先看清楚，确认了才写");
-        return;
-      }
+      dry = await call("wps.mcpPush",
+        { fileId: wps.fileId, sheet: wps.sheet, dryRun: true, force: force }, 120000) || {};
+    } catch (err) {
+      wpsBusy = false;
+      renderSettings();
+      var em = txt(err && err.message ? err.message : err);
+      setWpsMsg(em, true);
+      toast("推送失败：" + em);
+      return;
+    }
+    wpsBusy = false;
+    renderSettings();
+
+    var add = dry.added || 0, chg = dry.changed || 0;
+    var orph = dry.orphanRows || 0, app = dry.appended || 0;
+    var willRemove = force ? (dry.removed || 0) : 0;
+
+    if (!add && !chg && !app && !willRemove) {
+      var same = "两边一样 —— 表上一格不用改";
+      if (orph && !force) same += "（表上有 " + orph + " 行本地没有，留着没动；要清掉用「强制推送」）";
+      setWpsMsg(same);
+      toast(same);
+      return;
+    }
+
+    var lines = [];
+    if (add) lines.push("· 新增 " + add + " 行 —— 本地有、表上没有");
+    if (chg) lines.push("· 改 " + chg + " 个格 —— 两边都有这条单，值不一样");
+    if (app) lines.push("· 末尾补 " + app + " 列台账表头");
+    if (willRemove) {
+      lines.push("· 清空 " + willRemove + " 行 —— 表上有、本地没有的（含你自己加的备注列）");
+      lines.push("清空之后没法从表上找回，只能重新推。");
+    } else if (orph) {
+      lines.push("· 表上有 " + orph + " 行本地没有 —— 留着不动（要清掉用「强制推送」）");
+    }
+    if (!force) lines.push("表上别的行、你自己加的列，一个都不碰。");
+
+    var go = await ask({
+      title: force ? "强制推送：表格将与本机一致" : "推送到表格",
+      body: lines.join("\n"),
+      ok: force ? "清空并推送" : "推送",
+      cancel: "取消",
+      okTone: force ? "danger" : "primary",
+    });
+    if (!go) {
+      setWpsMsg("已取消，表上一格没动");
+      toast("已取消，表格没动");
+      return;
+    }
+
+    wpsBusy = true;
+    renderSettings();
+    setWpsMsg(force ? "正在推送（含清空）…" : "正在推送…");
+    try {
+      var res = await call("wps.mcpPush",
+        { fileId: wps.fileId, sheet: wps.sheet, dryRun: false, force: force }, 120000) || {};
       var done = [];
       if (res.added) done.push("新增 " + res.added + " 行");
       if (res.changed) done.push("改了 " + res.changed + " 个格");
-      setWpsMsg("已推送到「" + (wps.name || "在线表格") + "」："
+      if (res.removed) done.push("清空 " + res.removed + " 行");
+      var msg = "已推送到「" + (wps.name || "在线表格") + "」："
         + (done.length ? done.join("、") : "两边一样，没写任何格子")
-        + (res.appended ? "（末尾补了 " + res.appended + " 列台账表头）" : "")
-        + (res.orphanRows ? "；表上有 " + res.orphanRows + " 行本地没有，留着没动" : ""));
+        + (res.appended ? "（末尾补了 " + res.appended + " 列台账表头）" : "");
+      setWpsMsg(msg);
+      toast(msg);
     } catch (err) {
-      setWpsMsg(txt(err && err.message ? err.message : err), true);
+      var e2 = txt(err && err.message ? err.message : err);
+      setWpsMsg(e2, true);
+      toast("推送失败：" + e2);
     } finally {
       wpsBusy = false;
       renderSettings();
     }
   }
-  function bindPush(el) { if (el) el.onclick = function () { void doPush(false); }; }
+  function bindPush(el) { if (el) el.onclick = function () { void pushFlow(false); }; }
   bindPush($("wpsPush"));
   bindPush($("tblPush"));
   bindPush($("hdrPush"));
-  $("wpsPushGo").onclick = function () { void doPush(true); };
-  $("wpsPushCancel").onclick = function () {
-    hidePushPreview();
-    setWpsMsg("已取消，表上一格没动");
-  };
+  $("wpsPushForce").onclick = function () { void pushFlow(true); };
 
   function bindPull(el) { if (el) el.onclick = function () { void doPull(); }; }
   bindPull($("wpsPull"));
@@ -2557,7 +2601,6 @@
     wpsBusy = true;
     renderSettings();
     hideWpsPreview();
-    hidePushPreview();
     setWpsMsg("正在拉取…");
     try {
       var r = await call("wps.mcpPull", { fileId: wps.fileId, sheet: wps.sheet }, 120000);

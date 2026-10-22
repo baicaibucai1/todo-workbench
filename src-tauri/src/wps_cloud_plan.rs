@@ -271,6 +271,21 @@ pub fn plan_cloud_sync(
     })
 }
 
+/// 强制推送要清空的格：表上有、本地没有的**整行**（0-based，含用户自己加的列）。
+///
+/// 为什么清整行而不是只清台账 14 列：强制推送的语义是"表格与本机一致"。
+/// 只清台账列会留下半行区号 / 备注，看着比不删更怪。宽度由调用方按这张表
+/// 实际用到的最宽行给出 —— 少清会残留，清多只是多写几个空串（无害）。
+pub fn clear_cells(orphans: &[SyncOrphan], width: usize) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    for o in orphans {
+        for c in 0..width {
+            out.push((o.row, c));
+        }
+    }
+    out
+}
+
 pub fn plan_cloud_write(
     header: &[String],
     old_rows: usize,
@@ -554,5 +569,23 @@ mod tests {
         // 14 列从第 1 列开始排，不从中间或者 15 列开始
         assert_eq!(cols[0]["col"], 1);
         assert_eq!(cols[COLUMNS.len() - 1]["col"], COLUMNS.len());
+    }
+
+    /// 强制推送：每个"表上有、本地没有"的行整行清空 —— 一个不漏，也不多清。
+    /// 清空的列宽由调用方给（这张表实际用到的最宽行），所以这里只验行/列展开。
+    #[test]
+    fn force_clear_covers_whole_rows() {
+        let orphans = vec![
+            SyncOrphan { row: 4, key: "777-777".to_string() },
+            SyncOrphan { row: 9, key: "888-888".to_string() },
+        ];
+        let cells = clear_cells(&orphans, 15);
+        assert_eq!(cells.len(), 30, "2 行 × 15 列");
+        assert_eq!(cells[0], (4, 0), "第一行从第一列开始");
+        assert_eq!(cells[14], (4, 14), "第一行清到最后一列");
+        assert_eq!(cells[15], (9, 0), "第二行接着来");
+        assert_eq!(cells[29], (9, 14));
+        assert!(clear_cells(&orphans, 0).is_empty(), "宽度 0 不该清任何格");
+        assert!(clear_cells(&[], 15).is_empty(), "没有多余行就一个格都不清");
     }
 }

@@ -463,6 +463,8 @@ interface ToolRequest {
     text?: string;
     /** wps.mcpPush：true = 只算对账、一格都不写（推送前先看会改掉什么） */
     dryRun?: boolean;
+    /** wps.mcpPush：true = 强制同步，表上有本地没有的行会被清空（默认不动） */
+    force?: boolean;
   };
 }
 
@@ -1657,6 +1659,7 @@ export function createToolBridge(
             // dryRun：先算一遍对账（会覆盖几行、会清空几行），一格都不写。
             // 工具拿到这两个数字，要删东西时先问一句再真推。
             const dry = payload?.dryRun === true;
+            const force = payload?.force === true;
             const r = await mcpSheetPush(
               pFileId,
               pSheet,
@@ -1664,6 +1667,7 @@ export function createToolBridge(
               mcpToken,
               mcpClientId,
               dry,
+              force,
             );
             return reply(id, true, {
               count: r.count,
@@ -1671,6 +1675,7 @@ export function createToolBridge(
               added: r.added,
               changed: r.changed,
               orphanRows: r.orphan_rows,
+              removed: r.removed,
               dryRun: r.dry_run,
             });
           }

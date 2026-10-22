@@ -152,8 +152,10 @@ export type McpPush = {
   added: number;
   /** 这次改动的格数（两边都有这条单，值不一样） */
   changed: number;
-  /** 表上有、本地没有的行数 —— 不会删，只报出来 */
+  /** 表上有、本地没有的行数 —— 普通推送不会删，只报出来 */
   orphan_rows: number;
+  /** 这次清空了几行 —— 只有强制推送（force）才有值 */
+  removed: number;
   /** true = 只是先算了一遍，一格没写 */
   dry_run: boolean;
 };
@@ -222,7 +224,10 @@ export async function mcpSheetPull(
  * 推送台账到在线表格：**只写台账那 14 列**。
  *
  * 对账逻辑（找列 / 缺列补末尾 / 多出的旧行清空 / 表头认不出就停手）全在
- * Rust 的 `plan_cloud_write`，这次只换了下发方式，语义一个字没改。
+ * Rust 的 `plan_cloud_sync`，这次只换了下发方式，语义一个字没改。
+ *
+ * `force`：设置页那个「强制推送」用的。默认 false 时表上有、本地没有的行
+ * 只报出来不动；true 时把这些行**清空**，让表格和本机库一致。
  */
 export async function mcpSheetPush(
   fileId: string,
@@ -231,6 +236,7 @@ export async function mcpSheetPush(
   token: string,
   clientId: string,
   dryRun = false,
+  force = false,
 ): Promise<McpPush> {
   if (!isTauri()) desktopOnly();
   return invoke<McpPush>("wps_mcp_sheet_push", {
@@ -240,6 +246,7 @@ export async function mcpSheetPush(
     sheet: sheet || null,
     rows,
     dryRun,
+    force,
   });
 }
 
