@@ -1043,6 +1043,24 @@
    * ================================================================== */
   var rows = [];          // 全量（台账量级：几百到几千，一次拉全最简单也最不容易错）
   var selectedId = null;
+  /* 库里的 tickets 表**有没有 indemnity（赔款数）列**。
+     1.6.0 新增这一列，但**给人补列的是工作台**：旧版工作台只跑 CREATE IF NOT EXISTS，
+     对已有表一句废话，写这个字段会报 "no such column" —— 那种失败发生在点「登记」的
+     当口，用户看到的是"工具坏了"。所以挂载时探一次，探不到就只把赔款数降级
+     （输入禁用 + 说明），其余功能照常。
+     探测办法：对一条不存在的 id 做一次带 indemnity 的空 update —— 影响 0 行，
+     列在 = 成功，列不在 = SQL 编译就报错。比用 schema.info 可靠：
+     那边返回的是 manifest 声明，不是数据库真实列。 */
+  var hasIndemnity = true;
+  async function probeIndemnity() {
+    if (!bound()) return true;      // 独立态只有 localStorage，没有列这回事
+    try {
+      await call("row.update", { table: TABLE, id: "__probe_indemnity__", patch: { indemnity: "" } });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
   /* 详情「基本信息」解锁的那一条的 id —— 只对这一条生效，切走 / 存完都自动回锁。
      存行 id 而不是布尔值，是为了换一条单子时它自己就是锁的（不然手滑改的是新那条）。 */
   var baseEditId = "";
@@ -1622,10 +1640,10 @@
       flow: "",
       remind_at: "",
       remind_task: "",
-      indemnity: "",
       created_at: now,
       updated_at: now,
     };
+    if (hasIndemnity) row.indemnity = "";   // 旧版工作台的表没这列，别硬带
     var saved = await insert(row);
     /* 提醒：框里是默认预填的（没动过）→ 按**登记这一刻** + N 小时重算；
        手选过就按手选的；被清空 → 交回流程派发（syncRemind）。 */
@@ -1954,6 +1972,11 @@
     renderPills($("dStore"), cfg.stores.map(function (s) { return s.name; }), txt(r.store), null, !editingBase);
     renderPills($("dCategory"), cfg.situations, txt(r.category), null, !editingBase);
     setBaseLock(!editingBase);
+    if (!hasIndemnity && $("dIndemnity")) {
+      // 旧版工作台：列都建不出来，输入框摆着只会让人填了个必然存不上的数
+      $("dIndemnity").disabled = true;
+      $("dIndemnity").placeholder = "旧版工作台不支持 —— 升级后可用";
+    }
     $("dDate").onfocus = function () { openDp(this); };
     $("dDate").onclick = function () { openDp(this); };
     if ($("dRemind")) {
@@ -1975,7 +1998,7 @@
           var order = washOrder(readErp($("dOrder").value).order || $("dOrder").value);
           var track = washOrder($("dTrack").value);
           if (!order && !track) { setHint("editMsg", "订单号和快递单号不能都空", true); return; }
-          await update(r.id, {
+          var patch = {
             order_sn: order,
             tracking_no: track,
             courier: pillVal($("dCourier")),
@@ -1984,8 +2007,9 @@
             category: pillVal($("dCategory")),
             title: $("dTitle").value.trim(),
             note: $("dNote").value.trim(),
-            indemnity: $("dIndemnity").value.trim(),
-          });
+          };
+          if (hasIndemnity) patch.indemnity = $("dIndemnity").value.trim();
+          await update(r.id, patch);
           baseEditId = "";      // 存完回锁 —— 别让输入框一直敞着
           await load();     // ★ 重画会把提示条冲掉 —— 回显必须在 load 之后写
           setHint("editMsg", "已保存「" + (order || track) + "」");
@@ -2816,7 +2840,14 @@
     } catch (err) {
       $("schema").textContent = "读不到表结构：" + txt(err.message);
     }
+    /* 赔款数列探一次（旧版工作台会缺）：探不到就降级 —— 详情里的输入禁用、
+       写库时不带这个字段。探完重画一遍，让界面马上反映出来。 */
+    hasIndemnity = await probeIndemnity();
     await load();
+    if (!hasIndemnity) {
+      renderDetail();
+      renderTable();
+    }
   }
 
   (function boot() {

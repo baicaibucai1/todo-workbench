@@ -856,6 +856,94 @@ console.log("\n8. 独立打开也还是个能用的网页（不连宿主）");
   d2.window.close();
 }
 
+console.log("\n9. 旧版工作台（表里没 indemnity 列）→ 赔款数降级、其余照常");
+{
+  const vc3 = new VirtualConsole();
+  const errs3 = [];
+  vc3.on("jsdomError", (e) => errs3.push(String(e.message || e)));
+  vc3.on("error", (...a) => errs3.push(a.join(" ")));
+  const d3 = new JSDOM(HTML, {
+    url: "http://localhost/abnormal-ticket/oldhost.html",
+    runScripts: "dangerously",
+    pretendToBeVisual: true,
+    virtualConsole: vc3,
+  });
+  const w3 = d3.window;
+
+  // 假宿主：凡带 indemnity 的 update 一律当「no such column」拒掉 —— 旧版宿主的样子
+  const store3 = [];
+  const ops3 = [];
+  const kv3 = {};
+  const reply3 = (id, ok, data, error) =>
+    w3.postMessage({ source: "workbench-host", type: "tool:response", id, ok, data, error }, "*");
+  w3.addEventListener("message", (e) => {
+    const m = e.data;
+    if (!m || m.source !== "workbench-tool" || m.type !== "tool:request") return;
+    const p = m.payload || {};
+    ops3.push({ op: m.op, payload: p });
+    switch (m.op) {
+      case "row.select": return reply3(m.id, true, { rows: store3.slice() });
+      case "row.insert": {
+        const row = Object.assign({ id: "old-" + store3.length, created_at: new Date().toISOString() }, p.row || {});
+        store3.push(row);
+        return reply3(m.id, true, { row });
+      }
+      case "row.update": {
+        if (p.patch && "indemnity" in p.patch) return reply3(m.id, false, null, "no such column: indemnity");
+        const row = store3.find((r) => r.id === p.id) || null;
+        if (row) Object.assign(row, p.patch || {});
+        return reply3(m.id, true, { row });
+      }
+      case "kv.get": return reply3(m.id, true, { value: kv3[p.key] ?? null });
+      case "kv.set": kv3[p.key] = p.value; return reply3(m.id, true, { ok: true });
+      case "task.remind": return reply3(m.id, true, { taskId: "old-task" });
+      default: return reply3(m.id, true, {});
+    }
+  });
+  w3.postMessage({ source: "workbench-host", type: "tool:context", data: { theme: "light", gallery: false } }, "*");
+  await sleep(400);
+  const d3doc = w3.document;
+  check("旧宿主：状态照常连上", d3doc.body.dataset.bindState === "bound", d3doc.body.dataset.bindState);
+
+  // 登记：insert 不该带这一列（带了会整条插不进去）
+  d3doc.getElementById("tab-create").click();
+  await sleep(60);
+  d3doc.getElementById("fOrder").value = "261020-5555";
+  d3doc.getElementById("btnAdd").click();
+  await sleep(250);
+  check("旧宿主：登记照样成功", store3.length === 1, String(store3.length));
+  const ins3 = ops3.find((o) => o.op === "row.insert");
+  check("旧宿主：insert 的 row 里没有 indemnity", ins3 && !("indemnity" in (ins3.payload.row || {})),
+    JSON.stringify(ins3 && ins3.payload.row));
+
+  // 详情：赔款数输入禁用并说明
+  d3doc.getElementById("tab-browse").click();
+  await sleep(60);
+  d3doc.querySelector("#list .ticket").click();
+  await sleep(80);
+  check("旧宿主：赔款数输入被禁用并说明原因",
+    d3doc.getElementById("dIndemnity")?.disabled === true &&
+    /升级后可用/.test(d3doc.getElementById("dIndemnity")?.placeholder || ""),
+    d3doc.getElementById("dIndemnity")?.placeholder);
+
+  // 解锁保存：patch 也不该带
+  d3doc.getElementById("btnBaseToggle").click();
+  await sleep(80);
+  check("旧宿主：解锁后赔款数仍是禁用的", d3doc.getElementById("dIndemnity").disabled === true);
+  d3doc.getElementById("dTitle").value = "旧宿主改一句";
+  const updBefore = ops3.filter((o) => o.op === "row.update").length;
+  d3doc.getElementById("btnEdit").click();
+  await sleep(250);
+  const upd3 = ops3.filter((o) => o.op === "row.update").pop();
+  check("旧宿主：保存成功且 patch 不碰 indemnity",
+    ops3.filter((o) => o.op === "row.update").length === updBefore + 1 &&
+    !("indemnity" in (upd3.payload.patch || {})),
+    JSON.stringify(upd3 && upd3.payload.patch));
+  check("旧宿主：保存真的落库了", store3[0].title === "旧宿主改一句", store3[0].title);
+  check("旧宿主：全程无未捕获报错", errs3.length === 0, errs3.join(" | "));
+  d3.window.close();
+}
+
 console.log("\n====================================================");
 console.log(`    通过 ${pass} / 失败 ${fail}`);
 if (failures.length) {

@@ -199,14 +199,19 @@ function columnDdl(col: ToolColumn): string {
 /**
  * 按工具的 schema 声明建表。
  *
- * 幂等且**按版本跳过**：台账里记着的版本与 manifest.dbVersion 一致时直接返回，
- * 连 DDL 都不发。省一次往返是小事，关键是避免"每次挂载都重跑 DDL"这种
+ * 幂等且**按版本跳过 CREATE**：台账里记着的版本与 manifest.dbVersion 一致时
+ * 不再发建表 DDL。省一次往返是小事，关键是避免"每次挂载都重跑 DDL"这种
  * 看起来无害、实则掩盖版本漂移的写法。
  *
- * 版本变了也不只是重跑 CREATE：`IF NOT EXISTS` 对**已经按老版本建好的表**
- * 是一句废话，manifest 里新增的列不会自己长出来。所以这里先做一次列对账，
- * 缺的列用 ALTER TABLE 一条条补上 —— 工具加字段（比如异常单 v1.6.0 的
- * 「赔款数」）才真正落到老用户的库里，而不是只在全新安装时生效。
+ * 但**列对账每次都做**（每张表一次 `SELECT * LIMIT 1`，忽略不计）：
+ * `CREATE TABLE IF NOT EXISTS` 对已经按老版本建好的表是一句废话，
+ * manifest 里新增的列不会自己长出来 —— 工具的「赔款数」这种新字段
+ * 要真的落到老用户的库里，只能靠 ALTER。
+ *
+ * 为什么不做「版本相同就直接返回」：版本台账可能已经**被写脏** ——
+ * 比如用户先升级了工具、工作台还是旧版（旧版不会补列，但会把台账记成新版本），
+ * 之后再换新版，两边版本一相等就永远跳过，缺的列再也补不回来。
+ * 每次都对一遍，这种"一步错、步步错"就自愈了。
  *
  * @param version manifest.dbVersion
  */
@@ -219,14 +224,17 @@ export async function ensureToolSchema(
   if (validated.length === 0) return { applied: false, tables: [] };
 
   const ledger = await schemaVersionOf(toolId);
-  if (ledger === version) return { applied: false, tables: validated };
-
   const alters = await missingColumnSql(validated);
+  const needCreate = ledger !== version;
+  if (!needCreate && alters.length === 0) return { applied: false, tables: validated };
 
   // 一次发过去，而不是一张表一趟 IPC：桌面端每趟都要往 Rust 跑一圈，
   // 而 DDL 本来就是原子的准备动作，中途失败下一次挂载会重新来过。
-  const script = validated.map(createTableSql).join(";\n");
-  await db().execute(alters.length ? `${script};\n${alters.join(";\n")}` : script);
+  // 只补列（版本没变）时不重发 CREATE —— 免得让人误读成"又建了一遍表"。
+  const stmts = needCreate
+    ? [validated.map(createTableSql).join(";\n"), ...alters]
+    : alters;
+  await db().execute(stmts.join(";\n"));
 
   // 台账更新用「先查后写」而不是 INSERT OR REPLACE：
   // 内存库的 mini-SQL 不认 upsert 语法，两个驱动得共用同一段 SQL
@@ -237,7 +245,7 @@ export async function ensureToolSchema(
       `INSERT INTO core_tool_schema (tool_id, version, applied_at) VALUES (?, ?, ?)`,
       [toolId, version, now],
     );
-  } else {
+  } else if (ledger !== version) {
     await db().execute(
       `UPDATE core_tool_schema SET version = ?, applied_at = ? WHERE tool_id = ?`,
       [version, now, toolId],
