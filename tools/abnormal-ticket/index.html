@@ -143,7 +143,7 @@
   .f { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .f > span { font-size: 11.5px; color: var(--fg2); padding-left: 2px; }
   .c4 { grid-column: span 4; } .c6 { grid-column: span 6; } .c8 { grid-column: span 8; }
-  .c12 { grid-column: span 12; } .c24 { grid-column: span 24; }
+  .c12 { grid-column: span 12; } .c16 { grid-column: span 16; } .c24 { grid-column: span 24; }
   /* 单号类的格用等宽 —— 数字位数一眼数清，也跟登记页的大横条一致 */
   input.mono { font-family: var(--mono); letter-spacing: .2px; }
   @media (max-width: 900px) {
@@ -324,6 +324,8 @@
   /* ---------- 表格页 ---------- */
   .tblbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
   .tblbar input { flex: 1 1 220px; width: auto; }
+  /* 筛选 / 排序下拉：按内容宽度，窄到 120 就不再压（选项字比这长时尾部省略） */
+  .tblbar select { flex: 0 1 auto; width: auto; min-width: 104px; max-width: 150px; padding: 6px 8px; font-size: 12px; }
   .tblscroll { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
   table { border-collapse: collapse; width: 100%; font-size: 12px; }
   th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -509,8 +511,8 @@
           <input id="fTrack" placeholder="没有订单号时至少填这个" autocomplete="off" spellcheck="false" /></label>
         <div class="f c8"><span class="lbl" data-ico="truck">快递公司</span>
           <div class="pills" id="fCourier"></div></div>
-        <label class="f c8"><span class="lbl" data-ico="cal">登记时间</span>
-          <input id="fDate" placeholder="点这里选（今天 / 昨天 / 前天）" autocomplete="off" spellcheck="false" /></label>
+        <label class="f c8"><span class="lbl" data-ico="bell">提醒时间</span>
+          <input id="fRemindAt" readonly placeholder="默认登记后 24 小时" autocomplete="off" spellcheck="false" /></label>
 
         <div class="f c24"><span class="lbl" data-ico="shop">店铺</span>
           <div class="pills" id="fStore"></div></div>
@@ -536,8 +538,16 @@
         <div class="card" style="padding:8px 10px">
           <input id="search" placeholder="搜订单号 / 快递单号 / 描述" />
           <div class="r" style="margin-top:6px">
-            <select id="fltStore" style="flex:1 1 auto"></select>
-            <select id="fltStatus" style="flex:1 1 auto"></select>
+            <select id="fltStore" style="flex:1 1 40%"></select>
+            <select id="fltStatus" style="flex:1 1 40%"></select>
+          </div>
+          <div class="r" style="margin-top:6px">
+            <select id="fltCourier" style="flex:1 1 40%"></select>
+            <select id="fltCategory" style="flex:1 1 40%"></select>
+          </div>
+          <!-- 排序：登记时间 / 提醒时间，各带方向。选择会记住（见 LS_SORT） -->
+          <div class="r" style="margin-top:6px">
+            <select id="sortBy" style="flex:1 1 100%"></select>
           </div>
         </div>
         <div class="listwrap" id="list"></div>
@@ -562,13 +572,20 @@
   <section class="view" id="view-table" hidden>
     <div class="tblbar">
       <input id="tableSearch" placeholder="搜订单号 / 快递单号 / 店铺 / 描述 / 处理" />
+      <!-- 筛选与排序跟「查看」页**共用同一套值**：两处筛的是同一批单子，
+           各记一套会精神分裂（这边筛了店铺，切过去还全都在） -->
+      <select id="tfltStore" title="店铺"></select>
+      <select id="tfltStatus" title="状态"></select>
+      <select id="tfltCourier" title="快递公司"></select>
+      <select id="tfltCategory" title="情况"></select>
+      <select id="tsortBy" title="排序"></select>
       <span class="meta" id="tableStats"></span>
       <span class="spacer"></span>
       <!-- 推 / 拉就放在台账旁边：在哪看数据，就在哪同步（只能在宿主里跑） -->
       <button id="tblPush" data-host-only disabled>推送到表格</button>
       <button id="tblPull" data-host-only disabled>从表格拉取</button>
       <div style="position:relative">
-        <button id="colBtn">列 · <span id="colCount">14/14</span></button>
+        <button id="colBtn">列 · <span id="colCount">15/15</span></button>
         <div class="colpanel" id="colPanel" hidden></div>
       </div>
     </div>
@@ -589,7 +606,8 @@
       <h2>在线表格（WPS）</h2>
       <p class="note" style="margin:0 0 8px">
         每张 WPS 授权都有<b>一条分享链接</b> —— 粘一条进来就认出是哪张表，之后就在本工具里
-        <b>推送 / 拉取</b>。<b>只写台账那 14 列</b>：你自己加的备注列、公式列一格都不动；
+        <b>推送 / 拉取</b>。<b>只写台账那 14 列</b>：你自己加的备注列、公式列一格都不动，
+        <b>赔款数这类本地列的也不推</b>（它只在工具里记）；
         <b>推送是增量的</b> —— 按单号比对，只写「本地新增的行」和「值变了的那些格」，
         表上已有的行不重写，表上有而本地没有的行留着不动；
         拉取<b>先看差异、确认了才写库</b>。授权在 <b>设置 → WPS 授权</b> 里做一次就行
@@ -778,6 +796,7 @@
     bell: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 11.2V7.2a3.6 3.6 0 1 1 7.2 0v4"/><path d="M3 11.2h10M6.6 13.2h2.8"/></svg>',
     grid: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.4" y="2.4" width="11.2" height="11.2" rx="1.6"/><path d="M2.4 6.1h11.2M2.4 9.9h11.2M6.1 2.4v11.2M9.9 2.4v11.2"/></svg>',
     lock: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.4" rx="1.4"/><path d="M5.8 7V5.4a2.2 2.2 0 0 1 4.4 0V7"/></svg>',
+    cash: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.9" y="4.4" width="12.2" height="7.2" rx="1.2"/><circle cx="8" cy="8" r="1.8"/><path d="M4.3 6.4v.1M11.7 9.5v.1"/></svg>',
   };
 
   /* 空态插画：一张虚线单据 + 一个放大镜。描边、中性灰、跟着主题反色。
@@ -873,9 +892,9 @@
     if (locked) sect.classList.add("locked"); else sect.classList.remove("locked");
   }
 
-  /** 给下拉填选项。首格是空值（显示「待选」），value 是它的原样文本 */
-  function fillSelect(sel, list, keepValue) {
-    var html = '<option value="">待选</option>';
+  /** 给下拉填选项。首格是空值（文案默认「待选」，筛选用「全部店铺」这种）。 */
+  function fillSelect(sel, list, keepValue, firstLabel) {
+    var html = '<option value="">' + esc(firstLabel || "待选") + "</option>";
     for (var i = 0; i < list.length; i++) {
       var v = txt(list[i]);
       if (!v) continue;
@@ -905,7 +924,9 @@
   var REMIND_HOURS = 24;
   var REMIND_GAP_MS = 60 * 1000;   // 派生时刻与实际订的时刻差在这以内就算一致（幂等）
 
-  /** 台账 14 列：与宿主 Rust 那份 COLUMNS 同序同列（推送给在线表格就按这个排） */
+  /** 台账 14 列：与宿主 Rust 那份 COLUMNS 同序同列（推送给在线表格就按这个排）。
+      **赔款数（indemnity）不在推送范围**：推送的列与对账都在宿主（wps_cloud_plan.rs），
+      那边只认这 14 列；这里末尾多出来的一列只在本地存 / 表格页显示。 */
   var COLS = [
     ["order_sn", "订单号", 6],
     ["tracking_no", "快递单号", 6],
@@ -921,7 +942,31 @@
     ["note", "处理情况", 6],
     ["created_at", "登记时刻", 6],
     ["updated_at", "更新时刻", 6],
+    ["indemnity", "赔款数", 3],
   ];
+
+  /* 查看页 / 表格页共用的排序项。值 = "key:dir"，存 localStorage。
+     登记时间按 created_at（精确到分）；提醒时间按**实际生效**的时刻
+     （手改过就是手改的，没手改就是流程派发算出来的）。 */
+  var SORTS = [
+    ["created:desc", "登记时间 · 新在前"],
+    ["created:asc", "登记时间 · 旧在前"],
+    ["remind:asc", "提醒时间 · 早在前"],
+    ["remind:desc", "提醒时间 · 晚在前"],
+  ];
+  var LS_SORT = "wbtool:" + TOOL_ID + ":sort";
+  var sortKey = "created", sortDir = "desc";
+  function loadSort() {
+    try {
+      var p = (localStorage.getItem(LS_SORT) || "").split(":");
+      if ((p[0] === "created" || p[0] === "remind") && (p[1] === "asc" || p[1] === "desc")) {
+        sortKey = p[0]; sortDir = p[1];
+      }
+    } catch (e) { /* 无痕模式读不到，用默认 */ }
+  }
+  function saveSort() {
+    try { localStorage.setItem(LS_SORT, sortKey + ":" + sortDir); } catch (e) { /* 存不上就算 */ }
+  }
 
   /* ==================================================================
    * 2. 与宿主通信（postMessage）
@@ -1387,17 +1432,33 @@
   /* ==================================================================
    * 6. 登记页
    * ================================================================== */
+  /* 「提醒时间」的预填：默认 现在 + N 小时。
+     ★ 用户没动过这个框（值 === 上次预填）时，登记按**登记那一刻**重算 ——
+       页面开着几小时再登记，默认提醒应该是"登记时间 + N 小时"，
+       而不是"打开页面那一刻 + N 小时"；手选过就按手选的；清空 = 交回流程派发。 */
+  var fRemindPre = "";
+  /* 用户主动清空过（= 这条按流程派发，不手定时刻）。★ 必须记这一笔：
+     否则下次重画（记录流程后 load）又把默认值填回去，用户以为清掉了、其实提醒照样订上。 */
+  var fRemindCleared = false;
+  function prefillRemindAt() {
+    fRemindPre = fmtMin(new Date(Date.now() + remindHours() * 3600000));
+    $("fRemindAt").value = fRemindPre;
+    fRemindCleared = false;
+  }
   function renderCreateForm() {
     var names = cfg.stores.map(function (s) { return s.name; });
     // ★ 店铺 / 快递公司**留着上次选的**（连着录下一条不用重选）；「情况」是这一条才有的，每录完清空
     renderPills($("fStore"), names, pillVal($("fStore")));
     renderPills($("fCourier"), cfg.couriers, pillVal($("fCourier")));
     renderPills($("fCategory"), cfg.situations, pillVal($("fCategory")));
-    $("fDate").value = $("fDate").value || todayStr();
+    // 登记时间不再手填（就是当下）；这个框放的是提醒时间，空着就预填默认值
+    // （清空过的不重填 —— 那是用户明确说「这条按流程派发」）
+    if (!$("fRemindAt").value && !fRemindCleared) prefillRemindAt();
     var noteEl = $("addNote");
     if (noteEl) {
-      noteEl.textContent = "订单号和快递单号至少填一个。登记后店铺 / 快递公司 / 登记时间会留着，"
-        + "方便连着录下一条；同时自动订 " + remindHours() + " 小时后的跟进提醒（记一步流程会自动顺延）。";
+      noteEl.textContent = "订单号和快递单号至少填一个。登记时间就是当下；提醒时间默认 "
+        + remindHours() + " 小时后，点一下可以改或清掉（清掉就按流程派发：每记一步流程自动顺延）。"
+        + "登记后店铺 / 快递公司会留着，方便连着录下一条。";
     }
     $("todayCount").textContent = "今日已登记 " + rows.filter(function (r) {
       return txt(r.created_at).slice(0, 10) === todayStr();
@@ -1521,7 +1582,6 @@
     var track = washOrder($("fTrack").value);
     var store = pillVal($("fStore"));
     var courier = pillVal($("fCourier"));
-    var date = $("fDate").value.trim();
     var category = pillVal($("fCategory"));
     var title = $("fTitle").value.trim();
     var msg = $("addMsg");
@@ -1551,7 +1611,7 @@
       order_sn: order,
       tracking_no: track,
       courier: courier,
-      shipped_at: date || todayStr(),
+      shipped_at: todayStr(),      // 登记时间 = 当下，不再手填
       store: store,
       category: category,
       title: title,
@@ -1562,24 +1622,34 @@
       flow: "",
       remind_at: "",
       remind_task: "",
+      indemnity: "",
       created_at: now,
       updated_at: now,
     };
     var saved = await insert(row);
-    // ★ 登记即派发：默认 N 小时后提醒跟进（N 在设置里，出厂 24）
-    var rm = await syncRemind(saved);
+    /* 提醒：框里是默认预填的（没动过）→ 按**登记这一刻** + N 小时重算；
+       手选过就按手选的；被清空 → 交回流程派发（syncRemind）。 */
+    var remindRaw = txt($("fRemindAt").value).trim();
+    var remindManual = !!remindRaw && remindRaw !== fRemindPre;   // 手选过时刻
+    var wantAt = null;
+    if (remindManual) wantAt = parseTime(remindRaw);
+    else if (remindRaw) wantAt = new Date(Date.now() + remindHours() * 3600000); // 默认
+    var rm = wantAt
+      ? await bookRemindAt(saved, wantAt,
+        remindManual ? "登记时手定的提醒时刻" : "登记后 " + remindHours() + " 小时还没跟进")
+      : await syncRemind(saved);
     dupAck = "";
     msg.className = "hint";
     msg.textContent = "已登记「" + (order || track) + "」"
       + (order && !orderLooksRight(order) ? "（这个单号形状不像拼多多单号，客户端可能定位不到那张订单）" : "")
-      + (rm && rm.at ? " · 已订 " + remindHours() + " 小时后的跟进提醒（" + fmtMin(rm.at) + "）"
-        : " · 跟进提醒没订上（检查一下工具提醒是否开着）")
-      + " —— 店铺 / 快递公司 / 登记时间留着了，可以接着录下一条";
+      + (rm && rm.at ? " · 跟进提醒 " + fmtMin(rm.at) : " · 跟进提醒没订上（检查一下工具提醒是否开着）")
+      + " —— 店铺 / 快递公司留着了，可以接着录下一条";
     // 连着录：只清掉"这一条才有的东西"（订单号 / 快递单号 / 情况 / 描述），店铺快递公司留着
     $("fOrder").value = "";
     $("fTrack").value = "";
     pillSet($("fCategory"), "");
     $("fTitle").value = "";
+    prefillRemindAt();          // 提醒时间按此刻重新预填，下一条还是"现在 + N 小时"
     await load();
     $("fOrder").focus();
   }
@@ -1587,16 +1657,70 @@
   /* ==================================================================
    * 7. 查看页：列表 + 详情
    * ================================================================== */
-  function filtered() {
-    var q = txt($("search").value).trim().toLowerCase();
+  /** 两页共用的筛选条件（四个下拉，取值共享）。搜索关键词各页自己扫（表格页多扫店铺）。 */
+  function matchRow(r) {
     var fs = txt($("fltStore").value);
     var fst = txt($("fltStatus").value);
-    return rows.filter(function (r) {
-      if (fs && txt(r.store) !== fs) return false;
-      if (fst && statusOf(r) !== fst) return false;
-      if (!q) return true;
-      return (txt(r.order_sn) + " " + txt(r.tracking_no) + " " + txt(r.title) + " " + txt(r.handling)).toLowerCase().indexOf(q) >= 0;
+    var fc = txt($("fltCourier").value);
+    var fg = txt($("fltCategory").value);
+    if (fs && txt(r.store) !== fs) return false;
+    if (fst && statusOf(r) !== fst) return false;
+    if (fc && txt(r.courier) !== fc) return false;
+    if (fg && txt(r.category) !== fg) return false;
+    return true;
+  }
+  /** 排序：登记时间按 created_at（精确到分），提醒时间按**实际生效**的时刻
+      （remindView().eff —— 手改过就是手改的，没手改就是派发算出来的）。
+      没有可用时刻的排最后：空的提醒不该霸占榜首。 */
+  function sortRows(list) {
+    // 时刻**先算一次**存下来：比较器会被调 O(n log n) 次，
+    // remindView 里含 JSON.parse(flow)，放进比较器里就是白白重复几千次
+    var metas = list.map(function (r) {
+      var t = sortKey === "remind" ? remindView(r).eff : parseTime(r.created_at);
+      return { r: r, t: t ? t.getTime() : null };
     });
+    metas.sort(function (a, b) {
+      if (a.t === null && b.t === null) return 0;
+      if (a.t === null) return 1;
+      if (b.t === null) return -1;
+      return sortDir === "asc" ? a.t - b.t : b.t - a.t;
+    });
+    return metas.map(function (m) { return m.r; });
+  }
+  function filtered() {
+    var q = txt($("search").value).trim().toLowerCase();
+    return sortRows(rows.filter(function (r) {
+      if (!matchRow(r)) return false;
+      if (!q) return true;
+      return (txt(r.order_sn) + " " + txt(r.tracking_no) + " " + txt(r.store) + " " + txt(r.title) + " " + txt(r.handling)).toLowerCase().indexOf(q) >= 0;
+    }));
+  }
+  /* 筛选 / 排序：查看页和表格页各一套下拉，但**值共享** —— 两处筛的是同一批单子，
+     各记一套会精神分裂。改任一个，另一边跟着变，两份列表一起重画。 */
+  var FILTER_PAIR = {
+    fltStore: "tfltStore", tfltStore: "fltStore",
+    fltStatus: "tfltStatus", tfltStatus: "fltStatus",
+    fltCourier: "tfltCourier", tfltCourier: "fltCourier",
+    fltCategory: "tfltCategory", tfltCategory: "fltCategory",
+  };
+  function applyFilter(srcId) {
+    var pair = FILTER_PAIR[srcId];
+    var v = $(srcId).value;
+    if (pair && $(pair) && $(pair).value !== v) { $(pair).value = v; markSel($(pair)); }
+    renderList();
+    renderTable();
+  }
+  function applySort(srcId) {
+    var p = ($(srcId).value || "").split(":");
+    if (p[0] === "created" || p[0] === "remind") sortKey = p[0];
+    if (p[1] === "asc" || p[1] === "desc") sortDir = p[1];
+    saveSort();
+    var ids = ["sortBy", "tsortBy"];
+    for (var i = 0; i < ids.length; i++) {
+      if ($(ids[i]) && ids[i] !== srcId) $(ids[i]).value = sortKey + ":" + sortDir;
+    }
+    renderList();
+    renderTable();
   }
 
   /** 列表里的提醒标记：**只标逾期的** —— 每条都挂「还有 23 小时」就是噪音 */
@@ -1696,6 +1820,9 @@
       + '<div class="pills" id="dCategory"></div></div>'
       + '<label class="f c12"><span class="lbl" data-ico="cal">登记时间</span>'
       + '<input id="dDate" autocomplete="off" spellcheck="false" /></label>'
+      /* 赔款数：非必填，纯记账用（不进推送的 14 列，只在本地 / 表格页显示） */
+      + '<label class="f c12"><span class="lbl" data-ico="cash">赔款数</span>'
+      + '<input id="dIndemnity" autocomplete="off" spellcheck="false" placeholder="可不填，如 86 或 86.5" /></label>'
       + '<label class="f c24"><span class="lbl" data-ico="pen">详细描述</span>'
       + '<textarea id="dTitle" rows="2"></textarea></label>'
       + '<label class="f c24"><span class="lbl" data-ico="chat">处理情况</span>'
@@ -1728,7 +1855,7 @@
       flowHtml += '<div class="cd">还有 ' + esc(spanText(v.left)) + "</div>";
     }
     if (!flow.length) {
-      flowHtml += '<div class="note">还没记 —— 状态先由主栏的「处理」派生；提醒按<b>登记时刻 + '
+      flowHtml += '<div class="note">还没记 —— 状态先按登记摆着；提醒按<b>登记时刻 + '
         + plan.hours + ' 小时</b>算。</div>';
     } else {
       if (last && last.at) {
@@ -1820,6 +1947,7 @@
     $("dOrder").value = txt(r.order_sn);
     $("dTrack").value = txt(r.tracking_no);
     $("dDate").value = txt(r.shipped_at);
+    $("dIndemnity").value = txt(r.indemnity);
     $("dTitle").value = txt(r.title);
     $("dNote").value = txt(r.note);
     renderPills($("dCourier"), cfg.couriers, txt(r.courier), null, !editingBase);
@@ -1856,6 +1984,7 @@
             category: pillVal($("dCategory")),
             title: $("dTitle").value.trim(),
             note: $("dNote").value.trim(),
+            indemnity: $("dIndemnity").value.trim(),
           });
           baseEditId = "";      // 存完回锁 —— 别让输入框一直敞着
           await load();     // ★ 重画会把提示条冲掉 —— 回显必须在 load 之后写
@@ -1978,11 +2107,18 @@
    * 8. 表格页（只读快照，列可自选 / 调序）
    * ================================================================== */
   function visibleCols() {
+    var all = COLS.map(function (c) { return c[0]; });
     if (!tableCols || !tableCols.order || !tableCols.order.length) {
-      return COLS.map(function (c) { return c[0]; });
+      return all;
     }
     var hidden = tableCols.hidden || [];
-    return tableCols.order.filter(function (k) { return hidden.indexOf(k) < 0; });
+    var out = tableCols.order.filter(function (k) { return hidden.indexOf(k) < 0; });
+    // ★ 老配置（order 里没有后来新增的列）要把新列补在末尾 ——
+    //   否则给工具加一列，存过列配置的人永远看不见它（赔款数就是这么来的）
+    for (var i = 0; i < all.length; i++) {
+      if (tableCols.order.indexOf(all[i]) < 0 && hidden.indexOf(all[i]) < 0) out.push(all[i]);
+    }
+    return out;
   }
   function colLabel(key) {
     for (var i = 0; i < COLS.length; i++) if (COLS[i][0] === key) return COLS[i][1];
@@ -2000,10 +2136,11 @@
   }
   function renderTable() {
     var q = txt($("tableSearch").value).trim().toLowerCase();
-    var list = rows.filter(function (r) {
+    var list = sortRows(rows.filter(function (r) {
+      if (!matchRow(r)) return false;
       if (!q) return true;
       return (txt(r.order_sn) + " " + txt(r.tracking_no) + " " + txt(r.store) + " " + txt(r.title) + " " + txt(r.handling)).toLowerCase().indexOf(q) >= 0;
-    });
+    }));
     var keys = visibleCols();
     $("colCount").textContent = keys.length + "/" + COLS.length;
     $("tableStats").textContent = "共 " + rows.length + " 条" + (list.length !== rows.length ? "（筛出 " + list.length + "）" : "");
@@ -2045,6 +2182,11 @@
     var keys = (tableCols && tableCols.order && tableCols.order.length)
       ? tableCols.order.slice()
       : COLS.map(function (c) { return c[0]; });
+    // 面板里也要列全：order 里没有的新列（赔款数）补在末尾，否则不给勾选框，
+    // 一旦保存过一次老配置，这一列就再也没法调出来了
+    for (var ci = 0; ci < COLS.length; ci++) {
+      if (keys.indexOf(COLS[ci][0]) < 0) keys.push(COLS[ci][0]);
+    }
     var hidden = (tableCols && tableCols.hidden) || [];
     var html = "";
     for (var i = 0; i < keys.length; i++) {
@@ -2463,6 +2605,8 @@
       if (!dpFor) return;
       if (this.getAttribute("data-tquick") === "clear") {
         dpFor.value = "";
+        // 登记页的提醒框被清空 = 这条不手定时刻（交回流程派发），别让重画又填回来
+        if (dpFor === $("fRemindAt")) fRemindCleared = true;
       } else {
         var d = new Date();
         dpFor.value = fmtMin(d);
@@ -2500,13 +2644,39 @@
     if (name === "table") renderTable();
     if (name === "browse") renderDetail();
   }
+  /** 筛选 / 排序下拉：查看页和表格页各一套，取值共享（筛的是同一批单子）。
+      ★ 先填选项再重画列表 —— 列表要读这些 select 的当前值。 */
+  function fillFilterSelects() {
+    var SPEC = [
+      ["fltStore", "tfltStore", cfg.stores.map(function (s) { return s.name; }), "全部店铺"],
+      ["fltStatus", "tfltStatus", STATUSES, "全部状态"],
+      ["fltCourier", "tfltCourier", cfg.couriers, "全部快递"],
+      ["fltCategory", "tfltCategory", cfg.situations, "全部情况"],
+    ];
+    for (var i = 0; i < SPEC.length; i++) {
+      var a = $(SPEC[i][0]), b = $(SPEC[i][1]);
+      var keep = (a && a.value) || (b && b.value) || "";
+      if (a) fillSelect(a, SPEC[i][2], keep, SPEC[i][3]);
+      if (b) fillSelect(b, SPEC[i][2], keep, SPEC[i][3]);
+    }
+    var cur = sortKey + ":" + sortDir;
+    var sels = [$("sortBy"), $("tsortBy")];
+    for (var j = 0; j < sels.length; j++) {
+      if (!sels[j]) continue;
+      var html = "";
+      for (var k = 0; k < SORTS.length; k++) {
+        html += '<option value="' + esc(SORTS[k][0]) + '">' + esc(SORTS[k][1]) + "</option>";
+      }
+      sels[j].innerHTML = html;
+      sels[j].value = cur;
+    }
+  }
   function renderAll() {
+    fillFilterSelects();
     renderList();
     renderDetail();
     renderTable();
     renderCreateForm();
-    fillSelect($("fltStore"), cfg.stores.map(function (s) { return s.name; }), $("fltStore").value);
-    fillSelect($("fltStatus"), STATUSES, $("fltStatus").value);
   }
 
   /**
@@ -2563,8 +2733,23 @@
   $("fOrder").onblur = cleanOrderField;
   $("fTrack").onblur = function () { var v = washOrder(this.value); if (v !== this.value) this.value = v; };
   $("search").oninput = renderList;
-  $("fltStore").onchange = function () { markSel(this); renderList(); };
-  $("fltStatus").onchange = function () { markSel(this); renderList(); };
+  // 筛选：8 个下拉（查看页 4 + 表格页 4）走同一套逻辑 —— 改一个另一边跟着变
+  var FILTER_IDS = ["fltStore", "fltStatus", "fltCourier", "fltCategory",
+    "tfltStore", "tfltStatus", "tfltCourier", "tfltCategory"];
+  for (var fi = 0; fi < FILTER_IDS.length; fi++) {
+    (function (id) {
+      var el = $(id);
+      if (el) el.onchange = function () { markSel(this); applyFilter(id); };
+    })(FILTER_IDS[fi]);
+  }
+  // 排序：两套下拉同值，选择记在 localStorage（下次打开还是这个排法）
+  var SORT_IDS = ["sortBy", "tsortBy"];
+  for (var si = 0; si < SORT_IDS.length; si++) {
+    (function (id) {
+      var el = $(id);
+      if (el) el.onchange = function () { markSel(this); applySort(id); };
+    })(SORT_IDS[si]);
+  }
   $("tableSearch").oninput = renderTable;
   $("colBtn").onclick = function () {
     var p = $("colPanel");
@@ -2572,10 +2757,10 @@
     renderColPanel();
     p.hidden = false;
   };
-  $("fDate").onfocus = function () { openDp(this); };
-  $("fDate").onclick = function () { openDp(this); };
+  $("fRemindAt").onfocus = function () { openDp(this, true); };
+  $("fRemindAt").onclick = function () { openDp(this, true); };
   // 失焦收起：有的 webview 点按钮不给焦点，所以再加一条"鼠标还在面板里就不收"
-  // ★ 认的是"当前正在用面板的那个框"，不写死 fDate —— 查看页的登记时间也用同一个面板
+  // ★ 认的是"当前正在用面板的那个框"，不写死某个 id —— 详情页的登记时间 / 提醒时刻都走同一套
   document.addEventListener("focusin", function (e) {
     if (!$("dp").hidden && e.target !== dpFor && !$("dp").contains(e.target)) closeDp();
   });
@@ -2619,6 +2804,7 @@
       await cfgSet("remindHours", String(n));
       $("remindMsg").textContent = "已保存 —— 之后登记 / 记流程按 " + n + " 小时算";
       renderDetail();
+      renderCreateForm();     // 登记页的「默认提醒时间」也按新 N 重算文案与预填
     })();
   };
 
@@ -2642,6 +2828,7 @@
 
     paintIcos();          // 静态标签上的图标（登记页那几个）
     initSplitDrag();      // 查看页：左右分栏之间那条能拖的细线
+    loadSort();           // 排序偏好要在首次 renderAll 之前读到
 
     // 1.2 秒还没等到上下文：按"在不在 iframe 里"分类
     setTimeout(function () {

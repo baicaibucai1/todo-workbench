@@ -257,13 +257,13 @@ await sleep(80);
 const body = doc.getElementById("tableBody");
 check("表格渲染出行", body.querySelectorAll("tr").length >= 1, String(body.querySelectorAll("tr").length));
 check("表格里能搜到这条单号", (body.textContent || "").includes("6931234567890123456"));
-check("表头 14 列", doc.getElementById("tableHead").querySelectorAll("th").length === 14,
+check("表头 15 列（台账 14 列 + 赔款数）", doc.getElementById("tableHead").querySelectorAll("th").length === 15,
   String(doc.getElementById("tableHead").querySelectorAll("th").length));
 
 console.log("\n5b. 查看页能补全 / 改信息（默认锁着，点「编辑」才开）");
 doc.getElementById("tab-browse").click();
 await sleep(80);
-doc.querySelector("#list .ticket").click();
+doc.querySelector('#list .ticket[data-id="' + store[0].id + '"]').click();
 await sleep(80);
 check("详情里有订单号框", !!doc.getElementById("dOrder"));
 check("订单号预填的是这条的原值", doc.getElementById("dOrder").value === "6931234567890123456",
@@ -375,7 +375,9 @@ check("标题变成「编辑中」", /编辑中/.test(doc.querySelector("#sectBa
   doc.getElementById("btnBaseToggle").click();
   await sleep(80);
   check("（前置）当前这条解锁着", doc.getElementById("dOrder").disabled === false);
-  if (items.length >= 2) { items[1].click(); await sleep(120); }
+  /* 点「另一条」：不能按下标取 —— 排序生效后 items[1] 可能正是当前这条 */
+  const other = [...items].find((x) => x.getAttribute("data-id") !== store[0].id);
+  if (other) { other.click(); await sleep(120); }
   else { doc.getElementById("btnBaseToggle").click(); await sleep(120); }
   check("切到别的单子自动回锁", doc.getElementById("dOrder").disabled === true);
 }
@@ -400,7 +402,7 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
        流程**单开右栏一栏**（时间线竖着长，单独占一列） */
   doc.getElementById("tab-browse").click();
   await sleep(60);
-  doc.querySelector("#list .ticket").click();
+  doc.querySelector('#list .ticket[data-id="' + store[0].id + '"]').click();
   await sleep(80);
   const sects = Array.from(doc.querySelectorAll("#detail .sect > h3")).map((h) => h.textContent.trim());
   check("主栏分区顺序是 基本信息 → 提醒（处理区已移除）",
@@ -427,7 +429,7 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
 
   doc.getElementById("tab-browse").click();
   await sleep(60);
-  doc.querySelector("#list .ticket").click();
+  doc.querySelector('#list .ticket[data-id="' + store[0].id + '"]').click();
   await sleep(60);
   const cancelsBefore = args.filter((a) => a.op === "task.remind" && a.payload.action === "cancel").length;
   doc.getElementById("dFlow").value = "已联系快递";
@@ -462,11 +464,11 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   /* ③½ 没选阶段就点「记一步」→ 当场提示，不静默吞掉（记录丢失的真凶就是这个静默返回） */
   doc.getElementById("dFlow").value = "";
   doc.getElementById("dFlowNote").value = "只有记录、没选阶段";
-  const toastsBefore = doc.getElementById("toast").children.length;
+  doc.getElementById("toast").innerHTML = "";   // 清场：别让上一条 toast 的 2.6s 定时器干扰计数
   doc.getElementById("btnFlow").click();
   await sleep(60);
   check("没选阶段就记一步 → 当场提示而不是静默吞掉",
-    doc.getElementById("toast").children.length > toastsBefore,
+    /先选一个阶段/.test(doc.getElementById("toast").textContent || ""),
     doc.getElementById("toast").textContent);
   check("这条记录没有被存进 flow", !/"d":"只有记录/.test(store.find((x) => x.id === r0.id).flow));
 
@@ -554,10 +556,13 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   check("「此刻」写回当前时刻并收起",
     doc.getElementById("dp").hidden === true && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(dr.value),
     dr.value);
-  /* 日期模式回归：登记时间还是纯日期，点日期即收 */
-  const fd = doc.getElementById("fDate");
-  doc.getElementById("tab-create").click();
-  await sleep(40);
+  /* 日期模式回归：详情页的登记时间还是纯日期，点日期即收
+     （登记页已经没有手填的日期框了 —— 登记时间就是当下） */
+  doc.getElementById("tab-browse").click();
+  await sleep(60);
+  doc.getElementById("btnBaseToggle").click();     // 解锁基本信息才能点日期框
+  await sleep(60);
+  const fd = doc.getElementById("dDate");
   fd.onfocus.call(fd);
   await sleep(30);
   check("日期模式：时刻行隐藏、日期快捷键在",
@@ -573,6 +578,139 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   doc.getElementById("optRemindHours").value = "24";
   doc.getElementById("saveRemind").click();
   await sleep(120);
+}
+
+console.log("\n5c2. 登记时间自动 / 提醒时间可改可清");
+{
+  doc.getElementById("tab-create").click();
+  await sleep(60);
+  check("登记页不再有手填的登记时间框", doc.getElementById("fDate") === null);
+  const fr = doc.getElementById("fRemindAt");
+  check("有提醒时间框且只读（点开自绘面板）", !!fr && fr.readOnly === true);
+  const pre = fr.value || "";
+  const preT = new Date(pre.replace(" ", "T")).getTime();
+  check("提醒时间默认预填 现在 + 24 小时",
+    Math.abs(preT - (Date.now() + 24 * 3600000)) < 180000,
+    pre + "（" + ((preT - Date.now()) / 3600000).toFixed(2) + " 小时）");
+
+  const nd = new Date();
+  const td = nd.getFullYear() + "-" + String(nd.getMonth() + 1).padStart(2, "0") + "-" + String(nd.getDate()).padStart(2, "0");
+
+  // 手选一个时刻 → 登记，提醒就按手选的
+  fr.value = "2030-01-02 09:30";
+  doc.getElementById("fOrder").value = "250102-7777";
+  doc.getElementById("fTrack").value = "SF0000000001";
+  doc.getElementById("fTitle").value = "手选提醒时刻这条";
+  doc.getElementById("btnAdd").click();
+  await sleep(250);
+  const rx = store[store.length - 1];
+  check("手选时刻后能登记", rx && rx.title === "手选提醒时刻这条", JSON.stringify(rx && rx.order_sn));
+  check("登记时间自动 = 今天（不是手填的）", rx.shipped_at === td, rx && rx.shipped_at);
+  check("提醒就订在手选的时刻",
+    Math.abs(new Date(rx.remind_at).getTime() - new Date("2030-01-02T09:30:00").getTime()) < 60000,
+    rx && rx.remind_at);
+
+  // 走面板的「清除」清空提醒 → 登记，提醒交回流程派发
+  const fr2 = doc.getElementById("fRemindAt");
+  fr2.onfocus.call(fr2);
+  await sleep(30);
+  doc.querySelector("[data-tquick='clear']").click();
+  await sleep(30);
+  check("「清除」把提醒框清空了", fr2.value === "");
+  doc.getElementById("fOrder").value = "250103-8888";
+  doc.getElementById("fTrack").value = "SF0000000002";
+  doc.getElementById("btnAdd").click();
+  await sleep(250);
+  const rc = store[store.length - 1];
+  check("清空提醒 → 交回流程派发（登记 + 24 小时）",
+    Math.abs(new Date(rc.remind_at).getTime() - (Date.now() + 24 * 3600000)) < 180000,
+    ((new Date(rc.remind_at).getTime() - Date.now()) / 3600000).toFixed(2) + " 小时");
+  check("登记完提醒框重新预填（下一条又是默认）", (doc.getElementById("fRemindAt").value || "") !== "");
+}
+
+console.log("\n5c3. 赔款数：详情能填、表格能显示");
+{
+  doc.getElementById("tab-browse").click();
+  await sleep(60);
+  doc.querySelector('#list .ticket[data-id="' + store[0].id + '"]').click();
+  await sleep(60);
+  doc.getElementById("btnBaseToggle").click();
+  await sleep(60);
+  check("详情基本信息里有赔款数（非必填）", !!doc.getElementById("dIndemnity"));
+  doc.getElementById("dIndemnity").value = "86.5";
+  doc.getElementById("btnEdit").click();
+  await sleep(220);
+  check("赔款数存进了库", store.find((r) => r.id === store[0].id)?.indemnity === "86.5",
+    store.find((r) => r.id === store[0].id)?.indemnity);
+  doc.getElementById("tab-table").click();
+  await sleep(60);
+  const ths = [...doc.querySelectorAll("#tableHead th")].map((t) => t.textContent.trim());
+  check("表格有赔款数列", ths.includes("赔款数"), ths.join(" / "));
+  check("表格行里显示赔款数", /86\.5/.test(doc.getElementById("tableBody").textContent || ""));
+  doc.getElementById("colBtn").click();
+  await sleep(60);
+  const boxes = [...doc.querySelectorAll("#colPanel [data-col]")].map((b) => b.getAttribute("data-col"));
+  check("列面板里 15 列都能勾（含赔款数）", boxes.length === 15 && boxes.indexOf("indemnity") >= 0,
+    boxes.join(","));
+  doc.getElementById("colSave").click();
+  await sleep(60);
+}
+
+console.log("\n5c4. 列表与表格：筛选 + 排序（同一套值）");
+{
+  doc.getElementById("tab-browse").click();
+  await sleep(60);
+  const fc = doc.getElementById("fltCourier");
+  check("左栏有快递公司 / 情况筛选", !!fc && !!doc.getElementById("fltCategory"));
+  check("有排序下拉（4 种）", [...doc.getElementById("sortBy").options].length === 4,
+    String(doc.getElementById("sortBy").options.length));
+  const courierOpt = [...fc.options].map((o) => o.value).filter(Boolean)[0] || "";
+  fc.value = courierOpt;
+  fc.onchange.call(fc);
+  await sleep(60);
+  const expect = store.filter((r) => (r.courier || "") === courierOpt).length;
+  check("按快递公司筛出对应条数",
+    doc.querySelectorAll("#list .ticket").length === expect,
+    doc.querySelectorAll("#list .ticket").length + " vs " + expect);
+  doc.getElementById("tab-table").click();
+  await sleep(60);
+  check("表格页的筛选跟着变（两处共享一个值）",
+    doc.getElementById("tfltCourier").value === courierOpt, doc.getElementById("tfltCourier").value);
+  check("表格也筛出同样的条数",
+    doc.getElementById("tableBody").querySelectorAll("tr").length === expect,
+    doc.getElementById("tableBody").querySelectorAll("tr").length + " vs " + expect);
+
+  // 清筛选 → 两边都恢复
+  const tc = doc.getElementById("tfltCourier");
+  tc.value = "";
+  tc.onchange.call(tc);
+  await sleep(60);
+  check("清掉筛选两边都恢复", doc.getElementById("fltCourier").value === "" &&
+    doc.querySelectorAll("#list .ticket").length === store.length,
+    doc.querySelectorAll("#list .ticket").length + " vs " + store.length);
+
+  // 排序：登记时间旧在前 → 首条是最早登记的那条
+  const sb = doc.getElementById("sortBy");
+  sb.value = "created:asc";
+  sb.onchange.call(sb);
+  await sleep(60);
+  const firstId = doc.querySelector("#list .ticket")?.getAttribute("data-id");
+  check("按登记时间旧在前 → 首条是最早那条", firstId === store[0].id, firstId + " vs " + store[0].id);
+  check("排序选择记进了 localStorage",
+    /created:asc/.test(win.localStorage.getItem("wbtool:abnormal-ticket:sort") || ""),
+    win.localStorage.getItem("wbtool:abnormal-ticket:sort"));
+  // 提醒时间排序：手选 2030 年那条在「晚在前」时排第一
+  sb.value = "remind:desc";
+  sb.onchange.call(sb);
+  await sleep(60);
+  const manual = store.find((r) => r.order_sn === "250102-7777");
+  const firstRemind = doc.querySelector("#list .ticket")?.getAttribute("data-id");
+  check("按提醒时间晚在前 → 手选 2030 的那条排最前", firstRemind === manual.id,
+    firstRemind + " vs " + manual.id);
+  // 收尾：回到默认排序，别影响后面的断言
+  sb.value = "created:desc";
+  sb.onchange.call(sb);
+  await sleep(60);
 }
 
 console.log("\n5d. 布局：分栏能拖、列宽按权重");

@@ -28,7 +28,7 @@
  * 这也是设置页「数据库」分区要把"已卸载但仍占着表"的工具单独标出来的原因。
  */
 
-import { db } from "./db";
+import { db, dbInfo } from "./db";
 import { toolPrefix, toolTable } from "./tools";
 import type { ToolColumn, ToolSchema, ToolTableDef } from "../types";
 
@@ -203,6 +203,11 @@ function columnDdl(col: ToolColumn): string {
  * 连 DDL 都不发。省一次往返是小事，关键是避免"每次挂载都重跑 DDL"这种
  * 看起来无害、实则掩盖版本漂移的写法。
  *
+ * 版本变了也不只是重跑 CREATE：`IF NOT EXISTS` 对**已经按老版本建好的表**
+ * 是一句废话，manifest 里新增的列不会自己长出来。所以这里先做一次列对账，
+ * 缺的列用 ALTER TABLE 一条条补上 —— 工具加字段（比如异常单 v1.6.0 的
+ * 「赔款数」）才真正落到老用户的库里，而不是只在全新安装时生效。
+ *
  * @param version manifest.dbVersion
  */
 export async function ensureToolSchema(
@@ -216,10 +221,12 @@ export async function ensureToolSchema(
   const ledger = await schemaVersionOf(toolId);
   if (ledger === version) return { applied: false, tables: validated };
 
+  const alters = await missingColumnSql(validated);
+
   // 一次发过去，而不是一张表一趟 IPC：桌面端每趟都要往 Rust 跑一圈，
   // 而 DDL 本来就是原子的准备动作，中途失败下一次挂载会重新来过。
   const script = validated.map(createTableSql).join(";\n");
-  await db().execute(script);
+  await db().execute(alters.length ? `${script};\n${alters.join(";\n")}` : script);
 
   // 台账更新用「先查后写」而不是 INSERT OR REPLACE：
   // 内存库的 mini-SQL 不认 upsert 语法，两个驱动得共用同一段 SQL
@@ -260,6 +267,61 @@ function createTableSql(t: ValidatedTable): string {
     return `CREATE ${ix.unique ? "UNIQUE " : ""}INDEX IF NOT EXISTS ${name} ON ${t.fullName} (${ix.columns.join(", ")})`;
   });
   return [head, ...idx].join(";\n");
+}
+
+/**
+ * 已经存在的表缺哪些列（返回 ALTER TABLE ADD COLUMN 语句）。
+ *
+ * 现有列集怎么拿：两个驱动能力不一样（SQLite 有 PRAGMA table_info，
+ * 内存库只有一堆行对象），`SELECT * LIMIT 1` 再取行对象的键两边一致
+ * —— dbInspect 的体检走的就是这个惯例，这里沿用。
+ *
+ * 表是空的时样品推不出列集，此时分两种情况：
+ * - 内存库**没有列定义**这回事，INSERT 按行对象存列，缺列不会炸，不用补；
+ * - SQLite 的表定义里列是固定的，走 PRAGMA table_info 拿真实列集。
+ */
+async function missingColumnSql(tables: ValidatedTable[]): Promise<string[]> {
+  const names = await db().tableNames();
+  const out: string[] = [];
+  for (const t of tables) {
+    if (!names.includes(t.fullName)) continue; // 从没建过：CREATE 全套就有，轮不到 ALTER
+    let present: string[] | null = null;
+    const sample = await db().select<Record<string, unknown>>(
+      `SELECT * FROM ${t.fullName} LIMIT 1`,
+    );
+    if (sample.length) {
+      present = Object.keys(sample[0]);
+    } else if (dbInfo().driver === "sqlite") {
+      const info = await db().select<{ name: string }>(
+        `PRAGMA table_info(${t.fullName})`,
+      );
+      present = info.map((r) => r.name);
+    }
+    if (!present) continue; // 内存库的空表：补不补都不影响读写
+    for (const col of t.columns) {
+      if (present.includes(col.name)) continue;
+      // 主键列缺失说明表被外部改坏了 —— ALTER 也补不出主键约束，
+      // 让挂载当场报错比静默续命（写入时莫名失败）好查得多
+      if (col.pk) {
+        throw new Error(`表 ${t.fullName} 缺主键列 ${col.name}，结构已损坏，请在设置里清理后重装`);
+      }
+      out.push(alterAddColumnSql(t.fullName, col));
+    }
+  }
+  return out;
+}
+
+/**
+ * ALTER 版的列定义。SQLite 的 ADD COLUMN 有两条硬约束：
+ * 不能带 PRIMARY KEY；往**非空表**上加 NOT NULL 列必须带 DEFAULT。
+ * 所以这里比 columnDdl 松一档：NOT NULL 又没给 DEFAULT 的列按可空补上
+ * —— 宁可约束松一点，也不让一次版本升级把整个工具挂载卡死。
+ */
+function alterAddColumnSql(fullName: string, col: ToolColumn): string {
+  const parts = ["ALTER TABLE", fullName, "ADD COLUMN", col.name, col.type.toUpperCase()];
+  if (col.notNull && col.default !== undefined) parts.push("NOT NULL");
+  if (col.default !== undefined) parts.push(`DEFAULT ${sqlLiteral(col.default)}`);
+  return parts.join(" ");
 }
 
 /** 台账里记的版本；从没建过返回 null */
