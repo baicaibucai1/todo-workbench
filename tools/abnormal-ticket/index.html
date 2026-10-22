@@ -359,7 +359,15 @@
   /* ★ 列名是裸文本节点，在 flex 里会变成**可压缩**的匿名项：
      面板窄一点，它就被挤成「订/单/号」三条竖排 —— 中文的最小内容宽度就是一个字。
      nowrap 把最小宽度抬回整串，面板才会按最长列名撑开。 */
-  .colpanel label { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; white-space: nowrap; }
+  .colpanel label { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 2px 0; white-space: nowrap; }
+  /* ★ 全局 `input { width:100% }` 会连复选框一起算：它被撑成整行宽再压缩，
+     一列勾选框就跟着列名长短左右乱跳（行高也被 padding 撑得不齐）。
+     这里把复选框还原成 14px 的方块、固定在左边，列名占中间、箭头钉在右边。 */
+  .colpanel label input[type="checkbox"] {
+    flex: 0 0 auto; width: 14px; height: 14px; margin: 0; padding: 0;
+    border-radius: 3px; accent-color: var(--accent);
+  }
+  .colpanel .cn { flex: 1 1 auto; }
   .colpanel .updown { display: flex; gap: 4px; margin-left: auto; flex: 0 0 auto; }
 
   /* ---------- 日期选择（自绘：原生 date 弹窗不跟主题走） ---------- */
@@ -2366,7 +2374,7 @@
     for (var i = 0; i < keys.length; i++) {
       var k = keys[i];
       html += '<label><input type="checkbox" data-col="' + esc(k) + '"' + (hidden.indexOf(k) < 0 ? " checked" : "") + " />"
-        + esc(colLabel(k))
+        + '<span class="cn">' + esc(colLabel(k)) + "</span>"
         + '<span class="updown"><button class="mini" data-up="' + i + '"' + (i === 0 ? " disabled" : "") + ">↑</button>"
         + '<button class="mini" data-dn="' + i + '"' + (i === keys.length - 1 ? " disabled" : "") + ">↓</button></span></label>";
     }

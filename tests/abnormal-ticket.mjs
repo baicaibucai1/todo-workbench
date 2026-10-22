@@ -677,6 +677,18 @@ console.log("\n5c3. 赔款数：详情能填、表格能显示");
   const boxes = [...doc.querySelectorAll("#colPanel [data-col]")].map((b) => b.getAttribute("data-col"));
   check("列面板里 15 列都能勾（含赔款数）", boxes.length === 15 && boxes.indexOf("indemnity") >= 0,
     boxes.join(","));
+  /* 对齐：全局 `input { width:100% }` 会把复选框撑成一整行再压缩 —— 勾选框跟着
+     列名长短横跳、行高也被 padding 撑得不齐。这里钉死 14px 方块 + 列名占中间。 */
+  const cb0 = doc.querySelector('#colPanel [data-col="order_sn"]');
+  const cbCss = win.getComputedStyle(cb0);
+  check("勾选框是 14px 方块、不参与伸缩", cbCss.width === "14px" && /^0 0 /.test(cbCss.flex),
+    cbCss.width + " / " + cbCss.flex);
+  check("勾选框不带输入框的内边距 / 边框圆角",
+    (cbCss.padding === "0px" || cbCss.padding === "0px 0px") && (cbCss.margin === "0px" || cbCss.margin === "0px 0px"),
+    cbCss.padding + " / " + cbCss.margin);
+  const cn0 = doc.querySelector("#colPanel label .cn");
+  check("列名占中间一格（flex-grow:1，箭头才钉得住右边）",
+    !!cn0 && win.getComputedStyle(cn0).flexGrow === "1");
   doc.getElementById("colSave").click();
   await sleep(60);
 }
