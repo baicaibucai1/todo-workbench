@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.5.0）——整本重写过一次，之后按反馈迭代。
+  异常单号登记（v1.5.1）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -91,15 +91,24 @@
   button.mini { padding: 2px 8px; font-size: 12px; border-radius: 4px; }
 
   /* ---------- 头部 ---------- */
+  /* 头部整条**不许换行**：窄面板（工作台里工具常只有五六百像素）下，
+     标题 / 状态点超长就各自截断，meta 截成省略号 —— 推送按钮必须始终一行、贴着右上角 */
   header {
     flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
     padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--bg);
   }
-  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
-  .meta { font-size: 11.5px; color: var(--dim); }
+  header h1 {
+    font-size: 15px; margin: 0; font-weight: 600;
+    white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  }
+  .meta {
+    font-size: 11.5px; color: var(--dim);
+    white-space: nowrap; min-width: 0; flex: 0 1 auto;
+    overflow: hidden; text-overflow: ellipsis;
+  }
   .dot {
     font-size: 11px; color: var(--dim); border: 1px solid var(--line);
-    border-radius: 999px; padding: 2px 9px;
+    border-radius: 999px; padding: 2px 9px; white-space: nowrap; flex: 0 0 auto;
   }
   .dot.ok { color: var(--ok); border-color: var(--ok); }
   .dot.warn { color: var(--warn); border-color: var(--warn); }
@@ -469,7 +478,7 @@
   <span class="spacer"></span>
   <span class="badge" id="todayCount"></span>
   <!-- 推送按钮钉在右上角：哪个页签都看得见、够得着 -->
-  <button id="hdrPush" data-host-only disabled style="margin-left:10px">推送到表格</button>
+  <button id="hdrPush" data-host-only disabled style="flex:0 0 auto;white-space:nowrap">推送到表格</button>
 </header>
 
 <div class="tabs" role="tablist">
