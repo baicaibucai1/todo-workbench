@@ -442,6 +442,9 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   check("记一步按钮是整行宽的大按钮",
     (btn3?.getAttribute("style") || "").replace(/\s/g, "").includes("width:100%"),
     btn3?.getAttribute("style"));
+  check("流程栏顶有红色大字倒计时（还有 …）",
+    /还有/.test(doc.querySelector("#flowPane .cd")?.textContent || ""),
+    doc.querySelector("#flowPane .cd")?.textContent);
   const r1 = store.find((x) => x.id === r0.id);
   const at1 = new Date(r1.remind_at).getTime();
   check("记一步流程 → 提醒按新基准重算（1 小时）",
@@ -481,6 +484,7 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   check("记录以灰色小字显示在标题下", /客户同意补发/.test(topItem?.querySelector(".ds")?.textContent || ""));
   check("meta 行没有处理人", topItem?.querySelector(".by") === null &&
     /"by"/.test(r2.flow) === false);
+  check("完结后倒计时消失", doc.querySelector("#flowPane .cd") === null);
   check("完结后提醒时刻清空", r2.remind_at === "", JSON.stringify(r2.remind_at));
   check("完结后待办 id 也清空", r2.remind_task === "", JSON.stringify(r2.remind_task));
   const box2 = doc.querySelector("#detail .remindbox")?.textContent || "";
@@ -509,6 +513,8 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   await sleep(60);
   const r3 = store.find((x) => x.id === r0.id);
   check("删掉完结步 → 提醒又派上了", !!r3.remind_at, JSON.stringify(r3.remind_at));
+  check("重新派发后倒计时又出现", /还有/.test(doc.querySelector("#flowPane .cd")?.textContent || ""),
+    doc.querySelector("#flowPane .cd")?.textContent);
   doc.getElementById("btnUnRemind").click();
   await waitFor(() => store.find((x) => x.id === r0.id).remind_at === "");
   await sleep(60);
