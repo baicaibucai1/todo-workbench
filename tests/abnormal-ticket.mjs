@@ -1312,6 +1312,13 @@ console.log("\n11. 订单附图：字节进图床，工具只记关联");
   doc.getElementById("vw").click();
   check("点一下遮罩就关", doc.getElementById("vw").hidden === true);
 
+  /* ESC 也能关（和点遮罩两条路都留着 —— 有人习惯键盘） */
+  doc.querySelector("#dImgDrop .imgcell").click();
+  await waitFor(() => doc.getElementById("vw").hidden === false);
+  doc.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await sleep(40);
+  check("ESC 也能关掉看图", doc.getElementById("vw").hidden === true);
+
   /* × 去掉一张：要问一句，且只解除关联（图床那条不动） */
   doc.querySelector("#dImgDrop .imgcell .del").click();
   await sleep(80);
