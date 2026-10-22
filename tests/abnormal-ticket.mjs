@@ -531,6 +531,42 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   check("「恢复提醒」又订回来了", !!r5.remind_at && !!r5.remind_task,
     JSON.stringify({ at: r5.remind_at, task: r5.remind_task }));
 
+  /* ⑤½ 提醒时刻选择器：自绘面板（日期 + 时/分），替代原生 datetime-local 弹层 */
+  const dr = doc.getElementById("dRemind");
+  check("提醒时刻输入框存在且只读（点开面板选）", !!dr && dr.readOnly === true);
+  dr.onfocus.call(dr);
+  await sleep(30);
+  check("时刻模式：时刻行出现、日期快捷键换成 此刻/清除",
+    doc.getElementById("dpTime").hidden === false &&
+    doc.getElementById("dpFootDate").hidden === true &&
+    doc.getElementById("dpFootTime").hidden === false);
+  doc.querySelector("#dpGrid [data-day]").click();
+  await sleep(30);
+  check("点日期 → 写回 YYYY-MM-DD HH:MM 且面板不关（还能调时分）",
+    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(dr.value) && doc.getElementById("dp").hidden === false,
+    dr.value);
+  doc.getElementById("dpHour").value = "8";
+  doc.getElementById("dpHour").oninput();
+  await sleep(20);
+  check("改小时 → 输入框实时跟着变", / 08:/.test(dr.value), dr.value);
+  doc.querySelector("[data-tquick='now']").click();
+  await sleep(30);
+  check("「此刻」写回当前时刻并收起",
+    doc.getElementById("dp").hidden === true && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(dr.value),
+    dr.value);
+  /* 日期模式回归：登记时间还是纯日期，点日期即收 */
+  const fd = doc.getElementById("fDate");
+  doc.getElementById("tab-create").click();
+  await sleep(40);
+  fd.onfocus.call(fd);
+  await sleep(30);
+  check("日期模式：时刻行隐藏、日期快捷键在",
+    doc.getElementById("dpTime").hidden === true && doc.getElementById("dpFootDate").hidden === false);
+  doc.querySelector("#dpGrid [data-day]").click();
+  await sleep(30);
+  check("点日期 → 只写 YYYY-MM-DD 并收起",
+    /^\d{4}-\d{2}-\d{2}$/.test(fd.value) && doc.getElementById("dp").hidden === true, fd.value);
+
   // 后面的段落还要用 24 小时的口径（推送等无关，但别把设置留在 1）
   doc.getElementById("tab-settings").click();
   await sleep(40);

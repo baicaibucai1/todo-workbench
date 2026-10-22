@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.4.0）——整本重写过一次，之后按反馈迭代。
+  异常单号登记（v1.5.0）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -353,6 +353,20 @@
   .dp-grid button.today { border: 1px solid var(--accent); }
   .dp-foot { display: flex; gap: 4px; margin-top: 6px; }
   .dp-foot button { flex: 1 1 auto; font-size: 11.5px; padding: 3px 0; }
+  /* ★ [hidden] 打不过本文件里的 display:flex —— 两组快捷键 / 时刻行的显隐必须显式压住 */
+  .dp-time[hidden], .dp-foot[hidden] { display: none; }
+  /* 时刻行：datetime 模式才出现 —— 时/分两个小数字框，一改立刻写回输入框 */
+  .dp-time {
+    display: flex; align-items: center; gap: 4px;
+    border-top: 1px solid var(--line); margin-top: 6px; padding: 6px 2px 0;
+  }
+  .dp-time input { width: 54px; text-align: center; font-family: var(--mono); padding: 5px 4px; }
+  .dp-time .dp-colon { color: var(--dim); font-weight: 600; }
+  /* 已选中的那天：跟胶囊选中态同一套色 */
+  .dp-grid button.sel {
+    background: var(--sel); border: 1px solid var(--accent);
+    color: var(--accent); font-weight: 600;
+  }
   .mgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
   .mgrid button { font-size: 12px; padding: 5px 0; }
 
@@ -681,11 +695,22 @@
   <div class="dp-body" id="dpMonths" hidden>
     <div class="mgrid" id="dpMgrid"></div>
   </div>
-  <div class="dp-foot">
+  <!-- 时刻行：只有 datetime 模式（改提醒时刻）才出现 -->
+  <div class="dp-time" id="dpTime" hidden>
+    <input type="number" id="dpHour" min="0" max="23" step="1" aria-label="时" />
+    <span class="dp-colon">:</span>
+    <input type="number" id="dpMin" min="0" max="59" step="1" aria-label="分" />
+    <span class="note" style="margin:0 0 0 auto">时 · 分</span>
+  </div>
+  <div class="dp-foot" id="dpFootDate">
     <button type="button" data-quick="0">今天</button>
     <button type="button" data-quick="-1">昨天</button>
     <button type="button" data-quick="-2">前天</button>
     <button type="button" data-quick="clear">清除</button>
+  </div>
+  <div class="dp-foot" id="dpFootTime" hidden>
+    <button type="button" data-tquick="now">此刻</button>
+    <button type="button" data-tquick="clear">清除</button>
   </div>
 </div>
 <div id="toast"></div>
@@ -1757,7 +1782,7 @@
         + (v.state === "late" ? "已到点" : "待提醒") + "</span></div>"
         + '<div class="r" style="margin-top:8px">'
         + '<button class="mini" id="btnSnooze">再等 ' + plan.hours + ' 小时</button>'
-        + '<input id="dRemind" type="datetime-local" style="flex:0 1 200px" />'
+        + '<input id="dRemind" readonly placeholder="点这里选时刻" style="flex:0 1 200px" />'
         + '<button class="mini" id="btnRemind">改成这个时刻</button>'
         + '<button class="mini" id="btnUnRemind">不用提醒</button></div>'
         + '<div class="why">按流程派发：<b>'
@@ -1794,6 +1819,10 @@
     setBaseLock(!editingBase);
     $("dDate").onfocus = function () { openDp(this); };
     $("dDate").onclick = function () { openDp(this); };
+    if ($("dRemind")) {
+      $("dRemind").onfocus = function () { openDp(this, true); };
+      $("dRemind").onclick = function () { openDp(this, true); };
+    }
     $("btnBaseToggle").onclick = function () {
       // 解锁对着这一条；再点一次 = 放弃改动（等价于「撤掉改动」）
       baseEditId = editingBase ? "" : String(r.id);
@@ -1891,7 +1920,7 @@
       })();
     };
     /* 提醒：都在派生值上做文章 —— 顺延 = 从现在起再给 N 小时；不合意的时刻也能手改。 */
-    if ($("dRemind") && v.eff) $("dRemind").value = fmtMin(v.eff).replace(" ", "T");
+    if ($("dRemind") && v.eff) $("dRemind").value = fmtMin(v.eff);
     if ($("btnSnooze")) {
       $("btnSnooze").onclick = function () {
         void (async function () {
@@ -2307,11 +2336,27 @@
    * ================================================================== */
   var dpFor = null;        // 当前是哪个输入框在用
   var dpYear = 0, dpMonth = 0;
+  var dpTimeMode = false;  // true = 带时刻（改提醒时刻）；false = 纯日期（登记时间）
 
-  function openDp(input) {
+  function dpClamp(n, lo, hi) {
+    n = Math.round(Number(n));
+    if (!isFinite(n)) return lo;
+    return Math.min(hi, Math.max(lo, n));
+  }
+
+  function openDp(input, timeMode) {
     dpFor = input;
-    var cur = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input.value.trim());
-    var d = cur ? new Date(Number(cur[1]), Number(cur[2]) - 1, 1) : new Date();
+    dpTimeMode = !!timeMode;
+    var raw = input.value.trim();
+    var d;
+    if (dpTimeMode) {
+      d = parseTime(raw) || new Date();
+      $("dpHour").value = String(d.getHours());
+      $("dpMin").value = String(d.getMinutes());
+    } else {
+      var cur = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+      d = cur ? new Date(Number(cur[1]), Number(cur[2]) - 1, 1) : new Date();
+    }
     dpYear = d.getFullYear();
     dpMonth = d.getMonth();
     var rect = input.getBoundingClientRect();
@@ -2319,6 +2364,9 @@
     dp.hidden = false;
     $("dpMonths").hidden = true;
     $("dpDays").hidden = false;
+    $("dpTime").hidden = !dpTimeMode;
+    $("dpFootDate").hidden = dpTimeMode;
+    $("dpFootTime").hidden = !dpTimeMode;
     paintDp();
     // 贴底空间不够就往上弹
     var top = rect.bottom + 4;
@@ -2335,16 +2383,27 @@
     var html = "";
     for (var i = 0; i < lead; i++) html += "<span></span>";
     var t = todayStr();
+    var selIso = dpFor ? txt(dpFor.value).trim().slice(0, 10) : "";
     for (var d = 1; d <= days; d++) {
       var iso = dpYear + "-" + pad2(dpMonth + 1) + "-" + pad2(d);
-      html += '<button data-day="' + iso + '" class="' + (iso === t ? "today" : "") + '">' + d + "</button>";
+      var cls = (iso === t ? "today" : "") + (dpTimeMode && iso === selIso ? " sel" : "");
+      html += '<button data-day="' + iso + '" class="' + cls + '">' + d + "</button>";
     }
     $("dpGrid").innerHTML = html;
     var btns = $("dpGrid").querySelectorAll("[data-day]");
     for (var b = 0; b < btns.length; b++) {
       btns[b].onclick = function () {
-        if (dpFor) dpFor.value = this.getAttribute("data-day");
-        closeDp();
+        var iso = this.getAttribute("data-day");
+        if (dpTimeMode) {
+          // 带时刻：只换日期、保留时/分，面板留着 —— 时刻行还能接着调
+          var p = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+          dpFor.value = fmtMin(new Date(Number(p[1]), Number(p[2]) - 1, Number(p[3]),
+            dpClamp($("dpHour").value, 0, 23), dpClamp($("dpMin").value, 0, 59)));
+          paintDp();
+        } else {
+          dpFor.value = iso;
+          closeDp();
+        }
       };
     }
   }
@@ -2376,6 +2435,32 @@
       if (dpMonth < 0) { dpMonth = 11; dpYear -= 1; }
       if (dpMonth > 11) { dpMonth = 0; dpYear += 1; }
       paintDp();
+    };
+  }
+  /* 时刻行：一改就写回输入框（日期部分沿用已选的那天，没选就用今天） */
+  function dpWriteTime() {
+    if (!dpFor || !dpTimeMode) return;
+    var base = parseTime(dpFor.value) || new Date();
+    dpFor.value = fmtMin(new Date(base.getFullYear(), base.getMonth(), base.getDate(),
+      dpClamp($("dpHour").value, 0, 23), dpClamp($("dpMin").value, 0, 59)));
+  }
+  $("dpHour").oninput = dpWriteTime;
+  $("dpMin").oninput = dpWriteTime;
+  $("dpHour").onchange = dpWriteTime;
+  $("dpMin").onchange = dpWriteTime;
+  var tquicks = document.querySelectorAll("[data-tquick]");
+  for (var tq = 0; tq < tquicks.length; tq++) {
+    tquicks[tq].onclick = function () {
+      if (!dpFor) return;
+      if (this.getAttribute("data-tquick") === "clear") {
+        dpFor.value = "";
+      } else {
+        var d = new Date();
+        dpFor.value = fmtMin(d);
+        $("dpHour").value = String(d.getHours());
+        $("dpMin").value = String(d.getMinutes());
+      }
+      closeDp();
     };
   }
   var quicks = document.querySelectorAll("[data-quick]");
