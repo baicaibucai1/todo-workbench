@@ -1737,6 +1737,18 @@
   }
 
   /** 选中 / 拖进来的一批文件 → 待上传列表。读图是异步的，一次最多收 12 张 */
+  /** 把 `<input type=file>` 里选中的文件取成**真数组**，然后再清空输入框（同一个文件
+   *  再选一次也要能触发 change）。★ 顺序不能反：Chromium 里 `input.value = ""` 会
+   *  **就地清空**那个 FileList —— 先抓 `this.files` 的引用再清，拿到的就是 0 个，
+   *  表现为"选完图什么都没发生"、也不报错。无头 Chrome 实测：抓引用=0，先搬数组=2。 */
+  function filesOf(el) {
+    var out = [];
+    if (!el || !el.files) return out;
+    for (var i = 0; i < el.files.length; i++) out.push(el.files[i]);
+    try { el.value = ""; } catch (e) { /* 清不了就算了，别挡住取文件 */ }
+    return out;
+  }
+
   async function takeFiles(files, cb) {
     var arr = [];
     for (var i = 0; i < files.length && arr.length < 12; i++) arr.push(files[i]);
@@ -2916,9 +2928,8 @@
     if (pick && fileEl) pick.onclick = function () { fileEl.click(); };
     if (fileEl) {
       fileEl.onchange = function () {
-        var fs = this.files;
-        this.value = "";
-        if (!fs || !fs.length) return;
+        var fs = filesOf(this);
+        if (!fs.length) return;
         void takeFiles(fs, function (pics, bad) {
           if (bad.length) toast(bad[0]);
           if (pics.length) void doAttach(r.id, pics);
@@ -2956,9 +2967,8 @@
     if (pick && fileEl) pick.onclick = function () { fileEl.click(); };
     if (fileEl) {
       fileEl.onchange = function () {
-        var fs = this.files;
-        this.value = "";
-        if (!fs || !fs.length) return;
+        var fs = filesOf(this);
+        if (!fs.length) return;
         void takeFiles(fs, function (pics, bad) {
           if (bad.length) toast(bad[0]);
           pendingFlowImgs = pendingFlowImgs.concat(pics);
@@ -3005,9 +3015,8 @@
     }
     if (stepFile) {
       stepFile.onchange = function () {
-        var fs = this.files;
-        this.value = "";
-        if (!fs || !fs.length) return;
+        var fs = filesOf(this);
+        if (!fs.length) return;
         var idx = pendingStepIdx;
         void takeFiles(fs, function (pics, bad) {
           if (bad.length) toast(bad[0]);
@@ -3968,9 +3977,8 @@
   if ($("fImgPick")) {
     $("fImgPick").onclick = function () { $("fImgFile").click(); };
     $("fImgFile").onchange = function () {
-      var fs = this.files;
-      this.value = "";                 // 同一个文件再选一次也要能触发 change
-      if (!fs || !fs.length) return;
+      var fs = filesOf(this);        // 取完真数组再清空（同一个文件再选一次也要能触发 change）
+      if (!fs.length) return;
       void takeFiles(fs, function (pics, bad) {
         if (bad.length) toast(bad[0]);
         pendingImgs = pendingImgs.concat(pics);

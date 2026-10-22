@@ -47,6 +47,33 @@ async function waitFor(fn, ms = 3000) {
   return false;
 }
 
+/** 模拟用户选文件。
+ *
+ *  ★ 必须连「input.value = "" 会**就地清空** FileList」一起模拟 —— Chromium 就是
+ *  这么干的（无头 Chrome 实测：先抓 `input.files` 的引用再清空，拿到的 length 是 0；
+ *  先搬进真数组再清，才是完整的两张）。而 jsdom 里 `files` 是咱们自己塞的普通数组，
+ *  清 value 根本碰不到它 —— 于是「选完图静默无反应」这种 bug 在测试里永远看不见。
+ *  这里让 getter 返回同一个列表对象、value 的 setter 把它清空，就跟真浏览器一致了。 */
+function pickFiles(doc, win, inputId, files) {
+  const el = doc.getElementById(inputId);
+  if (!el) throw new Error("找不到文件框 " + inputId);
+  const list = [];
+  files.forEach((f, i) => { list[i] = f; });
+  list.length = files.length;
+  Object.defineProperty(el, "files", { configurable: true, get: () => list });
+  Object.defineProperty(el, "value", {
+    configurable: true,
+    get: () => "",
+    set: (v) => {
+      if (v) return;
+      for (let i = 0; i < list.length; i++) delete list[i];
+      list.length = 0;                 // 就地清空：外部抓着的引用也一起变空
+    },
+  });
+  el.dispatchEvent(new win.Event("change", { bubbles: true }));
+  return el;
+}
+
 /* ---------------- 假宿主 ---------------- */
 const store = [];          // 台账行
 const pushLog = [];        // 推送记录（工具只会 insert / select 它）
@@ -1262,9 +1289,7 @@ console.log("\n11. 订单附图：字节进图床，工具只记关联");
      —— 正好覆盖"压不了也不能把图丢了"那个分支 */
   const f1 = new win.File([new Uint8Array([137, 80, 78, 71])], "破损.png", { type: "image/png" });
   const f2 = new win.File([new Uint8Array([137, 80, 78, 71])], "面单.png", { type: "image/png" });
-  const fin = doc.getElementById("fImgFile");
-  Object.defineProperty(fin, "files", { value: [f1, f2], configurable: true });
-  fin.dispatchEvent(new win.Event("change", { bubbles: true }));
+  pickFiles(doc, win, "fImgFile", [f1, f2]);
   await waitFor(() => doc.querySelectorAll("#fImgDrop .imgcell").length === 2);
   check("登记页选两张 → 出现两个待传格",
     doc.querySelectorAll("#fImgDrop .imgcell").length === 2,
@@ -1369,9 +1394,7 @@ console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）
   /* 先在「记一步」的表单里选两张图 —— 这一步提交前不该进图床 */
   const g1 = new win.File([new Uint8Array([137, 80, 78, 71])], "补发单.png", { type: "image/png" });
   const g2 = new win.File([new Uint8Array([137, 80, 78, 71])], "聊天记录.png", { type: "image/png" });
-  const fin = doc.getElementById("dFlowFile");
-  Object.defineProperty(fin, "files", { value: [g1, g2], configurable: true });
-  fin.dispatchEvent(new win.Event("change", { bubbles: true }));
+  pickFiles(doc, win, "dFlowFile", [g1, g2]);
   await waitFor(() => doc.querySelectorAll("#dFlowPick .imgcell").length === 2);
   check("记一步之前能先选图，两张都排成待传格",
     doc.querySelectorAll("#dFlowPick .imgcell").length === 2 &&
@@ -1409,11 +1432,8 @@ console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）
   const addBtn = doc.querySelector('#flowTl [data-stepimg="0"]');
   check("每一步的时刻旁边都有「+图」", !!addBtn);
   addBtn.click();
-  const sFile = doc.getElementById("dStepFile");
   const g3 = new win.File([new Uint8Array([137, 80, 78, 71])], "后来找到的.png", { type: "image/png" });
-  Object.defineProperty(sFile, "files", { value: [g3], configurable: true });
-  sFile.dispatchEvent(new win.Event("change", { bubbles: true }));
-  await waitFor(() => imgStore.length === iBefore + 3, 6000);
+  pickFiles(doc, win, "dStepFile", [g3]);  await waitFor(() => imgStore.length === iBefore + 3, 6000);
   check("历史步骤能补图，挂的还是原来那一步",
     imgStore.filter((r) => r.ticket_id === row.id).length === 3 &&
     imgStore.filter((r) => r.ticket_id === row.id).every((r) => r.step_uid === sid),
@@ -1432,6 +1452,22 @@ console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）
     imgStore.filter((r) => r.ticket_id === row.id).length === 0,
     String(imgStore.filter((r) => r.ticket_id === row.id).length));
   check("图床里的原图一张没删", gallery.length === gKeep, gallery.length + " vs " + gKeep);
+
+  /* 详情页右上「添加」走的是另一个文件框（dImgFile）—— 和登记页 / 记一步是各自独立的
+     一段 onchange，都得单独验一遍「选完真的会动」（同一个坑曾四处都在：清 value 把
+     FileList 一起清了，选完图静默无反应） */
+  const g4 = new win.File([new Uint8Array([137, 80, 78, 71])], "补拍的面单.png", { type: "image/png" });
+  const wholeBefore = imgStore.length;
+  pickFiles(doc, win, "dImgFile", [g4]);
+  await waitFor(() => imgStore.length === wholeBefore + 1, 6000);
+  check("详情页「添加」选一张 → 真的存进图床并挂上了", imgStore.length === wholeBefore + 1,
+    imgStore.length + " vs " + wholeBefore);
+  check("这张是**整单图**（没有 step_uid）",
+    !imgStore[imgStore.length - 1]?.step_uid,
+    String(imgStore[imgStore.length - 1]?.step_uid));
+  check("选完立刻出现在「图片」区",
+    doc.querySelectorAll("#dImgDrop .imgcell").length === 1,
+    String(doc.querySelectorAll("#dImgDrop .imgcell").length));
 
   /* 老流程（v1.10.0 之前的步骤没有 u）：load 时静默补上 —— 不补的话图挂不住 */
   store.push({
