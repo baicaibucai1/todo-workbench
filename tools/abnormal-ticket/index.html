@@ -6,7 +6,7 @@
 <title>异常单号登记</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23378add'/%3E%3Crect x='8' y='7' width='16' height='18' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='11' y='11' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='15' width='10' height='1.6' rx='.8' fill='%23378add'/%3E%3Crect x='11' y='19' width='6' height='1.6' rx='.8' fill='%23378add'/%3E%3C/svg%3E" />
 <!--
-  异常单号登记（v1.5.1）——整本重写过一次，之后按反馈迭代。
+  异常单号登记（v1.8.0）——整本重写过一次，之后按反馈迭代。
 
   宿主约定（改之前先读 src/lib/toolBridge.ts 与 toolLink.ts）：
     · 页面**自包含**：不引外部 CSS/JS/字体，独立打开也能用（数据落 localStorage）；
@@ -349,6 +349,32 @@
   th:first-child { background: var(--chip); z-index: 2; }
   td:first-child { background: var(--bg); font-family: var(--mono); }
   tbody tr:hover td:first-child { background: var(--chip); }
+
+  /* ---------- 推送记录：只增不删的流水 ----------
+     首列不是单号、也不需要横滚时冻住，所以把台账那套 sticky 撤销；
+     时间列用等宽字，数字列右对齐 —— 扫一列"新增几行"时不用逐位对齐着读。 */
+  #logTable th:first-child, #logTable td:first-child {
+    position: static; box-shadow: none; font-family: var(--mono);
+  }
+  #logTable td.num, #logTable th.num { text-align: right; font-family: var(--mono); }
+  #logTable td.msg { max-width: 560px; }
+  .lg {
+    display: inline-block; font-size: 11px; line-height: 1.7; border-radius: 999px;
+    padding: 0 8px; border: 1px solid var(--line); color: var(--fg2); white-space: nowrap;
+  }
+  .lg.ok { color: var(--ok); border-color: var(--ok); }
+  .lg.fail { color: var(--danger); border-color: var(--danger); }
+  .lg.skip { color: var(--warn); border-color: var(--warn); }
+  .lg.noop { color: var(--dim); }
+  .lg.k { color: var(--violet); border-color: var(--violet); }
+  .lg.force { color: var(--warn); border-color: var(--warn); }
+  .loghead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .loghead h2 { margin: 0; }
+  .loghead .meta { margin-left: auto; color: var(--dim); font-size: 12px; }
+  .logbar { display: flex; align-items: center; gap: 8px; margin: 10px 0 8px; flex-wrap: wrap; }
+  .logbar select { width: auto; min-width: 120px; }
+  /* ★ 它同时是 .r（display:flex）—— hidden 属性压不住，得显式写一条 */
+  #logMoreWrap[hidden] { display: none; }
   .colpanel {
     position: absolute; z-index: 20; background: var(--bg);
     border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-width: 220px;
@@ -450,13 +476,16 @@
   #view-table { --tint: var(--violet); }
   .tabs button[data-tab="settings"],
   #view-settings { --tint: var(--dim); }
+  .tabs button[data-tab="log"],
+  #view-log { --tint: var(--ok); }
 
-  /* 页头：底边一条 2px 的色条（四段硬边拼色，不是渐变），呼应四个页签 */
+  /* 页头：底边一条 2px 的色条（五段硬边拼色，不是渐变），呼应五个页签 */
   header { position: relative; }
   header::after {
     content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
     background: linear-gradient(90deg,
-      var(--accent) 0 25%, var(--teal) 25% 50%, var(--violet) 50% 75%, var(--dim) 75% 100%);
+      var(--accent) 0 20%, var(--teal) 20% 40%, var(--violet) 40% 60%,
+      var(--ok) 60% 80%, var(--dim) 80% 100%);
     opacity: .75;
   }
   /* 页头小标：圆角方块里三条横线，跟 favicon 一个形状 */
@@ -531,6 +560,7 @@
   <button id="tab-create" data-tab="create" data-ico="pen" role="tab" aria-selected="true">登记</button>
   <button id="tab-browse" data-tab="browse" data-ico="doc" role="tab" aria-selected="false">查看</button>
   <button id="tab-table" data-tab="table" data-ico="grid" role="tab" aria-selected="false">表格</button>
+  <button id="tab-log" data-tab="log" data-ico="hist" role="tab" aria-selected="false">记录</button>
   <button id="tab-settings" data-tab="settings" data-ico="gear" role="tab" aria-selected="false">设置</button>
 </div>
 
@@ -638,6 +668,55 @@
         <thead id="tableHead"></thead>
         <tbody id="tableBody"></tbody>
       </table>
+    </div>
+  </section>
+
+  <!-- ==================== 推送记录 ==================== -->
+  <!-- 只增不删：这里没有删除 / 清空按钮，页面上也没有任何能少一条的入口。
+       记录是排查"到底推没推、断在哪一步"的唯一凭据，删了就没法复盘了。 -->
+  <section class="view" id="view-log" hidden>
+    <div class="card">
+      <div class="loghead">
+        <h2 data-ico="hist">推送记录</h2>
+        <span class="meta" id="logStats"></span>
+      </div>
+      <p class="note" style="margin:8px 0 0">
+        每次点「推送」都会在这里留一条 —— <b>成功、没改动、取消、失败都记</b>，
+        写清时间、增量还是强制、新增几行 / 改几个格 / 清空几行、推送时本地共有多少单。
+        记录存在<b>本机数据库自己的表里</b>，<b>只增不删</b>：推送、拉取、整理数据都不会动它，
+        正常使用下一条都不会少（只有你在设置里主动「清空这个工具的数据」才会一起清掉）。
+      </p>
+      <div class="logbar">
+        <select id="logFlt" title="按结果筛">
+          <option value="all">全部记录</option>
+          <option value="ok">只看成功</option>
+          <option value="noop">只看没改动</option>
+          <option value="skip">只看取消</option>
+          <option value="fail">只看失败</option>
+        </select>
+        <span class="spacer"></span>
+        <button id="logRefresh" data-ico="hist">刷新</button>
+      </div>
+      <div class="tblscroll" style="max-height:calc(100vh - 320px)">
+        <table id="logTable">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>方式</th>
+              <th>结果</th>
+              <th class="num">新增</th>
+              <th class="num">改动</th>
+              <th class="num">清空</th>
+              <th>详情</th>
+            </tr>
+          </thead>
+          <tbody id="logBody"></tbody>
+        </table>
+      </div>
+      <div class="r" id="logMoreWrap" hidden style="margin-top:8px">
+        <button id="logMore">加载更早的记录</button>
+        <span class="hint" id="logMoreHint" style="margin:0"></span>
+      </div>
     </div>
   </section>
 
@@ -913,6 +992,7 @@
     grid: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.4" y="2.4" width="11.2" height="11.2" rx="1.6"/><path d="M2.4 6.1h11.2M2.4 9.9h11.2M6.1 2.4v11.2M9.9 2.4v11.2"/></svg>',
     lock: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.4" rx="1.4"/><path d="M5.8 7V5.4a2.2 2.2 0 0 1 4.4 0V7"/></svg>',
     cash: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.9" y="4.4" width="12.2" height="7.2" rx="1.2"/><circle cx="8" cy="8" r="1.8"/><path d="M4.3 6.4v.1M11.7 9.5v.1"/></svg>',
+    hist: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.6"/><path d="M8 4.6V8l2.6 1.7"/></svg>',
   };
 
   /* 空态插画：一张虚线单据 + 一个放大镜。描边、中性灰、跟着主题反色。
@@ -1414,6 +1494,9 @@
     return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
       + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
   }
+  /** 推送记录用：到秒。日志是排查用的 —— 同一分钟推两次要能分出先后
+      （台账那几列仍然是到分钟，两者别混）。 */
+  function nowSecStr() { var d = new Date(); return fmtMin(d) + ":" + pad2(d.getSeconds()); }
   /** 兼容三种写法：ISO、旧数据的「2026/10/20 14:30:00」、datetime-local 的「2026-10-20T14:30」 */
   function parseTime(v) {
     var s = txt(v).trim();
@@ -2581,6 +2664,7 @@
       var em = txt(err && err.message ? err.message : err);
       setWpsMsg(em, true);
       toast("推送失败：" + em);
+      void recordPush(force ? "force" : "incr", "fail", null, "核对阶段就失败了（表上一格没动）：" + em);
       return;
     }
     wpsBusy = false;
@@ -2595,6 +2679,7 @@
       if (orph && !force) same += "（表上有 " + orph + " 行本地没有，留着没动；要清掉用「强制推送」）";
       setWpsMsg(same);
       toast(same);
+      void recordPush(force ? "force" : "incr", "noop", null, same);
       return;
     }
 
@@ -2620,6 +2705,7 @@
     if (!go) {
       setWpsMsg("已取消，表上一格没动");
       toast("已取消，表格没动");
+      void recordPush(force ? "force" : "incr", "skip", null, "在确认框点了取消，表上一格没动");
       return;
     }
 
@@ -2638,15 +2724,192 @@
         + (res.appended ? "（末尾补了 " + res.appended + " 列台账表头）" : "");
       setWpsMsg(msg);
       toast(msg);
+      void recordPush(force ? "force" : "incr", "ok", {
+        added: res.added, changed: res.changed, removed: res.removed,
+      }, msg);
     } catch (err) {
       var e2 = txt(err && err.message ? err.message : err);
       setWpsMsg(e2, true);
       toast("推送失败：" + e2);
+      void recordPush(force ? "force" : "incr", "fail", null, "写表时失败（可能只写了一半，下次推送会补齐）：" + e2);
     } finally {
       wpsBusy = false;
       renderSettings();
     }
   }
+  /* ==================================================================
+   * 10b. 推送记录：本机数据库里的只增不删流水
+   * ==================================================================
+   * 每次点「推送」都记一条 —— 成功 / 没改动 / 取消 / 失败。排查时最想知道的是
+   * "到底推没推、断在哪一步"，只记成功的日志等于没有。
+   *
+   * ★ 只增不删：工具侧对这张表只有 row.insert / row.select，没有 update、
+   *   没有 delete，页面上也不给删除入口。推送、拉取、时间归一都不碰它。
+   *   （唯一会清掉它的是用户在设置里主动「清空这个工具的数据」。）
+   *
+   * ★ 记账失败不能影响推送：推送已经把表格写了，这时冒一条红字，
+   *   用户只会以为"推失败了"。所以 recordPush 里的异常一律吞掉。
+   */
+  var TABLE_LOG = "push_log";
+  var LS_LOG = "wbtool:" + TOOL_ID + ":pushlog";
+  var LOG_PAGE = 200;         // 一次载入多少条；「加载更早」再加一页
+  var pushLogs = [];
+  var logTotal = 0;
+  var logLimit = LOG_PAGE;
+  var logFlt = "all";
+  var logStat = null;         // { all, ok, fail }：全表计数（不受筛选影响）
+  var logSeq = 0;             // 连点刷新时，只让最后发起的那个结果写界面
+
+  var LOG_RESULTS = [
+    ["ok", "成功"], ["noop", "没改动"], ["skip", "取消"], ["fail", "失败"],
+  ];
+  function logResultText(v) {
+    for (var i = 0; i < LOG_RESULTS.length; i++) if (LOG_RESULTS[i][0] === v) return LOG_RESULTS[i][1];
+    return txt(v) || "—";
+  }
+  function logKindText(v) { return v === "force" ? "强制" : "增量"; }
+
+  /** id 以时间打头（字典序 = 时间序）：同一秒推两次也分得出先后，
+      排序不用再依赖 logged_at 的字符串格式。 */
+  function logKey() {
+    var d = new Date();
+    return "pl_" + d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate())
+      + pad2(d.getHours()) + pad2(d.getMinutes()) + pad2(d.getSeconds())
+      + ("00" + d.getMilliseconds()).slice(-3) + "_" + Math.random().toString(36).slice(2, 6);
+  }
+
+  function logWhere() {
+    return logFlt === "all" ? undefined : { push_result: logFlt };
+  }
+
+  /**
+   * 记一条推送流水。
+   * @param {"incr"|"force"} kind
+   * @param {"ok"|"noop"|"skip"|"fail"} result
+   * @param {{added?:number, changed?:number, removed?:number}|null} nums 真正写下去的格数 / 行数
+   * @param {string} message 人话，直接显示在「详情」列
+   */
+  async function recordPush(kind, result, nums, message) {
+    var entry = {
+      id: logKey(),
+      logged_at: nowSecStr(),
+      push_kind: kind,
+      push_result: result,
+      added: Number(nums && nums.added) || 0,
+      changed: Number(nums && nums.changed) || 0,
+      removed: Number(nums && nums.removed) || 0,
+      ticket_count: rows.length,
+      target: txt(wps.name) || txt(wps.fileId) || "",
+      message: txt(message),
+    };
+    if (bound()) {
+      try {
+        await call("row.insert", { table: TABLE_LOG, row: entry });
+      } catch (e) {
+        return;    // 记账失败不打断推送 —— 见上面那段
+      }
+    } else {
+      pushLogs.unshift(entry);
+      try { localStorage.setItem(LS_LOG, JSON.stringify(pushLogs)); } catch (e) { /* 配额满了就算了 */ }
+    }
+    if (!$("view-log").hidden) void loadLog();
+  }
+
+  async function loadLog() {
+    var mine = ++logSeq;
+    try {
+      if (bound()) {
+        var res = await call("row.select", {
+          table: TABLE_LOG, where: logWhere(), orderBy: "id", orderDir: "desc", limit: logLimit,
+        });
+        // 汇总另算：筛「失败」时顶部仍要显示总共推过多少次。数不出来不影响列表
+        var stat = null;
+        try {
+          var cnt = await call("row.count", { table: TABLE_LOG });
+          var okc = await call("row.count", { table: TABLE_LOG, where: { push_result: "ok" } });
+          var bad = await call("row.count", { table: TABLE_LOG, where: { push_result: "fail" } });
+          stat = {
+            all: Number(cnt && cnt.count) || 0,
+            ok: Number(okc && okc.count) || 0,
+            fail: Number(bad && bad.count) || 0,
+          };
+        } catch (e) { stat = null; }
+        if (mine !== logSeq) return;
+        pushLogs = (res && res.rows) || [];
+        logTotal = res && typeof res.total === "number" ? res.total : pushLogs.length;
+        logStat = stat;
+      } else {
+        var all = [];
+        try { all = JSON.parse(localStorage.getItem(LS_LOG) || "[]") || []; } catch (e) { all = []; }
+        all.sort(function (a, b) { return txt(a.id) < txt(b.id) ? 1 : txt(a.id) > txt(b.id) ? -1 : 0; });
+        logStat = {
+          all: all.length,
+          ok: all.filter(function (r) { return txt(r.push_result) === "ok"; }).length,
+          fail: all.filter(function (r) { return txt(r.push_result) === "fail"; }).length,
+        };
+        var list = logFlt === "all" ? all : all.filter(function (r) { return txt(r.push_result) === logFlt; });
+        if (mine !== logSeq) return;
+        logTotal = list.length;
+        pushLogs = list.slice(0, logLimit);
+      }
+      renderLog("");
+    } catch (e) {
+      if (mine !== logSeq) return;
+      pushLogs = [];
+      logTotal = 0;
+      renderLog(txt(e && e.message ? e.message : e));
+    }
+  }
+
+  function renderLog(err) {
+    var body = $("logBody");
+    if (!body) return;
+    if (err) {
+      body.innerHTML = '<tr><td colspan="7"><div class="empty sm"><span class="t">读不到推送记录：'
+        + esc(err) + "</span></div></td></tr>";
+    } else if (!pushLogs.length) {
+      body.innerHTML = '<tr><td colspan="7">'
+        + emptyBlock(logFlt === "all" ? "还没有推送记录 —— 推一次就会留一条" : "这个筛选下没有记录", true)
+        + "</td></tr>";
+    } else {
+      var html = "";
+      for (var i = 0; i < pushLogs.length; i++) {
+        var r = pushLogs[i], res = txt(r.push_result) || "ok";
+        html += "<tr>"
+          + '<td title="' + esc(txt(r.logged_at)) + '">' + esc(txt(r.logged_at)) + "</td>"
+          + '<td><span class="lg k' + (txt(r.push_kind) === "force" ? " force" : "") + '">'
+          + esc(logKindText(txt(r.push_kind))) + "</span></td>"
+          + '<td><span class="lg ' + esc(res) + '">' + esc(logResultText(res)) + "</span></td>"
+          + '<td class="num">' + (Number(r.added) || 0) + "</td>"
+          + '<td class="num">' + (Number(r.changed) || 0) + "</td>"
+          + '<td class="num">' + (Number(r.removed) || 0) + "</td>"
+          + '<td class="msg" title="' + esc(txt(r.message)) + '">' + esc(txt(r.message)) + "</td>"
+          + "</tr>";
+      }
+      body.innerHTML = html;
+    }
+
+    var st = logStat;
+    $("logStats").textContent = st
+      ? (st.all ? "累计 " + st.all + " 次 · 成功 " + st.ok + " · 失败 " + st.fail : "还没有记录")
+      : "已载入 " + pushLogs.length + " 条";
+
+    var more = logTotal > pushLogs.length;
+    $("logMoreWrap").hidden = !more;
+    if (more) $("logMoreHint").textContent = "还有 " + (logTotal - pushLogs.length) + " 条更早的";
+  }
+
+  $("logFlt").onchange = function () {
+    logFlt = this.value || "all";
+    logLimit = LOG_PAGE;
+    void loadLog();
+  };
+  $("logRefresh").onclick = function () { void loadLog(); };
+  $("logMore").onclick = function () {
+    logLimit += LOG_PAGE;
+    void loadLog();
+  };
+
   function bindPush(el) { if (el) el.onclick = function () { void pushFlow(false); }; }
   bindPush($("wpsPush"));
   bindPush($("tblPush"));
@@ -2858,7 +3121,7 @@
   /* ==================================================================
    * 12. 页签与渲染总入口
    * ================================================================== */
-  var TABS = ["create", "browse", "table", "settings"];
+  var TABS = ["create", "browse", "table", "log", "settings"];
   function setTab(name) {
     for (var i = 0; i < TABS.length; i++) {
       var v = TABS[i] === name;
@@ -2867,6 +3130,7 @@
     }
     if (name === "table") renderTable();
     if (name === "browse") renderDetail();
+    if (name === "log") void loadLog();   // 每次切过来都重查：别的时候推送不刷新它
   }
   /** 筛选 / 排序下拉：查看页和表格页各一套，取值共享（筛的是同一批单子）。
       ★ 先填选项再重画列表 —— 列表要读这些 select 的当前值。 */
@@ -2947,7 +3211,7 @@
   /* ==================================================================
    * 13. 事件绑定与启动
    * ================================================================== */
-  ["create", "browse", "table", "settings"].forEach(function (n) {
+  ["create", "browse", "table", "log", "settings"].forEach(function (n) {
     $("tab-" + n).onclick = function () { setTab(n); };
   });
   $("btnAdd").onclick = function () { void add(); };
@@ -3036,7 +3300,9 @@
     try {
       var info = await call("schema.info", {});
       $("schema").textContent = JSON.stringify(info, null, 2);
-      $("meta").textContent = "数据落在 " + (info && info.table ? info.table : "tool_" + TOOL_ID.replace(/-/g, "_") + "_" + TABLE) + " · SQLite";
+      // 1.8.0 起是两张表（台账 + 推送记录）—— 页头只报个数，明细在设置页那个 details 里
+      var nt = info && info.tables ? info.tables.length : 1;
+      $("meta").textContent = "本机 SQLite · " + nt + " 张表";
     } catch (err) {
       $("schema").textContent = "读不到表结构：" + txt(err.message);
     }

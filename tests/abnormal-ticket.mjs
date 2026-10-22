@@ -49,6 +49,9 @@ async function waitFor(fn, ms = 3000) {
 
 /* ---------------- 假宿主 ---------------- */
 const store = [];          // 台账行
+const pushLog = [];        // 推送记录（工具只会 insert / select 它）
+let pushLogDeletes = 0;    // 断言「只增不删」：这里必须一直是 0
+let pushFail = "";         // 非空 = 下一次推送直接失败（测失败也留痕）
 const kv = {};             // 工具 kv
 const ops = [];            // 收到的 op 流水
 const args = [];           // 每个 op 的参数（要看推送第一步是不是 dryRun）
@@ -77,12 +80,33 @@ function host(win, e) {
   const p = m.payload || {};
   args.push({ op: m.op, payload: p });
   switch (m.op) {
-    case "row.select":
-      reply(win, m.id, true, { rows: store.slice() });
+    case "row.select": {
+      // 两张表：台账用 store，推送记录用 pushLog。真宿主按 orderBy 排，
+      // 这里只实现日志用到的 id desc（id 以时间打头，字典序=时间序）
+      let rows = p.table === "push_log" ? pushLog.slice() : store.slice();
+      if (p.table === "push_log") {
+        if (p.where && p.where.push_result) {
+          rows = rows.filter((r) => r.push_result === p.where.push_result);
+        }
+        rows.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+      }
+      const total = rows.length;
+      if (p.limit) rows = rows.slice(0, p.limit);
+      reply(win, m.id, true, { rows, total });
       return;
+    }
+    case "row.count": {
+      let rows = p.table === "push_log" ? pushLog : store;
+      if (p.where) {
+        rows = rows.filter((r) => Object.keys(p.where).every((k) => String(r[k]) === String(p.where[k])));
+      }
+      reply(win, m.id, true, { count: rows.length });
+      return;
+    }
     case "row.insert": {
+      const target = p.table === "push_log" ? pushLog : store;
       const row = Object.assign({ id: newId(), created_at: new Date().toISOString() }, p.row || {});
-      store.push(row);
+      target.push(row);
       reply(win, m.id, true, { row });
       return;
     }
@@ -93,6 +117,7 @@ function host(win, e) {
       return;
     }
     case "row.delete": {
+      if (p.table === "push_log") pushLogDeletes++;
       const i = store.findIndex((r) => r.id === p.id);
       if (i >= 0) store.splice(i, 1);
       reply(win, m.id, true, { ok: true });
@@ -120,6 +145,7 @@ function host(win, e) {
       });
       return;
     case "wps.mcpPush":
+      if (pushFail) { reply(win, m.id, false, null, pushFail); return; }
       // 增量口径：新增 1 行、改 2 个格，表上还有 1 行本地没有（默认留着不动）
       // force：那一行会被清空 → removed=1
       reply(win, m.id, true, {
@@ -174,12 +200,12 @@ check("没有未捕获报错", errors.length === 0, errors.join(" | "));
 check("连上了宿主（bindState=bound）", doc.body.dataset.bindState === "bound", doc.body.dataset.bindState);
 check("状态点写着「已连工作台」", (doc.getElementById("hostState")?.textContent || "").includes("已连工作台"));
 
-console.log("\n2. 四个页签切得动");
-for (const [tab, view] of [["browse", "view-browse"], ["table", "view-table"], ["settings", "view-settings"], ["create", "view-create"]]) {
+console.log("\n2. 五个页签切得动");
+for (const [tab, view] of [["browse", "view-browse"], ["table", "view-table"], ["log", "view-log"], ["settings", "view-settings"], ["create", "view-create"]]) {
   doc.getElementById("tab-" + tab).click();
   await sleep(30);
   const v = doc.getElementById(view);
-  const others = ["view-create", "view-browse", "view-table", "view-settings"].filter((x) => x !== view);
+  const others = ["view-create", "view-browse", "view-table", "view-log", "view-settings"].filter((x) => x !== view);
   check(
     `点「${tab}」→ ${view} 显示、其余隐藏`,
     !v.hidden && others.every((o) => doc.getElementById(o).hidden === true),
@@ -880,6 +906,92 @@ check("确认后真推且带 force", real3.length === 2 && real3[1].payload.forc
 check("结果里说清了清空 1 行", /清空 1 行/.test(doc.getElementById("wpsMsg").textContent || ""),
   doc.getElementById("wpsMsg").textContent);
 
+console.log("\n7d. 推送记录：本机库里的只增不删流水");
+check("三次操作都记了（成功 / 取消 / 强制成功）", pushLog.length === 3,
+  pushLog.map((r) => r.push_result + "/" + r.push_kind).join(", "));
+check("成功那条记了新增 1 行、改 2 格、本地单数",
+  pushLog[0] && pushLog[0].push_result === "ok" && Number(pushLog[0].added) === 1 &&
+  Number(pushLog[0].changed) === 2 && Number(pushLog[0].ticket_count) === store.length,
+  JSON.stringify(pushLog[0]));
+check("取消也留了一条（不是静默吞掉）", pushLog[1] && pushLog[1].push_result === "skip",
+  String(pushLog[1] && pushLog[1].push_result));
+check("强制推送单独标 force、记了清空 1 行",
+  pushLog[2] && pushLog[2].push_kind === "force" && Number(pushLog[2].removed) === 1,
+  JSON.stringify(pushLog[2]));
+check("记录里写了绑定的表名", (pushLog[0].target || "").includes("测试异常单"), pushLog[0].target);
+check("时间是本地到秒（不是 ISO）", /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(pushLog[0].logged_at),
+  pushLog[0].logged_at);
+check("只增不删：一次 delete 都没有", pushLogDeletes === 0, String(pushLogDeletes));
+
+doc.getElementById("tab-log").click();
+await sleep(250);
+check("记录页签切得过去", doc.getElementById("view-log").hidden === false);
+check("表格里 3 条记录", doc.querySelectorAll("#logBody tr").length === 3,
+  String(doc.querySelectorAll("#logBody tr").length));
+check("最新在最上面（强制推送那条）",
+  (doc.querySelector("#logBody tr")?.textContent || "").includes("强制"));
+check("顶部汇总：累计 3 次 · 成功 2 · 失败 0",
+  /累计 3 次 · 成功 2 · 失败 0/.test(doc.getElementById("logStats").textContent || ""),
+  doc.getElementById("logStats").textContent);
+check("结果标签说人话（成功 / 取消都在）",
+  /成功/.test(doc.getElementById("logBody").textContent || "") &&
+  /取消/.test(doc.getElementById("logBody").textContent || ""));
+check("时间列到秒", /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(doc.getElementById("logBody").textContent || ""));
+check("页面没有删除记录的入口（只增不删）",
+  !doc.querySelector("#view-log button#logClear") &&
+  !/清空记录|删除记录/.test(doc.getElementById("view-log").textContent || ""));
+check("不到一页时不显示「加载更早」", doc.getElementById("logMoreWrap").hidden === true);
+
+{
+  const lf = doc.getElementById("logFlt");
+  lf.value = "fail";
+  lf.dispatchEvent(new win.Event("change", { bubbles: true }));
+  await sleep(250);
+  check("筛「只看失败」→ 空态（这 3 条里没有失败）",
+    /这个筛选下没有记录/.test(doc.getElementById("logBody").textContent || ""),
+    (doc.getElementById("logBody").textContent || "").slice(0, 60));
+  lf.value = "all";
+  lf.dispatchEvent(new win.Event("change", { bubbles: true }));
+  await sleep(250);
+  check("筛回全部又是 3 条", doc.querySelectorAll("#logBody tr").length === 3,
+    String(doc.querySelectorAll("#logBody tr").length));
+}
+
+console.log("\n7e. 推送失败也要留痕（只看到红字、不知道断在哪一步等于没记）");
+pushFail = "MCP 会话已过期，请重新授权";
+doc.getElementById("tab-settings").click();
+await sleep(80);
+doc.getElementById("wpsPush").click();
+await sleep(300);
+check("核对失败也写了一条（fail）", pushLog.length === 4 && pushLog[3].push_result === "fail",
+  pushLog.map((r) => r.push_result).join(","));
+check("失败原因原话记下来了", /会话已过期/.test(pushLog[3].message || ""), pushLog[3].message);
+check("失败那条的数字全 0（一格没写）",
+  Number(pushLog[3].added) === 0 && Number(pushLog[3].changed) === 0 && Number(pushLog[3].removed) === 0,
+  JSON.stringify(pushLog[3]));
+pushFail = "";
+
+doc.getElementById("tab-log").click();
+await sleep(250);
+check("记录页现在 4 条", doc.querySelectorAll("#logBody tr").length === 4,
+  String(doc.querySelectorAll("#logBody tr").length));
+{
+  const lf2 = doc.getElementById("logFlt");
+  lf2.value = "fail";
+  lf2.dispatchEvent(new win.Event("change", { bubbles: true }));
+  await sleep(250);
+  check("「只看失败」正好 1 条", doc.querySelectorAll("#logBody tr").length === 1,
+    String(doc.querySelectorAll("#logBody tr").length));
+  check("顶部汇总仍是全表：累计 4 次 · 成功 2 · 失败 1",
+    /累计 4 次 · 成功 2 · 失败 1/.test(doc.getElementById("logStats").textContent || ""),
+    doc.getElementById("logStats").textContent);
+  lf2.value = "all";
+  lf2.dispatchEvent(new win.Event("change", { bubbles: true }));
+  await sleep(200);
+}
+doc.getElementById("tab-settings").click();
+await sleep(100);
+
 doc.getElementById("wpsPull").click();
 await sleep(250);
 check("拉取走了 wps.mcpPull", ops.includes("wps.mcpPull"));
@@ -922,6 +1034,12 @@ console.log("\n8. 独立打开也还是个能用的网页（不连宿主）");
   const saved = w2.localStorage.getItem("wbtool:abnormal-ticket:rows") || "";
   check("登记一条落进 localStorage（独立态唯一的数据处）", saved.includes("261019-1234567890123"),
     saved.slice(0, 120));
+  d2doc.getElementById("tab-log").click();
+  await sleep(150);
+  check("独立运行也能打开记录页（空态，不报错）",
+    d2doc.getElementById("view-log").hidden === false &&
+    /还没有推送记录/.test(d2doc.getElementById("logBody").textContent || ""),
+    d2doc.getElementById("logBody").textContent);
   check("独立运行也没有未捕获报错", errs2.length === 0, errs2.join(" | "));
   d2.window.close();
 }
