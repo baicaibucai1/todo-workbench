@@ -79,6 +79,22 @@ const store = [];          // 台账行
 const pushLog = [];        // 推送记录（工具只会 insert / select 它）
 const imgStore = [];       // 订单附图关联（工具只会 insert / select / delete）
 const gallery = [];        // 假图床：gallery.put 往里放，gallery.get 从里取
+
+/* 一条 v1.11.0 之前存下的附图：宿主那时生成缩略图是坏的（把跨源的图直接画到
+   canvas 上 → 画布被污染 → toDataURL 抛 SecurityError → 上层 catch 掉回空串），
+   于是 thumb 存成了空串，界面上就是格子里的「无预览」。启动时工具该自己补回来
+   （见 index.html 的 healThumbs）。 */
+imgStore.push({
+  id: "legacy-img-1", ticket_id: "legacy-ticket-1", gallery_id: "g-legacy",
+  thumb: "", name: "旧图.png", step_uid: "", sort: 0, created_at: "2026-10-01 09:00",
+});
+gallery.push({
+  id: "g-legacy", title: "旧图", kind: "image", thumb: "",
+  dataUrl: "data:image/jpeg;base64,OLDORIGINAL",
+});
+/** 只算测试里当场挂上去的关联：预置那条 legacy 是给"补缩略图"用的，
+    不计进"这时有几条关联"这类计数 */
+const liveImgs = () => imgStore.filter((r) => r.id !== "legacy-img-1");
 let pushLogDeletes = 0;    // 断言「只增不删」：这里必须一直是 0
 let pushFail = "";         // 非空 = 下一次推送直接失败（测失败也留痕）
 const kv = {};             // 工具 kv
@@ -147,7 +163,10 @@ function host(win, e) {
       return;
     }
     case "row.update": {
-      const row = store.find((r) => r.id === p.id) || null;
+      // 必须按 p.table 分派：只查台账的话，探列 / 补缩略图这类对附图表的更新
+      // 会"成功但没改到"，测试绿着、真机上什么事都没发生
+      const arr = p.table === "push_log" ? pushLog : p.table === "ticket_images" ? imgStore : store;
+      const row = arr.find((r) => r.id === p.id) || null;
       if (row) Object.assign(row, p.patch || {});
       reply(win, m.id, true, { row });
       return;
@@ -167,8 +186,11 @@ function host(win, e) {
         id,
         title: p.title || "",
         kind: "image",
-        // 缩略图随便给一段可辨识的 data URL：断言里只关心它有没有被透传
-        thumb: "data:image/png;base64,THUMB" + id,
+        /* ★ 照真宿主现在的样子回空串：它那边生成缩略图要跨源画布导出，
+           会抛 SecurityError 被 catch 掉。工具必须自己能出缩略图 —— 这里要是
+           回一段假的 data URL，就把「无预览」这个 bug 又盖住了。 */
+        thumb: "",
+        dataUrl: p.dataUrl || "",        // gallery.get 要用（真宿主回原图字节）
       };
       gallery.push(item);
       reply(win, m.id, true, item);
@@ -177,7 +199,10 @@ function host(win, e) {
     case "gallery.get": {
       const it = gallery.find((g) => g.id === p.id) || null;
       if (!it) { reply(win, m.id, false, null, "这条记录不在图床里（可能已被删除）"); return; }
-      reply(win, m.id, true, { id: it.id, title: it.title, kind: "image", dataUrl: it.thumb, mime: "image/png", width: 10, height: 10 });
+      reply(win, m.id, true, {
+        id: it.id, title: it.title, kind: "image",
+        dataUrl: it.dataUrl || it.thumb, mime: "image/jpeg", width: 800, height: 600,
+      });
       return;
     }
     case "kv.get":
@@ -245,6 +270,28 @@ const dom = new JSDOM(HTML, {
 });
 const win = dom.window;
 const doc = win.document;
+
+/* 画布 / 图片：jsdom 没有 canvas，而工具现在**自己**压 320 缩略图（不再靠宿主回传）。
+   给个最小实现，让这条真实路径也跑起来 —— 不然 canCanvas() 是 false、缩略图恒为空，
+   「无预览」就会被当成正常。 */
+win.HTMLCanvasElement.prototype.getContext = function () {
+  return { fillStyle: "", fillRect() {}, drawImage() {} };
+};
+win.HTMLCanvasElement.prototype.toDataURL = function (type) {
+  return "data:" + (type || "image/png") + ";base64,TOOLTHUMB";
+};
+win.Image = function () {
+  const self = this;
+  this.naturalWidth = 800;
+  this.naturalHeight = 600;
+  this.onload = null;
+  this.onerror = null;
+  let src = "";
+  Object.defineProperty(this, "src", {
+    get() { return src; },
+    set(v) { src = v; win.setTimeout(function () { if (self.onload) self.onload(); }, 0); },
+  });
+};
 win.addEventListener("message", (e) => host(win, e));
 win.addEventListener("error", (e) => errors.push("window.error: " + (e.message || e)));
 
@@ -257,6 +304,12 @@ console.log("1. 页面起得来");
 check("没有未捕获报错", errors.length === 0, errors.join(" | "));
 check("连上了宿主（bindState=bound）", doc.body.dataset.bindState === "bound", doc.body.dataset.bindState);
 check("状态点写着「已连工作台」", (doc.getElementById("hostState")?.textContent || "").includes("已连工作台"));
+
+/* 老行（宿主当年生成缩略图失败 → thumb 存成空串）在启动时该自己补回来。
+   不补的话，那几格永远写着「无预览」，用户只能删了重挂。 */
+await waitFor(() => !!imgStore.find((r) => r.id === "legacy-img-1")?.thumb, 4000);
+const healedThumb = imgStore.find((r) => r.id === "legacy-img-1")?.thumb || "";
+check("没有缩略图的老行会在启动时自己补上", /^data:image\//.test(healedThumb), healedThumb.slice(0, 40));
 
 console.log("\n2. 五个页签切得动");
 for (const [tab, view] of [["browse", "view-browse"], ["table", "view-table"], ["log", "view-log"], ["settings", "view-settings"], ["create", "view-create"]]) {
@@ -1308,10 +1361,10 @@ console.log("\n11. 订单附图：字节进图床，工具只记关联");
     !!doc.querySelector("#fImgDrop .imgcell[data-pv]"));
 
   doc.getElementById("btnAdd").click();
-  await waitFor(() => imgStore.length === 2 && store.length === before + 1, 5000);
+  await waitFor(() => liveImgs().length === 2 && store.length === before + 1, 5000);
   check("登记成功、两张图都挂上",
-    store.length === before + 1 && imgStore.length === 2,
-    store.length + " 单 / " + imgStore.length + " 图");
+    store.length === before + 1 && liveImgs().length === 2,
+    store.length + " 单 / " + liveImgs().length + " 图");
   check("两张图都进了图床", gallery.length === gBefore + 2, String(gallery.length - gBefore));
   check("图床里的标题带单号（翻图床时认得出来）",
     /异常单 261022-777777777777 附图/.test(gallery[gBefore]?.title || ""),
@@ -1362,8 +1415,8 @@ console.log("\n11. 订单附图：字节进图床，工具只记关联");
     /图床里那张原图还在/.test(doc.querySelector(".dlgm")?.textContent || ""));
   const gNow = gallery.length;
   doc.getElementById("dlgYes").click();
-  await waitFor(() => imgStore.length === 1);
-  check("去掉后只剩 1 条关联", imgStore.length === 1, String(imgStore.length));
+  await waitFor(() => liveImgs().length === 1);
+  check("去掉后只剩 1 条关联", liveImgs().length === 1, String(liveImgs().length));
   check("图床里那张图没被删", gallery.length === gNow, gallery.length + " vs " + gNow);
 
   /* 删整条单子 → 它的图片关联一起清掉（别留孤儿行） */
@@ -1375,8 +1428,8 @@ console.log("\n11. 订单附图：字节进图床，工具只记关联");
   doc.getElementById("dlgYes").click();
   await waitFor(() => !store.find((r) => r.id === row.id));
   check("单子删了、它的图片关联也清了",
-    imgStore.length === 0 && !store.find((r) => r.id === row.id),
-    imgStore.length + " 条残留");
+    liveImgs().length === 0 && !store.find((r) => r.id === row.id),
+    liveImgs().length + " 条残留");
 }
 
 console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）");
@@ -1431,6 +1484,14 @@ console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）
   check("时间线上这一步下面排着两张缩略图",
     doc.querySelectorAll("#flowTl .tlpic .imgcell").length === 2,
     String(doc.querySelectorAll("#flowTl .tlpic .imgcell").length));
+  /* 格子要真出图 —— 宿主回的 thumb 是空串，缩略图得是工具自己压的那张，
+     否则格子里就写着「无预览」 */
+  const tlCells = doc.querySelectorAll("#flowTl .tlpic .imgcell");
+  check("步骤图格子里是真图，不是「无预览」",
+    !tlCells[0]?.querySelector(".noimg") &&
+    /^data:image\//.test(tlCells[0]?.querySelector("img")?.getAttribute("src") || ""),
+    (tlCells[0]?.textContent || "").slice(0, 20) + " / " +
+      (tlCells[0]?.querySelector("img")?.getAttribute("src") || "").slice(0, 30));
   check("整单「图片」区不混步骤图",
     doc.querySelectorAll("#dImgDrop .imgcell").length === 0,
     String(doc.querySelectorAll("#dImgDrop .imgcell").length));
@@ -1503,6 +1564,36 @@ console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）
   const lf = JSON.parse(store.find((r) => r.id === "legacy-flow-1").flow);
   check("老流程步骤 load 时静默补上 u（界面上的图才有地方挂）",
     !!lf[0].u && lf[0].n === "待处理", JSON.stringify(lf));
+}
+
+console.log("\n13. 默认窗口宽度下三栏并排（流程栏在右侧，不掉到底部）");
+{
+  /* jsdom 不做布局，只能量样式表本身：这三条就是"默认 1120×760（工具区约 840）
+     打开时流程栏还在右边"的全部依据，改了它们页面就会掉回上下排。 */
+  const css = HTML.slice(HTML.indexOf("<style>"), HTML.indexOf("</style>"));
+  check("流程栏是比例宽（clamp 230–320），不是写死 320",
+    /\.paneFlow\s*\{[^}]*flex:\s*0 0 clamp\(230px,\s*27%,\s*320px\)/.test(css));
+  check("上下排的断点收在 800（原来 1180 会在默认宽度就把流程栏甩到下面）",
+    /@media \(max-width: 800px\)\s*\{\s*\.panes\s*\{\s*flex-direction: column/.test(css));
+  const i1180 = css.indexOf("@media (max-width: 1180px)");
+  const i960 = css.indexOf("@media (max-width: 960px)");
+  const i800 = css.indexOf("@media (max-width: 800px)");
+  const blk1180 = i1180 >= 0 && i960 > i1180 ? css.slice(i1180, i960) : "";
+  const blk960 = i960 >= 0 && i800 > i960 ? css.slice(i960, i800) : "";
+  check("1180 / 960 两条断点只收窄列表，不换行",
+    !!blk1180 && !!blk960 &&
+    !/flex-direction: column/.test(blk1180) && !/flex-direction: column/.test(blk960));
+  check("窄下来的列表宽度取 min(拖出来的宽度, 百分比) —— 拖动仍然作数",
+    /\.split > \.left\s*\{[^}]*min\(var\(--listw, 320px\),\s*24%\)/.test(css));
+}
+console.log("\n14. 缩略图这条链路（宿主回空串时工具自己出图）");
+{
+  /* 图床里那张是工具自己压的：宿主 gallery.put 现在回的就是空 thumb */
+  const mine = imgStore.filter((r) => r.ticket_id === "legacy-ticket-1");
+  check("预置的老行已被补上缩略图", mine.length === 1 && /^data:image\//.test(mine[0].thumb || ""),
+    JSON.stringify(mine.map((r) => (r.thumb || "").slice(0, 24))));
+  check("缩略图不是原图（长度可控，不把原图字节塞进表）",
+    (mine[0]?.thumb || "").length < 200, String((mine[0]?.thumb || "").length));
 }
 
 console.log("\n====================================================");

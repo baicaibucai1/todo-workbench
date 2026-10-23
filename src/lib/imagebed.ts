@@ -514,22 +514,37 @@ export const THUMB_MAX = 320;
  */
 export async function makeThumb(relPath: string, max: number = THUMB_MAX): Promise<string> {
   const url = await attachmentStore().url(relPath);
-  const img = new Image();
-  img.src = url;
-  // decode() 而不是 onload：onload 在有些实现里早于解码完成，
-  // 这时候画到 canvas 上会得到一张空白图
-  await img.decode();
+  // ★ 不能把 asset:// 的图**直接**塞给 canvas：桌面端宿主的页面在 tauri.localhost，
+  //   图在 asset.localhost —— 没带 crossOrigin 加载的跨源图会把画布**污染**，
+  //   `toDataURL()` 抛 SecurityError。这里原来就是直连，异常被上层 catch 掉，
+  //   结果是"缩略图永远是空串"：图床自己看不出问题（它只 <img src>，不导像素），
+  //   工具里的格子却写着「无预览」。
+  //   所以先取字节转成 blob: URL（同源）再画 —— 画布干净，与 CORS 头无关。
+  //   asset 协议带 Access-Control-Allow-Origin，这条 fetch 走得通。
+  const res = await fetch(url);
+  if (!res.ok) return "";
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.src = objUrl;
+    // decode() 而不是 onload：onload 在有些实现里早于解码完成，
+    // 这时候画到 canvas 上会得到一张空白图
+    await img.decode();
 
-  const w = img.naturalWidth || max;
-  const h = img.naturalHeight || max;
-  const scale = Math.min(1, max / Math.max(w, h));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(w * scale));
-  canvas.height = Math.max(1, Math.round(h * scale));
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return "";
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/jpeg", 0.82);
+    const w = img.naturalWidth || max;
+    const h = img.naturalHeight || max;
+    const scale = Math.min(1, max / Math.max(w, h));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return "";
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.82);
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
 }
 
 /**

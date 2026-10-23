@@ -269,16 +269,28 @@
      1230 = 主信息卡上限 900 + 缝 10 + 流程栏 320：再多出来的是**纯空白**，
      会让主栏和流程栏之间裂开一道沟，所以对着内容定宽，不跟 --maxw 走。 */
   .split > .right > .panes { max-width: 1230px; margin-inline: auto; }
-  /* 右栏两分：主信息 + 流程栏。流程栏定宽（时间线竖着长，给它一条窄长的地方），
+  /* 右栏两分：主信息 + 流程栏。流程栏按比例伸缩（窄了先收它，宽了最多 320），
      主信息吃掉剩下的 —— 两栏都 min-width:0，否则长单号会把栅格顶宽。 */
   .panes { display: flex; gap: var(--gap); align-items: flex-start; }
   .paneMain { flex: 1 1 auto; min-width: 0; }
   .paneMain > .card { max-width: 900px; }
-  .paneFlow { flex: 0 0 320px; max-width: 42%; min-width: 0; }
-  /* 窄了就上下排：主信息在上，流程在下（时间线横着也不吃亏） */
+  .paneFlow { flex: 0 0 clamp(230px, 27%, 320px); max-width: 40%; min-width: 0; }
+  /* ★ 默认窗口是 1120×760，扣掉 280 的侧栏之后工具区只有 **840 左右** —— 原来 1180
+     的断点在这个宽度上直接把流程栏甩到页面底部，等于"默认打开就看不到进度"。所以：
+     先收窄列表、再收窄流程栏，一直并排到 800 才上下排。 */
   @media (max-width: 1180px) {
+    /* 列表跟用户拖出来的宽度走，但最多吃 29%（320 在 840 宽里占三分之一太贪） */
+    .split > .left { flex-basis: min(var(--listw, 320px), 29%); }
+  }
+  @media (max-width: 960px) {
+    .split > .left { flex-basis: min(var(--listw, 320px), 24%); }
+    .paneFlow { flex: 0 0 216px; }
+  }
+  /* 真窄了才上下排：主信息在上，流程在下（时间线横着也不吃亏） */
+  @media (max-width: 800px) {
     .panes { flex-direction: column; }
-    .paneFlow { flex: 1 1 auto; width: 100%; max-width: 900px; }
+    .paneFlow { flex: 1 1 auto; width: 100%; max-width: none; }
+    .paneMain > .card { max-width: none; }
   }
   /* 拖杆：左右分栏之间的一条细线，拖它改列表宽度 */
   .gutter { flex: 0 0 7px; cursor: col-resize; position: relative; }
@@ -287,8 +299,8 @@
     border-radius: 2px; background: var(--line);
   }
   .gutter:hover::after, .gutter.on::after { background: var(--accent); }
-  /* 窗口窄下来：列表先让位（320 在 1000 宽里要占三分之一），再窄就上下排 */
-  @media (max-width: 1080px) { .split > .left { flex-basis: 268px; } }
+  /* 窗口窄下来：列表先让位（宽度在 .split > .left 那几条断点里按比例收），
+     再窄就上下排 —— 顺序是「先收窄列表 → 再收窄流程栏 → 最后才上下排」 */
   @media (max-width: 820px) {
     .split { flex-direction: column; }
     .split > .left { flex: 0 0 auto; max-height: 38vh; }
@@ -1607,6 +1619,37 @@
     imgs = imgs.filter(function (r) { return txt(r.id) !== txt(id); });
     if (!bound()) saveImgs();
   }
+  /** 补缩略图：v1.11.1 之前存的行 thumb 是空的（那时宿主生成缩略图那条路是坏的），
+   *  界面上就是「无预览」。这里回图床取一次原图、自己压 320、写回这一列 ——
+   *  一次最多补 limit 张，失败静默跳过（原图可能已被删、或超过读取上限）。
+   *  返回补上了几张。 */
+  var healBusy = false;
+  async function healThumbs(limit) {
+    if (!bound() || healBusy || !hasImages) return 0;
+    var todo = [], cap = limit || 3;
+    for (var i = 0; i < imgs.length && todo.length < cap; i++) {
+      if (!txt(imgs[i].thumb) && txt(imgs[i].gallery_id)) todo.push(imgs[i]);
+    }
+    if (!todo.length) return 0;
+    healBusy = true;
+    var fixed = 0;
+    try {
+      for (var j = 0; j < todo.length; j++) {
+        try {
+          var got = await call("gallery.get", { id: txt(todo[j].gallery_id) }, 30000);
+          var th = await thumbOf(txt(got && got.dataUrl));
+          if (!th) continue;
+          await call("row.update", {
+            table: TABLE_IMG, id: txt(todo[j].id), patch: { thumb: th },
+          });
+          todo[j].thumb = th;          // 内存这份同步改掉，省一次整表重读
+          fixed++;
+        } catch (e) { /* 单张补不上不影响别的 */ }
+      }
+    } finally { healBusy = false; }
+    return fixed;
+  }
+
   /** 删整条单子前先清它的图片关联 —— 否则那几行会永远挂在一条不存在的单子上 */
   async function removeImgsOf(ticketId) {
     var list = imgsOf(ticketId);
@@ -1665,6 +1708,41 @@
     });
   }
 
+  /** 一张图（dataURL）的 320px 缩略图 —— **工具自己出**，不问宿主。
+   *
+   *  为什么不用宿主 `gallery.put` 回来的 thumb：宿主是把图床里的文件
+   *  （`asset://` 跨源）画到 canvas 上再 `toDataURL`，跨源画布是"被污染"的，
+   *  导出会抛 SecurityError；宿主那边 catch 掉就回空串 —— 落到格子里就是
+   *  「无预览」。工具手上本来就有确切的字节，自己压一张又快又稳。
+   *  没 canvas / 解码失败返回空串（那就退回用宿主的）。 */
+  function thumbOf(src) {
+    return new Promise(function (resolve) {
+      if (!src || !canCanvas()) { resolve(""); return; }
+      var img = new Image();
+      var settled = false;
+      var done = function (v) { if (!settled) { settled = true; resolve(v); } };
+      img.onload = function () {
+        try {
+          var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+          if (!w || !h) { done(""); return; }
+          var scale = Math.min(1, 320 / Math.max(w, h));
+          var cv = document.createElement("canvas");
+          cv.width = Math.max(1, Math.round(w * scale));
+          cv.height = Math.max(1, Math.round(h * scale));
+          var ctx = cv.getContext("2d");
+          if (!ctx) { done(""); return; }
+          ctx.fillStyle = "#fff";           // 透明 PNG 转 JPEG 会发黑，跟 shrinkImage 一个口径
+          ctx.fillRect(0, 0, cv.width, cv.height);
+          ctx.drawImage(img, 0, 0, cv.width, cv.height);
+          done(cv.toDataURL("image/jpeg", 0.78));
+        } catch (e) { done(""); }
+      };
+      img.onerror = function () { done(""); };
+      setTimeout(function () { done(""); }, 4000);   // 有的环境 onload 永不触发
+      img.src = src;
+    });
+  }
+
   function readImageFile(file) {
     return new Promise(function (resolve, reject) {
       if (!file || !/^image\//.test(txt(file.type))) {
@@ -1674,7 +1752,10 @@
       var fr = new FileReader();
       fr.onload = function () {
         shrinkImage(txt(fr.result)).then(function (u) {
-          resolve({ dataUrl: u, name: txt(file.name) || "图片" });
+          // 缩略图跟原图一起备好：详情/时间线画格子直接用它，不用再回宿主取
+          thumbOf(u).then(function (th) {
+            resolve({ dataUrl: u, thumb: th, name: txt(file.name) || "图片" });
+          });
         });
       };
       fr.onerror = function () { reject(new Error("读不了「" + (txt(file.name) || "这个文件") + "」")); };
@@ -1689,7 +1770,8 @@
     var got = await call("gallery.put", { dataUrl: pic.dataUrl, title: label }, 60000);
     var gid = txt(got && got.id);
     if (!gid) throw new Error("图床没有返回这张图的 id");
-    return { galleryId: gid, thumb: txt(got && got.thumb) };
+    // 优先用工具自己压的那张：宿主回的可能就是空串（见 thumbOf 上面的说明）
+    return { galleryId: gid, thumb: txt(pic && pic.thumb) || txt(got && got.thumb) };
   }
 
   /** 一串图挂到某条单子上。逐张来 —— 一张失败不该让剩下的都不存。
@@ -4165,6 +4247,18 @@
     if (!hasIndemnity || !hasStepCol) {
       renderDetail();
       renderTable();
+    }
+    /* 老行的缩略图当年没生成出来（宿主那条路是坏的）—— 后台悄悄补，补上再重画。
+       不 await 整轮：界面先出来，图后补。一次补 3 张、最多 6 轮，够覆盖日常攒下的量。 */
+    if (hasImages) {
+      void (async function () {
+        for (var round = 0; round < 6; round++) {
+          var n = await healThumbs(3);
+          if (!n) break;
+          renderDetail();
+          renderTable();
+        }
+      })();
     }
   }
 
