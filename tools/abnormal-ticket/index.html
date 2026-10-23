@@ -55,6 +55,18 @@
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
+  /* 滚动条：WebView2 默认那条宽灰块在浅色界面里很扎眼，也把「表格横滚」这条重要线索
+     盖成一片灰。收细、跟主题走，track 透明 —— 只在真需要滚的地方才看得见。 */
+  * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    /* 透明边框 + padding-box：缩成一根细条，又不会在浅底上留一圈异色描边 */
+    background: var(--line); border-radius: 6px;
+    border: 2px solid transparent; background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--dim); background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
   body {
     margin: 0; height: 100vh; overflow: hidden;
     background: var(--page); color: var(--fg);
@@ -294,6 +306,8 @@
   .ticket .sn { font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ticket .tags { display: flex; gap: 5px; flex-wrap: wrap; font-size: 11px; color: var(--dim); }
   .tag { background: var(--chip); border-radius: 4px; padding: 0 6px; }
+  /* 「N 图」比店铺/快递那类标签亮半档：它是"这条有证据照片"的提示，容易被忽略就没意义了 */
+  .tag.pic { color: var(--fg2); }
   .badge {
     font-size: 11px; border-radius: 999px; padding: 1px 9px;
     border: 1px solid var(--line); color: var(--fg2); white-space: nowrap;
@@ -344,12 +358,15 @@
     background: var(--line);
   }
   .tlitem:last-child::after { display: none; }
-  /* 倒计时：流程栏顶上的红色大字 —— 全页唯一用大字号的地方，就是要一眼看到它 */
+  /* 倒计时：流程栏顶上的大字 —— 全页唯一用大字号的地方，就是要一眼看到它。
+     ★ 只有**逾期**才红。以前「还有 23 小时」也红着，等于把"没事"和"出事了"涂成一个颜色；
+       正常状态用正文色，字号还是 20px 粗体，一样第一眼看到，但红只留给真逾期的。 */
   .tl .cd, .cd {
-    font-size: 20px; font-weight: 700; color: var(--danger);
+    font-size: 20px; font-weight: 700; color: var(--fg);
     font-family: var(--mono); letter-spacing: .3px; line-height: 1.3;
     margin: 2px 0 8px;
   }
+  .cd.late { color: var(--danger); }
   /* 进度标题 = 阶段名；描述情况用灰色小字缀在标题底下，时刻再往下 */
   .tlitem .nm { font-size: 12.5px; font-weight: 500; color: var(--fg); line-height: 1.5; }
   .tlitem.cur .nm { font-weight: 600; }
@@ -358,7 +375,21 @@
     margin-top: 1px; white-space: pre-wrap; word-break: break-word;
   }
   .tlitem .tm { display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 11.5px; color: var(--dim); }
-  .tlitem .tm .ts { font-family: var(--mono); }
+  /* 时刻不许折行：流程栏只有 320，时间串一被压就在空格处断开，整条时间线的行高全歪 */
+  .tlitem .tm .ts { font-family: var(--mono); white-space: nowrap; }
+  /* 每步那两个操作平时是**灰字、不带框** —— 一条单子十几步，二十个描边按钮会把时间线
+     吵成一排工具栏。悬停/键盘聚焦才亮出边框；「删」照旧红，不因为变淡就变成危险按钮。
+     flex:0 0 auto 是必须的：它俩被压扁时「删」会缩成一竖条。 */
+  .tlitem .tm .mini {
+    flex: 0 0 auto; padding: 1px 6px; font-size: 11.5px;
+    border-color: transparent; background: transparent; color: var(--dim);
+  }
+  .tlitem .tm .mini:hover:not(:disabled),
+  .tlitem .tm .mini:focus-visible { border-color: var(--line); background: var(--bg); color: var(--fg); }
+  .tlitem .tm .mini.danger:hover:not(:disabled),
+  .tlitem .tm .mini.danger:focus-visible { border-color: var(--danger); color: var(--danger); }
+  /* 图格子悬停描一下边：一排缩略图里要知道自己正要点哪张 */
+  .imgcell:hover { border-color: var(--accent); }
   /* 记在某一步上的图：比整单图小一号（流程栏就那么宽），贴着这一步的时刻排。
      「+图」也在这一行的时刻旁边 —— 历史步骤照样能补。 */
   .tlpic { margin-top: 5px; gap: 5px; }
@@ -369,6 +400,15 @@
   .flowpick .imgadd, .flowpick .imgcell { width: 62px; height: 62px; }
   .flowpick .imgadd { font-size: 10.5px; gap: 1px; }
   .flowpick .imgadd .ico { width: 15px; height: 15px; }
+  /* 「记一步」整组 = 一个动作面板：浅底 + 细框，跟上面的时间线分开。
+     不包的时候，下拉和描述框直接接在最后一步底下，读起来像"又一步"，找不到在哪儿写。 */
+  .flowform {
+    margin-top: 10px; padding: 10px;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--chip);
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .flowform .flowpick { margin-top: 0; }
+  .flowform > .primary { width: 100%; padding: 9px 12px; font-size: 13px; margin-top: 2px; }
 
   /* ---------- 跟进提醒 ----------
      提醒不是"单独设的一个闹钟"，而是**流程的看门狗**：基准时刻 + N 小时。
@@ -655,7 +695,7 @@
           <textarea id="fTitle" rows="2" placeholder="发生了什么"></textarea></label>
         <!-- 附图：一次可选多张，也可以把图直接拖进这块。图片进图床的「异常单号登记」分类 -->
         <div class="f c24" data-host-gallery id="fImgSect">
-          <span class="lbl" data-ico="img">图片（可选，可多张）</span>
+          <span class="lbl" data-ico="img">图片（可选，可多张，也能把图直接拖进来）</span>
           <div class="imgwrap imgdrop" id="fImgDrop" tabindex="0"
                title="点「添加图片」选，或者把图片直接拖到这里">
             <button class="imgadd" id="fImgPick" type="button" data-ico="img">添加图片</button>
@@ -2459,6 +2499,15 @@
       return;
     }
     var html = "";
+    /* 每条单子挂了几张图（含步骤图）—— 左栏标一下，翻列表时才知道哪条带证据照片。
+       一次统计完再用：逐条调 imgsOf() 是 O(单子数 × 图数)，上百条就会卡住开页。 */
+    var picN = {};
+    if (hasImages) {
+      for (var q = 0; q < imgs.length; q++) {
+        var tid = txt(imgs[q].ticket_id);
+        if (tid) picN[tid] = (picN[tid] || 0) + 1;
+      }
+    }
     for (var i = 0; i < list.length; i++) {
       var r = list[i];
       var st = statusOf(r);
@@ -2471,6 +2520,7 @@
         + (r.store ? '<span class="tag">' + esc(r.store) + "</span>" : "")
         + (r.courier ? '<span class="tag">' + esc(r.courier) + "</span>" : "")
         + (r.category ? '<span class="tag">' + esc(r.category) + "</span>" : "")
+        + (picN[r.id] ? '<span class="tag pic" title="这条挂了几张图（含流程步骤上的）">' + picN[r.id] + " 图</span>" : "")
         + remindTag(r)
         + "</div></div>";
     }
@@ -2578,7 +2628,7 @@
        完结 / 关掉提醒 / 没基准时不显示（那种状态没有"倒计时"可言）。
        折叠也照显示 —— 折的是明细，不是警报。 */
     if (v.state === "late") {
-      flowHtml += '<div class="cd">已逾期 ' + esc(spanText(v.left)) + "</div>";
+      flowHtml += '<div class="cd late">已逾期 ' + esc(spanText(v.left)) + "</div>";
     } else if (v.state === "due") {
       flowHtml += '<div class="cd">还有 ' + esc(spanText(v.left)) + "</div>";
     }
@@ -2610,7 +2660,7 @@
             /* 附图按钮：一步一个，历史步骤也能补（事后找到照片才想起来是常事） */
             + (hasImages && hasStepCol
               ? '<button class="mini" data-stepimg="' + j + '" title="给这一步附图">+图</button>' : "")
-            + '<button class="mini" data-delflow="' + j + '">删</button></div>'
+            + '<button class="mini danger" data-delflow="' + j + '" title="删掉这一步">删</button></div>'
             + (spics.length ? '<div class="imgwrap tlpic">' + imgGridHtml(spics, true) + "</div>" : "")
             + "</div>";
         }
@@ -2618,9 +2668,11 @@
       }
     }
     if (!done && !flowFolded) {
-      // 顺序：选阶段 → 写记录 → 加图 → 记一步（按钮放大放最后，一竖条从上到下顺完）
-      flowHtml += '<select id="dFlow" style="margin-top:8px"></select>'
-        + '<textarea id="dFlowNote" rows="2" style="margin-top:6px"'
+      /* 整组包进 .flowform：不包的话，下拉 / 描述 / 加图 / 按钮跟上面时间线只隔几像素，
+         读起来像"又一步"，而不是"往这儿写下一步"。浅底 + 细框把它拎成一个动作区。 */
+      flowHtml += '<div class="flowform">'
+        + '<select id="dFlow"></select>'
+        + '<textarea id="dFlowNote" rows="2"'
         + ' placeholder="这一步的情况描述（灰色小字显示在这一步标题下，可不填）"></textarea>'
         + (hasImages && hasStepCol
           ? '<div class="imgwrap imgdrop flowpick" id="dFlowPick"'
@@ -2629,7 +2681,8 @@
             + '<input type="file" id="dFlowFile" accept="image/*" multiple hidden />'
             + "</div>"
           : "")
-        + '<button class="primary" id="btnFlow" style="margin-top:8px;width:100%;padding:9px 12px;font-size:13px">记一步</button>';
+        + '<button class="primary" id="btnFlow">记一步</button>'
+        + "</div>";
     } else if (done && !flowFolded) {
       flowHtml += '<div class="note" style="margin-top:6px">已「完结」封口 —— 要继续先删掉那一步。</div>';
     }
@@ -2646,14 +2699,19 @@
     if (hasImages) {
       var pics = grp.plain;
       var onSteps = grp.total - pics.length;
+      /* 标题写明「整单」—— 步骤图在流程栏里跟着那一步，两边混着放会让人以为图丢了 */
       html += '<div class="sect" id="sectImgs" data-host-gallery>'
-        + '<h3 data-ico="img">图片'
-        + (pics.length ? '<span class="hint" style="margin:0 0 0 6px">' + pics.length + " 张</span>" : "")
+        + '<h3 data-ico="img">整单图片'
+        + (pics.length ? '<span class="hint" style="margin:0 0 0 6px">共 ' + pics.length + " 张</span>" : "")
         + '<button class="mini" id="btnImgPick" data-ico="img" style="margin-left:auto">添加</button></h3>'
         + '<div class="imgwrap imgdrop" id="dImgDrop">'
         + (pics.length
           ? imgGridHtml(pics, true)
-          : '<div class="note" style="margin:0">这条还没挂图 —— 点右上「添加」，或者把图拖到这块</div>')
+          : '<div class="note" style="margin:0">'
+            + (onSteps
+              ? "整单没挂图 —— " + onSteps + " 张都在流程步骤上（右边「流程状态」里跟着那一步）。"
+              : "这条还没挂图 —— 点右上「添加」，或者把图拖到这块")
+            + "</div>")
         + "</div>"
         + '<input type="file" id="dImgFile" accept="image/*" multiple hidden />'
         + '<div class="hint" id="imgMsg"></div>'

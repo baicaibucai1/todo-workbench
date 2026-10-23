@@ -499,8 +499,8 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   doc.querySelector('#list .ticket[data-id="' + store[0].id + '"]').click();
   await sleep(80);
   const sects = Array.from(doc.querySelectorAll("#detail .sect > h3")).map((h) => h.textContent.trim());
-  check("主栏分区顺序是 基本信息 → 图片 → 提醒（处理区已移除）",
-    sects.length === 3 && /^基本信息/.test(sects[0]) && /^图片/.test(sects[1]) && sects[2] === "跟进提醒",
+  check("主栏分区顺序是 基本信息 → 整单图片 → 提醒（处理区已移除）",
+    sects.length === 3 && /^基本信息/.test(sects[0]) && /^整单图片/.test(sects[1]) && sects[2] === "跟进提醒",
     sects.join(" / "));
   check("处理区不再渲染（处理方式/结果/结账都没有）",
     doc.getElementById("dHandling") === null && doc.getElementById("dResult") === null &&
@@ -538,12 +538,22 @@ console.log("\n5c. 提醒按流程派发（登记后默认 N 小时）");
   check("记一步按钮在描述框下面",
     !!(note3 && btn3 && (btn3.compareDocumentPosition(note3) & 2)), // 2 = PRECEDING：描述框在按钮前面
     "note=" + !!note3 + " btn=" + !!btn3);
-  check("记一步按钮是整行宽的大按钮",
-    (btn3?.getAttribute("style") || "").replace(/\s/g, "").includes("width:100%"),
-    btn3?.getAttribute("style"));
-  check("流程栏顶有红色大字倒计时（还有 …）",
-    /还有/.test(doc.querySelector("#flowPane .cd")?.textContent || ""),
-    doc.querySelector("#flowPane .cd")?.textContent);
+  check("记一步是整行宽的大按钮（包在 .flowform 动作面板里，宽度由样式给）",
+    !!btn3 && !!btn3.closest(".flowform") &&
+    /\.flowform\s*>\s*\.primary\s*\{[^}]*width:\s*100%/.test(doc.querySelector("style").textContent),
+    "form=" + !!btn3?.closest(".flowform"));
+  check("流程栏顶有大字倒计时（还有 …，未逾期不标红）",
+    /还有/.test(doc.querySelector("#flowPane .cd")?.textContent || "") &&
+    !doc.querySelector("#flowPane .cd")?.classList.contains("late"),
+    doc.querySelector("#flowPane .cd")?.className + " / " + doc.querySelector("#flowPane .cd")?.textContent);
+  /* 逾期才标红：工具只在「逾期」时给大字挂 .late —— 正常态是正文色。
+     这里查样式（运行态的逾期要改库再 load，属于下一节的事），
+     上面那条已经验过"没逾期时不带 late"。 */
+  const cdCss = doc.querySelector("style").textContent;
+  check("倒计时：正常态正文色、逾期才用危险色",
+    /\.cd\s*\{[^}]*color:\s*var\(--fg\)/.test(cdCss) &&
+    /\.cd\.late\s*\{[^}]*color:\s*var\(--danger\)/.test(cdCss),
+    (cdCss.match(/\.cd\s*\{[^}]*\}/) || [""])[0].slice(0, 60));
   const r1 = store.find((x) => x.id === r0.id);
   const at1 = new Date(r1.remind_at).getTime();
   check("记一步流程 → 提醒按新基准重算（1 小时）",
@@ -1468,6 +1478,11 @@ console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）
   check("选完立刻出现在「图片」区",
     doc.querySelectorAll("#dImgDrop .imgcell").length === 1,
     String(doc.querySelectorAll("#dImgDrop .imgcell").length));
+  /* 左栏列表给带图的单子挂一个「N 图」标签 —— 不点开也能知道哪条有照片 */
+  const picTag = doc.querySelector("#list .ticket.on .tag.pic");
+  check("左栏列表标了「N 图」（含步骤图一起算）",
+    !!picTag && /^\d+ 图$/.test(picTag.textContent.trim()),
+    picTag ? picTag.textContent.trim() : "没有");
 
   /* 老流程（v1.10.0 之前的步骤没有 u）：load 时静默补上 —— 不补的话图挂不住 */
   store.push({
