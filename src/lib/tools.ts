@@ -113,7 +113,7 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     description:
       "写工具时照着抄的样板：演示一个工具怎么在工作台里建自己的表、用结构化 CRUD 读写它，以及把一条内容交给别的工具。默认停用，不是日常用的便签本",
     icon: "notebook-pen",
-    // 打上样板标签，设置页会挂一枚「参考模板」徽章。
+    // 打上示例标签，设置页会挂一枚「示例」徽章。
     // 注意它**只管显示**：让这个工具默认不出现的是 settings 里的停用清单。
     tags: ["template"],
     entry: "index.html",
@@ -303,6 +303,10 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     description:
       "直接读写一份云文档：在「设置 → WPS 授权」里授权一次，点「读取我的文件」列出云文档根目录，点哪份绑哪份 —— 读的就是那份原文件，不复制、不经过知识库。表格按格编辑（可加行加列、删行），Ctrl+S 写回原表（长订单号当文本存，不会丢位）；智能文档改完直接存回。也能绑定知识库里的表格或文档（那条路要账号登录态，保存走「新建 → 删旧 → 改名」）—— MCP 只列得出根目录，知识库里的东西只有那条路进得去。",
     icon: "file",
+    // 示例型工具：它演示的是「一个工具怎么接 WPS 能力」，不是日常要用的功能。
+    // 设置页据此挂一枚「示例」徽章；**默认不出现靠的是 settings 的停用清单**
+    // （DEFAULT_SETTINGS[tools.disabled] 里有它），要的人自己去 设置 → 工具 打开。
+    tags: ["template"],
     entry: "index.html",
     dbVersion: 1,
     author: "内置",

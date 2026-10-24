@@ -25,11 +25,12 @@
  * ------------------------------------------------------------------
  * 两档数字为什么不同
  * ------------------------------------------------------------------
- * ALL_TOOL_IDS    磁盘上 tools/ 里的全部目录，含默认停用的「模板」
+ * ALL_TOOL_IDS    磁盘上 tools/ 里的全部目录，含默认停用的两个示例型工具
  * ENABLED_TOOL_IDS 新库默认会显示在侧边栏里的那部分
  *                  （差集 = src/lib/settings.ts 的 DEFAULT_SETTINGS[tools.disabled]）
  *
- * 老库不适用这个差集 —— 迁移会按「有没有用过」回填，见 migrations.ts。
+ * 老库不适用这个差集 —— 回填由 migrations.ts 的 v24 负责（把 wpslink 幂等地
+ * 合并进 tools.disabled，只合并、不动用户自己停用过/启用过的项）。
  */
 
 /** 全部内置工具 id（含默认停用的样板） */
@@ -48,6 +49,10 @@ export const ALL_TOOL_IDS = [
  *
  * 与 ALL_TOOL_IDS 的差集必须**恰好**是 settings.ts 里默认停用的那几个，
  * 由 `npm run tool:audit` 盯着 —— 两边各改一处就会立刻对不上。
+ *
+ * 现在差集是两个示例型工具：scratchpad（写工具照抄的样板）和
+ * wpslink（演示怎么接 WPS 能力的样本）。两者文件都随工具包分发，
+ * 要用的到 设置 → 工具 里打开。
  */
 export const ENABLED_TOOL_IDS = [
   "image-crop",
@@ -55,7 +60,6 @@ export const ENABLED_TOOL_IDS = [
   "notes",
   "ai-gen",
   "abnormal-ticket",
-  "wpslink",
 ];
 
 /**

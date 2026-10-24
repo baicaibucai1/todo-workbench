@@ -1896,12 +1896,13 @@ section("25. 工具的启用、状态保持与单文件导入");
   /* --- 停用清单是一条字符串，必须挡得住脏输入 ---
      它躺在 core_settings 里，用户能手改；而 id 会参与表名拼接，
      所以非法值要在入口处丢掉，而不是带着往下走。 */
-  // 「模板」（scratchpad）是给写工具的人照抄的样板，默认就该是关的 ——
-  // 新装用户的工具区里不该出现一个和「便签」撞脸的东西。
-  // （只管新库：withDefaults 是 {...DEFAULT, ...raw}，老库沿用自己那个值。）
+  // 示例型工具默认就该是关的：scratchpad（写工具照抄的样板，和「便签」撞脸）
+  // 和 wpslink（演示怎么接 WPS 能力的样本）—— 新装用户的工具区里不该出现
+  // 两个不是日常功能的东西。文件都随工具包分发，要用的到 设置 → 工具 里打开。
+  // （只管新库：withDefaults 是 {...DEFAULT, ...raw}，老库由 v24 迁移回填。）
   check(
-    "默认只停用样板工具「模板」",
-    st.DEFAULT_SETTINGS[st.SETTINGS.toolsDisabled] === "scratchpad",
+    "默认只停用两个示例型工具",
+    st.DEFAULT_SETTINGS[st.SETTINGS.toolsDisabled] === "scratchpad,wpslink",
   );
   check(
     "解析逗号分隔的停用清单",
@@ -1925,6 +1926,60 @@ section("25. 工具的启用、状态保持与单文件导入");
     "停用再启用能回到空串",
     st.toggleDisabledTool(st.toggleDisabledTool("", "image-crop", true), "image-crop", false) === "",
   );
+
+  /* --- v24 迁移：老库里把 wpslink 并进停用清单 ---
+     withDefaults 是 {...DEFAULT, ...raw} —— 只补缺失的键，不会改一个已经存在
+     的值。所以「wpslink 默认屏蔽」对新库由默认值负责，对**已经跑起来的老库**
+     必须由这条迁移落地，否则老用户重启后照样在侧边栏看见它。
+     这里钉三件事：合并得进去、重跑不加重复项、没这个键时不硬造。 */
+  {
+    const { migrations } = await import("../src/lib/migrations.ts");
+    const v24 = migrations.find((m) => m.version === 24);
+    check(
+      "v24 这条迁移存在且叫得出名字",
+      !!v24 && v24.name === "disable_example_tool_wpslink",
+      v24?.name,
+    );
+    const KEY = st.SETTINGS.toolsDisabled;
+    const readDisabled = async () => {
+      const rows = await db().select(`SELECT value FROM core_settings WHERE key = '${KEY}'`);
+      return rows.length ? rows[0].value : undefined;
+    };
+    const keep = await readDisabled();
+
+    // 模拟老库：用户自己那份清单（gomoku 残留、scratchpad 在、没有 wpslink）。
+    // initDb 只跑迁移、不写默认设置，所以 core_settings 里可能还没有这一行 ——
+    // 先删再插，保证它就在、且值就是老库那份。
+    // ⚠️ INSERT 必须走参数：MemoryDb 的 INSERT 按逗号切 VALUES（不认引号内逗号），
+    // 字面量写 'gomoku,scratchpad,t2-0' 会被切成 'gomoku（实测踩过）。
+    await db().execute(`DELETE FROM core_settings WHERE key = '${KEY}'`);
+    await db().execute(`INSERT INTO core_settings (key, value) VALUES (?, ?)`, [
+      KEY,
+      "gomoku,scratchpad,t2-0",
+    ]);
+    await v24.run(db());
+    check(
+      "v24 把 wpslink 并进老库的停用清单（用户自己那几项原样保留）",
+      (await readDisabled()) === "gomoku,scratchpad,t2-0,wpslink",
+      String(await readDisabled()),
+    );
+
+    // 迁移失败会重跑，所以必须幂等 —— 每跑一遍多加一个 wpslink 是最难查的那种
+    await v24.run(db());
+    check(
+      "v24 幂等：重跑不加重复项",
+      (await readDisabled()) === "gomoku,scratchpad,t2-0,wpslink",
+      String(await readDisabled()),
+    );
+
+    // 库里没这个键 → 按新默认走，迁移不硬造一个
+    await db().execute(`DELETE FROM core_settings WHERE key = '${KEY}'`);
+    await v24.run(db());
+    check("v24 库里没这个键时不造一个", (await readDisabled()) === undefined, String(await readDisabled()));
+
+    // 还原，别影响后面的用例
+    await db().execute(`UPDATE core_settings SET value = ? WHERE key = ?`, [keep ?? "", KEY]);
+  }
 
   /* --- 保持工具状态：默认开；只有显式 "0" 才算关 ---
      方向不能反：把"读不懂"当成"关"，用户切一趟回来就丢一次状态。 */

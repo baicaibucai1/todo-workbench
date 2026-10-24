@@ -970,6 +970,42 @@ export const migrations: Migration[] = [
       ALTER TABLE core_tasks ADD COLUMN origin_tool TEXT NOT NULL DEFAULT '';
     `,
   },
+  {
+    // 「WPS 绑定文件」（wpslink）归入示例型工具：随工具包分发、设置页列得出来，
+    // 但默认不进侧边栏。新库由 DEFAULT_SETTINGS[tools.disabled] 带上它；
+    // 这个迁移负责**已经跑起来的老库** —— withDefaults 只补缺失的键，
+    // 不会去改一个已经存在的值，所以老库得在这里合并一次。
+    //
+    // 幂等：看一眼清单里有没有它，有就什么都不做（迁移失败会重跑）。
+    // 只合并、不动别的项：用户自己停用过谁、启用过谁，原样保留。
+    //
+    // ⚠️ 排序去重在这里**内联**重写，不 import settings.ts 的 formatDisabledTools：
+    // 迁移是不可变的，将来那个函数改格式，老迁移也必须按今天的写法落库。
+    //
+    // sql 是显式空串：migrate 对每条迁移都会包一个事务，这条没有任何 DDL/DML
+    // 要做（splitStatements("") 返回空数组，transaction 直接空转）。
+    version: 24,
+    name: "disable_example_tool_wpslink",
+    sql: "",
+    run: async (db) => {
+      const rows = await db.select<{ value: string }>(
+        `SELECT value FROM core_settings WHERE key = 'tools.disabled'`,
+      );
+      const raw = rows?.[0]?.value;
+      if (raw === undefined) return; // 库里没这个键 → 按新默认走，不用管
+      const ids = new Set(
+        raw
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => /^[a-z][a-z0-9-]{1,31}$/.test(s)),
+      );
+      if (ids.has("wpslink")) return; // 合并过了（重入走这条）
+      ids.add("wpslink");
+      await db.execute(`UPDATE core_settings SET value = ? WHERE key = 'tools.disabled'`, [
+        [...ids].sort().join(","),
+      ]);
+    },
+  },
 ];
 
 /** 当前代码期望的 schema 版本 */

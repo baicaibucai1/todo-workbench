@@ -456,14 +456,18 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   [SETTINGS.toolKeepState]: "1",
   // 示例数据默认关：理由见 SETTINGS.seedSampleData 的注释
   [SETTINGS.seedSampleData]: "0",
-  // 「模板」（tools/scratchpad）默认停用：它是给写工具的人照着抄的样板，
-  // 不是给用户日常用的功能 —— 默认挂进侧边栏只会让工具区多一个名字相近的
-  // 便签本（旁边就是真正给用户用的「便签」），还容易被人当成重复造的轮子。
-  // 要看它的人到 设置 → 工具 里自己打开即可，文件一直都在。
+  // 示例型工具默认停用，共两个：
+  //   「模板」（tools/scratchpad）—— 给写工具的人照着抄的样板。默认挂进侧边栏
+  //     只会让工具区多一个名字相近的便签本（旁边就是真正给用户用的「便签」），
+  //     还容易被人当成重复造的轮子。
+  //   「WPS 绑定文件」（tools/wpslink）—— 演示「一个工具怎么接 WPS 能力」的样本。
+  //     文件一直都在、随工具包分发，但不是日常功能。
+  // 两者都要的人到 设置 → 工具 里自己打开即可。
   //
   // ⚠️ withDefaults 是 `{...DEFAULT_SETTINGS, ...raw}`：**只有库里没这个键时才填**。
-  // 所以这一行只管新库；已经跑过的库沿用它自己那个值（想批量改要走迁移）。
-  [SETTINGS.toolsDisabled]: "scratchpad",
+  // 所以这一行只管新库；已经跑过的库沿用它自己那个值 —— 回填由 v24 迁移负责
+  // （migrations.ts：把 wpslink 幂等地合并进 tools.disabled）。
+  [SETTINGS.toolsDisabled]: "scratchpad,wpslink",
   [SETTINGS.imagebedEnabled]: "1",
   [SETTINGS.orderCopyTemplate]: "label-cn",
   [SETTINGS.orderTrackChannel]: "kuaidi100",

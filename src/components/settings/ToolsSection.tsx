@@ -515,9 +515,9 @@ export function ToolsSection({
                     {tool.tags?.includes("template") && (
                       <span
                         className="rounded bg-chip px-1.5 py-px text-[10.5px] text-fg-dim"
-                        title="写工具时照着抄的样板，不是给你日常用的功能。它默认停用 —— 想看就在下面把它打开，文件一直都在。"
+                        title="示例型工具：它演示的是某种机制怎么写，不是给你日常用的功能。默认停用 —— 想看就在下面把它打开，文件一直都在。"
                       >
-                        参考模板
+                        示例
                       </span>
                     )}
                     {aliveToolIds.includes(tool.id) && (
