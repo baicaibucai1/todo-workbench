@@ -2012,6 +2012,80 @@ console.log("\n13d. 布局 / 缩放：高度靠 flex 撑，窄窗口有档位（
     !!snbig && !!snbig.textContent.trim(), snbig ? snbig.textContent : "没有 .snbig");
 }
 
+console.log("\n13e. 选项自己的颜色，在登记页 / 筛选 / 查看页都得看得见（v1.17.0）");
+{
+  /* 用户的原话：「这些选项没有对应颜色啊」—— 设置里配过的色原来只出现在列表的小标签上，
+     登记页那排胶囊、筛选下拉、查看页的锁态标签全是中性灰，等于白配一次。 */
+  const couriers = Array.from(new Set(store.map((r) => (r.courier || "").trim()).filter(Boolean)));
+  const cn = couriers[0] || "中通";
+
+  doc.getElementById("tab-settings").click();
+  await sleep(80);
+  const cRow = [...doc.querySelectorAll('.ogroup[data-kind="courier"] .orow')]
+    .find((r) => r.querySelector(".oname")?.value === cn);
+  check("快递公司组里能找到 " + cn, !!cRow);
+  cRow.querySelector(".osw").click();
+  await sleep(60);
+  const pal2 = doc.querySelector(".palpop");
+  check("色块还能弹出调色板（和上一版同一个组件）", !!pal2);
+  pal2.querySelector('[data-pv="var(--violet)"]').click();
+  await sleep(180);
+
+  doc.getElementById("tab-create").click();
+  await sleep(80);
+  const cpill = doc.querySelector('#fCourier .pill[data-v="' + cn + '"]');
+  check("登记页的快递胶囊带上了配置色（--tc）",
+    !!cpill && cpill.classList.contains("c") && /--violet/.test(cpill.getAttribute("style") || ""),
+    cpill ? cpill.getAttribute("style") : "没有这个胶囊");
+
+  cpill.click();
+  await sleep(80);
+  const onPill = doc.querySelector('#fCourier .pill[data-v="' + cn + '"]');
+  check("选中之后是它自己的紫，不再统一变蓝",
+    !!onPill && onPill.classList.contains("on") && onPill.classList.contains("c")
+    && /--violet/.test(onPill.getAttribute("style") || ""),
+    onPill ? onPill.className + " / " + onPill.getAttribute("style") : "点完没找到");
+
+  /* 筛选下拉：展开的列表里每一项也带自己的色（option 的 inline color），
+     选中的那个值把下拉自身的字染成同色 —— 一眼看出现在筛的是什么 */
+  const fs = doc.getElementById("fltCourier");
+  check("筛选下拉的选项里带着颜色",
+    new RegExp('value="' + cn + '" style="color:var\\(--violet\\)"').test(fs.innerHTML),
+    fs.innerHTML.slice(0, 120));
+  fs.value = cn;
+  fs.dispatchEvent(new win.Event("change", { bubbles: true }));
+  await sleep(150);
+  check("选中的筛选项，下拉自身也是那个色（不是满格亮色，只有字）",
+    /--violet/.test(fs.getAttribute("style") || ""), fs.getAttribute("style") || "没上色");
+
+  // 查看页：锁态那一个胶囊也要带色 —— 锁只表示不能改，不表示看不出是什么
+  doc.getElementById("tab-browse").click();
+  await sleep(120);
+  const hit = store.find((r) => (r.courier || "").trim() === cn);
+  if (hit) {
+    doc.querySelector('#list .ticket[data-id="' + hit.id + '"]').click();
+    await sleep(150);
+    const ro = doc.querySelector("#dCourier .pill.ro");
+    check("查看页锁态的胶囊也是配置色",
+      !!ro && ro.classList.contains("c") && /--violet/.test(ro.getAttribute("style") || ""),
+      ro ? ro.className + " / " + ro.getAttribute("style") : "没有锁态胶囊");
+  }
+
+  // 收拾干净：筛选项清空、颜色改回默认（后面的段落别被这个紫影响）
+  fs.value = "";
+  fs.dispatchEvent(new win.Event("change", { bubbles: true }));
+  await sleep(120);
+  check("清空筛选后下拉的字回到默认色", !fs.style.color, fs.style.color);
+  doc.getElementById("tab-settings").click();
+  await sleep(80);
+  const cRow2 = [...doc.querySelectorAll('.ogroup[data-kind="courier"] .orow')]
+    .find((r) => r.querySelector(".oname")?.value === cn);
+  cRow2.querySelector(".osw").click();
+  await sleep(60);
+  doc.querySelector('.palpop [data-pv=""]').click();
+  await sleep(150);
+}
+
 console.log("\n14. 缩略图这条链路（宿主回空串时工具自己出图）");
 {
   /* 图床里那张是工具自己压的：宿主 gallery.put 现在回的就是空 thumb */

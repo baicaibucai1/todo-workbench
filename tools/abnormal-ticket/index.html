@@ -211,6 +211,17 @@
     background: var(--sel); border-color: var(--accent); color: var(--accent); font-weight: 600;
   }
   .pill.on .ico { opacity: 1; }
+  /* 配过色的选项（快递公司 / 情况）：色值写在元素的 --tc 上，和列表里的小标签同一套。
+     未选中 = 色字 + 普通边框（一排七个选项全是彩字已经够分了，再满格描边就成了调色盘）；
+     选中 = 该色描边 + 极淡同色底 —— 不再统一变蓝：蓝是"可点"的暗示，
+     而"这个选项是什么"由它自己的颜色回答（中通配了紫，选中就该是紫）。 */
+  .pill.c { color: var(--tc); }
+  .pill.c:hover:not(.on) { border-color: var(--tc); color: var(--tc); }
+  .pill.on.c {
+    border-color: var(--tc); color: var(--tc);
+    background: var(--bg);                                            /* 老 WebView2 没有 color-mix 时兜底 */
+    background: color-mix(in srgb, var(--tc) 12%, var(--bg));
+  }
 
   /* ---------- 订单附图 ----------
      一格 84px 正方形：缩略图铺满、右上角 × 只在悬停时冒出来（平时让图自己说话）。
@@ -425,6 +436,8 @@
   .sect.base.locked .lbl { color: var(--dim); }
   /* 锁态胶囊只剩"当前值"一个，显示成中性的标签而不是按钮 —— 蓝色高亮带着"可点"的暗示 */
   .pill.ro { cursor: default; background: var(--chip); color: var(--fg2); border-color: var(--line); }
+  /* 锁态也吃配置色：锁只表示"现在不能改"，不代表"看不出这是什么" —— 色字在这种中性底上最清楚 */
+  .pill.ro.c { background: var(--chip); color: var(--tc); border-color: var(--line); }
   .sect.base.locked .pills .note { font-size: 12px; }
   .basehint { font-size: 11.5px; color: var(--dim); }
   /* ---------- 流程时间线：竖线串圆点，最新一步点亮 ----------
@@ -1355,6 +1368,14 @@
     if (!sel || sel.tagName !== "SELECT") return;
     if (!sel.value) sel.classList.add("is-empty");
     else sel.classList.remove("is-empty");
+    paintSel(sel);
+  }
+  /** 选中的那个值也吃配置色（筛选栏里一眼看出现在筛的是「中通」还是「圆通」）。
+      色只来自预设表（colorOf 过滤过），拼进 style 安全。 */
+  function paintSel(sel) {
+    var kind = sel.getAttribute("data-ckind") || "";
+    var c = kind && sel.value ? colorOf(kind, sel.value) : "";
+    sel.style.color = c || "";
   }
   /* ---------- 图标：一份描边 SVG，页面各处共用 ----------
      颜色不写死，靠 stroke:currentColor 跟着文字走（深色模式自动反色）。 */
@@ -1405,13 +1426,17 @@
      值存在容器的 data-value 上：DOM 重建（换配置、重画详情）时不丢已选。
      ★ 再点一次同一个 = 取消选择 —— 选错了不用翻设置页。
      ★ locked=true：只摆当前值一个标签，不把所有选项铺出来。选项是"要改的时候"才需要的东西，
-       锁着还铺 6 个店铺 6 个快递公司，一屏全是没用的东西，反而看不清这条单到底选了啥。 */
-  function renderPills(el, list, cur, onPick, locked) {
+       锁着还铺 6 个店铺 6 个快递公司，一屏全是没用的东西，反而看不清这条单到底选了啥。
+     ★ kind 给了就按设置里配的颜色上色（store 没有配色项，保持中性）。 */
+  function renderPills(el, list, cur, onPick, locked, kind) {
     if (!el) return;
-    el.setAttribute("data-value", txt(cur));
+    var curTxt = txt(cur);
+    el.setAttribute("data-value", curTxt);
     if (locked) {
-      el.innerHTML = txt(cur)
-        ? '<span class="pill on ro">' + esc(txt(cur)) + "</span>"
+      var lc = kind && curTxt ? colorOf(kind, curTxt) : "";
+      el.innerHTML = curTxt
+        ? '<span class="pill on ro' + (lc ? " c" : "") + '"'
+          + (lc ? ' style="--tc:' + lc + '"' : "") + ">" + esc(curTxt) + "</span>"
         : '<span class="note">未填</span>';
       return;
     }
@@ -1419,7 +1444,9 @@
     for (var i = 0; i < list.length; i++) {
       var v = txt(list[i]);
       if (!v) continue;
-      html += '<button type="button" class="pill' + (v === cur ? " on" : "") + '" data-v="' + esc(v) + '">' + esc(v) + "</button>";
+      var c = kind ? colorOf(kind, v) : "";
+      html += '<button type="button" class="pill' + (v === cur ? " on" : "") + (c ? " c" : "") + '"'
+        + (c ? ' style="--tc:' + c + '"' : "") + ' data-v="' + esc(v) + '">' + esc(v) + "</button>";
     }
     el.innerHTML = html || '<span class="note">（还没配选项 —— 去「设置 → 下拉选项」加）</span>';
     var bs = el.querySelectorAll(".pill");
@@ -1470,13 +1497,18 @@
     if (locked) sect.classList.add("locked"); else sect.classList.remove("locked");
   }
 
-  /** 给下拉填选项。首格是空值（文案默认「待选」，筛选用「全部店铺」这种）。 */
-  function fillSelect(sel, list, keepValue, firstLabel) {
+  /** 给下拉填选项。首格是空值（文案默认「待选」，筛选用「全部店铺」这种）。
+      kind = courier / situation / status：有这个 kind 的选项在展开的列表里也带自己的色
+      （原生 select 的弹出列表认 option 的 inline color，WebView2 是 Chromium，认）。 */
+  function fillSelect(sel, list, keepValue, firstLabel, kind) {
+    sel.setAttribute("data-ckind", kind || "");
     var html = '<option value="">' + esc(firstLabel || "待选") + "</option>";
     for (var i = 0; i < list.length; i++) {
       var v = txt(list[i]);
       if (!v) continue;
-      html += '<option value="' + esc(v) + '">' + esc(v) + "</option>";
+      var c = kind ? colorOf(kind, v) : "";
+      html += '<option value="' + esc(v) + '"'
+        + (c ? ' style="color:' + c + '"' : "") + ">" + esc(v) + "</option>";
     }
     sel.innerHTML = html;
     if (keepValue) sel.value = keepValue;
@@ -2599,8 +2631,8 @@
     var names = cfg.stores.map(function (s) { return s.name; });
     // ★ 店铺 / 快递公司**留着上次选的**（连着录下一条不用重选）；「情况」是这一条才有的，每录完清空
     renderPills($("fStore"), names, pillVal($("fStore")));
-    renderPills($("fCourier"), cfg.couriers, pillVal($("fCourier")));
-    renderPills($("fCategory"), cfg.situations, pillVal($("fCategory")));
+    renderPills($("fCourier"), cfg.couriers, pillVal($("fCourier")), null, false, "courier");
+    renderPills($("fCategory"), cfg.situations, pillVal($("fCategory")), null, false, "situation");
     // 登记时间不再手填（就是当下）；这个框放的是提醒时间，空着就预填默认值
     // （清空过的不重填 —— 那是用户明确说「这条按流程派发」）
     if (!$("fRemindAt").value && !fRemindCleared) prefillRemindAt();
@@ -3191,9 +3223,9 @@
     $("dIndemnity").value = txt(r.indemnity);
     $("dTitle").value = txt(r.title);
     $("dNote").value = txt(r.note);
-    renderPills($("dCourier"), cfg.couriers, txt(r.courier), null, !editingBase);
+    renderPills($("dCourier"), cfg.couriers, txt(r.courier), null, !editingBase, "courier");
     renderPills($("dStore"), cfg.stores.map(function (s) { return s.name; }), txt(r.store), null, !editingBase);
-    renderPills($("dCategory"), cfg.situations, txt(r.category), null, !editingBase);
+    renderPills($("dCategory"), cfg.situations, txt(r.category), null, !editingBase, "situation");
     setBaseLock(!editingBase);
     if (!hasIndemnity && $("dIndemnity")) {
       // 旧版工作台：列都建不出来，输入框摆着只会让人填了个必然存不上的数
@@ -3240,7 +3272,7 @@
       };
     }
 
-    if ($("dFlow")) fillSelect($("dFlow"), flowOptions(), "");
+    if ($("dFlow")) fillSelect($("dFlow"), flowOptions(), "", null, "status");
 
     if ($("btnFlow")) {
       $("btnFlow").onclick = function () {
@@ -4789,16 +4821,16 @@
       ★ 先填选项再重画列表 —— 列表要读这些 select 的当前值。 */
   function fillFilterSelects() {
     var SPEC = [
-      ["fltStore", "tfltStore", cfg.stores.map(function (s) { return s.name; }), "全部店铺"],
-      ["fltStatus", "tfltStatus", STATUSES, "全部状态"],
-      ["fltCourier", "tfltCourier", cfg.couriers, "全部快递"],
-      ["fltCategory", "tfltCategory", cfg.situations, "全部情况"],
+      ["fltStore", "tfltStore", cfg.stores.map(function (s) { return s.name; }), "全部店铺", ""],
+      ["fltStatus", "tfltStatus", STATUSES, "全部状态", "status"],
+      ["fltCourier", "tfltCourier", cfg.couriers, "全部快递", "courier"],
+      ["fltCategory", "tfltCategory", cfg.situations, "全部情况", "situation"],
     ];
     for (var i = 0; i < SPEC.length; i++) {
       var a = $(SPEC[i][0]), b = $(SPEC[i][1]);
       var keep = (a && a.value) || (b && b.value) || "";
-      if (a) fillSelect(a, SPEC[i][2], keep, SPEC[i][3]);
-      if (b) fillSelect(b, SPEC[i][2], keep, SPEC[i][3]);
+      if (a) fillSelect(a, SPEC[i][2], keep, SPEC[i][3], SPEC[i][4]);
+      if (b) fillSelect(b, SPEC[i][2], keep, SPEC[i][3], SPEC[i][4]);
     }
     var cur = sortKey + ":" + sortDir;
     var sels = [$("sortBy"), $("tsortBy")];
