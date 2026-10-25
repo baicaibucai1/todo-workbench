@@ -121,6 +121,70 @@ fn norm_key(s: &str) -> String {
     s.trim().trim_start_matches('\'').trim().to_string()
 }
 
+/// 把一个"看起来像日期 / 时刻"的文本拆成 (年, 月, 日, 时刻)。
+///
+/// 认这几种：`2026-10-25`、`2026/10/25`、`2026-10-25 17:10`、`2026/10/25 17:10`、
+/// `2026-10-25T17:10`（老数据是 ISO，中间是 T）。认不出就返回 None ——
+/// 调用方据此退回**严格文本比较**，普通字段一个都不放松。
+fn dt_parts(s: &str) -> Option<(i32, u32, u32, Option<(u32, u32)>)> {
+    let s = s.trim();
+    let (date, time) = match s.find([' ', 'T', 't']) {
+        Some(i) => (&s[..i], Some(s[i + 1..].trim())),
+        None => (s, None),
+    };
+    // 分隔符按"日期里出现的是哪个"来定：`/` 和 `-` 都见过（在线表格显示成 `2026/10/25`）
+    let sep = if date.contains('/') { '/' } else { '-' };
+    let mut it = date.split(sep);
+    let y: i32 = it.next()?.trim().parse().ok()?;
+    let m: u32 = it.next()?.trim().parse().ok()?;
+    let d: u32 = it.next()?.trim().parse().ok()?;
+    if it.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let hm = match time {
+        Some(t) if !t.is_empty() => {
+            let mut ti = t.split(':');
+            let h: u32 = ti.next()?.trim().parse().ok()?;
+            let mi: u32 = ti.next()?.trim().parse().ok()?;
+            Some((h, mi))
+        }
+        _ => None,
+    };
+    Some((y, m, d, hm))
+}
+
+/// 表上那一格与本地这个值，算不算"同一个值"。
+///
+/// 只比文本是不够的：在线表格把 `2026-10-25 17:33` 当**日期值**存起来，
+/// 读回来的 `cellText` 是它按单元格格式显示的文本 —— 分隔符变成 `/`，
+/// 列格式只有日期时干脆没有时刻。2026-10-25 实测：4 条单子连推三次，
+/// 每次都报「改了 12 个格」，正是 3 个时间列 × 4 行在无限重写（写进去 →
+/// 读回来变成另一种写法 → 又判成改动）。
+///
+/// 所以日期/时刻这一类再宽松比一层：
+///   · `2026/10/25 17:10` == `2026-10-25 17:10`   （只是分隔符不同）
+///   · `2026/10/25`       == `2026-10-25 17:33`   （那列只显示日期，时刻写进去也看不见）
+/// 其余一律严格相等 —— 不放过真正的改动（日期不同、时刻不同、文本不同都仍算改）。
+pub fn same_cell(a: &str, b: &str) -> bool {
+    let (a, b) = (a.trim(), b.trim());
+    if a == b {
+        return true;
+    }
+    match (dt_parts(a), dt_parts(b)) {
+        (Some(x), Some(y)) => {
+            x.0 == y.0
+                && x.1 == y.1
+                && x.2 == y.2
+                // 一边只有日期（表上那列不显示时刻）→ 日期相同就算同一个
+                && match (x.3, y.3) {
+                    (Some(p), Some(q)) => p == q,
+                    _ => true,
+                }
+        }
+        _ => false,
+    }
+}
+
 /// 表上某一行的主键：按列位置把订单号 / 快递单号取出来。
 fn grid_row_key(grow: &[String], located: &[(&str, &str, usize)]) -> String {
     let pick = |key: &str| -> String {
@@ -242,7 +306,13 @@ pub fn plan_cloud_sync(
                 .get(*col - 1)
                 .map(|s| norm_key(s))
                 .unwrap_or_default();
-            if have != want {
+            // ★ 文本一样就跳过；不一样还要过一道 same_cell ——
+            // 时间列读回来是"单元格显示文本"（2026/10/25），跟本地的 2026-10-25 永远
+            // 不相等，只比文本就会每次推送都把这几列重写一遍（2026-10-25 实踩）。
+            if have == want || same_cell(&have, &want) {
+                continue;
+            }
+            {
                 updates.push(SyncCell {
                     row: row_no,
                     col: *col,
@@ -442,6 +512,55 @@ mod tests {
         let p = plan_cloud_sync(&header, &g, &rows).unwrap();
         assert!(p.appends.is_empty(), "{:?}", p.appends);
         assert!(p.updates.is_empty(), "{:?}", p.updates);
+    }
+
+    /// ★ 表上读回来的时间列是**单元格显示文本**：`2026/10/25 17:10`，
+    /// 「发货时间」那列只有日期格式时连时刻都没有。纯文本比较会把这几列
+    /// 判成"每次都变了"（2026-10-25 实踩：连推三次，三次都是「改了 12 个格」）。
+    #[test]
+    fn cloud_sync_is_idempotent_with_slash_formatted_times() {
+        let header: Vec<String> = COLUMNS.iter().map(|(_, h)| (*h).to_string()).collect();
+        let mut line = vec![String::new(); COLUMNS.len()];
+        line[0] = "261023-225527806352802".to_string(); // 订单号
+        line[1] = "982504489372".to_string();           // 快递单号
+        line[3] = "2026/10/25".to_string();             // 发货时间：表上只有日期
+        line[12] = "2026/10/25 17:33".to_string();      // 登记时间：斜杠
+        line[13] = "2026/10/25 19:08".to_string();      // 更新时间：斜杠
+        let g = vec![header.clone(), line];
+        let rows = vec![row(&[
+            ("order_sn", "261023-225527806352802"),
+            ("tracking_no", "982504489372"),
+            ("shipped_at", "2026-10-25 17:33"),
+            ("created_at", "2026-10-25 17:33"),
+            ("updated_at", "2026-10-25 19:08"),
+        ])];
+        let p = plan_cloud_sync(&header, &g, &rows).unwrap();
+        assert!(
+            p.updates.is_empty(),
+            "时间列不该反复重写：{:?}",
+            p.updates
+                .iter()
+                .map(|u| (&u.label, &u.have, &u.value))
+                .collect::<Vec<_>>()
+        );
+        assert!(p.appends.is_empty(), "{:?}", p.appends);
+    }
+
+    /// 宽松比较的边界：只放过"分隔符 / 缺时刻"，别的都仍算改动。
+    #[test]
+    fn same_cell_is_lenient_only_about_date_formatting() {
+        assert!(same_cell("2026/10/25 17:10", "2026-10-25 17:10"));
+        assert!(same_cell("2026/10/25", "2026-10-25 17:33"));
+        assert!(same_cell("2026-10-25T17:33", "2026-10-25 17:33"));
+        assert!(same_cell("2026/10/5", "2026-10-05"));      // 不补零也算同一天
+        // 真改了的不能放过
+        assert!(!same_cell("2026/10/25", "2026-10-26 17:33"));
+        assert!(!same_cell("2026-10-25 17:10", "2026-10-25 18:10"));
+        assert!(!same_cell("申通", "中通"));
+        assert!(!same_cell("465795437616035", "465795437616036"));
+        assert!(!same_cell("", "2026-10-25"));
+        // 不是日期的短数字不许被当成日期（"2026" / "07-25" 这种）
+        assert!(!same_cell("2026", "2026-01-01"));
     }
 
     /// 单号是纯数字时，表上读回来可能带着"当文本写"留下的内容

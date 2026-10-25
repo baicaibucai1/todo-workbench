@@ -169,6 +169,65 @@ export function ledgerTimeText(v: unknown): string {
 }
 
 /**
+ * 把"看起来像日期 / 时刻"的文本拆成 (年, 月, 日, 时刻)。
+ *
+ * 与 `src-tauri/src/wps_cloud_plan.rs` 的 `dt_parts` 是同一份口径 ——
+ * 推送和拉取必须用同一个"算不算同一个值"的判据，否则一边说没变、一边说要改。
+ * 认 `2026-10-25`、`2026/10/25`、`2026-10-25 17:10`、`2026-10-25T17:10`。
+ */
+function dtParts(s: string): [number, number, number, [number, number] | null] | null {
+  const t = s.trim();
+  const at = t.search(/[ Tt]/);
+  const date = at < 0 ? t : t.slice(0, at);
+  const time = at < 0 ? "" : t.slice(at + 1).trim();
+  const sep = date.includes("/") ? "/" : "-";
+  const bits = date.split(sep);
+  if (bits.length !== 3) return null;
+  const [y, m, d] = bits.map((b) => Number(b.trim()));
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return null;
+  if (y < 1900 || m < 1 || m > 12 || d < 1 || d > 31) return null;
+  if (!time) return [y, m, d, null];
+  const hm = time.split(":");
+  const h = Number((hm[0] ?? "").trim());
+  const mi = Number((hm[1] ?? "").trim());
+  if (!Number.isInteger(h) || !Number.isInteger(mi)) return [y, m, d, null];
+  return [y, m, d, [h, mi]];
+}
+
+/**
+ * 表上那一格与本地这个值，算不算"同一个值"。
+ *
+ * 只比文本不够：在线表格把 `2026-10-25 17:33` 当**日期值**存，读回来的
+ * 是单元格显示文本 —— 分隔符变 `/`，「发货时间」那列只有日期格式时连时刻都没有。
+ * 纯文本比较的结果是每次启动都对账出一堆假差异（2026-10-25 实踩）。
+ *
+ * 宽松只对日期这一类：分隔符不同、少个时刻算同一个；日期或时刻真变了仍算改动。
+ */
+export function sameCell(a: unknown, b: unknown): boolean {
+  const x = txt(a).trim();
+  const y = txt(b).trim();
+  if (x === y) return true;
+  const dx = dtParts(x);
+  const dy = dtParts(y);
+  if (!dx || !dy) return false;
+  if (dx[0] !== dy[0] || dx[1] !== dy[1] || dx[2] !== dy[2]) return false;
+  if (dx[3] && dy[3]) return dx[3][0] === dy[3][0] && dx[3][1] === dy[3][1];
+  return true; // 一边只有日期 → 同日即同一个
+}
+
+/**
+ * 表上读回来的日期文本转成本地写法：`2026/10/25` → `2026-10-25`。
+ *
+ * 只换斜杠，**不碰时刻**：老数据里带着 `T…Z` 的 ISO 是"事实"，
+ * 顺手改成空格会让「登记时间」这种列丢掉时区标记（库里的原值也就变了）。
+ */
+export function fixDateText(v: unknown): string {
+  const s = txt(v).trim();
+  if (!dtParts(s) || !s.includes("/")) return s;
+  return s.replace(/\//g, "-");
+}
+
+/**
  * 推出前的一份拷贝：时间列换成分钟写法。
  *
  * 只改**推上去的那份**，数据库里不动 —— 拉取时拿表上的值跟本地比，
@@ -267,7 +326,10 @@ export function planPull(remote: LedgerRow[], local: LedgerRow[]): PullPlan {
       if (PULL_SKIP.has(col)) continue;
       const v = txt(row[col]).trim();
       // 空值不当"改动"：对面空格子可能只是没填，把它写过来会抹掉本地已有的值
-      if (v && v !== txt(mine[col]).trim()) patch[col] = v;
+      // ★ sameCell 而不是字符串不等：表上的时间列是**显示文本**（2026/10/25），
+      //   跟本地的 2026-10-25 永远不相等 —— 不加这层，每次启动对账都要报一遍
+      //   「发货时间不一样」（2026-10-25 实踩）。
+      if (v && !sameCell(v, mine[col])) patch[col] = fixDateText(v);
     }
     if (Object.keys(patch).length) updates.push({ row: mine, patch });
   }
@@ -293,7 +355,7 @@ export async function applyPull(plan: PullPlan): Promise<{ added: number; update
 
   for (const row of plan.adds) {
     const vals: Record<string, string> = {};
-    for (const [col] of COLUMNS) if (col !== "_status") vals[col] = txt(row[col]).trim();
+    for (const [col] of COLUMNS) if (col !== "_status") vals[col] = fixDateText(txt(row[col]).trim());
     vals.id = newId();
     // 对面的登记时间只是参考：没有就按现在算，updated_at 一律落到本次同步的时刻
     vals.created_at = vals.created_at || now;

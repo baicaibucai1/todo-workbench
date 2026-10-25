@@ -249,6 +249,47 @@ section("3. planPull：新增 / 改动 / 空值不覆盖");
   );
 }
 
+/* ============ 3b. 表上的时间列是「显示文本」，不能当改动 ============ */
+
+section("3b. sameCell：时间列的显示格式不算改动（2026-10-25 实踩）");
+{
+  /* 在线表格把 "2026-10-25 17:33" 当日期值存，读回来是显示文本：
+     斜杠分隔，列格式只有日期时连时刻都没有。纯文本比较的结果是
+     每次启动对账都报「发货时间不一样」、每次推送都重写这几格。 */
+  check("斜杠与横杠是同一天", K.sameCell("2026/10/25 17:10", "2026-10-25 17:10"));
+  check("只有日期 == 同一天的带时刻", K.sameCell("2026/10/25", "2026-10-25 17:33"));
+  check("ISO 的 T 也认", K.sameCell("2026-10-25T17:33", "2026-10-25 17:33"));
+  check("日期真变了不算同一个", !K.sameCell("2026/10/25", "2026-10-26 17:33"));
+  check("同一天换了时刻不算同一个", !K.sameCell("2026-10-25 17:10", "2026-10-25 18:10"));
+  check("普通文本仍然严格比", !K.sameCell("申通", "中通"));
+
+  const local = [
+    row({
+      id: "t1",
+      order_sn: "261023-225527806352802",
+      shipped_at: "2026-10-25 17:33",
+      created_at: "2026-10-25 17:33",
+      updated_at: "2026-10-25 19:08",
+    }),
+  ];
+  const remote = [
+    row({
+      order_sn: "261023-225527806352802",
+      shipped_at: "2026/10/25",
+      created_at: "2026/10/25 17:33",
+      updated_at: "2026/10/25 19:08",
+    }),
+  ];
+  const plan = K.planPull(remote, local);
+  check("一样的时刻：不产生改动（否则每次启动都报假差异）",
+    plan.updates.length === 0, JSON.stringify(plan.updates));
+
+  const changed = K.planPull([row({ order_sn: "261023-225527806352802", shipped_at: "2026/10/26" })], local);
+  check("日期真变了：还是要改，且落库时换成横杠写法",
+    changed.updates.length === 1 && changed.updates[0].patch.shipped_at === "2026-10-26",
+    JSON.stringify(changed.updates[0]?.patch));
+}
+
 /* ================= 4. 写库往返 ================= */
 
 section("4. applyPull：写进数据库，再读回来");

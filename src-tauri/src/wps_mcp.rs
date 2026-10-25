@@ -1125,9 +1125,19 @@ pub async fn wps_mcp_sheet_push(
     }
 
     let mut ops: Vec<Json> = Vec::new();
-    // 1) 表头：补出来的列得有表头；已有列重写一遍（同一个值，不影响）
+    // 1) 表头：**只补新加的列**。
+    //    已有列重写一遍值虽然一样，但那等于"没改动也去动表格" —— 用户点了推送、
+    //    什么都没改，服务端却收到 14 个写格请求；而且 ops 永远非空，下面
+    //    "ops 为空 = 一格都不用写" 这条短路永远走不到（2026-10-25 修）。
+    //    表头宽度按最后一个非空格算（读回来的网格会补齐出尾随空串）。
+    let header_len = grid
+        .first()
+        .map(|h| h.iter().rposition(|c| !c.trim().is_empty()).map(|i| i + 1).unwrap_or(0))
+        .unwrap_or(0);
     for (_key, label, col) in &plan.cols {
-        ops.push(cell_op(0, col - 1, label));
+        if *col > header_len {
+            ops.push(cell_op(0, col - 1, label));
+        }
     }
     // 2) 值变了的格 —— 一个格一条 op
     for u in &plan.updates {
@@ -1151,10 +1161,11 @@ pub async fn wps_mcp_sheet_push(
         }
     }
     if ops.is_empty() {
+        // 一格都不用写：表上已经和本机一样。这不是错误，是"没有改动"。
         return Ok(WpsMcpPush {
             count: rows.len(),
             columns: COLUMNS.len(),
-            appended: 0,
+            appended,
             file_kuid: file_id.to_string(),
             added: 0,
             changed: 0,

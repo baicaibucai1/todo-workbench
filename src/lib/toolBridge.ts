@@ -307,10 +307,20 @@ function sheetOf(v: unknown): string {
 }
 
 /** 给工具看的"这一行是哪条"—— 只够认人，不给整行（工具不需要，也不必拿） */
-/** 列 key → 中文列名：明细里要给人看「快递单号」，不是 tracking_no */
-const COLUMN_LABEL: Record<string, string> = Object.fromEntries(
-  COLUMNS.map(([k, l]) => [k, l]),
-);
+/**
+ * 列 key → 中文列名：明细里要给人看「快递单号」，不是 tracking_no。
+ *
+ * ★ 必须**惰性**建：toolBridge 与 kwiki 互相 import（kwiki 要桥接的 HOST_SOURCE，
+ * 桥接要 kwiki 的 COLUMNS）。在模块顶层直接读 COLUMNS，谁先被加载谁拿到
+ * undefined —— 症状是 `npm run kwiki:test` 在导入期就崩（2026-10-25 发现）。
+ */
+let columnLabelCache: Record<string, string> | null = null;
+function columnLabel(key: string): string {
+  if (!columnLabelCache) {
+    columnLabelCache = Object.fromEntries(COLUMNS.map(([k, l]) => [k, l]));
+  }
+  return columnLabelCache[key] || key;
+}
 
 function pullBrief(row: LedgerRow): { key: string; store: string; status: string } {
   return {
@@ -1749,7 +1759,7 @@ export function createToolBridge(
                 // 的话，人还是得自己去表上找那一格对，等于没说。
                 diffs: Object.keys(u.patch).map((c) => ({
                   col: c,
-                  label: COLUMN_LABEL[c] || c,
+                  label: columnLabel(c),
                   from: String(u.row[c] ?? ""),
                   to: u.patch[c],
                 })),
