@@ -335,12 +335,72 @@
      没设 --tc 时：徽章回落到原来的灰，色条透明（不留一条黑边）。 */
   .badge.t { color: var(--tc, var(--fg2)); border-color: var(--tc, var(--line)); }
   .ticket.t { box-shadow: inset 3px 0 0 var(--tc, transparent); }
-  /* 配色板：一行一个选项 + 一个颜色下拉。不定宽 —— 窄了自动换行，不挤成竖排 */
-  .colorpad { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 2px 12px; }
-  .colorpad label { display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap; }
-  .colorpad .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg2); }
-  .colorpad select { flex: 0 0 78px; width: 78px; padding: 2px 4px; font-size: 11.5px; }
-  .colorpad .grp { grid-column: 1 / -1; font-size: 11px; color: var(--dim); margin-top: 6px; }
+  /* ---------- 选项编辑器（v1.15.0）：颜色和选项合成一块 ----------
+     一行 = 拖拽点 + 颜色块（点开调色板）+ 名称 + 删除，跟"字段设置"里那种一样。
+     ★ 名称走 <input> 而不是裸文本：flex 里裸文本是可压缩匿名 item，窄了会被压成一字一列。
+     其余元素一律 flex:0 0 auto，谁也挤不动谁。 */
+  .ogroup { border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px 10px; }
+  .ogroup + .ogroup { margin-top: 10px; }
+  .oghead { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+  .oghead .ot { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+  .oghead .on { margin-left: auto; font-size: 11px; color: var(--dim); white-space: nowrap; }
+  .orow { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+  .orow.dragging { opacity: .5; }
+  .odrag {
+    flex: 0 0 auto; width: 15px; height: 24px; display: flex; align-items: center; justify-content: center;
+    color: var(--dim); cursor: grab; touch-action: none; user-select: none;
+  }
+  .odrag:active { cursor: grabbing; }
+  .osw {
+    flex: 0 0 auto; width: 30px; height: 30px; padding: 0; border: none; border-radius: 7px;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+    background: var(--chip); color: var(--dim);
+  }
+  .osw.on { color: #fff; }
+  /* 深色主题里那几个色都是浅调的，白箭头糊在底色上 → 换深色箭头 */
+  html[data-theme="dark"] .osw.on { color: #1b1b18; }
+  .osw:hover { filter: brightness(.95); }
+  .osw svg { width: 13px; height: 13px; }
+  .oname {
+    flex: 1 1 auto; min-width: 0; width: auto; padding: 5px 10px; font-size: 12.5px;
+    background: var(--chip); border-color: transparent; border-radius: 7px;
+  }
+  .oname:focus { background: var(--field); }
+  .oname:disabled { color: var(--fg2); background: transparent; border: 1px dashed var(--line); cursor: default; }
+  .odel {
+    flex: 0 0 auto; width: 26px; height: 26px; padding: 0; border: none; background: transparent;
+    color: var(--dim); border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  }
+  .odel:hover:not(:disabled) { background: var(--chip); color: var(--danger); }
+  .odel svg { width: 15px; height: 15px; }
+  .ofoot { display: flex; align-items: center; gap: 14px; margin-top: 7px; padding-left: 21px; }
+  .olink {
+    border: none; background: transparent; padding: 2px 0; color: var(--accent);
+    font-size: 12px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  }
+  .olink svg { width: 12px; height: 12px; }
+  .olink:hover:not(:disabled) { text-decoration: underline; }
+  .olink.mute { color: var(--fg2); }
+  .osplit { width: 1px; height: 12px; background: var(--line); }
+  .osys { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+  .osys .cap { font-size: 11px; color: var(--dim); margin: 0 0 3px 21px; }
+  /* 调色板：fixed 贴着色块弹（absolute 会被卡片/滚动容器裁）。宽度定死 ——
+     中文标签在 auto 宽度里会把面板压成一条竖线。 */
+  .palpop {
+    position: fixed; z-index: 95; width: 150px; padding: 5px;
+    background: var(--bg); border: 2px solid var(--line); border-radius: 10px;
+  }
+  .palpop button {
+    display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px;
+    border: none; border-radius: 6px; background: transparent; font-size: 12.5px;
+    color: var(--fg); text-align: left; white-space: nowrap;
+  }
+  .palpop button:hover { background: var(--chip); border-color: transparent; }
+  .palpop .dot { flex: 0 0 auto; width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--line); }
+  .palpop .ck { margin-left: auto; color: var(--accent); opacity: 0; font-size: 12px; }
+  .palpop button[aria-checked="true"] .ck { opacity: 1; }
+  /* 批量编辑：对话框里放一个 textarea，宽的那档 */
+  .dlg-b textarea { margin-top: 8px; font-family: var(--mono); font-size: 12.5px; }
 
   .kv { display: grid; grid-template-columns: 88px 1fr; gap: 6px 10px; font-size: 12.5px; }
   .kv > span { color: var(--dim); }
@@ -954,29 +1014,14 @@
     <div class="card narrow">
       <h2>下拉选项</h2>
       <p class="note" style="margin:0 0 8px">
-        五个下拉的选项<b>一行一个</b>，改完点保存。已经在单子上的旧值不受影响。
-        流程状态里<b>「完结」恒定在最后一项</b> —— 它是收尾步，不跟着下面这格走。
+        一行一个选项，<b>改完立刻生效</b>（没有保存按钮）。左边色块点开挑颜色 ——
+        列表里的标签、徽章、左侧竖条都吃它；不挑就按语义走（逾期红 / 办完绿 / 待办黄）。
+        改名只影响以后，已经在单子上的旧值不动。
       </p>
-      <div class="grid24">
-        <label class="f c12"><span>快递公司</span><textarea id="optCouriers" rows="5"></textarea></label>
-        <label class="f c12"><span>情况</span><textarea id="optSituations" rows="5"></textarea></label>
-        <label class="f c12"><span>流程状态（中间步骤）</span><textarea id="optFlows" rows="5"></textarea></label>
-      </div>
-      <div class="r" style="margin-top:8px">
-        <button class="primary" id="saveOpts">保存选项</button>
-        <span class="hint" id="optMsg" style="margin:0"></span>
-      </div>
-
-      <!-- 配色（v1.14.0）：给下拉选项挑颜色 —— 列表里的标签、状态徽章、左侧竖条都吃它。
-           没配的按语义走：逾期 / 快到期红、办完绿、待办黄。改完立刻生效，不用保存。 -->
-      <div class="sect">
-        <h3>配色</h3>
-        <p class="note" style="margin:0 0 6px">
-          选一个色，列表里那个标签就跟着变。<b>状态还会影响整条</b>：徽章和左侧竖条同色。
-          「默认」= 按语义 —— <b>逾期和 24 小时内到期的红</b>、<b>办完的绿</b>、<b>待办黄</b>。
-        </p>
-        <div class="colorpad" id="colorPad"></div>
-      </div>
+      <!-- 颜色和选项在一块儿（v1.15.0）：以前是「三个多行文本 + 另开一块配色」，
+           改个名字要去两边对，还容易对错行。现在一行解决。 -->
+      <div id="optEditor"></div>
+      <div class="hint" id="optMsg"></div>
     </div>
 
     <div class="card narrow">
@@ -1156,9 +1201,19 @@
       }
       document.addEventListener("keydown", onKey, true);
       mask.querySelector("#dlgNo").onclick = function () { close(false); };
-      mask.querySelector("#dlgYes").onclick = function () { close(true); };
+      // collect：关掉之前把框里的值捞走（批量编辑要用 —— close 会把 DOM 一起摘掉）
+      mask.querySelector("#dlgYes").onclick = function () {
+        if (o.collect) { try { o.collect(mask); } catch (err) { /* 捞失败就当没填 */ } }
+        close(true);
+      };
       mask.onclick = function (e) { if (e.target === mask) close(false); };
-      mask.querySelector("#dlgNo").focus();
+      // 默认焦点在「取消」上（删除这类操作用回车不该直接过），但带输入框的对话框
+      // 得把焦点交给那个框 —— 否则用户要先点一下才能打字
+      var focusEl = o.focus ? mask.querySelector(o.focus) : null;
+      (focusEl || mask.querySelector("#dlgNo")).focus();
+      if (focusEl && focusEl.setSelectionRange) {
+        try { focusEl.setSelectionRange(focusEl.value.length, focusEl.value.length); } catch (e2) { /* 非文本控件 */ }
+      }
     });
   }
   /**
@@ -3568,62 +3623,367 @@
    * 9. 设置页
    * ================================================================== */
   /** 配色板里能配的状态名：三个派生状态 + 流程里配的每一步 */
-  function statusNames() {
-    var out = ["待处理", "处理中", "已关闭"];
-    var list = (cfg.flows && cfg.flows.length ? cfg.flows : DEFAULT_FLOWS);
+  /* ---------- 选项编辑器（v1.15.0）：颜色和选项合成一块 ----------
+     一行 = 拖拽点 + 色块 + 名称 + 删除，跟"字段设置"里那种一样。
+     · 色块点开调色板（只给预设色 —— 面板会把颜色拼进 style，不能收任意字符串）；
+     · 名称改完立刻写 kv，没有保存按钮（跟原来的配色板一个道理：多了就会忘点）；
+     · 拖拽只认手柄，不然在名称框里选字会变成拖行；
+     · 颜色键仍是「kind:名称」，改名时颜色跟着名字搬，删项时把那条清掉。 */
+  var OPT_GROUPS = [
+    { kind: "courier", title: "快递公司", list: "couriers", kv: "optCouriers" },
+    { kind: "situation", title: "情况", list: "situations", kv: "optSituations" },
+    { kind: "status", title: "流程状态", list: "flows", kv: "optFlows", done: true, sys: true },
+  ];
+  var OPT_ICON = {
+    drag: '<svg class="ico" viewBox="0 0 10 16" aria-hidden="true"><path d="M3.4 4v1M6.6 4v1M3.4 8v1M6.6 8v1M3.4 12v1M6.6 12v1"/></svg>',
+    chev: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 6.5 8 10.1l3.6-3.6"/></svg>',
+    del: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.8"/><path d="M5.6 8h4.8"/></svg>',
+    add: '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.2v9.6M3.2 8h9.6"/></svg>',
+  };
+  var OPT_PAL = null;       // 开着的调色板（全页只有一个）
+  var OPT_PAL_FOR = null;   // 它贴在哪个色块上（再点同一个色块 = 收起）
+  function optGroupOf(kind) {
+    for (var i = 0; i < OPT_GROUPS.length; i++) if (OPT_GROUPS[i].kind === kind) return OPT_GROUPS[i];
+    return null;
+  }
+  /** 从任意节点往上找带某属性的祖先（点的是按钮里的 svg，也算点了按钮） */
+  function near(el, attr) {
+    while (el && el.nodeType === 1) {
+      if (el.hasAttribute(attr)) return el;
+      el = el.parentNode;
+    }
+    return null;
+  }
+  function optSay(m) { var el = $("optMsg"); if (el) el.textContent = m; }
+  function saveOptList(grp) { return cfgSet(grp.kv, JSON.stringify(cfg[grp.list] || [])); }
+  /** 颜色键跟着名字走：改名搬过去（to 为空 = 删掉这条） */
+  function keepColor(kind, from, to) {
+    var all = cfg.colors || {}, key = kind + ":" + from;
+    if (!all[key]) return;
+    var next = {}, k;
+    for (k in all) if (Object.prototype.hasOwnProperty.call(all, k)) next[k] = all[k];
+    var v = next[key];
+    delete next[key];
+    if (to) next[kind + ":" + to] = v;
+    cfg.colors = next;
+    void cfgSet("colors", JSON.stringify(next));
+  }
+  function optRowHtml(grp, name, idx, locked) {
+    var c = colorOf(grp.kind, name);
+    var row = '<div class="orow' + (locked ? " lock" : "") + '"'
+      + (locked ? "" : ' data-i="' + idx + '"') + ">";
+    row += '<span class="odrag"' + (locked ? ' style="visibility:hidden"' : ' data-drag="1" title="拖动排序"')
+      + ">" + OPT_ICON.drag + "</span>";
+    row += '<button type="button" class="osw' + (c ? " on" : "") + '" data-sw="1" title="挑颜色"'
+      + (c ? ' style="background:' + esc(c) + '"' : "") + ">" + OPT_ICON.chev + "</button>";
+    row += '<input class="oname" data-old="' + esc(name) + '" value="' + esc(name) + '"'
+      + (locked ? " disabled" : "") + " />";
+    row += locked
+      ? '<span class="odel" style="visibility:hidden"></span>'
+      : '<button type="button" class="odel" data-del="1" title="删掉这一项">' + OPT_ICON.del + "</button>";
+    return row + "</div>";
+  }
+  function renderOptEditor() {
+    var box = $("optEditor");
+    if (!box) return;
+    if (OPT_PAL) closePal();     // 重画后色块位置变了，旧面板别留在屏幕上
+    var html = "";
+    for (var g = 0; g < OPT_GROUPS.length; g++) {
+      var grp = OPT_GROUPS[g];
+      var list = cfg[grp.list] || [];
+      var i;
+      html += '<div class="ogroup" data-kind="' + grp.kind + '">'
+        + '<div class="oghead"><span class="ot">' + esc(grp.title) + "</span>"
+        + '<span class="on" id="optCount-' + grp.kind + '">' + list.length + " 项</span></div>"
+        + '<div class="olist">';
+      for (i = 0; i < list.length; i++) {
+        var nm = txt(list[i]).trim();
+        if (!nm) continue;
+        html += optRowHtml(grp, nm, i, false);
+      }
+      // 「完结」恒定在最后一项：它是收尾步，不是可编辑的普通选项（但可以配色）
+      if (grp.done) html += optRowHtml(grp, FLOW_DONE, -1, true);
+      html += "</div>";
+      if (grp.sys) {
+        html += '<div class="osys"><p class="cap">下面这三个是<b>算出来的</b>状态 —— 只能配色</p>';
+        for (i = 0; i < STATUSES.length; i++) html += optRowHtml(grp, STATUSES[i], -1, true);
+        html += "</div>";
+      }
+      html += '<div class="ofoot">'
+        + '<button type="button" class="olink" data-add="1">' + OPT_ICON.add + "添加选项</button>"
+        + '<span class="osplit"></span>'
+        + '<button type="button" class="olink mute" data-batch="1">批量编辑</button>'
+        + "</div></div>";
+    }
+    box.innerHTML = html;
+  }
+  /* --- 调色板 --- */
+  function closePal() {
+    if (OPT_PAL && OPT_PAL.parentNode) OPT_PAL.parentNode.removeChild(OPT_PAL);
+    OPT_PAL = null;
+    OPT_PAL_FOR = null;
+  }
+  function setOptColor(kind, name, v) {
+    var all = cfg.colors || {}, next = {}, k;
+    for (k in all) if (Object.prototype.hasOwnProperty.call(all, k)) next[k] = all[k];
+    var key = kind + ":" + txt(name).trim();
+    if (v) next[key] = v; else delete next[key];
+    cfg.colors = next;
+    void cfgSet("colors", JSON.stringify(next));
+    renderOptEditor();
+    renderAll();                 // 标签 / 徽章 / 左侧竖条都吃这个色
+  }
+  function openPal(btn) {
+    // 再点同一个色块 = 收起（不然只能点别处关，容易觉得"点不动"）
+    if (OPT_PAL && OPT_PAL_FOR === btn) { closePal(); return; }
+    closePal();
+    var row = btn.closest(".orow"), grpEl = btn.closest(".ogroup");
+    if (!row || !grpEl) return;
+    var kind = grpEl.getAttribute("data-kind");
+    var inp = row.querySelector(".oname");
+    var name = inp ? txt(inp.value).trim() : "";
+    if (!name) return;
+    var cur = colorOf(kind, name);
+    var pal = document.createElement("div");
+    pal.className = "palpop";
+    pal.setAttribute("role", "listbox");
+    var html = "";
+    for (var i = 0; i < COLOR_PRESETS.length; i++) {
+      var v = COLOR_PRESETS[i][0];
+      var lb = v ? COLOR_PRESETS[i][1] : "默认（按语义走）";
+      html += '<button type="button" role="option" data-pv="' + esc(v) + '" aria-checked="'
+        + (v === cur ? "true" : "false") + '">'
+        + '<span class="dot"' + (v ? ' style="background:' + esc(v) + '"' : "") + "></span>"
+        + esc(lb) + '<span class="ck">✓</span></button>';
+    }
+    pal.innerHTML = html;
+    document.body.appendChild(pal);
+    // 贴着色块弹（fixed：absolute 会被卡片 / 滚动容器裁掉），超出视口就往上翻
+    var r = btn.getBoundingClientRect();
+    var w = pal.offsetWidth || 150, h = pal.offsetHeight || 0;
+    var left = Math.max(6, Math.min(r.left, window.innerWidth - w - 6));
+    var top = r.bottom + 4;
+    if (h && top + h > window.innerHeight - 6) top = Math.max(6, r.top - h - 4);
+    pal.style.left = Math.round(left) + "px";
+    pal.style.top = Math.round(top) + "px";
+    pal.onclick = function (e) {
+      var b = near(e.target, "data-pv");
+      if (!b) return;
+      var pick = colorOk(b.getAttribute("data-pv"));
+      closePal();
+      setOptColor(kind, name, pick);
+    };
+    OPT_PAL = pal;
+    OPT_PAL_FOR = btn;
+  }
+  /* --- 增 / 删 / 改名 / 批量 --- */
+  function addOpt(kind) {
+    var grp = optGroupOf(kind);
+    if (!grp) return;
+    var list = cfg[grp.list] || (cfg[grp.list] = []);
+    var name = "新选项", n = 1;
+    while (list.indexOf(name) >= 0) { n++; name = "新选项" + n; }
+    list.push(name);
+    void saveOptList(grp);
+    renderOptEditor();
+    renderAll();
+    // 焦点直接落到刚加的那行 —— 加完就是要改名
+    var rows = $("optEditor").querySelectorAll('.ogroup[data-kind="' + kind + '"] .orow:not(.lock)');
+    var last = rows[rows.length - 1];
+    var inp = last ? last.querySelector(".oname") : null;
+    if (inp) {
+      inp.focus();
+      try { inp.setSelectionRange(0, inp.value.length); } catch (e) { /* 老 webview 没有 */ }
+    }
+    optSay("加了「" + name + "」，直接改名就行");
+  }
+  function delOpt(kind, idx) {
+    var grp = optGroupOf(kind);
+    if (!grp) return;
+    var list = cfg[grp.list] || [];
+    var name = txt(list[idx]).trim();
+    if (!name) return;
+    list.splice(idx, 1);
+    keepColor(kind, name, "");
+    void saveOptList(grp);
+    renderOptEditor();
+    renderAll();
+    optSay("删掉了「" + name + "」—— 单子上已经写着的这个值不受影响");
+  }
+  function renameOpt(kind, idx, value, inp) {
+    var grp = optGroupOf(kind);
+    if (!grp) return;
+    var list = cfg[grp.list] || [];
+    var old = txt(list[idx]).trim();
+    var nv = txt(value).trim();
+    if (!nv || nv === old) { inp.value = old; return; }
+    // 收尾步是语义，不能拿来当普通选项名
+    if (kind === "status" && isDoneName(nv)) {
+      inp.value = old;
+      optSay("「" + FLOW_DONE + "」是固定的收尾步，不能改名成这个");
+      return;
+    }
     for (var i = 0; i < list.length; i++) {
-      var n = txt(list[i]).trim();
-      if (n && out.indexOf(n) < 0) out.push(n);
+      if (i !== idx && txt(list[i]).trim() === nv) {
+        inp.value = old;
+        optSay("「" + nv + "」这一项已经有了");
+        return;
+      }
+    }
+    list[idx] = nv;
+    keepColor(kind, old, nv);
+    void saveOptList(grp);
+    renderOptEditor();
+    renderAll();
+    optSay("「" + old + "」改成了「" + nv + "」");
+  }
+  /** 批量编辑：一行一个。去空行、去重；流程组里「完结」不用写 */
+  function cleanNames(arr, kind) {
+    var out = [], seen = {}, i, v;
+    for (i = 0; i < arr.length; i++) {
+      v = txt(arr[i]).trim();
+      if (!v || seen[v]) continue;
+      if (kind === "status" && isDoneName(v)) continue;
+      seen[v] = 1;
+      out.push(v);
     }
     return out;
   }
-  /** 设置页「配色」那块：三组选项，一行一个下拉。
-      ★ 改完立刻写 kv 并重画列表 —— 配色是"看着调"的东西，
-      多一个保存按钮只会让人忘点，然后以为没生效。 */
-  function renderColorPad() {
-    var box = $("colorPad");
-    if (!box) return;
-    var groups = [
-      ["status", "当前状态", statusNames()],
-      ["situation", "情况", cfg.situations || []],
-      ["courier", "快递公司", cfg.couriers || []],
-    ];
-    var html = "";
-    for (var g = 0; g < groups.length; g++) {
-      var kind = groups[g][0], title = groups[g][1], names = groups[g][2];
-      html += '<div class="grp">' + esc(title) + "</div>";
-      for (var i = 0; i < names.length; i++) {
-        var n = txt(names[i]).trim();
-        if (!n) continue;
-        var key = kind + ":" + n;
-        var cur = (cfg.colors || {})[key] || "";
-        html += '<label><span class="nm" title="' + esc(n) + '">' + esc(n) + "</span>"
-          + '<select data-ckey="' + esc(key) + '">';
-        for (var p = 0; p < COLOR_PRESETS.length; p++) {
-          html += '<option value="' + esc(COLOR_PRESETS[p][0]) + '"'
-            + (COLOR_PRESETS[p][0] === cur ? " selected" : "") + ">"
-            + esc(COLOR_PRESETS[p][1]) + "</option>";
-        }
-        html += "</select></label>";
+  function batchEdit(kind) {
+    var grp = optGroupOf(kind);
+    if (!grp) return;
+    var list = (cfg[grp.list] || []).map(function (v) { return txt(v).trim(); })
+      .filter(function (v) { return !!v; });
+    var got = null;
+    ask({
+      title: grp.title + " · 批量编辑",
+      wide: true,
+      html: '<div class="note" style="margin:0">一行一个。空行忽略，重名只留一个；'
+        + "「" + esc(FLOW_DONE) + "」是固定的收尾步，不用写在这里。</div>"
+        + '<textarea id="dlgOpts" rows="10" spellcheck="false">' + esc(list.join("\n")) + "</textarea>",
+      focus: "#dlgOpts",
+      ok: "保存",
+      okTone: "primary",
+      // ★ 对话框关掉之前把值捞出来 —— close() 会把整块 DOM 摘掉
+      collect: function (m) {
+        var ta = m.querySelector("#dlgOpts");
+        got = cleanNames(parseList(ta ? ta.value : "") || [], kind);
+      },
+    }).then(function (ok) {
+      if (!ok || !got) return;
+      cfg[grp.list] = got;
+      // 被删掉的那些，颜色也一起清掉（否则 kv 里越攒越多，改名回来还会"诈尸"）
+      var seen = {}, i;
+      for (i = 0; i < got.length; i++) seen[kind + ":" + got[i]] = 1;
+      var all = cfg.colors || {}, kept = {}, changed = false, k;
+      for (k in all) if (Object.prototype.hasOwnProperty.call(all, k)) {
+        if (k.indexOf(kind + ":") === 0 && !seen[k]) { changed = true; continue; }
+        kept[k] = all[k];
       }
-    }
-    box.innerHTML = html;
-    var sels = box.querySelectorAll("[data-ckey]");
-    for (var s = 0; s < sels.length; s++) {
-      sels[s].onchange = function () {
-        var k = this.getAttribute("data-ckey");
-        var v = colorOk(this.value);
-        var next = {};
-        var all = cfg.colors || {};
-        for (var kk in all) if (Object.prototype.hasOwnProperty.call(all, kk)) next[kk] = all[kk];
-        if (v) next[k] = v; else delete next[k];
-        cfg.colors = next;
-        void cfgSet("colors", JSON.stringify(next));
-        renderList();
-        renderDetail();
-        renderTable();
-      };
-    }
+      if (changed) { cfg.colors = kept; void cfgSet("colors", JSON.stringify(kept)); }
+      void saveOptList(grp);
+      renderOptEditor();
+      renderAll();
+      optSay("已保存 " + got.length + " 项");
+    });
+  }
+  /** 绑定一次就够：行是整体重画的，事件全走委托 */
+  function bindOptEditor() {
+    var box = $("optEditor");
+    if (!box) return;
+    box.addEventListener("click", function (e) {
+      var el;
+      if ((el = near(e.target, "data-add"))) {
+        addOpt(el.closest(".ogroup").getAttribute("data-kind"));
+        return;
+      }
+      if ((el = near(e.target, "data-batch"))) {
+        batchEdit(el.closest(".ogroup").getAttribute("data-kind"));
+        return;
+      }
+      if ((el = near(e.target, "data-sw"))) { openPal(el); return; }
+      if ((el = near(e.target, "data-del"))) {
+        var row = el.closest(".orow");
+        delOpt(el.closest(".ogroup").getAttribute("data-kind"), Number(row.getAttribute("data-i")));
+      }
+    });
+    box.addEventListener("change", function (e) {
+      var inp = e.target;
+      if (!inp || !inp.classList || !inp.classList.contains("oname") || inp.disabled) return;
+      var row = inp.closest(".orow");
+      if (!row) return;
+      renameOpt(inp.closest(".ogroup").getAttribute("data-kind"),
+        Number(row.getAttribute("data-i")), inp.value, inp);
+    });
+    // 回车确认、ESC 还原：input 不在 form 里，不主动 blur 的话 change 要等下一次点击
+    box.addEventListener("keydown", function (e) {
+      var inp = e.target;
+      if (!inp || !inp.classList || !inp.classList.contains("oname")) return;
+      if (e.key === "Enter") { e.preventDefault(); inp.blur(); }
+      else if (e.key === "Escape") {
+        e.preventDefault();
+        inp.value = inp.getAttribute("data-old") || inp.value;
+        inp.blur();
+      }
+    });
+    /* 拖拽排序：只认手柄。pointer 事件（不用 HTML5 DnD）—— 拖动时行跟着走 */
+    box.addEventListener("pointerdown", function (e) {
+      var h = near(e.target, "data-drag");
+      if (!h) return;
+      var row = h.closest(".orow");
+      var listEl = row && row.parentNode;
+      if (!row || !listEl) return;
+      e.preventDefault();
+      var kind = row.closest(".ogroup").getAttribute("data-kind");
+      var rows = Array.prototype.slice.call(listEl.querySelectorAll(".orow:not(.lock)"));
+      var moved = false;
+      row.classList.add("dragging");
+      document.body.style.userSelect = "none";
+      function onMove(ev) {
+        var y = ev.clientY, best = null, bestD = Infinity, i, b, d;
+        for (i = 0; i < rows.length; i++) {
+          if (rows[i] === row) continue;
+          b = rows[i].getBoundingClientRect();
+          d = Math.abs(y - (b.top + b.height / 2));
+          if (d < bestD) { bestD = d; best = rows[i]; }
+        }
+        if (!best) return;
+        b = best.getBoundingClientRect();
+        if (y > b.top + b.height / 2) {
+          if (row.nextSibling !== best) listEl.insertBefore(row, best.nextSibling);
+        } else if (row !== best.nextSibling) {
+          listEl.insertBefore(row, best);
+        }
+        moved = true;
+      }
+      function onUp() {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onUp);
+        document.body.style.userSelect = "";
+        row.classList.remove("dragging");
+        if (!moved) return;
+        // 按 DOM 现在的顺序重排：认不出的（理论上没有）按原顺序补回末尾
+        var grp = optGroupOf(kind), list = cfg[grp.list] || [];
+        var old = [], i, k;
+        for (i = 0; i < list.length; i++) old.push(txt(list[i]).trim());
+        var dom = listEl.querySelectorAll(".orow:not(.lock) .oname");
+        var next = [];
+        for (i = 0; i < dom.length; i++) {
+          var v = txt(dom[i].value).trim();
+          if (old.indexOf(v) >= 0 && next.indexOf(v) < 0) next.push(v);
+        }
+        for (k = 0; k < old.length; k++) if (next.indexOf(old[k]) < 0) next.push(old[k]);
+        cfg[grp.list] = next;
+        void saveOptList(grp);
+        renderOptEditor();
+        renderAll();
+        optSay("顺序已更新");
+      }
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+      document.addEventListener("pointercancel", onUp);
+    });
   }
   function renderSettings() {
     /* 店铺表 */
@@ -3659,11 +4019,8 @@
       };
     }
 
-    /* 下拉选项 */
-    $("optCouriers").value = cfg.couriers.join("\n");
-    $("optSituations").value = cfg.situations.join("\n");
-    $("optFlows").value = cfg.flows.join("\n");
-    renderColorPad();
+    /* 下拉选项 + 配色：同一块编辑器（v1.15.0） */
+    renderOptEditor();
 
     /* 跟进提醒：间隔（小时） */
     $("optRemindHours").value = String(remindHours());
@@ -4619,6 +4976,15 @@
   document.addEventListener("change", function (e) {
     if (e.target && e.target.tagName === "SELECT") markSel(e.target);
   });
+  // 选项编辑器：行是整体重画的，事件委托只挂一次
+  bindOptEditor();
+  // 调色板：点别处 / ESC 都收
+  document.addEventListener("click", function (e) {
+    if (OPT_PAL && !OPT_PAL.contains(e.target) && !near(e.target, "data-sw")) closePal();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (OPT_PAL && e.key === "Escape") closePal();
+  }, true);
   $("addStore").onclick = function () {
     cfg.stores.push({ name: "店铺 " + (cfg.stores.length + 1), mallcsid: "" });
     renderSettings();
@@ -4629,21 +4995,6 @@
       $("storeMsg").textContent = "已保存";
       renderCreateForm();
       renderList();
-    })();
-  };
-  $("saveOpts").onclick = function () {
-    void (async function () {
-      cfg.couriers = parseList($("optCouriers").value) || [];
-      cfg.situations = parseList($("optSituations").value) || [];
-      cfg.flows = parseList($("optFlows").value) || [];
-      await cfgSet("optCouriers", JSON.stringify(cfg.couriers));
-      await cfgSet("optSituations", JSON.stringify(cfg.situations));
-      await cfgSet("optFlows", JSON.stringify(cfg.flows));
-      $("optMsg").textContent = "已保存";
-      renderCreateForm();
-      renderColorPad();      // 选项变了，配色板跟着列新的
-      renderList();
-      renderDetail();
     })();
   };
   $("saveRemind").onclick = function () {

@@ -1860,15 +1860,28 @@ console.log("\n13b. 状态配色：逾期红 / 待办黄 / 办完绿，且可在
   // ④ 设置里给「待处理」挑个紫 → 列表里待处理的跟着变（"下拉选项允许设定颜色"）
   doc.getElementById("tab-settings").click();
   await sleep(80);
-  const pad = doc.getElementById("colorPad");
-  check("设置页有配色板", !!pad && pad.querySelectorAll("select[data-ckey]").length >= 3,
-    pad ? String(pad.querySelectorAll("select[data-ckey]").length) : "没有");
-  const sel = pad.querySelector('select[data-ckey="status:待处理"]');
-  check("每个状态下拉旁都有一个颜色下拉", !!sel);
-  sel.value = "var(--violet)";
-  sel.dispatchEvent(new win.Event("change", { bubbles: true }));
+  const ed = doc.getElementById("optEditor");
+  const groups = ed ? ed.querySelectorAll(".ogroup") : [];
+  check("设置页把颜色和选项合成一块（三组）", groups.length === 3, String(groups.length));
+  const flowGrp = ed && ed.querySelector('.ogroup[data-kind="status"]');
+  const flowNames = flowGrp ? [...flowGrp.querySelectorAll(".oname")] : [];
+  check("流程组里「完结」是锁定的最后一项",
+    flowNames.some((i) => i.value === "完结" && i.disabled),
+    flowNames.map((i) => i.value + (i.disabled ? "（锁）" : "")).join("/"));
+  const sysRow = [...(flowGrp ? flowGrp.querySelectorAll(".orow") : [])]
+    .find((r) => r.querySelector(".oname")?.value === "待处理");
+  check("系统算出来的「待处理」也在一行里（只能配色）",
+    !!sysRow && sysRow.querySelector(".oname").disabled === true);
+  sysRow.querySelector(".osw").click();
+  await sleep(80);
+  const pal = doc.querySelector(".palpop");
+  check("点色块弹出调色板（只给预设色，不收任意字符串）",
+    !!pal && pal.querySelectorAll("[data-pv]").length >= 4,
+    pal ? String(pal.querySelectorAll("[data-pv]").length) : "没弹出来");
+  pal.querySelector('[data-pv="var(--violet)"]').click();
   await sleep(200);
   check("配色存进了宿主 kv", /--violet/.test(kv["colors"] || ""), kv["colors"]);
+  check("选完调色板自己收起来", !doc.querySelector(".palpop"));
   doc.getElementById("tab-create").click();
   await sleep(60);
   doc.getElementById("fRemindAt").value = "";
@@ -1882,9 +1895,40 @@ console.log("\n13b. 状态配色：逾期红 / 待办黄 / 办完绿，且可在
   check("配过色的状态：列表跟着用配置色",
     !!purpleEl && /--violet/.test(purpleEl.getAttribute("style") || ""),
     purpleEl ? purpleEl.getAttribute("style") : "列表里没有这条");
+
+  // ⑤ 改名 / 删项：kv 里的列表和颜色都得跟着走（颜色键是「kind:名称」，
+  //    不搬的话改个名就白配一次）
+  doc.getElementById("tab-settings").click();
+  await sleep(80);
+  const sitRow = doc.querySelector('.ogroup[data-kind="situation"] .orow');
+  const sitOld = sitRow.querySelector(".oname").value;
+  sitRow.querySelector(".osw").click();
+  await sleep(60);
+  doc.querySelector('.palpop [data-pv="var(--ok)"]').click();
+  await sleep(150);
+  const sitInp = doc.querySelector('.ogroup[data-kind="situation"] .orow .oname');
+  sitInp.value = sitOld + "X";
+  sitInp.dispatchEvent(new win.Event("change", { bubbles: true }));
+  await sleep(200);
+  const sitKv = JSON.parse(kv["optSituations"] || "[]");
+  check("改名后 kv 里的列表跟着变", sitKv.indexOf(sitOld + "X") >= 0, kv["optSituations"]);
+  check("改名时颜色跟着搬（不然白配一次）",
+    (kv["colors"] || "").indexOf("situation:" + sitOld + "X") >= 0, kv["colors"]);
+  const delRow = doc.querySelector('.ogroup[data-kind="situation"] .orow');
+  const delName = delRow.querySelector(".oname").value;
+  delRow.querySelector(".odel").click();
+  await sleep(200);
+  const sitKv2 = JSON.parse(kv["optSituations"] || "[]");
+  check("删项：kv 列表少一项、颜色也一起清掉",
+    sitKv2.indexOf(delName) < 0 && (kv["colors"] || "").indexOf("situation:" + delName) < 0,
+    delName);
+
   // 把配色改回去，别影响后面的段落
-  sel.value = "";
-  sel.dispatchEvent(new win.Event("change", { bubbles: true }));
+  const sysRow2 = [...doc.querySelectorAll('.ogroup[data-kind="status"] .orow')]
+    .find((r) => r.querySelector(".oname")?.value === "待处理");
+  sysRow2.querySelector(".osw").click();
+  await sleep(60);
+  doc.querySelector('.palpop [data-pv=""]').click();
   await sleep(150);
 }
 
