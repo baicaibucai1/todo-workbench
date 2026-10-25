@@ -1968,6 +1968,50 @@ console.log("\n13c. 列配置面板：窄窗口下不再只剩一列箭头（v1.
   panel.hidden = true;
 }
 
+console.log("\n13d. 布局 / 缩放：高度靠 flex 撑，窄窗口有档位（v1.16.0）");
+{
+  /* 用户要求"缩放、窗口调整不能崩"。这里能断言的只有结构约束 ——
+     真正好看与否要看真机，但这些是最容易悄悄坏掉的那几条：
+       · 高度不许写 calc(100vh - N)（N 是对工具栏行数的假设）
+       · 页签窄了要能滚，不能把按钮压扁
+       · 确认框要能在矮窗口里滚，按钮不能被顶出视口
+       · 600 以下表单字段单列 */
+  const css = HTML.slice(HTML.indexOf("<style>"), HTML.indexOf("</style>"));
+  const cssCode = css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  /* 只认"页面主容器"：浮层（列面板 / 确认框）本来就该按视口夹住，那是另一回事 */
+  check("表格页 / 记录页的高度不再写死（没有 calc(100vh - N)，也没有内联 max-height）",
+    !/class="tblscroll"[^>]*style=/.test(HTML) &&
+    !/\.tblscroll\s*\{[^}]*max-height:\s*calc/.test(cssCode));
+  check("表格页是 flex 列，表格那格吃掉剩余高度",
+    /#view-table\s*\{[^}]*display:\s*flex/.test(cssCode) &&
+    /#view-table\s*\{[^}]*flex-direction:\s*column/.test(cssCode) &&
+    /#view-table > \.tblscroll\s*\{[^}]*flex:\s*1 1 auto/.test(cssCode));
+  check("推送记录卡也是 flex 列（表头贴卡片顶、表自己滚）",
+    /#view-log > \.card\s*\{[^}]*display:\s*flex/.test(cssCode));
+  check("页签窄了横着滚，不换行也不压扁",
+    /\.tabs\s*\{[^}]*overflow-x:\s*auto/.test(cssCode) &&
+    /\.tabs button\s*\{[^}]*flex:\s*0 0 auto/.test(cssCode));
+  check("窄窗口收起页头的次要信息（标题和推送按钮留住）",
+    /@media \(max-width: 780px\)[\s\S]*?header \.meta\s*\{[^}]*display:\s*none/.test(cssCode));
+  check("确认框在矮窗口里正文自己滚（按钮不会被顶出视口）",
+    /\.dlg\s*\{[^}]*max-height:\s*calc\(100vh - 48px\)/.test(cssCode) &&
+    /\.dlg-b\s*\{[^}]*overflow:\s*auto/.test(cssCode));
+  check("600px 以下表单字段一律单列",
+    /@media \(max-width: 600px\)[\s\S]*?\.grid24 > \*\s*\{[^}]*grid-column:\s*span 24/.test(cssCode));
+  check("流程栏只在还并排的那一段收窄（821–960）",
+    /@media \(min-width: 821px\) and \(max-width: 960px\)[\s\S]*?\.paneFlow\s*\{[^}]*flex:\s*0 0 204px/.test(cssCode));
+
+  doc.getElementById("tab-browse").click();
+  await sleep(80);
+  const firstRow = doc.querySelector("#list .ticket");
+  firstRow.click();
+  await sleep(120);
+  const snbig = doc.querySelector("#detail .snbig");
+  check("详情页头的单号是独立一格（长单号省略，不折行把按钮挤下去）",
+    !!snbig && !!snbig.textContent.trim(), snbig ? snbig.textContent : "没有 .snbig");
+}
+
 console.log("\n14. 缩略图这条链路（宿主回空串时工具自己出图）");
 {
   /* 图床里那张是工具自己压的：宿主 gallery.put 现在回的就是空 thumb */

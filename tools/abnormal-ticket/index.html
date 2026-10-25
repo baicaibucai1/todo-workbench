@@ -108,7 +108,7 @@
      标题 / 状态点超长就各自截断，meta 截成省略号 —— 推送按钮必须始终一行、贴着右上角 */
   header {
     flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
-    padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--bg);
+    padding: 10px var(--pad); border-bottom: 1px solid var(--line); background: var(--bg);
   }
   header h1 {
     font-size: 15px; margin: 0; font-weight: 600;
@@ -125,7 +125,7 @@
   }
   .dot.ok { color: var(--ok); border-color: var(--ok); }
   .dot.warn { color: var(--warn); border-color: var(--warn); }
-  .tabs { display: flex; gap: 4px; padding: 8px 14px 0; flex: 0 0 auto; }
+  .tabs { display: flex; gap: 4px; padding: 8px var(--pad) 0; flex: 0 0 auto; }
   .tabs button {
     border-radius: 8px 8px 0 0; border-bottom: none; color: var(--fg2); background: transparent;
   }
@@ -303,7 +303,7 @@
      再窄就上下排 —— 顺序是「先收窄列表 → 再收窄流程栏 → 最后才上下排」 */
   @media (max-width: 820px) {
     .split { flex-direction: column; }
-    .split > .left { flex: 0 0 auto; max-height: 38vh; }
+    .split > .left { flex: 0 0 auto; max-height: 40vh; }
     .gutter { display: none; }
     .split > .right > .panes, .paneMain > .card, .paneFlow { max-width: none; }
   }
@@ -759,6 +759,108 @@
   .empty .t { font-size: 12px; }
   .empty.sm { padding: 14px 10px; gap: 6px; }
   .empty.sm .art { width: 34px; height: 34px; }
+
+  /* ==================================================================
+   * 布局与缩放（v1.16.0）
+   * ------------------------------------------------------------------
+   * 这套界面实际活在三种宽度里：
+   *   · 桌面端默认窗口 1120 − 侧栏 280 ≈ **840**（最常见的一档）
+   *   · 工具被塞进待办详情那种面板，600 上下
+   *   · 宽屏最大化的 1500+
+   * 再加上 Windows 的显示缩放（125% / 150%）和 Ctrl+滚轮 —— 它们最终都表现为
+   * "CSS 视口变窄/变宽"，所以一律**按宽度分档**，不假设某一档的像素数。
+   *
+   * 铁律：**能靠 flex/grid 撑开的高度，不要写 calc(100vh - N)**。
+   * N 是对工具栏行数的假设；窄一档工具栏折成两行，N 就错了 ——
+   * 表格要么顶出屏幕，要么在底下留一条空白。表格页原来就是这么坏的。
+   * ================================================================== */
+
+  /* 控件别被压成 0：input 有 size 带来的固有宽度，flex 里不写 min-width 会顶宽 */
+  input, select, textarea { min-width: 0; }
+  /* 键盘走到哪儿要看得见（鼠标点不给框，免得满屏描边） */
+  button:focus-visible, .pill:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  /* 图标 + 文字在同一个按钮里：inline-block 的基线对齐会让字偏下半行 */
+  button[data-ico] { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+  button.imgadd[data-ico] { display: flex; gap: 2px; }
+  /* 这几种永远不参与压缩：被挤扁的按钮和徽章比折行还难看 */
+  header > button, .r > button, .dlg-r button, .badge, .dot { flex: 0 0 auto; }
+
+  /* ---------- 页签：窄了横着滚，不换行也不压扁 ---------- */
+  .tabs { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { flex: 0 0 auto; }
+
+  /* ---------- 表格页：整页铺满视口，表格自己滚 ---------- */
+  #view-table { display: flex; flex-direction: column; }
+  #view-table > .tblbar { flex: 0 0 auto; }
+  #view-table > .tblscroll { flex: 1 1 auto; min-height: 140px; max-height: none; }
+
+  /* 推送记录：整张卡是滚动容器，底下的说明和表格一起跟着走 */
+  #view-log { display: flex; flex-direction: column; }
+  #view-log > .card { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  #view-log .tblscroll { flex: 1 1 auto; min-height: 140px; max-height: none; }
+
+  /* 详情页头一行：单号是这条的身份，不许折成两行把按钮挤到下一排 */
+  .snbig {
+    flex: 0 1 auto; min-width: 0; font-size: 14px; font-family: var(--mono);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* 列表行里的单号同理：不加 min-width:0，flex 会拿"整串"当最小宽度，
+     长单号把右边界顶出去（列表横向滚动条就是这么来的） */
+  .ticket .sn { flex: 0 1 auto; min-width: 0; }
+
+  /* ---------- 确认框：矮窗口里正文自己滚，按钮始终在视野里 ---------- */
+  .dlg { max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+  .dlg-t, .dlg-r { flex: 0 0 auto; }
+  .dlg-b { overflow: auto; min-height: 0; }
+  /* 差异明细自己还有一层 max-height:46vh —— 外层既然会滚，就别套两层滚动条 */
+  .dlg-b .dlist { max-height: none; overflow: visible; }
+
+  /* 选项编辑器：行尾两个链接窄了换行，不挤成竖排 */
+  .ofoot { flex-wrap: wrap; row-gap: 6px; }
+  /* 提示条别横出屏幕：长错误信息（URL / 原始报错）也能换行 */
+  #toast div { max-width: calc(100vw - 40px); word-break: break-word; }
+
+  /* ---------- 窄一档：先收间距，再收内容 ---------- */
+  @media (max-width: 960px) {
+    /* 默认 840 时详情主栏只剩 370 上下 —— 卡片内边距收一档，把宽度还给内容 */
+    .paneMain > .card, .paneFlow > .card { padding: 10px 12px; }
+    /* 列表栏这时只有 190 出头：筛选下拉两个并排各剩 80 多，
+       14px 的字会顶到箭头，收一档刚好放下「全部快递」四个字 */
+    .split > .left .card input, .split > .left .card select { font-size: 12px; padding: 5px 7px; }
+  }
+  /* ★ 只在**还并排**的那一段收流程栏（821–960）。
+     窄过 820 就是上下排了，这条 flex-basis 会变成"高度 204"，把流程栏压扁。 */
+  @media (min-width: 821px) and (max-width: 960px) {
+    .paneFlow { flex: 0 0 204px; }
+  }
+  @media (max-width: 780px) {
+    /* 表数量 / 连接细节收起来，标题和推送按钮必须还在 */
+    header .meta { display: none; }
+    header { padding: 9px var(--pad); gap: 8px; }
+  }
+  @media (max-width: 640px) {
+    :root { --pad: 12px; --gap: 8px; }
+    #view-table > .tblscroll, #view-log .tblscroll { min-height: 120px; }
+  }
+  @media (max-width: 600px) {
+    #todayCount { display: none; }
+    /* 台账工具栏：搜索独占一行，下拉两个一行 ——
+       5 个 104px 起的选择器在 400 多像素里会横着顶出去 */
+    .tblbar input { flex: 1 1 100%; }
+    .tblbar select { flex: 1 1 calc(50% - 4px); min-width: 0; max-width: none; }
+    /* 表单字段一律单列：两两并排时每格只剩半行，中文标签自己就折了 */
+    .grid24 > * { grid-column: span 24; }
+  }
+  @media (max-width: 460px) {
+    .brand { display: none; }
+    header h1 { font-size: 14px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
 </style>
 </head>
 <body data-bind-state="booting">
@@ -898,7 +1000,9 @@
         <div class="colpanel" id="colPanel" hidden></div>
       </div>
     </div>
-    <div class="tblscroll" style="max-height:calc(100vh - 190px)">
+    <!-- 高度交给 flex（#view-table 是 flex 列，这一格 flex:1）——
+         原来写的是 calc(100vh - 190px)：工具栏一折成两行，这个 190 就不对了 -->
+    <div class="tblscroll">
       <table>
         <thead id="tableHead"></thead>
         <tbody id="tableBody"></tbody>
@@ -932,7 +1036,7 @@
         <span class="spacer"></span>
         <button id="logRefresh" data-ico="hist">刷新</button>
       </div>
-      <div class="tblscroll" style="max-height:calc(100vh - 320px)">
+      <div class="tblscroll">
         <table id="logTable">
           <thead>
             <tr>
@@ -2861,7 +2965,7 @@
     for (var i = 0; i < cfg.stores.length; i++) if (cfg.stores[i].name === r.store) store = cfg.stores[i];
 
     var html = ""
-      + '<div class="r"><b style="font-size:14px;font-family:var(--mono)">' + esc(sn) + "</b>"
+      + '<div class="r"><b class="snbig">' + esc(sn) + "</b>"
       + '<span class="badge t"' + (tcHdr ? ' style="--tc:' + tcHdr + '"' : "") + ">" + esc(st) + "</span>"
       + '<span class="spacer"></span>'
       + '<button class="mini" id="btnCall">呼起客户端</button>'
@@ -4556,7 +4660,10 @@
     var top = rect.bottom + 4;
     if (top + dp.offsetHeight > window.innerHeight - 8) top = Math.max(8, rect.top - dp.offsetHeight - 4);
     dp.style.top = Math.round(top) + "px";
-    dp.style.left = Math.round(Math.min(rect.left, window.innerWidth - dp.offsetWidth - 8)) + "px";
+    // ★ 左右也要钳：窗口窄 / 放大到 150% 时，输入框贴着右边缘，往右展开就掉出视口了。
+    //   Math.max(8, …) 是给"视口比面板还窄"那种极端情况兜底（否则会算出负数）。
+    var left = Math.min(rect.left, window.innerWidth - dp.offsetWidth - 8);
+    dp.style.left = Math.round(Math.max(8, left)) + "px";
   }
   function closeDp() { $("dp").hidden = true; dpFor = null; }
   function paintDp() {
