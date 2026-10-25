@@ -197,6 +197,9 @@ pub fn run() {
             attachments::attachment_exists,
             attachments::attachment_usage,
             attachments::open_external,
+            // 唤起客户端：工具在 sandbox iframe 里不能自己跳自定义协议
+            // （Chromium 会把整个 iframe 换成「已阻止此内容」），只能交给宿主。
+            attachments::open_protocol,
             // 工具包下载。前端自己 fetch 会被 CORS 挡住，而工具包挂在
             // GitHub Release 上，给不给跨域头不由我们决定（见 toolpkg.rs 顶部）。
             toolpkg::tool_download,

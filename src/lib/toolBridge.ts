@@ -194,6 +194,14 @@ export type ToolOp =
    */
   | "task.remind"
   /**
+   * 用系统默认程序打开一个自定义协议链接（唤起本机客户端）。
+   *
+   * 工具**不能**自己 `location.href = "pddim:..."`：它跑在 sandbox iframe 里，
+   * Chromium 拦下自定义协议导航时会把整个 iframe 换成「已阻止此内容」错误页，
+   * 唤起失败之外，工具里没提交的东西也一起没了。协议白名单在 Rust 侧。
+   */
+  | "shell.open"
+  /**
    * 绑定一份 WPS 知识库文件并读写它。
    *
    * 四个 op 共用一道 `wps` 能力门：list 列可绑定的文件、bindLink 把分享链接
@@ -903,6 +911,32 @@ export function createToolBridge(
     try {
       if (op === "info") {
         reply(id, true, buildContext(toolId, currentSettings(), currentInject()));
+        return;
+      }
+
+      /*
+       * shell.open —— 唤起本机客户端（自定义协议）。
+       *
+       * 为什么不放给界面自己 `location.href = "pddim:..."`：
+       * 工具跑在 sandbox iframe 里，Chromium 拦下自定义协议导航时会把
+       * **整个 iframe** 换成「已阻止此内容」错误页 —— 不只是唤起失败，
+       * 工具里还没提交的东西也一起没了（异常单号 1.12.1 的真实事故）。
+       *
+       * 协议白名单在 Rust（`open_protocol`），这里只做能力门 + 形状检查。
+       */
+      if (op === "shell.open") {
+        const state = capabilityState(currentSettings(), toolId, "shell");
+        if (state !== "on") {
+          return reply(id, false, `唤起客户端不可用：${capabilityError(state, "shell")}`);
+        }
+        const url = typeof payload?.url === "string" ? payload.url.trim() : "";
+        if (!url) return reply(id, false, "缺少要唤起的链接");
+        try {
+          await invoke("open_protocol", { url });
+          reply(id, true, { url });
+        } catch (err) {
+          reply(id, false, err instanceof Error ? err.message : String(err));
+        }
         return;
       }
 

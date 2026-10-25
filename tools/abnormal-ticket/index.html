@@ -409,9 +409,24 @@
   .tlpic .imgcell .del { width: 17px; height: 17px; font-size: 12px; }
   /* 记一步时先选的待传图：跟输入框同宽，不把流程栏撑开 */
   .flowpick { margin-top: 6px; gap: 6px; }
-  .flowpick .imgadd, .flowpick .imgcell { width: 62px; height: 62px; }
+  .flowpick .imgcell { width: 62px; height: 62px; }
   .flowpick .imgadd { font-size: 10.5px; gap: 1px; }
   .flowpick .imgadd .ico { width: 15px; height: 15px; }
+  /* 「加图」在流程栏里会长成什么样，取决于手里有没有图：
+       · 一张都没有 → 占满整宽的虚线投放条（横排图标 + 文字），一眼看得出"能往这儿放"
+       · 已经有待传图 → 收成 62 方块跟缩略图并排，不白占一行
+     之前恒为 62px 方块：在 230~320px 的窄栏里孤零零一小块，像坏掉的图标。 */
+  .flowform .flowpick .imgadd {
+    flex: 1 0 100%; width: auto; height: 38px;
+    flex-direction: row; gap: 6px;
+    font-size: 12px; line-height: 1;
+  }
+  .flowform .flowpick:has(.imgcell) .imgadd {
+    flex: 0 0 62px; width: 62px; height: 62px;
+    flex-direction: column; gap: 1px; font-size: 10.5px;
+  }
+  /* 描述框右下角那个 resize 手柄：窄栏里宽度就那么点，拖也没意义，还特别脏 */
+  .flowform textarea { resize: none; }
   /* 「记一步」整组 = 一个动作面板：浅底 + 细框，跟上面的时间线分开。
      不包的时候，下拉和描述框直接接在最后一步底下，读起来像"又一步"，找不到在哪儿写。 */
   .flowform {
@@ -707,9 +722,9 @@
           <textarea id="fTitle" rows="2" placeholder="发生了什么"></textarea></label>
         <!-- 附图：一次可选多张，也可以把图直接拖进这块。图片进图床的「异常单号登记」分类 -->
         <div class="f c24" data-host-gallery id="fImgSect">
-          <span class="lbl" data-ico="img">图片（可选，可多张，也能把图直接拖进来）</span>
+          <span class="lbl" data-ico="img">图片（可选，可多张 —— 拖进来或 Ctrl+V 直接粘）</span>
           <div class="imgwrap imgdrop" id="fImgDrop" tabindex="0"
-               title="点「添加图片」选，或者把图片直接拖到这里">
+               title="点「添加图片」选，把图片拖到这里，或者直接按 Ctrl+V 粘贴">
             <button class="imgadd" id="fImgPick" type="button" data-ico="img">添加图片</button>
             <input type="file" id="fImgFile" accept="image/*" multiple hidden />
           </div>
@@ -1898,6 +1913,15 @@
       if (!fs || !fs.length) return;
       void takeFiles(fs, cb);
     });
+    /* 点这一块的空白（不是按钮、不是缩略图）就把焦点收进来。
+       贴图/拖图都对焦点敏感：焦点若还停在宿主页面（刚点过侧边栏、标题栏），
+       iframe 里的 document 收不到 paste —— 用户看起来"在界面上按了"，却什么都没发生。
+       点一下这块再按 Ctrl+V，落点就确定了。 */
+    el.addEventListener("click", function (e) {
+      var t = e.target;
+      if (t && t.closest && t.closest("button, .imgcell, input")) return;
+      try { el.focus({ preventScroll: true }); } catch (err) { /* 老引擎不认参数就算了 */ }
+    });
   }
 
   /** 图床里这张图的标题：带上单号，在图床里翻到时不至于全是「未命名」 */
@@ -2755,11 +2779,11 @@
       flowHtml += '<div class="flowform">'
         + '<select id="dFlow"></select>'
         + '<textarea id="dFlowNote" rows="2"'
-        + ' placeholder="这一步的情况描述（灰色小字显示在这一步标题下，可不填）"></textarea>'
+        + ' placeholder="这一步的情况，可不填"></textarea>'
         + (hasImages && hasStepCol
-          ? '<div class="imgwrap imgdrop flowpick" id="dFlowPick"'
-            + ' title="这一步的照片，可以多张；也能直接拖进来">'
-            + '<button class="imgadd" id="btnFlowPick" type="button" data-ico="img">加图</button>'
+          ? '<div class="imgwrap imgdrop flowpick" id="dFlowPick" tabindex="0"'
+            + ' title="这一步的照片，可以多张；拖进来，或者直接按 Ctrl+V 粘贴">'
+            + '<button class="imgadd" id="btnFlowPick" type="button" data-ico="img">加图 · 拖入 · Ctrl+V</button>'
             + '<input type="file" id="dFlowFile" accept="image/*" multiple hidden />'
             + "</div>"
           : "")
@@ -2786,13 +2810,13 @@
         + '<h3 data-ico="img">整单图片'
         + (pics.length ? '<span class="hint" style="margin:0 0 0 6px">共 ' + pics.length + " 张</span>" : "")
         + '<button class="mini" id="btnImgPick" data-ico="img" style="margin-left:auto">添加</button></h3>'
-        + '<div class="imgwrap imgdrop" id="dImgDrop">'
+        + '<div class="imgwrap imgdrop" id="dImgDrop" tabindex="0">'
         + (pics.length
           ? imgGridHtml(pics, true)
           : '<div class="note" style="margin:0">'
             + (onSteps
               ? "整单没挂图 —— " + onSteps + " 张都在流程步骤上（右边「流程状态」里跟着那一步）。"
-              : "这条还没挂图 —— 点右上「添加」，或者把图拖到这块")
+              : "这条还没挂图 —— 点右上「添加」，把图拖到这块，或直接按 Ctrl+V")
             + "</div>")
         + "</div>"
         + '<input type="file" id="dImgFile" accept="image/*" multiple hidden />'
@@ -2983,7 +3007,20 @@
       var cs = store ? store.mallcsid : "";
       if (!cs) { toast("这个店铺还没配客服 ID —— 去「设置」里粘一条 ERP 链接"); return; }
       if (!sn) { toast("这条没有单号，呼不起来"); return; }
-      window.location.href = "pddim:sendmsg/?OpeId=open_order&mallcsid=" + encodeURIComponent(cs) + "&ordersn=" + encodeURIComponent(sn);
+      if (!bound()) { toast("独立运行时唤不起客户端 —— 从工作台打开这个工具才行"); return; }
+      var link = "pddim:sendmsg/?OpeId=open_order&mallcsid=" + encodeURIComponent(cs) + "&ordersn=" + encodeURIComponent(sn);
+      /* 交给宿主去唤起，**不要**在这里 window.location.href = link：
+         工具跑在 sandbox iframe 里，Chromium 会拦下自定义协议导航，并把整个
+         iframe 换成「已阻止此内容」错误页 —— 唤不起来之外，这一页也没了。
+         宿主的 open_protocol 走系统 ShellExecute，页面原地不动。 */
+      call("shell.open", { url: link }, 15000).then(function () {
+        toast("已交给系统唤起客户端");
+      }).catch(function (err) {
+        var m = txt(err && err.message) || "唤起失败";
+        if (/不支持的操作/.test(m)) m = "这个工作台版本还不会唤起客户端 —— 升级到 0.3.0 后可用";
+        else if (/系统没能唤起/.test(m)) m = "系统没能唤起客户端 —— 多半是这台机器没装拼多多商家版客户端";
+        toast(m);
+      });
     };
     $("btnCopy").onclick = function () {
       var ta = document.createElement("textarea");
@@ -3186,7 +3223,7 @@
       }), true, { pending: true }));
     }
     setHint("flowImgMsg", pendingFlowImgs.length
-      ? "选了 " + pendingFlowImgs.length + " 张 —— 点「记一步」时一起存进图床" : "");
+      ? "待传 " + pendingFlowImgs.length + " 张 —— 点「记一步」时一起存进图床" : "");
   }
 
   /** 给第 idx 步补一个稳定 id（只补缺的）。返回 id；那一步已经没了返回 ""。
@@ -4107,7 +4144,7 @@
     }
     var hint = $("fImgMsg");
     if (hint) hint.textContent = pendingImgs.length
-      ? "选了 " + pendingImgs.length + " 张 —— 点「登记」时一起存进图床"
+      ? "待传 " + pendingImgs.length + " 张 —— 点「登记」时一起存进图床"
       : "";
   }
   function pendingIndex(raw) {
@@ -4146,6 +4183,90 @@
       }
     };
   }
+  /* ---------------- 直接粘贴图片（Ctrl+V） ----------------
+     不挂在某个投放区上，而是在 document 上统一收：粘贴事件只发给**当前焦点元素**，
+     用户刚粘完订单号、或者点了下别处，挂在投放区上的监听根本收不到 —— 而"截图
+     就在剪贴板里"恰恰是最自然的入口。收下来之后按"人现在在哪个视图"决定落点：
+       · 登记页          → 待提交图（跟「添加图片」选的一样，点登记时一起进图床）
+       · 查看页          → 当前这条单的整单图
+       · 查看页 + 光标在流程描述框 → 这一步的待传图（记一步时一起存）
+     ★ 不能见 image 就抢：从 Excel / Word 复制单元格时，剪贴板同时带 text/plain
+       和 image/png，那会儿用户在输入框里要的是文本 —— 把单元格截图存成图是灾难。
+       判据：有 text/plain 且焦点在输入类元素上，就整件事让给浏览器。 */
+  function clipImageFiles(e) {
+    var dt = e && (e.clipboardData || window.clipboardData);
+    if (!dt) return [];
+    var out = [], items = dt.items || [], i;
+    for (i = 0; i < items.length; i++) {
+      if (items[i].kind !== "file" || !/^image\//i.test(items[i].type || "")) continue;
+      var f = items[i].getAsFile();
+      if (f) out.push(f);
+    }
+    if (!out.length && dt.files) {              // 少数环境（老实现 / 从资源管理器复制文件）只给 files
+      for (i = 0; i < dt.files.length; i++) {
+        if (/^image\//i.test(dt.files[i].type || "")) out.push(dt.files[i]);
+      }
+    }
+    return out;
+  }
+  /** 剪贴板里的**文本内容**（不是"有没有这个类型"）。
+   *  ★ 不能只看 types 里有没有 text/plain：不少截图工具（含微信）复制图片时会捎带
+   *  一个**空的** text/plain 占位。按类型判断就会把图片当文本让给浏览器 →
+   *  用户按了 Ctrl+V 什么也没发生，还以为"不支持粘贴"。 */
+  function clipText(e) {
+    var dt = e && e.clipboardData;
+    if (!dt) return "";
+    try { return txt(dt.getData("text/plain") || ""); } catch (err) { return ""; }
+  }
+  /** 只有**单行输入框**才把粘贴让给浏览器。
+   *  · 下拉（SELECT）根本不吃文本粘贴，留着它拦只会白白吞掉图片；
+   *  · 描述框（TEXTAREA）里粘截图恰恰是最常见的动作 —— 拦了就是"按了没反应"。
+   *  单行框都是单号 / 时间这类短字段，粘图在那儿没有意义，让文本优先是对的。 */
+  function isTextField(el) {
+    return !!el && (el.tagName || "").toUpperCase() === "INPUT";
+  }
+  function viewOpen(id) { var el = $(id); return !!el && !el.hidden; }
+
+  document.addEventListener("paste", function (e) {
+    if (!hasImages) return;                     // 老宿主没有图床，收下来也没处落盘
+    var fs = clipImageFiles(e);
+    if (!fs.length) return;
+    if (clipText(e) && isTextField(document.activeElement)) return;   // 单行框里粘文字，别抢
+
+    var inCreate = viewOpen("view-create"), inBrowse = viewOpen("view-browse");
+    if (!inCreate && !inBrowse) { toast("先切到「登记」或「查看」，再粘图"); return; }
+    e.preventDefault();                          // 收下了，别再让浏览器往输入框里塞东西
+
+    if (inCreate) {
+      void takeFiles(fs, function (pics, bad) {
+        if (bad.length) toast(bad[0]);
+        if (!pics.length) return;
+        pendingImgs = pendingImgs.concat(pics);
+        renderPendingImgs();
+        toast("粘入 " + pics.length + " 张图 —— 点「登记」时一起存进图床");
+      });
+      return;
+    }
+    if (!selectedId || !findRow(selectedId)) { toast("先在左边选一条单子，再粘图"); return; }
+
+    var noteFocused = document.activeElement && document.activeElement.id === "dFlowNote";
+    if (noteFocused && $("dFlowPick")) {
+      void takeFiles(fs, function (pics, bad) {
+        if (bad.length) toast(bad[0]);
+        if (!pics.length) return;
+        pendingFlowImgs = pendingFlowImgs.concat(pics);
+        renderFlowPending();
+        toast("粘入 " + pics.length + " 张图 —— 记这一步时一起存");
+      });
+      return;
+    }
+    if (imgBusy) { toast("上一批图还在存，稍等一下"); return; }
+    void takeFiles(fs, function (pics, bad) {
+      if (bad.length) toast(bad[0]);
+      if (pics.length) void doAttach(selectedId, pics);
+    });
+  });
+
   // 订单号框：一动输入就重置重复确认位；粘链接 / 失焦时就地收拾（把链接换成单号、认店铺）
   $("fOrder").oninput = function () { dupAck = ""; showOrderHint(); };
   $("fOrder").onpaste = function () { setTimeout(cleanOrderField, 0); };  // 粘贴要先等浏览器把值写进去

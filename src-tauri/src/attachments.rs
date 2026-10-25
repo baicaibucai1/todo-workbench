@@ -676,6 +676,69 @@ pub fn open_external(url: String) -> Result<(), String> {
     open_url(&url)
 }
 
+/* ------------------------------------------------------------------ */
+/* 唤起客户端（自定义协议）                                            */
+/* ------------------------------------------------------------------ */
+
+/// 工具可以唤起的客户端协议白名单。
+///
+/// 目前只有拼多多客户端（异常单号工具详情页的「呼起客户端」）。
+/// **白名单而不是黑名单**：这条命令的本质是"让一个 iframe 在用户机器上
+/// 启动一个程序"，放开任意协议等于把 `file:` / `ms-msdt:` 这类入口一起交出去。
+const ALLOWED_PROTOCOLS: &[&str] = &["pddim"];
+
+/// 用系统默认程序打开一个自定义协议链接（如 `pddim:sendmsg/?...`）。
+///
+/// 为什么不让界面自己 `location.href = "pddim:..."`：
+/// 工具跑在 sandbox iframe 里，Chromium 拦下自定义协议导航时**会把整个 iframe
+/// 换成「已阻止此内容」错误页** —— 不只是唤起失败，工具里还没提交的东西也一起没了。
+/// 所以协议交给宿主：系统 ShellExecute 去注册表找客户端，页面原地不动。
+///
+/// 与 `open_external` 分开而不是放宽它的 scheme：那条路走的是附件/网页链接，
+/// 只该是 http(s)；把自定义协议塞进去，等于让所有调它的地方都能启动程序。
+#[tauri::command]
+pub fn open_protocol(url: String) -> Result<(), String> {
+    let raw = url.trim();
+    let scheme = raw.split(':').next().unwrap_or("").to_ascii_lowercase();
+    if !raw.contains(':') || !ALLOWED_PROTOCOLS.contains(&scheme.as_str()) {
+        return Err(format!("拒绝唤起「{scheme}」协议"));
+    }
+    // 控制字符会把日志/命令行搞乱，且 URL 里本来不该有
+    if raw.chars().any(|c| c.is_control()) {
+        return Err("链接里含控制字符".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let verb: Vec<u16> = "open\0".encode_utf16().collect();
+        let file: Vec<u16> = format!("{raw}\0").encode_utf16().collect();
+        // 返回值按老 Win32 约定当整数用：> 32 才算成功（0..=32 都是错误码）。
+        let ret = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                file.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        } as isize;
+        if ret <= 32 {
+            return Err(format!("系统没能唤起这个链接（ShellExecute 返回 {ret}）"));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = raw;
+        Err("只有 Windows 支持唤起客户端".to_string())
+    }
+}
+
 fn collect_usage(dir: &Path, files: &mut usize, bytes: &mut u64) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;

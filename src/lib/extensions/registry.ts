@@ -56,6 +56,8 @@ export const CAPABILITY_NAMES: Capability[] = [
   // 缺了它，「WPS 绑定文件」声明的 wps 能力会被白名单丢掉，
   // 设置页里根本没有这一项的开关 —— 工具就拿不到读写授权。
   "wps",
+  // 唤起本机客户端（shell.open）。内核提供，协议白名单在 Rust 侧。
+  "shell",
 ];
 
 /**
@@ -417,6 +419,8 @@ const CAPABILITY_OWNER: Partial<Record<Capability, string>> = {
   // 它额外还有一道"必须挂在某条待办上"的门，那道门在桥接里 ——
   // 没有 inject 上下文时 task.get 一律拒绝，因为那时它不知道该读哪一条。
   task: CORE_EXTENSION_ID,
+  // 唤起客户端借的是操作系统的协议注册，与哪个模块开着无关。
+  shell: CORE_EXTENSION_ID,
 };
 
 export type CapabilityState =

@@ -100,6 +100,7 @@ let pushFail = "";         // 非空 = 下一次推送直接失败（测失败�
 const kv = {};             // 工具 kv
 const ops = [];            // 收到的 op 流水
 const args = [];           // 每个 op 的参数（要看推送第一步是不是 dryRun）
+let shellFail = null;      // 模拟旧宿主（不认识 shell.open）或系统唤不起来
 
 // 预置店铺表：其中一个挂着客服 ID 987654 —— ERP 链接里就写这个，
 // 好验证「粘链接 → 店铺自动认出来」这条路。
@@ -250,6 +251,11 @@ function host(win, e) {
       return;
     case "wps.mcpApply":
       reply(win, m.id, true, { added: 1, updated: 0 });
+      return;
+    /* ---- 唤起客户端（宿主侧 ShellExecute，工具只递链接） ---- */
+    case "shell.open":
+      if (shellFail) { reply(win, m.id, false, null, shellFail); return; }
+      reply(win, m.id, true, { url: p.url });
       return;
     default:
       reply(win, m.id, false, null, "假宿主不认识这个 op: " + m.op);
@@ -1432,6 +1438,127 @@ console.log("\n11. 订单附图：字节进图床，工具只记关联");
     liveImgs().length + " 条残留");
 }
 
+console.log("\n11b. 剪贴板里的图：Ctrl+V 直接进图片区");
+{
+  /** 造一个真粘贴事件。jsdom 既没有 ClipboardEvent 也不给 clipboardData，
+      只能自己挂上 —— 工具读的就是 items / files / types 这几个字段。
+      返回值 = dispatchEvent 的结果：false 表示工具 preventDefault 收下了。
+      另外：剪贴板里"既有文字又有图"是常态（从 Excel / Word 复制单元格就是），
+      withText 用来覆盖那条"别抢文本粘贴"的分支。 */
+  function pasteImgs(files, opt) {
+    const o = opt || {};
+    const ev = new win.Event("paste", { bubbles: true, cancelable: true });
+    const items = files.map((f) => ({ kind: "file", type: f.type, getAsFile: () => f }));
+    Object.defineProperty(ev, "clipboardData", {
+      configurable: true,
+      value: {
+        items,
+        files,
+        types: o.withText ? ["text/plain", "Files"] : ["Files"],
+        // ★ 工具判"是不是在粘文字"看的是 getData 的真实内容，不是 types 里有没有这一项；
+        //   withText 只模拟"带这个类型"，text 才是真有字（空串 = 截图工具的占位）
+        getData: (t) => (o.withText && t === "text/plain" ? (o.text || "") : ""),
+      },
+    });
+    if (o.focus) o.focus.focus();
+    return (o.target || doc.body).dispatchEvent(ev);
+  }
+  const mkPng = (name) => new win.File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" });
+
+  /* ① 登记页：粘贴 = 跟点「添加图片」选一样，先排成待传格 */
+  doc.getElementById("tab-create").click();
+  await sleep(60);
+  const beforeN = store.length, gBefore = gallery.length;
+  doc.getElementById("fOrder").value = "261022-999999999999";
+  doc.getElementById("fOrder").dispatchEvent(new win.Event("input", { bubbles: true }));
+  const taken = pasteImgs([mkPng("截图1.png"), mkPng("截图2.png")]);
+  await waitFor(() => doc.querySelectorAll("#fImgDrop .imgcell").length === 2);
+  check("登记页粘贴两张 → 出现两个待传格",
+    doc.querySelectorAll("#fImgDrop .imgcell").length === 2,
+    String(doc.querySelectorAll("#fImgDrop .imgcell").length));
+  check("粘贴事件被接管（不让浏览器再往页面里塞）", taken === false);
+  check("待传区写着「待传 2 张」（不静默）",
+    /待传 2 张/.test(doc.getElementById("fImgMsg").textContent || ""),
+    doc.getElementById("fImgMsg").textContent);
+  check("toast 说清是从剪贴板来的",
+    /粘入 2 张/.test(doc.getElementById("toast").textContent || ""),
+    doc.getElementById("toast").textContent);
+
+  doc.getElementById("btnAdd").click();
+  await waitFor(() => store.length === beforeN + 1 && liveImgs().length === 2, 6000);
+  check("粘来的图跟选的一样：登记时进图床",
+    store.length === beforeN + 1 && gallery.length === gBefore + 2,
+    (store.length - beforeN) + " 单 / " + (gallery.length - gBefore) + " 图");
+  const pastedRow = store.find((r) => r.order_sn === "261022-999999999999");
+
+  /* ② 查看页：粘贴直接挂到当前这条单，不用先点「添加」 */
+  doc.getElementById("tab-browse").click();
+  await sleep(80);
+  doc.querySelector('#list .ticket[data-id="' + pastedRow.id + '"]').click();
+  await sleep(140);
+  const iBefore = imgStore.length;
+  pasteImgs([mkPng("聊天截图.png")]);
+  await waitFor(() => imgStore.length === iBefore + 1, 6000);
+  check("查看页粘贴 → 直接挂到当前单",
+    imgStore.length === iBefore + 1,
+    String(imgStore.length - iBefore));
+  await waitFor(() => doc.querySelectorAll("#dImgDrop .imgcell").length === 3);
+  check("详情页立刻多出一格（不用再点添加）",
+    doc.querySelectorAll("#dImgDrop .imgcell").length === 3,
+    String(doc.querySelectorAll("#dImgDrop .imgcell").length));
+
+  /* ②b 光标在「记一步」的描述框里粘 → 进这一步的待传区（跟选图等效），不直接挂整单图 */
+  const noteEl = doc.getElementById("dFlowNote");
+  const pBefore = doc.querySelectorAll("#dFlowPick .imgcell").length;
+  noteEl.focus();
+  pasteImgs([mkPng("步骤截图.png")]);
+  await waitFor(() => doc.querySelectorAll("#dFlowPick .imgcell").length === pBefore + 1);
+  check("光标在「记一步」描述框里粘 → 进这一步的待传区",
+    doc.querySelectorAll("#dFlowPick .imgcell").length === pBefore + 1,
+    String(doc.querySelectorAll("#dFlowPick .imgcell").length));
+  check("没顺手挂成整单图", imgStore.length === iBefore + 1, String(imgStore.length - iBefore));
+
+  /* ③ 单行框（订单号）里粘带文字的剪贴板：让给浏览器，别把单元格截图存成图 */
+  doc.getElementById("tab-create").click();
+  await sleep(60);
+  const nBefore = doc.querySelectorAll("#fImgDrop .imgcell").length;
+  const notTaken = pasteImgs([mkPng("单元格.png")], {
+    withText: true, text: "261022-123456789012", focus: doc.getElementById("fOrder"),
+  });
+  await sleep(120);
+  check("单行框里粘带文字的剪贴板 → 文本优先，不抢",
+    notTaken === true && doc.querySelectorAll("#fImgDrop .imgcell").length === nBefore,
+    notTaken === true ? "没 preventDefault" : "被抢了");
+
+  /* ④ 描述框（textarea）里粘图：必须收下 —— 这是最常走的路径。
+     顺带覆盖"截图工具带一个空 text/plain 占位"那个坑：types 里有 text/plain、
+     但 getData 是空串，不能因此把图让给浏览器（那正是"按了没反应"的来源）。 */
+  const taken2 = pasteImgs([mkPng("描述框截图.png")], {
+    withText: true, text: "", focus: doc.getElementById("fTitle"),
+  });
+  await waitFor(() => doc.querySelectorAll("#fImgDrop .imgcell").length === nBefore + 1);
+  check("描述框里粘图 → 收下（空 text/plain 不算文字）",
+    taken2 === false && doc.querySelectorAll("#fImgDrop .imgcell").length === nBefore + 1,
+    (taken2 === false ? "收下了" : "被让掉了") + " / " + doc.querySelectorAll("#fImgDrop .imgcell").length);
+  doc.querySelector("#fImgDrop .imgcell .del").click();     // 收尾：别把这批留给下一段建的单
+  await sleep(60);
+  check("待传区清得干净（不带给下一单）",
+    doc.querySelectorAll("#fImgDrop .imgcell").length === 0,
+    String(doc.querySelectorAll("#fImgDrop .imgcell").length));
+
+  /* ⑤ 别的页签（表格）粘图：说清该去哪儿，而不是静默什么都不发生 */
+  doc.getElementById("tab-table").click();
+  await sleep(80);
+  const imgN = imgStore.length;
+  pasteImgs([mkPng("表格页.png")]);
+  await sleep(120);
+  check("表格页粘图 → 给提示、不入库",
+    imgStore.length === imgN && /先切到/.test(doc.getElementById("toast").textContent || ""),
+    doc.getElementById("toast").textContent);
+  doc.getElementById("tab-create").click();
+  await sleep(60);
+}
+
 console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）");
 {
   const before = store.length;
@@ -1564,6 +1691,46 @@ console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）
   const lf = JSON.parse(store.find((r) => r.id === "legacy-flow-1").flow);
   check("老流程步骤 load 时静默补上 u（界面上的图才有地方挂）",
     !!lf[0].u && lf[0].n === "待处理", JSON.stringify(lf));
+}
+
+console.log("\n12b. 呼起客户端交给宿主（自己跳 pddim: 会把整页换成「已阻止此内容」）");
+{
+  /* v1.12.1 里这一下是 `location.href = "pddim:..."`。工具在 sandbox iframe 里，
+     Chromium 拦自定义协议导航时会把**整个 iframe** 换成错误页 ——
+     唤不起来，页面上还没提交的东西也一起没了。现在必须走 shell.open。 */
+  doc.getElementById("tab-browse").click();
+  await sleep(100);
+  const callRow = store.find((r) => r.store === "拼5" && r.order_sn);
+  doc.querySelector('#list .ticket[data-id="' + callRow.id + '"]').click();
+  await sleep(150);
+
+  const beforeCall = args.filter((a) => a.op === "shell.open").length;
+  doc.getElementById("btnCall").click();
+  await waitFor(() => args.filter((a) => a.op === "shell.open").length > beforeCall, 3000);
+  const callReq = args.filter((a) => a.op === "shell.open").pop();
+  check("点「呼起客户端」→ 发 shell.open 给宿主", !!callReq, JSON.stringify(args.slice(-3)));
+  check("链接是 pddim:sendmsg，客服 ID 与订单号都对",
+    !!callReq &&
+      callReq.payload.url.indexOf("pddim:sendmsg/?") === 0 &&
+      callReq.payload.url.indexOf("mallcsid=987654") > 0 &&
+      callReq.payload.url.indexOf("ordersn=" + encodeURIComponent(callRow.order_sn)) > 0,
+    callReq && callReq.payload.url);
+  check("页面原地不动（没把 iframe 导航走）",
+    doc.getElementById("btnCall") !== null &&
+      win.location.href === "http://localhost/abnormal-ticket/index.html",
+    win.location.href);
+  check("toast 说清已经交给系统",
+    /已交给系统唤起客户端/.test(doc.getElementById("toast").textContent || ""),
+    doc.getElementById("toast").textContent);
+
+  /* 旧宿主（兜底回「不支持的操作：shell.open」）：要给一句人能看懂的 */
+  shellFail = "不支持的操作：shell.open";
+  doc.getElementById("btnCall").click();
+  await waitFor(() => /升级到 0\.3\.0/.test(doc.getElementById("toast").textContent || ""), 3000);
+  check("旧宿主 → 提示升级到 0.3.0（不静默、也不甩原文）",
+    /升级到 0\.3\.0/.test(doc.getElementById("toast").textContent || ""),
+    doc.getElementById("toast").textContent);
+  shellFail = null;
 }
 
 console.log("\n13. 默认窗口宽度下三栏并排（流程栏在右侧，不掉到底部）");

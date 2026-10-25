@@ -4579,7 +4579,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "todo-workbench"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "flate2",
  "indexmap 1.9.3",
@@ -4599,6 +4599,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-sql",
  "tauri-plugin-updater",
+ "windows-sys 0.59.0",
  "zip",
 ]
 
