@@ -2001,6 +2001,13 @@ console.log("\n13d. 布局 / 缩放：高度靠 flex 撑，窄窗口有档位（
     /@media \(max-width: 600px\)[\s\S]*?\.grid24 > \*\s*\{[^}]*grid-column:\s*span 24/.test(cssCode));
   check("流程栏只在还并排的那一段收窄（821–960）",
     /@media \(min-width: 821px\) and \(max-width: 960px\)[\s\S]*?\.paneFlow\s*\{[^}]*flex:\s*0 0 204px/.test(cssCode));
+  /* 竖向滚动条不画（用户要求）：整页 / 整栏都藏，但**横向条**必须留着 ——
+     台账比窗口宽时，那条横杠是唯一"还能往右看"的线索。 */
+  check("整页 / 整栏的竖向滚动条不画（内容照常滚）",
+    /main,\s*\.listwrap,\s*\.split > \.right\s*\{[^}]*scrollbar-width:\s*none/.test(cssCode)
+    && /main::-webkit-scrollbar[^{]*\{[^}]*width:\s*0/.test(cssCode));
+  check("表格的滚动条没被一起藏掉（横滚要看得见）",
+    !/\.tblscroll[^{]*\{[^}]*scrollbar-width:\s*none/.test(cssCode));
 
   doc.getElementById("tab-browse").click();
   await sleep(80);

@@ -67,6 +67,12 @@
   }
   ::-webkit-scrollbar-thumb:hover { background: var(--dim); background-clip: padding-box; }
   ::-webkit-scrollbar-corner { background: transparent; }
+  /* 竖向滚动条不画（1.17.1）：整页 / 整栏这种"长内容"的容器右边不再挂一条灰杠 ——
+     滚轮、触控板、键盘、拖选都照常，只是页面上不再有一条"还有多长"的视觉噪声。
+     ★ 只藏竖排，横向条留着：.tblscroll 比窗口宽时，那条横杠是唯一"还能往右看"的线索。 */
+  main, .listwrap, .split > .right { scrollbar-width: none; }
+  main::-webkit-scrollbar, .listwrap::-webkit-scrollbar,
+  .split > .right::-webkit-scrollbar { width: 0; height: 0; }
   body {
     margin: 0; height: 100vh; overflow: hidden;
     background: var(--page); color: var(--fg);
