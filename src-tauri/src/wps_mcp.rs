@@ -65,6 +65,30 @@ pub struct WpsMcpPoll {
     pub message: String,
 }
 
+/// 干跑明细里的一格：哪个字段、表上是什么、本机是什么。
+///
+/// 只给**确认框**看的 —— 用户点「推送」前想知道"到底要动我表上哪几格"，
+/// 光一句「改 12 个格」不够：那 12 格可能有一格是他自己在表上手填的备注，
+/// 得让他看见旧值才敢点。
+#[derive(Debug, Serialize)]
+pub struct WpsPushField {
+    /// 台账列名（「快递单号」这种，不是 order_sn）
+    pub label: String,
+    /// 表上那一格原来的值（空的就显示「（空）」是前端的事）
+    pub from: String,
+    /// 这次要写进去的值（本机台账里的）
+    pub to: String,
+}
+
+/// 按单号归组的一段差异：一条单子改哪几个字段。
+#[derive(Debug, Serialize)]
+pub struct WpsPushDiff {
+    pub key: String,
+    /// 表上第几行（1-based）—— 定位用，也让人知道是表里哪一行
+    pub row: usize,
+    pub fields: Vec<WpsPushField>,
+}
+
 /// 推送结果。字段与前端 `wpsMcp.ts` 的 `McpPush` 逐字对应。
 #[derive(Debug, Serialize)]
 pub struct WpsMcpPush {
@@ -87,6 +111,39 @@ pub struct WpsMcpPush {
     pub removed: usize,
     /// true 表示这只是"先算一遍"，一格都没写（用来做推送前确认）
     pub dry_run: bool,
+    /// 逐条明细：改的是哪几单、每单哪几个字段、表上原值 → 本机值。
+    /// 上限 `DIFF_LIMIT` 条（再多确认框也读不完），完整数字看 changed。
+    pub diffs: Vec<WpsPushDiff>,
+}
+
+/// 明细最多带几条单子。超出的靠 `changed` 的总数说明，不必逐条塞给前端。
+const DIFF_LIMIT: usize = 60;
+
+/// 把「要写的格」按单号聚成一段段人话 —— 顺序沿用 plan.updates 的顺序（即表行号）。
+fn plan_diff(plan: &crate::wps_cloud_plan::SyncPlan) -> Vec<WpsPushDiff> {
+    let mut out: Vec<WpsPushDiff> = Vec::new();
+    for u in &plan.updates {
+        let idx = match out.iter().position(|d| d.key == u.unit) {
+            Some(i) => i,
+            None => {
+                if out.len() >= DIFF_LIMIT {
+                    continue;
+                }
+                out.push(WpsPushDiff {
+                    key: u.unit.clone(),
+                    row: u.row,
+                    fields: Vec::new(),
+                });
+                out.len() - 1
+            }
+        };
+        out[idx].fields.push(WpsPushField {
+            label: u.label.clone(),
+            from: u.have.clone(),
+            to: u.value.clone(),
+        });
+    }
+    out
 }
 
 #[derive(Debug, Serialize)]
@@ -1063,6 +1120,7 @@ pub async fn wps_mcp_sheet_push(
             orphan_rows,
             removed,
             dry_run: true,
+            diffs: plan_diff(&plan),
         });
     }
 
@@ -1103,6 +1161,7 @@ pub async fn wps_mcp_sheet_push(
             orphan_rows,
             removed: 0,
             dry_run: false,
+            diffs: Vec::new(),
         });
     }
 
@@ -1138,6 +1197,7 @@ pub async fn wps_mcp_sheet_push(
         orphan_rows,
         removed,
         dry_run: false,
+        diffs: plan_diff(&plan),
     })
 }
 

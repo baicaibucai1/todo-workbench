@@ -144,6 +144,10 @@ pub struct SyncCell {
     pub row: usize,
     pub col: usize,
     pub value: String,
+    /// 表上那一格**原来**的值 —— 干跑时给用户看「表上 → 本机」用
+    pub have: String,
+    /// 这一行是谁家的单子（干跑明细按单号归组，别让人对着一堆行号猜）
+    pub unit: String,
     /// 台账列名 —— 写格时靠它认「单号列」（那两列要当文本写）
     pub key: String,
     pub label: String,
@@ -243,6 +247,8 @@ pub fn plan_cloud_sync(
                     row: row_no,
                     col: *col,
                     value: want,
+                    have,
+                    unit: key.clone(),
                     key: k.clone(),
                     label: label.clone(),
                 });

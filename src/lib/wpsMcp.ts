@@ -158,6 +158,19 @@ export type McpPush = {
   removed: number;
   /** true = 只是先算了一遍，一格没写 */
   dry_run: boolean;
+  /**
+   * 逐条明细：改哪几单、每单哪几个字段、表上原值 → 本机值。
+   *
+   * 确认框要能把「改 12 个格」摊开给人看 —— 那 12 格可能有一格是他
+   * 自己在表上手填的备注，只报个数字会让人不敢点，或者点了才发现被改。
+   * 上限 60 条单子（Rust 侧 DIFF_LIMIT），总数仍是 changed。
+   */
+  diffs: Array<{
+    key: string;
+    /** 表上第几行（1-based） */
+    row: number;
+    fields: Array<{ label: string; from: string; to: string }>;
+  }>;
 };
 
 /** 云文档根目录里的一份文件（挑表格时列出来给人选） */

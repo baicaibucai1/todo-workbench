@@ -152,6 +152,7 @@ import {
   mcpSheetPush,
 } from "./wpsMcp";
 import {
+  COLUMNS,
   applyPull,
   planPull,
   readLedger,
@@ -306,6 +307,11 @@ function sheetOf(v: unknown): string {
 }
 
 /** 给工具看的"这一行是哪条"—— 只够认人，不给整行（工具不需要，也不必拿） */
+/** 列 key → 中文列名：明细里要给人看「快递单号」，不是 tracking_no */
+const COLUMN_LABEL: Record<string, string> = Object.fromEntries(
+  COLUMNS.map(([k, l]) => [k, l]),
+);
+
 function pullBrief(row: LedgerRow): { key: string; store: string; status: string } {
   return {
     key: String(row.order_sn || row.tracking_no || ""),
@@ -1717,6 +1723,8 @@ export function createToolBridge(
               orphanRows: r.orphan_rows,
               removed: r.removed,
               dryRun: r.dry_run,
+              // 逐条明细（表上原值 → 本机值）：确认框要把"改哪几格"摊开
+              diffs: r.diffs,
             });
           }
 
@@ -1737,6 +1745,14 @@ export function createToolBridge(
               updates: plan.updates.map((u) => ({
                 ...pullBrief(u.row),
                 changes: Object.keys(u.patch),
+                // 字段级明细：表上是什么 → 会写成什么。只给 changes 那几个列名
+                // 的话，人还是得自己去表上找那一格对，等于没说。
+                diffs: Object.keys(u.patch).map((c) => ({
+                  col: c,
+                  label: COLUMN_LABEL[c] || c,
+                  from: String(u.row[c] ?? ""),
+                  to: u.patch[c],
+                })),
               })),
             });
           }

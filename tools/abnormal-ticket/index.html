@@ -318,6 +318,8 @@
   .ticket .sn { font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ticket .tags { display: flex; gap: 5px; flex-wrap: wrap; font-size: 11px; color: var(--dim); }
   .tag { background: var(--chip); border-radius: 4px; padding: 0 6px; }
+  /* 配过色的标签（店铺 / 快递 / 情况）：颜色写在元素的 --tc 上 */
+  .tag.c { color: var(--tc); }
   /* 「N 图」比店铺/快递那类标签亮半档：它是"这条有证据照片"的提示，容易被忽略就没意义了 */
   .tag.pic { color: var(--fg2); }
   .badge {
@@ -327,6 +329,18 @@
   .badge.s0 { color: var(--warn); border-color: var(--warn); }
   .badge.s1 { color: var(--accent); border-color: var(--accent); }
   .badge.s2 { color: var(--ok); border-color: var(--ok); }
+  /* ★ 语义色（v1.14.0）：徽章和列表左色条共用一个色源 --tc ——
+     逾期 / 快到期 = 红，办完 = 绿，待办 = 黄，其余灰。
+     某个状态想单独配色，就在设置里给它挑一个（见「配色」那块），那也是写 --tc。
+     没设 --tc 时：徽章回落到原来的灰，色条透明（不留一条黑边）。 */
+  .badge.t { color: var(--tc, var(--fg2)); border-color: var(--tc, var(--line)); }
+  .ticket.t { box-shadow: inset 3px 0 0 var(--tc, transparent); }
+  /* 配色板：一行一个选项 + 一个颜色下拉。不定宽 —— 窄了自动换行，不挤成竖排 */
+  .colorpad { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 2px 12px; }
+  .colorpad label { display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap; }
+  .colorpad .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg2); }
+  .colorpad select { flex: 0 0 78px; width: 78px; padding: 2px 4px; font-size: 11.5px; }
+  .colorpad .grp { grid-column: 1 / -1; font-size: 11px; color: var(--dim); margin-top: 6px; }
 
   .kv { display: grid; grid-template-columns: 88px 1fr; gap: 6px 10px; font-size: 12.5px; }
   .kv > span { color: var(--dim); }
@@ -502,11 +516,15 @@
   /* ★ 它同时是 .r（display:flex）—— hidden 属性压不住，得显式写一条 */
   #logMoreWrap[hidden] { display: none; }
   .colpanel {
-    position: absolute; z-index: 20; background: var(--bg);
-    border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-width: 220px;
-    /* 面板挂在「列」按钮上 —— 按钮靠右，就从按钮右边往左展开，别顶出窗口；
-       15 列竖着排比工具栏高，给它一个上限，多了自己滚 */
-    right: 0; max-height: calc(100vh - 120px); overflow: auto;
+    /* ★ fixed，不是 absolute（v1.14.0 修）：它原来挂在工具栏里 `right:0` 往左展开，
+       窗口一窄就整个溢出到 main 左边，被 `main{overflow:auto}` 裁掉 ——
+       用户看到的就是"只剩一列上下箭头、列名全没了"（截图 2026-10-25）。
+       fixed 之后由 openColPanel() 按按钮位置算坐标并钳进视口，谁裁都裁不到。
+       宽度写死 248：勾选框 14 + 列名 + 两个箭头，三段各自不被压缩。 */
+    position: fixed; z-index: 60; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+    width: 248px; max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 24px); overflow: auto;
   }
   /* ★ 列名是裸文本节点，在 flex 里会变成**可压缩**的匿名项：
      面板窄一点，它就被挤成「订/单/号」三条竖排 —— 中文的最小内容宽度就是一个字。
@@ -519,7 +537,7 @@
     flex: 0 0 auto; width: 14px; height: 14px; margin: 0; padding: 0;
     border-radius: 3px; accent-color: var(--accent);
   }
-  .colpanel .cn { flex: 1 1 auto; }
+  .colpanel .cn { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .colpanel .updown { display: flex; gap: 4px; margin-left: auto; flex: 0 0 auto; }
 
   /* ---------- 日期选择（自绘：原生 date 弹窗不跟主题走） ---------- */
@@ -578,6 +596,8 @@
     width: min(400px, 100%); background: var(--bg);
     border: 2px solid var(--line); border-radius: 10px; padding: 16px 18px 14px;
   }
+  /* 差异明细要摊开「哪个字段 表上什么 → 本机什么」，400px 读不下 */
+  .dlg.wide { width: min(560px, 100%); }
   .dlg-t { font-size: 14px; font-weight: 600; }
   /* pre-line：call 方给的 body 里带 \n 就换行（推送明细是一行一条） */
   .dlg-b { margin-top: 6px; font-size: 13px; color: var(--fg2); line-height: 1.65; white-space: pre-line; }
@@ -586,6 +606,22 @@
   .dlg-r button { min-width: 72px; }
   .dlg-r button.danger { border-color: var(--danger); color: var(--danger); }
   .dlg-r button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
+
+  /* ---------- 差异明细（推送确认 / 拉取确认 / 启动对账共用） ----------
+     一条单一段，字段一行一个「表上 → 本机」。值用等宽字，
+     单号 / 时刻这类东西对齐了才扫得快。 */
+  .dlist { margin-top: 6px; max-height: 46vh; overflow: auto; font-size: 12px; white-space: normal; }
+  .ditem { border-left: 2px solid var(--line); padding: 1px 0 4px 8px; margin-bottom: 7px; }
+  .ditem .k { font-family: var(--mono); color: var(--fg); font-weight: 600; }
+  .ditem .m { color: var(--dim); font-size: 11px; margin-left: 6px; }
+  .ditem .f { display: flex; gap: 5px; flex-wrap: wrap; line-height: 1.6; color: var(--fg2); }
+  .ditem .f .lb { color: var(--dim); flex: 0 0 auto; }
+  .ditem .f .old { color: var(--dim); text-decoration: line-through; word-break: break-all; }
+  .ditem .f .ar { color: var(--dim); flex: 0 0 auto; }
+  .ditem .f .new { color: var(--fg); word-break: break-all; }
+  .dsec { margin-top: 10px; font-size: 12px; color: var(--fg); font-weight: 600; }
+  .dsec:first-child { margin-top: 2px; }
+  .dmore { color: var(--dim); font-size: 11.5px; margin: 2px 0 0 10px; }
   pre.schema {
     font-family: var(--mono); font-size: 11px; color: var(--dim);
     white-space: pre-wrap; word-break: break-all; margin: 0;
@@ -678,6 +714,9 @@
   <span class="meta" id="meta"></span>
   <span class="spacer"></span>
   <span class="badge" id="todayCount"></span>
+  <!-- 对账（v1.14.0）：启动时静默读一遍云表，有差异才露出来。
+       不自动动手 —— 只是把"哪几处不一样"摆出来，点开看、确认了才写本机。 -->
+  <button id="reconBtn" data-host-only hidden style="flex:0 0 auto;white-space:nowrap">对账</button>
   <!-- 推送按钮钉在右上角：哪个页签都看得见、够得着 -->
   <button id="hdrPush" data-host-only disabled style="flex:0 0 auto;white-space:nowrap">推送到表格</button>
 </header>
@@ -896,13 +935,6 @@
         </div>
       </div>
       <div class="hint" id="wpsMsg"></div>
-      <div id="wpsPreview" hidden style="margin-top:8px">
-        <div class="hint" id="wpsPreviewText" style="white-space:pre-line"></div>
-        <div class="r" style="margin-top:6px">
-          <button class="primary" id="wpsApply">确认写库</button>
-          <button id="wpsCancel">取消</button>
-        </div>
-      </div>
     </div>
 
     <div class="card narrow">
@@ -933,6 +965,17 @@
       <div class="r" style="margin-top:8px">
         <button class="primary" id="saveOpts">保存选项</button>
         <span class="hint" id="optMsg" style="margin:0"></span>
+      </div>
+
+      <!-- 配色（v1.14.0）：给下拉选项挑颜色 —— 列表里的标签、状态徽章、左侧竖条都吃它。
+           没配的按语义走：逾期 / 快到期红、办完绿、待办黄。改完立刻生效，不用保存。 -->
+      <div class="sect">
+        <h3>配色</h3>
+        <p class="note" style="margin:0 0 6px">
+          选一个色，列表里那个标签就跟着变。<b>状态还会影响整条</b>：徽章和左侧竖条同色。
+          「默认」= 按语义 —— <b>逾期和 24 小时内到期的红</b>、<b>办完的绿</b>、<b>待办黄</b>。
+        </p>
+        <div class="colorpad" id="colorPad"></div>
       </div>
     </div>
 
@@ -1082,11 +1125,15 @@
       var mask = document.createElement("div");
       mask.className = "dlgm";
       mask.innerHTML =
-        '<div class="dlg" role="dialog" aria-modal="true">'
+        '<div class="dlg' + (o.wide ? " wide" : "") + '" role="dialog" aria-modal="true">'
         + '<div class="dlg-t">' + esc(o.title || "确定继续？") + "</div>"
         + '<div class="dlg-b">'
-        + (o.mark ? '<span class="sn">' + esc(o.mark) + "</span> · " : "")
-        + esc(o.body || "") + "</div>"
+        // ★ html 模式下调用方自己负责转义（差异明细要摆每一格的旧值新值，
+        //   纯文本 body 表达不了）。mark 只有纯文本模式才拼。
+        + (o.html != null
+          ? o.html
+          : (o.mark ? '<span class="sn">' + esc(o.mark) + "</span> · " : "") + esc(o.body || ""))
+        + "</div>"
         + '<div class="dlg-r">'
         + '<button id="dlgNo" autofocus>' + esc(o.cancel || "取消") + "</button>"
         // 默认是红色（删除这类不可逆操作）；动表格的推送是"常规但重要"，用主色
@@ -1113,6 +1160,36 @@
       mask.onclick = function (e) { if (e.target === mask) close(false); };
       mask.querySelector("#dlgNo").focus();
     });
+  }
+  /**
+   * 差异明细的 HTML —— 推送确认 / 拉取确认 / 启动对账三处共用。
+   * items: [{ key, meta, fields: [{ label, from, to }] }]
+   *
+   * 只画前 max 条：确认框不是报表，超过一屏半就没人读了 ——
+   * 剩下的用一句「还有 N 条」交代，总数在标题里已经有。
+   */
+  function diffHtml(items, max, moreText) {
+    if (!items || !items.length) return "";
+    var n = Math.min(items.length, max || 8);
+    var out = '<div class="dlist">';
+    for (var i = 0; i < n; i++) {
+      var it = items[i];
+      out += '<div class="ditem"><span class="k">' + esc(it.key || "（没有单号）") + "</span>"
+        + (it.meta ? '<span class="m">' + esc(it.meta) + "</span>" : "");
+      var fs = it.fields || [];
+      for (var j = 0; j < fs.length; j++) {
+        out += '<div class="f"><span class="lb">' + esc(fs[j].label) + "</span>"
+          + '<span class="old">' + (txt(fs[j].from) ? esc(fs[j].from) : "（空）") + "</span>"
+          + '<span class="ar">→</span>'
+          + '<span class="new">' + (txt(fs[j].to) ? esc(fs[j].to) : "（空）") + "</span></div>";
+      }
+      out += "</div>";
+    }
+    out += "</div>";
+    if (items.length > n) {
+      out += '<div class="dmore">… 还有 ' + (items.length - n) + " 条" + esc(moreText || "") + "</div>";
+    }
+    return out;
   }
   /** 空下拉显成灰的「待选」。右栏是动态重建的，逐个绑监听必漏 —— 挂 document 上 */
   function markSel(sel) {
@@ -1990,6 +2067,7 @@
     flows: DEFAULT_FLOWS.slice(),
     remindHours: REMIND_HOURS,     // 跟进提醒的间隔（小时）
     remindOff: [],                 // 用户点名「不用提醒」的单子 id
+    colors: {},                    // 下拉选项配色 { "status:已关闭": "var(--ok)" }
   };
   var tableCols = null;       // { order:[key…], hidden:[key…] } —— 空 = 全显示、按 COLS 顺序
   var wps = { link: "", fileId: "", name: "", sheet: "", owner: "" };
@@ -2047,6 +2125,19 @@
     // 列配置：存的是「全量顺序 + 隐藏名单」，新增列自动可见（不用每次改代码补名单）
     var tc = await cfgGet("tableCols");
     try { tableCols = tc ? JSON.parse(tc) : null; } catch (e) { tableCols = null; }
+    // 选项配色：只收预设色，键是 "kind:名称"
+    try {
+      var cm = JSON.parse((await cfgGet("colors")) || "{}");
+      var clean = {};
+      if (cm && typeof cm === "object") {
+        for (var ck in cm) {
+          if (!Object.prototype.hasOwnProperty.call(cm, ck)) continue;
+          var cv = colorOk(txt(cm[ck]));
+          if (cv) clean[ck] = cv;
+        }
+      }
+      cfg.colors = clean;
+    } catch (e) { cfg.colors = {}; }
     var w = await cfgGet("wps.sheet");
     try {
       var o = w ? JSON.parse(w) : null;
@@ -2095,6 +2186,50 @@
     if (s === "待处理") return "s0";
     if (s === "处理中") return "s1";
     if (s === "已关闭") return "s2";
+    return "";
+  }
+  /* 配色：只认这几种预设（存进 kv 的也是这几个字符串）。
+     ★ 不存用户输入的任意 CSS 色 —— 面板是把颜色拼进 style 的，
+     放任任意字符串等于让配置能往页面上写任意样式。 */
+  var COLOR_PRESETS = [
+    ["", "默认"],
+    ["var(--danger)", "红"],
+    ["var(--warn)", "黄"],
+    ["var(--ok)", "绿"],
+    ["var(--accent)", "蓝"],
+    ["var(--violet)", "紫"],
+    ["var(--dim)", "灰"],
+  ];
+  function colorOk(v) {
+    for (var i = 0; i < COLOR_PRESETS.length; i++) if (COLOR_PRESETS[i][0] === v) return v;
+    return "";
+  }
+  /** 某个下拉选项配的颜色。kind = status / situation / courier */
+  function colorOf(kind, name) {
+    var all = cfg.colors || {};
+    var v = all[kind + ":" + txt(name).trim()];
+    return v ? colorOk(v) : "";
+  }
+  /** 「临近」的界线：默认 12 小时内。提醒周期被调短时按周期一半算，
+      否则 6 小时的周期会有一半时间都在"临近"，等于没区分。 */
+  function soonMs() {
+    var h = (cfg.remindHours > 0 ? cfg.remindHours : REMIND_HOURS) * 3600 * 1000;
+    return Math.min(12 * 3600 * 1000, h / 2);
+  }
+  /**
+   * 一条单子该显示成什么色（返回的就是 --tc 的值，空串 = 不着色）。
+   * ★ 顺序即优先级：**时间上的紧急度压过状态** —— 一条写着「已关闭」的单子，
+   *   要是流程派发的提醒已经逾期，那它显然没真办完，红比绿有用。
+   */
+  function toneOf(r) {
+    var st = statusOf(r);
+    var v = remindView(r);
+    if (v.state === "late") return "var(--danger)";
+    if (v.state === "due" && v.left <= soonMs()) return "var(--danger)";
+    var own = colorOf("status", st);
+    if (own) return own;
+    if (st === "已关闭") return "var(--ok)";
+    if (st === "待处理") return "var(--warn)";
     return "";
   }
   function keyOf(r) { return txt(r.order_sn).trim() || txt(r.tracking_no).trim(); }
@@ -2593,8 +2728,17 @@
   /** 列表里的提醒标记：**只标逾期的** —— 每条都挂「还有 23 小时」就是噪音 */
   function remindTag(r) {
     var v = remindView(r);
-    if (v.state !== "late") return "";
+    if (v.state !== "late" && !(v.state === "due" && v.left <= soonMs())) return "";
+    // 「快到期」也提前露出来 —— 等真逾期了才提示，该做的事已经晚了
     return '<span class="tag late" title="按流程派发，到点还没更新">' + esc(remindText(v)) + "</span>";
+  }
+  /** 列表里的一个标签（店铺 / 快递 / 情况）：被配过色就带上 --tc */
+  function tagHtml(kind, value) {
+    var v = txt(value);
+    if (!v) return "";
+    var c = colorOf(kind, v);
+    return '<span class="tag' + (c ? " c" : "") + '"'
+      + (c ? ' style="--tc:' + c + '"' : "") + ">" + esc(v) + "</span>";
   }
 
   function renderList() {
@@ -2617,15 +2761,18 @@
     for (var i = 0; i < list.length; i++) {
       var r = list[i];
       var st = statusOf(r);
+      var tc = toneOf(r);
       var sn = txt(r.order_sn) || txt(r.tracking_no) || "（没有单号）";
-      html += '<div class="ticket ' + statusClass(st) + (r.id === selectedId ? " on" : "") + '" data-id="' + esc(r.id) + '">'
+      html += '<div class="ticket t' + (r.id === selectedId ? " on" : "") + '"'
+        + (tc ? ' style="--tc:' + tc + '"' : "")
+        + ' data-id="' + esc(r.id) + '">'
         + '<div class="line1"><span class="sn">' + esc(sn) + '</span>'
         + '<span class="spacer"></span>'
-        + '<span class="badge ' + statusClass(st) + '">' + esc(st) + "</span></div>"
+        + '<span class="badge t">' + esc(st) + "</span></div>"
         + '<div class="tags">'
-        + (r.store ? '<span class="tag">' + esc(r.store) + "</span>" : "")
-        + (r.courier ? '<span class="tag">' + esc(r.courier) + "</span>" : "")
-        + (r.category ? '<span class="tag">' + esc(r.category) + "</span>" : "")
+        + tagHtml("store", r.store)
+        + tagHtml("courier", r.courier)
+        + tagHtml("situation", r.category)
         + (picN[r.id] ? '<span class="tag pic" title="这条挂了几张图（含流程步骤上的）">' + picN[r.id] + " 图</span>" : "")
         + remindTag(r)
         + "</div></div>";
@@ -2651,6 +2798,7 @@
       return;
     }
     var st = statusOf(r);
+    var tcHdr = toneOf(r);
     var sn = txt(r.order_sn) || txt(r.tracking_no);
     var flow = parseFlow(r.flow);
     var done = flow.length ? isDoneName(flow[flow.length - 1].n) : false;
@@ -2659,7 +2807,7 @@
 
     var html = ""
       + '<div class="r"><b style="font-size:14px;font-family:var(--mono)">' + esc(sn) + "</b>"
-      + '<span class="badge ' + statusClass(st) + '">' + esc(st) + "</span>"
+      + '<span class="badge t"' + (tcHdr ? ' style="--tc:' + tcHdr + '"' : "") + ">" + esc(st) + "</span>"
       + '<span class="spacer"></span>'
       + '<button class="mini" id="btnCall">呼起客户端</button>'
       + '<button class="mini" id="btnCopy">复制单号</button>'
@@ -3419,6 +3567,64 @@
   /* ==================================================================
    * 9. 设置页
    * ================================================================== */
+  /** 配色板里能配的状态名：三个派生状态 + 流程里配的每一步 */
+  function statusNames() {
+    var out = ["待处理", "处理中", "已关闭"];
+    var list = (cfg.flows && cfg.flows.length ? cfg.flows : DEFAULT_FLOWS);
+    for (var i = 0; i < list.length; i++) {
+      var n = txt(list[i]).trim();
+      if (n && out.indexOf(n) < 0) out.push(n);
+    }
+    return out;
+  }
+  /** 设置页「配色」那块：三组选项，一行一个下拉。
+      ★ 改完立刻写 kv 并重画列表 —— 配色是"看着调"的东西，
+      多一个保存按钮只会让人忘点，然后以为没生效。 */
+  function renderColorPad() {
+    var box = $("colorPad");
+    if (!box) return;
+    var groups = [
+      ["status", "当前状态", statusNames()],
+      ["situation", "情况", cfg.situations || []],
+      ["courier", "快递公司", cfg.couriers || []],
+    ];
+    var html = "";
+    for (var g = 0; g < groups.length; g++) {
+      var kind = groups[g][0], title = groups[g][1], names = groups[g][2];
+      html += '<div class="grp">' + esc(title) + "</div>";
+      for (var i = 0; i < names.length; i++) {
+        var n = txt(names[i]).trim();
+        if (!n) continue;
+        var key = kind + ":" + n;
+        var cur = (cfg.colors || {})[key] || "";
+        html += '<label><span class="nm" title="' + esc(n) + '">' + esc(n) + "</span>"
+          + '<select data-ckey="' + esc(key) + '">';
+        for (var p = 0; p < COLOR_PRESETS.length; p++) {
+          html += '<option value="' + esc(COLOR_PRESETS[p][0]) + '"'
+            + (COLOR_PRESETS[p][0] === cur ? " selected" : "") + ">"
+            + esc(COLOR_PRESETS[p][1]) + "</option>";
+        }
+        html += "</select></label>";
+      }
+    }
+    box.innerHTML = html;
+    var sels = box.querySelectorAll("[data-ckey]");
+    for (var s = 0; s < sels.length; s++) {
+      sels[s].onchange = function () {
+        var k = this.getAttribute("data-ckey");
+        var v = colorOk(this.value);
+        var next = {};
+        var all = cfg.colors || {};
+        for (var kk in all) if (Object.prototype.hasOwnProperty.call(all, kk)) next[kk] = all[kk];
+        if (v) next[k] = v; else delete next[k];
+        cfg.colors = next;
+        void cfgSet("colors", JSON.stringify(next));
+        renderList();
+        renderDetail();
+        renderTable();
+      };
+    }
+  }
   function renderSettings() {
     /* 店铺表 */
     var html = "";
@@ -3457,6 +3663,7 @@
     $("optCouriers").value = cfg.couriers.join("\n");
     $("optSituations").value = cfg.situations.join("\n");
     $("optFlows").value = cfg.flows.join("\n");
+    renderColorPad();
 
     /* 跟进提醒：间隔（小时） */
     $("optRemindHours").value = String(remindHours());
@@ -3499,14 +3706,111 @@
   var wpsBusy = false;
   var wpsPlan = null;
 
+  /* ---------- 对账（v1.14.0）：读一遍云表，把差异摆出来 ----------
+   * 用户要的是「启动时自动读一遍表格，检查是否一致，如不一致显示不同的地方，
+   * 手动确认是否更改」—— 所以这里**只读不写**，写库仍然要人点。
+   * ★ 每次启动都读：云表别人（或另一台机器）也会动，昨天对过不代表今天还一致。
+   *   失败一律静默：令牌过期、没网这些事不该在启动时就糊一脸错误。
+   */
+  var recon = null;      // { adds:[], updates:[], at: Date }
+  function reconCount() { return recon ? recon.adds.length + recon.updates.length : 0; }
+  function paintRecon() {
+    var b = $("reconBtn");
+    if (!b) return;
+    var n = reconCount();
+    b.hidden = !n;
+    if (n) b.textContent = "云端有 " + n + " 处不同";
+  }
+  /** 差异清单的 HTML：新增一段、字段变化一段 */
+  function reconHtml() {
+    if (!recon) return "";
+    var html = "";
+    if (recon.adds.length) {
+      html += '<div class="dsec">只在云端有 → 会新增 ' + recon.adds.length + " 条</div>"
+        + diffHtml(recon.adds.map(function (a) {
+          return { key: a.key, meta: a.store || "", fields: [] };
+        }), 6);
+    }
+    if (recon.updates.length) {
+      html += '<div class="dsec">两边都有、值不同 → 改 ' + recon.updates.length + " 条</div>"
+        + diffHtml(recon.updates.map(function (u) {
+          return { key: u.key, meta: u.store || "", fields: u.diffs || [] };
+        }), 8);
+    }
+    return html;
+  }
+  async function openRecon() {
+    if (!recon) return;
+    if (!reconCount()) { toast("两边一样，没有要改的"); return; }
+    var go = await ask({
+      title: "云端表格和本机不一致",
+      html: '<div style="margin-bottom:2px">按单号比对，差异如下。'
+        + '<b>只有点「写入本机」才会动本机数据</b>；点「先不管」什么都不发生。</div>'
+        + reconHtml(),
+      ok: "写入本机", cancel: "先不管", okTone: "primary", wide: true,
+    });
+    if (!go) { setWpsMsg("已取消，本机一条没动"); return; }
+    wpsBusy = true;
+    renderSettings();
+    setWpsMsg("正在写入本机…");
+    try {
+      var r = await call("wps.mcpApply", {}, 60000) || {};
+      var msg = "已写入本机：新增 " + (r.added || 0) + " 条、更新 " + (r.updated || 0) + " 条";
+      setWpsMsg(msg);
+      toast(msg);
+      recon = null;
+      paintRecon();
+      hideWpsPreview();
+      // 宿主写库后会发 kwiki:pulled，界面由那个事件重画
+    } catch (err) {
+      var em = txt(err && err.message ? err.message : err);
+      setWpsMsg(em, true);
+      toast("写入失败：" + em);
+    } finally {
+      wpsBusy = false;
+      renderSettings();
+    }
+  }
+  /**
+   * 读云表、算出差异。silent = 启动时那次（不弹窗、不报错，只在页头标个数）。
+   * ★ 不在这里判 wpsBusy：调用方自己管互斥（doPull 先置 true 再进来）。
+   */
+  async function readSheetDiff(silent) {
+    if (!wps.fileId) return;
+    try {
+      var r = await call("wps.mcpPull", { fileId: wps.fileId, sheet: wps.sheet }, 120000) || {};
+      recon = { adds: r.adds || [], updates: r.updates || [], at: new Date() };
+      paintRecon();
+      var n = reconCount();
+      if (!n) {
+        if (!silent) { setWpsMsg("两边一样，没有要改的"); toast("两边一样，没有要改的"); }
+        return;
+      }
+      if (silent) {
+        // 启动时只提示"有差异"，不抢焦点 —— 人可能正打算登记一条
+        toast("云端表格有 " + n + " 处和本机不一样 —— 点右上角「云端有…」看差异");
+      } else {
+        setWpsMsg("确认了才写本机 —— 只有点「写入本机」才动数据");
+        void openRecon();
+      }
+    } catch (err) {
+      if (!silent) {
+        var em = txt(err && err.message ? err.message : err);
+        setWpsMsg(em, true);
+        toast("读表失败：" + em);
+      }
+    }
+  }
+
   function setWpsMsg(text, bad) {
     var el = $("wpsMsg");
     el.textContent = text || "";
     el.className = bad ? "hint bad" : "hint";
   }
+  /** 收掉「上次算出来、还没写」的那份计划。v1.14.0 起确认走弹窗，
+      这里只负责把内存里的痕迹清掉（宿主那边下次 mcpPull 会自己覆盖）。 */
   function hideWpsPreview() {
     wpsPlan = null;
-    $("wpsPreview").hidden = true;
   }
   async function saveWps() {
     var payload = JSON.stringify(wps);
@@ -3529,7 +3833,12 @@
       return saveWps().then(function () { setWpsMsg("已绑定「" + (wps.name || wps.fileId) + "」"); });
     }).catch(function (err) {
       setWpsMsg(txt(err && err.message ? err.message : err), true);
-    }).then(function () { wpsBusy = false; renderSettings(); });
+    }).then(function () {
+      wpsBusy = false;
+      renderSettings();
+      // 刚绑上就对一次账：第一件事就是"两边差多少"，不然推还是拉全靠猜
+      void readSheetDiff(true);
+    });
   };
   $("wpsUnbind").onclick = function () {
     wps = { link: "", fileId: "", name: "", sheet: "", owner: "" };
@@ -3599,12 +3908,24 @@
     }
     if (!force) lines.push("表上别的行、你自己加的列，一个都不碰。");
 
+    /* 逐格明细：光说「改 12 个格」不够 —— 那 12 格里有可能是他在表上手填的
+       备注，得让他看见旧值才敢点。宿主干跑时一起算好带回来的（dry.diffs）。 */
+    var diffs = dry.diffs || [];
+    var detail = "";
+    if (diffs.length) {
+      detail = '<div class="dsec">表上这几格会变（左：表上的值 → 右：本机的值）</div>'
+        + diffHtml(diffs.map(function (d) {
+          return { key: d.key, meta: d.row ? "表第 " + d.row + " 行" : "", fields: d.fields || [] };
+        }), 8, chg > 8 ? "（只列前 8 条，一共改 " + chg + " 个格）" : "");
+    }
+
     var go = await ask({
       title: force ? "强制推送：表格将与本机一致" : "推送到表格",
-      body: lines.join("\n"),
+      html: lines.map(function (s) { return esc(s); }).join("<br>") + detail,
       ok: force ? "清空并推送" : "推送",
       cancel: "取消",
       okTone: force ? "danger" : "primary",
+      wide: !!diffs.length,
     });
     if (!go) {
       setWpsMsg("已取消，表上一格没动");
@@ -3823,56 +4144,20 @@
   function bindPull(el) { if (el) el.onclick = function () { void doPull(); }; }
   bindPull($("wpsPull"));
   bindPull($("tblPull"));
+  if ($("reconBtn")) $("reconBtn").onclick = function () { void openRecon(); };
   async function doPull() {
     if (wpsBusy || !wps.fileId) return;
     wpsBusy = true;
     renderSettings();
     hideWpsPreview();
-    setWpsMsg("正在拉取…");
+    setWpsMsg("正在读表格…");
     try {
-      var r = await call("wps.mcpPull", { fileId: wps.fileId, sheet: wps.sheet }, 120000);
-      var res = r || {};
-      var adds = res.adds || [], ups = res.updates || [];
-      wpsPlan = res;
-      if (!adds.length && !ups.length) { setWpsMsg("在线表格和本地一样，没有要改的"); return; }
-      var lines = [];
-      for (var i = 0; i < Math.min(adds.length, 8); i++) {
-        lines.push("+ " + (adds[i].key || "（没有单号）") + (adds[i].store ? " · " + adds[i].store : ""));
-      }
-      if (adds.length > 8) lines.push("… 还有 " + (adds.length - 8) + " 条新增");
-      for (var j = 0; j < Math.min(ups.length, 8); j++) {
-        lines.push("~ " + (ups[j].key || "（没有单号）") + "：" + (ups[j].changes || []).join("、"));
-      }
-      if (ups.length > 8) lines.push("… 还有 " + (ups.length - 8) + " 条更新");
-      $("wpsPreviewText").textContent = "将新增 " + adds.length + " 条、更新 " + ups.length + " 条\n" + lines.join("\n");
-      $("wpsPreview").hidden = false;
-      setWpsMsg("确认了才写库 —— 本地已有的行只补空格，不改已有的值");
-    } catch (err) {
-      setWpsMsg(txt(err && err.message ? err.message : err), true);
+      await readSheetDiff(false);
     } finally {
       wpsBusy = false;
       renderSettings();
     }
   }
-  $("wpsCancel").onclick = function () {
-    hideWpsPreview();
-    setWpsMsg("已取消，什么都没改");
-  };
-  $("wpsApply").onclick = function () {
-    if (wpsBusy || !wpsPlan) return;
-    wpsBusy = true;
-    renderSettings();
-    setWpsMsg("正在写库…");
-    call("wps.mcpApply", {}, 60000).then(function (r) {
-      var res = r || {};
-      // 写库后宿主会发 kwiki:pulled，界面由那个事件重画
-      setWpsMsg("已写库：新增 " + (res.added || 0) + " 条、更新 " + (res.updated || 0) + " 条");
-      hideWpsPreview();
-    }).catch(function (err) {
-      setWpsMsg(txt(err && err.message ? err.message : err), true);
-    }).then(function () { wpsBusy = false; renderSettings(); });
-  };
-
   /* ==================================================================
    * 11. 日期选择（自绘：原生 date 弹窗不跟主题走）
    * ================================================================== */
@@ -4291,12 +4576,33 @@
     })(SORT_IDS[si]);
   }
   $("tableSearch").oninput = renderTable;
+  /** 打开列面板：fixed 定位，按按钮的屏幕坐标算，右缘对齐按钮、上下按视口钳制。
+      ★ 不让 CSS 的 right:0 去算 —— 那套在窄窗口下会把面板推到容器外面。 */
+  function openColPanel() {
+    var p = $("colPanel"), b = $("colBtn");
+    if (!p || !b) return;
+    renderColPanel();
+    p.hidden = false;
+    var r = b.getBoundingClientRect();
+    var w = p.offsetWidth || 248, h = p.offsetHeight || 0;
+    var left = Math.min(r.right - w, window.innerWidth - w - 8);
+    left = Math.max(8, left);
+    var top = r.bottom + 4;
+    if (h && top + h > window.innerHeight - 8) {
+      top = Math.max(8, Math.min(r.top - h - 4, window.innerHeight - h - 8));
+    }
+    p.style.left = Math.round(left) + "px";
+    p.style.top = Math.round(top) + "px";
+  }
   $("colBtn").onclick = function () {
     var p = $("colPanel");
     if (!p.hidden) { p.hidden = true; return; }
-    renderColPanel();
-    p.hidden = false;
+    openColPanel();
   };
+  // 拖窗口宽度时面板还开着：重算一次坐标（fixed 不会跟着按钮走）
+  window.addEventListener("resize", function () {
+    if ($("colPanel") && !$("colPanel").hidden) openColPanel();
+  });
   $("fRemindAt").onfocus = function () { openDp(this, true); };
   $("fRemindAt").onclick = function () { openDp(this, true); };
   // 失焦收起：有的 webview 点按钮不给焦点，所以再加一条"鼠标还在面板里就不收"
@@ -4306,7 +4612,9 @@
   });
   document.addEventListener("click", function (e) {
     var p = $("colPanel");
-    if (!p.hidden && !p.contains(e.target) && e.target !== $("colBtn")) p.hidden = true;
+    // ★ 认「在按钮里」而不是「就是按钮」：按钮里还有 <span id="colCount">，
+    //   点那段数字时 target 是 span，只比 === 会把刚打开的面板立刻收掉
+    if (!p.hidden && !p.contains(e.target) && !$("colBtn").contains(e.target)) p.hidden = true;
   });
   document.addEventListener("change", function (e) {
     if (e.target && e.target.tagName === "SELECT") markSel(e.target);
@@ -4333,6 +4641,8 @@
       await cfgSet("optFlows", JSON.stringify(cfg.flows));
       $("optMsg").textContent = "已保存";
       renderCreateForm();
+      renderColorPad();      // 选项变了，配色板跟着列新的
+      renderList();
       renderDetail();
     })();
   };
@@ -4381,6 +4691,18 @@
         }
       })();
     }
+    /* 启动对账：绑了云表就悄悄读一遍，有差异在页头标出来（不写库、不弹窗）。
+       ★ 绑定信息是 loadCfg 读 kv 得来的，它可能比 bootHost 晚一步到 ——
+       读不到就再等一会儿，别因为一次竞态就永远不对账了。
+       晚 1.5 秒起：先把台账画出来，别让一次 MCP 往返挡着人看数据。 */
+    var reconTries = 0;
+    setTimeout(function tryRecon() {
+      if (!wps.fileId) {
+        if (reconTries++ < 6) setTimeout(tryRecon, 800);
+        return;
+      }
+      void readSheetDiff(true);
+    }, 1500);
   }
 
   (function boot() {

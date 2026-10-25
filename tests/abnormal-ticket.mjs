@@ -231,6 +231,8 @@ function host(win, e) {
       if (pushFail) { reply(win, m.id, false, null, pushFail); return; }
       // 增量口径：新增 1 行、改 2 个格，表上还有 1 行本地没有（默认留着不动）
       // force：那一行会被清空 → removed=1
+      // ★ diffs 是 v1.14.0 加的逐格明细（宿主 Rust 的 plan_diff 算的）：
+      //   确认框要把"表上原值 → 本机值"摊开，只报数字没人敢点。
       reply(win, m.id, true, {
         count: store.length,
         appended: 0,
@@ -239,14 +241,31 @@ function host(win, e) {
         orphanRows: 1,
         removed: p.force === true ? 1 : 0,
         dryRun: p.dryRun === true,
+        diffs: [
+          {
+            key: "6931234567890123456",
+            row: 3,
+            fields: [
+              { label: "快递单号", from: "SF0001", to: "SF9999" },
+              { label: "情况", from: "表上写的", to: "本机写的" },
+            ],
+          },
+        ],
       });
       return;
     case "wps.mcpPull":
-      // 与 toolBridge.ts 的 mcpPull 回包同形：{ header, adds:[{key,store,status}], updates:[{…,changes}] }
+      // 与 toolBridge.ts 的 mcpPull 回包同形：
+      //   { header, adds:[{key,store,status}], updates:[{…,changes,diffs:[{col,label,from,to}]}] }
+      // ★ diffs 是 v1.14.0 加的字段级明细：真宿主会给，假宿主不给就等于
+      //   确认框里永远是空的 —— 那种"测试绿、真机没内容"最坑。
       reply(win, m.id, true, {
         header: ["订单号", "快递单号"],
         adds: [{ key: "261020-111111111111", store: "拼5", status: "待处理" }],
-        updates: [{ key: "6931234567890123456", store: "拼5", status: "处理中", changes: ["情况"] }],
+        updates: [{
+          key: "6931234567890123456", store: "拼5", status: "处理中",
+          changes: ["情况"],
+          diffs: [{ col: "category", label: "情况", from: "表上写的", to: "本机写的" }],
+        }],
       });
       return;
     case "wps.mcpApply":
@@ -953,6 +972,21 @@ check("创建人也一起存下来了",
   /"owner":"大苏打"/.test(String(kv["wps.sheet"] || "")), String(kv["wps.sheet"]).slice(0, 120));
 check("绑定后推/拉按钮解禁",
   doc.getElementById("wpsPush").disabled === false && doc.getElementById("wpsPull").disabled === false);
+
+/* v1.14.0：绑上之后立刻对一次账（启动那条路同理，只是要等 boot）——
+   只读不写，差异用页头那个小按钮标出来，不弹窗抢人。 */
+check("绑定后自动读了一遍云表（不是等用户点拉取）",
+  ops.filter((o) => o === "wps.mcpPull").length >= 1,
+  String(ops.filter((o) => o === "wps.mcpPull").length));
+{
+  const rb = doc.getElementById("reconBtn");
+  check("有差异时页头标出「云端有 N 处不同」",
+    rb && rb.hidden === false && /云端有 \d+ 处不同/.test(rb.textContent || ""),
+    rb ? rb.textContent + " / hidden=" + rb.hidden : "没有这个按钮");
+  check("自动对账只读不写（没弹确认框、也没 apply）",
+    !doc.querySelector(".dlgm") && !ops.includes("wps.mcpApply"),
+    (doc.querySelector(".dlgm") ? "弹窗了" : "") + " apply=" + ops.includes("wps.mcpApply"));
+}
 doc.getElementById("tab-table").click();
 await sleep(60);
 check("表格页也有推 / 拉（跟着数据走，不用回设置页）",
@@ -979,6 +1013,16 @@ check("确认框说清了新增 1 行", /新增 1 行/.test(dlg1 ? dlg1.textCont
   (dlg1 ? dlg1.textContent : "").slice(0, 140));
 check("确认框说清了改 2 个格", /改 2 个格/.test(dlg1 ? dlg1.textContent : ""));
 check("确认框说明了表上多出来的行留着不动", /留着不动/.test(dlg1 ? dlg1.textContent : ""));
+/* v1.14.0：光说「改 2 个格」不够 —— 那两格可能是他手填的，得看见旧值 */
+check("确认框摊到逐格：单号 + 表第几行 + 表上值 → 本机值",
+  /6931234567890123456/.test(dlg1?.textContent || "") &&
+  /表第 3 行/.test(dlg1?.textContent || "") &&
+  /快递单号/.test(dlg1?.textContent || "") &&
+  /SF0001/.test(dlg1?.textContent || "") &&
+  /SF9999/.test(dlg1?.textContent || ""),
+  (dlg1?.textContent || "").slice(0, 200));
+check("旧值有新有旧两个都要在（改前能对照）",
+  /表上写的/.test(dlg1?.textContent || "") && /本机写的/.test(dlg1?.textContent || ""));
 check("确认按钮是主色（不是删除那种红）", !!doc.querySelector(".dlgm #dlgYes.primary"));
 check("没确认前没有真写", args.filter((a) => a.op === "wps.mcpPush" && a.payload.dryRun !== true).length === 0);
 doc.getElementById("dlgYes").click();
@@ -1123,12 +1167,19 @@ await sleep(100);
 doc.getElementById("wpsPull").click();
 await sleep(250);
 check("拉取走了 wps.mcpPull", ops.includes("wps.mcpPull"));
-check("拉取后弹出了确认写库", doc.getElementById("wpsPreview").hidden === false);
-check("预览里写清了「新增 1 条、更新 1 条」",
-  /新增 1 条、更新 1 条/.test(doc.getElementById("wpsPreviewText").textContent || ""),
-  (doc.getElementById("wpsPreviewText").textContent || "").slice(0, 80));
-doc.getElementById("wpsApply").click();
-await sleep(200);
+/* v1.14.0：确认从"设置页里一块预览"改成弹窗，且要摊到字段级（表上 → 本机）。
+   弹窗是自绘的（WebView2 里 confirm 不一定弹），所以认 .dlgm/.dlist 而不是原生对话框。 */
+const reconDlg = doc.querySelector(".dlgm");
+check("拉取后弹出了差异确认框", !!reconDlg);
+const reconText = reconDlg ? reconDlg.textContent || "" : "";
+check("确认框按单号摆出「会新增 1 条 / 改 1 条」",
+  /会新增 1\s*条/.test(reconText) && /值不同\s*→\s*改 1\s*条/.test(reconText),
+  reconText.slice(0, 120));
+check("明细摊到字段级：情况 表上写的 → 本机写的",
+  /情况/.test(reconText) && /表上写的/.test(reconText) && /本机写的/.test(reconText),
+  reconText.slice(0, 160));
+reconDlg.querySelector("#dlgYes").click();
+await sleep(250);
 check("确认走 wps.mcpApply", ops.includes("wps.mcpApply"));
 // 宿主 applyPull 之后会推 kwiki:pulled，工具靠它重画（对账与写库都在宿主）
 win.postMessage({ source: "workbench-host", type: "tool:event", event: "kwiki:pulled" }, "*");
@@ -1753,6 +1804,126 @@ console.log("\n13. 默认窗口宽度下三栏并排（流程栏在右侧，不�
   check("窄下来的列表宽度取 min(拖出来的宽度, 百分比) —— 拖动仍然作数",
     /\.split > \.left\s*\{[^}]*min\(var\(--listw, 320px\),\s*24%\)/.test(css));
 }
+console.log("\n13b. 状态配色：逾期红 / 待办黄 / 办完绿，且可在设置里改（v1.14.0）");
+{
+  /* 用户 2026-10-25 的原话：「逾期的和将近的将以红色显示，完成显示绿色，待办显示黄色」。
+     颜色统一走元素的 --tc，徽章和列表左色条同一个源 —— 两处分开算过就会有一天对不上。 */
+  const css = HTML.slice(HTML.indexOf("<style>"), HTML.indexOf("</style>"));
+  check("徽章与左色条共用一个色源 --tc",
+    /\.badge\.t\s*\{[^}]*var\(--tc/.test(css) && /\.ticket\.t\s*\{[^}]*var\(--tc/.test(css));
+
+  // ① 造一条提醒时刻已经过去的单 → 逾期
+  doc.getElementById("tab-create").click();
+  await sleep(60);
+  doc.getElementById("fRemindAt").value = "2020-01-01 09:00";
+  doc.getElementById("fOrder").value = "250101-0000";
+  doc.getElementById("fTrack").value = "SF0000000000";
+  doc.getElementById("fTitle").value = "过期那条";
+  doc.getElementById("btnAdd").click();
+  await sleep(250);
+  const lateRow = store[store.length - 1];
+  const lateEl = doc.querySelector('#list .ticket[data-id="' + lateRow.id + '"]');
+  check("逾期的单：列表左色条是红（--danger）",
+    !!lateEl && /--danger/.test(lateEl.getAttribute("style") || ""),
+    lateEl ? lateEl.getAttribute("style") : "列表里没有这条");
+  check("逾期的单：徽章也走同一色源（不是各写各的）",
+    !!lateEl && lateEl.querySelector(".badge")?.classList.contains("t") === true);
+
+  // ② 再登记一条（默认 24 小时）→ 待办黄
+  doc.getElementById("tab-create").click();
+  await sleep(60);
+  doc.getElementById("fRemindAt").value = "";
+  doc.getElementById("fOrder").value = "250101-0001";
+  doc.getElementById("fTrack").value = "SF0000000001";
+  doc.getElementById("fTitle").value = "待办那条";
+  doc.getElementById("btnAdd").click();
+  await sleep(250);
+  const todoRow = store[store.length - 1];
+  const todoEl = doc.querySelector('#list .ticket[data-id="' + todoRow.id + '"]');
+  check("待处理的单：是黄（--warn）",
+    !!todoEl && /--warn/.test(todoEl.getAttribute("style") || ""),
+    todoEl ? todoEl.getAttribute("style") : "列表里没有这条");
+
+  // ③ 记一步「完结」→ 绿
+  doc.getElementById("tab-browse").click();
+  await sleep(60);
+  doc.querySelector('#list .ticket[data-id="' + todoRow.id + '"]').click();
+  await sleep(80);
+  doc.getElementById("dFlow").value = "完结";
+  doc.getElementById("btnFlow").click();
+  await sleep(250);
+  const doneEl = doc.querySelector('#list .ticket[data-id="' + todoRow.id + '"]');
+  check("办完（完结）的单：变绿（--ok）",
+    !!doneEl && /--ok/.test(doneEl.getAttribute("style") || ""),
+    doneEl ? doneEl.getAttribute("style") : "列表里没有这条");
+
+  // ④ 设置里给「待处理」挑个紫 → 列表里待处理的跟着变（"下拉选项允许设定颜色"）
+  doc.getElementById("tab-settings").click();
+  await sleep(80);
+  const pad = doc.getElementById("colorPad");
+  check("设置页有配色板", !!pad && pad.querySelectorAll("select[data-ckey]").length >= 3,
+    pad ? String(pad.querySelectorAll("select[data-ckey]").length) : "没有");
+  const sel = pad.querySelector('select[data-ckey="status:待处理"]');
+  check("每个状态下拉旁都有一个颜色下拉", !!sel);
+  sel.value = "var(--violet)";
+  sel.dispatchEvent(new win.Event("change", { bubbles: true }));
+  await sleep(200);
+  check("配色存进了宿主 kv", /--violet/.test(kv["colors"] || ""), kv["colors"]);
+  doc.getElementById("tab-create").click();
+  await sleep(60);
+  doc.getElementById("fRemindAt").value = "";
+  doc.getElementById("fOrder").value = "250101-0002";
+  doc.getElementById("fTrack").value = "SF0000000002";
+  doc.getElementById("fTitle").value = "配了紫色的待办";
+  doc.getElementById("btnAdd").click();
+  await sleep(250);
+  const purpleRow = store[store.length - 1];
+  const purpleEl = doc.querySelector('#list .ticket[data-id="' + purpleRow.id + '"]');
+  check("配过色的状态：列表跟着用配置色",
+    !!purpleEl && /--violet/.test(purpleEl.getAttribute("style") || ""),
+    purpleEl ? purpleEl.getAttribute("style") : "列表里没有这条");
+  // 把配色改回去，别影响后面的段落
+  sel.value = "";
+  sel.dispatchEvent(new win.Event("change", { bubbles: true }));
+  await sleep(150);
+}
+
+console.log("\n13c. 列配置面板：窄窗口下不再只剩一列箭头（v1.14.0）");
+{
+  /* 2026-10-25 的截图：面板只有 117px 宽，列名和勾选框全被裁到窗口外 ——
+     根因是 `position:absolute; right:0` 往左溢出，被 main{overflow:auto} 裁掉。
+     改成 fixed + 定宽 + JS 钳制位置后，列名必须还在面板里。 */
+  const css = HTML.slice(HTML.indexOf("<style>"), HTML.indexOf("</style>"));
+  /* ★ 断言前先去掉注释：这段注释里为了讲清原委写了 `main{overflow:auto}`，
+     里面带花括号 —— 拿 `[^}]*` 一路扫过去会在那儿断掉，误判成"规则没写"。 */
+  const cssCode = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  check("列面板是 fixed 定位（不再被滚动容器裁）",
+    /\.colpanel\s*\{[^}]*position:\s*fixed/.test(cssCode));
+  check("列面板定宽 248（列名/勾选框/箭头三段不互相挤）",
+    /\.colpanel\s*\{[^}]*[^-]width:\s*248px/.test(cssCode));
+  check("列名那一格允许省略号，但不再被压成 0 宽",
+    /\.colpanel \.cn\s*\{[^}]*flex:\s*1 1 auto/.test(cssCode) && /\.colpanel \.cn\s*\{[^}]*min-width:\s*0/.test(cssCode));
+
+  doc.getElementById("tab-table").click();
+  await sleep(80);
+  doc.getElementById("colBtn").click();
+  await sleep(100);
+  const panel = doc.getElementById("colPanel");
+  check("点「列」打开面板", panel.hidden === false);
+  check("面板里 15 个列名都在（不是只剩箭头）",
+    panel.querySelectorAll("label .cn").length >= 15 &&
+    /订单号/.test(panel.textContent) && /快递单号/.test(panel.textContent),
+    String(panel.querySelectorAll("label .cn").length));
+  check("每行有勾选框 + 上移/下移两个按钮",
+    panel.querySelectorAll('input[type="checkbox"]').length >= 15 &&
+    panel.querySelectorAll("[data-up]").length >= 15 &&
+    panel.querySelectorAll("[data-dn]").length >= 15);
+  check("面板打开后有屏幕坐标（由 openColPanel 算，不靠 CSS 的 right:0）",
+    /px/.test(panel.style.left || "") && /px/.test(panel.style.top || ""),
+    (panel.style.left || "") + "," + (panel.style.top || ""));
+  panel.hidden = true;
+}
+
 console.log("\n14. 缩略图这条链路（宿主回空串时工具自己出图）");
 {
   /* 图床里那张是工具自己压的：宿主 gallery.put 现在回的就是空 thumb */
