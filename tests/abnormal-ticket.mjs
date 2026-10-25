@@ -862,6 +862,48 @@ console.log("\n5c3. 赔款数：详情能填、表格能显示");
   const cn0 = doc.querySelector("#colPanel label .cn");
   check("列名占中间一格（flex-grow:1，箭头才钉得住右边）",
     !!cn0 && win.getComputedStyle(cn0).flexGrow === "1");
+  /* ★ 回归（v1.18.0）：连续勾两列不能互相覆盖。
+     早先的写法把「打开面板那一刻的 hidden」闭包进每个 onchange，
+     勾第二列时拿旧快照重算，第一列又被写回可见 —— 用户看到的是「一次只能开一项」。 */
+  function toggleBox(cb) {
+    cb.checked = !cb.checked;
+    cb.dispatchEvent(new win.Event("change", { bubbles: true }));
+  }
+  const cbA = doc.querySelector('#colPanel [data-col="tracking_no"]');
+  const cbB = doc.querySelector('#colPanel [data-col="courier"]');
+  toggleBox(cbA);
+  await sleep(90);
+  toggleBox(cbB);
+  await sleep(150);
+  const hidTwo = JSON.parse(kv["tableCols"] || "{}").hidden || [];
+  check("连勾两列：两条都算隐藏（不互相覆盖）",
+    hidTwo.indexOf("tracking_no") >= 0 && hidTwo.indexOf("courier") >= 0, hidTwo.join(","));
+  const thTwo = [...doc.querySelectorAll("#tableHead th")].map((t) => t.textContent.trim());
+  check("两列都从表格里消失",
+    !thTwo.includes("快递单号") && !thTwo.includes("快递公司"), thTwo.join("/"));
+  check("勾选立刻落地（不用点完成）", (doc.getElementById("colCount").textContent || "").startsWith("13/"),
+    doc.getElementById("colCount").textContent);
+  toggleBox(cbA);
+  await sleep(90);
+  toggleBox(cbB);
+  await sleep(150);
+  const hidBack = JSON.parse(kv["tableCols"] || "{}").hidden || [];
+  check("再点回来两列都恢复", hidBack.length === 0, hidBack.join(","));
+  /* 排序走的是同一个闭包：下移一列不许把刚勾掉的列又放出来 */
+  toggleBox(doc.querySelector('#colPanel [data-col="note"]'));
+  await sleep(120);
+  const beforeOrd = (JSON.parse(kv["tableCols"] || "{}").order || []).slice();
+  doc.querySelector('#colPanel [data-dn="0"]').click();
+  await sleep(150);
+  const afterOrd = JSON.parse(kv["tableCols"] || "{}");
+  check("下移一列：刚藏的那列还在藏",
+    (afterOrd.hidden || []).indexOf("note") >= 0, (afterOrd.hidden || []).join(","));
+  check("下移一列：顺序真的换了",
+    afterOrd.order[0] !== beforeOrd[0], afterOrd.order.slice(0, 2).join("→"));
+  doc.querySelector('#colPanel [data-up="1"]').click();
+  await sleep(120);
+  toggleBox(doc.querySelector('#colPanel [data-col="note"]'));
+  await sleep(120);
   doc.getElementById("colSave").click();
   await sleep(60);
 }

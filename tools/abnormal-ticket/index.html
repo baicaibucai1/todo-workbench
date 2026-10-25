@@ -3691,17 +3691,36 @@
       };
     }
   }
-  function renderColPanel() {
-    var panel = $("colPanel");
+  /** 列表当前「按什么顺序、藏了哪些」—— 一律从 tableCols 现取。
+      ★★ 以前是 renderColPanel() 里算一份 keys/hidden 让各个事件闭包捕获。
+         勾选框改的是 tableCols，而面板并不重绘，闭包里那份就永远停在
+         「打开面板那一刻」：勾上 B 时拿旧快照重新算一遍 hidden，
+         刚勾的 A 当场被抹回去 —— 表现就是**一次只能开一项**
+         （上移/下移同理会把刚勾的作废）。所以要现取，不捕获。
+      ★ order 里没有的新列（后来加的赔款数）补在末尾：存过老配置的人
+        也得有勾选框，否则这一列永远调不出来。 */
+  function colState() {
     var keys = (tableCols && tableCols.order && tableCols.order.length)
       ? tableCols.order.slice()
       : COLS.map(function (c) { return c[0]; });
-    // 面板里也要列全：order 里没有的新列（赔款数）补在末尾，否则不给勾选框，
-    // 一旦保存过一次老配置，这一列就再也没法调出来了
     for (var ci = 0; ci < COLS.length; ci++) {
       if (keys.indexOf(COLS[ci][0]) < 0) keys.push(COLS[ci][0]);
     }
-    var hidden = (tableCols && tableCols.hidden) || [];
+    var hidden = ((tableCols && tableCols.hidden) || []).slice();
+    return { keys: keys, hidden: hidden };
+  }
+  /** 列配置改完立刻落地：写库 + 重画表格（徽标「12/15」也跟着变）。
+      ★ 原来是「先改草稿、点完成才保存」：勾了几个没点完成、顺手点面板外面关掉，
+        面板里看着勾好了、表格却没变，下次打开还以为早生效了。 */
+  function commitCols(st) {
+    tableCols = { order: st.keys, hidden: st.hidden };
+    void cfgSet("tableCols", JSON.stringify(tableCols));
+    renderTable();
+  }
+  function renderColPanel() {
+    var panel = $("colPanel");
+    var st = colState();
+    var keys = st.keys, hidden = st.hidden;
     var html = "";
     for (var i = 0; i < keys.length; i++) {
       var k = keys[i];
@@ -3718,19 +3737,20 @@
     for (var b = 0; b < boxes.length; b++) {
       boxes[b].onchange = function () {
         var k = this.getAttribute("data-col");
-        var hid = hidden.slice();
+        var s = colState();                 // ★ 现取，别用闭包里的旧快照
+        var hid = s.hidden;
         if (this.checked) hid = hid.filter(function (x) { return x !== k; });
         else if (hid.indexOf(k) < 0) hid.push(k);
-        tableCols = { order: keys, hidden: hid };
+        commitCols({ keys: s.keys, hidden: hid });
       };
     }
     var ups = panel.querySelectorAll("[data-up]");
     for (var u = 0; u < ups.length; u++) {
       ups[u].onclick = function () {
         var i = Number(this.getAttribute("data-up"));
-        var next = keys.slice();
-        var tmp = next[i - 1]; next[i - 1] = next[i]; next[i] = tmp;
-        tableCols = { order: next, hidden: hidden };
+        var s = colState();
+        var tmp = s.keys[i - 1]; s.keys[i - 1] = s.keys[i]; s.keys[i] = tmp;
+        commitCols(s);
         renderColPanel();
       };
     }
@@ -3738,19 +3758,13 @@
     for (var d = 0; d < dns.length; d++) {
       dns[d].onclick = function () {
         var i = Number(this.getAttribute("data-dn"));
-        var next = keys.slice();
-        var tmp = next[i + 1]; next[i + 1] = next[i]; next[i] = tmp;
-        tableCols = { order: next, hidden: hidden };
+        var s = colState();
+        var tmp = s.keys[i + 1]; s.keys[i + 1] = s.keys[i]; s.keys[i] = tmp;
+        commitCols(s);
         renderColPanel();
       };
     }
-    $("colSave").onclick = function () {
-      void (async function () {
-        await cfgSet("tableCols", JSON.stringify(tableCols || {}));
-        panel.hidden = true;
-        renderTable();
-      })();
-    };
+    $("colSave").onclick = function () { panel.hidden = true; };
     $("colReset").onclick = function () {
       void (async function () {
         tableCols = null;
