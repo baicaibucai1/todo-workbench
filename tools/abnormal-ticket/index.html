@@ -89,6 +89,14 @@
     border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
     width: 100%; transition: border-color .12s, box-shadow .12s;
   }
+  /* ★★★ 上面那条 `width: 100%` 是给输入框的，可它连复选框 / 单选框一起算：
+     复选框被撑成整行宽（原生控件画在这条框的中间），旁边那句说明就被挤到只剩
+     一个汉字宽、一字一行竖排下来 —— .bakopt 的「带上图片原图」就是这么坏的
+     （量过截图：复选框在 x=513 居中，文字列只有 15px 宽）。
+     → 这里统一把勾选类控件还原成它自己的尺寸；具体大小交给各场景规则再定。 */
+  input[type="checkbox"], input[type="radio"] {
+    width: auto; height: auto; padding: 0; border: none; background: none; border-radius: 0;
+  }
   input:not(:disabled):hover, select:not(:disabled):hover, textarea:hover { border-color: var(--dim); }
   input:focus, select:focus, textarea:focus {
     outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring);

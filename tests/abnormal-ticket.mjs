@@ -2403,6 +2403,36 @@ console.log("\n15. 备份与恢复：导出一个文件，再导回来（v1.19.0
   check("备份/恢复这一路没有新报错", errors.length === 0, errors.join(" | "));
 }
 
+console.log("\n15b. 排版：勾选框不吃全局 width:100%（v1.20.1）");
+{
+  /* 症状（2026-10-26 用户截图）：备份卡的「带上图片原图」变成一字一列竖排下来。
+     根因是全局 `input { width:100% }` 连复选框一起算 —— 复选框被撑成整行宽
+     （原生控件画在这条框的中央，量截图正好在 x=513 居中），旁边那段中文只剩
+     一个汉字宽。所以这里量的是**计算值**，不是"看起来对不对"。 */
+  const boxes = [...doc.querySelectorAll('input[type="checkbox"], input[type="radio"]')];
+  check("页面上有勾选框", boxes.length > 0, String(boxes.length));
+  const fat = boxes.filter((el) => win.getComputedStyle(el).width === "100%");
+  check(
+    "没有哪个勾选框被撑成整行宽",
+    fat.length === 0,
+    fat.map((el) => el.id || el.name || el.type).join(","),
+  );
+
+  const cb = doc.getElementById("bakOriginals");
+  const cs = win.getComputedStyle(cb);
+  check("备份卡的复选框是自身尺寸", cs.width === "auto", cs.width);
+  check("也不再带输入框那圈内边距", cs.padding === "0px", cs.padding);
+  const label = cb.parentElement;
+  check("它那行仍是 flex", win.getComputedStyle(label).display === "flex", win.getComputedStyle(label).display);
+  const txt = label.querySelector("span");
+  check(
+    "说明文字占满剩下的宽度（flex:1 1 auto / min-width:0）",
+    win.getComputedStyle(txt).flexGrow === "1" && win.getComputedStyle(txt).minWidth === "0px",
+    win.getComputedStyle(txt).flexGrow + " / " + win.getComputedStyle(txt).minWidth,
+  );
+  check("没有新报错", errors.length === 0, errors.join(" | "));
+}
+
 console.log("\n====================================================");
 console.log(`    通过 ${pass} / 失败 ${fail}`);
 if (failures.length) {
