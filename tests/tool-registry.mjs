@@ -35,8 +35,9 @@
 
 /** 全部内置工具 id（2026-10-26 起只留两个：图片编辑、异常单号登记） */
 export const ALL_TOOL_IDS = [
-  "image-crop",
   "abnormal-ticket",
+  "image-crop",
+  "scratchpad",
 ];
 
 /**
@@ -48,8 +49,9 @@ export const ALL_TOOL_IDS = [
  * 现在差集是**空**：两个工具都是日常要用的，没有"随包发但要你去设置里打开"的样板。
  */
 export const ENABLED_TOOL_IDS = [
-  "image-crop",
   "abnormal-ticket",
+  "image-crop",
+  "scratchpad",
 ];
 
 /**
@@ -60,6 +62,7 @@ export const ENABLED_TOOL_IDS = [
 export const THEME_TOOLS = [
   ["image-crop", "图片编辑"],
   ["abnormal-ticket", "异常单号"],
+  ["scratchpad", "便签"],
 ];
 
 /** 给断言用的期望值：侧栏工具数 / 设置页工具行数 */

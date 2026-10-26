@@ -1,0 +1,138 @@
+{
+  "id": "scratchpad",
+  "name": "便签",
+  "version": "2.3.5",
+  "description": "白板便签：中键拖动平移、滚轮缩放，双击空白处贴一张；可以开多块白板。便签有文字、图片（整张图就是便签，显示图床原图）、待办表、链接四种，可换纸色、可调大小、可设提醒，便签之间还能关联（板上画线、底部出标签，可跳转可断开）。位置、尺寸、颜色、图片、清单、关联都存在工具自己的私有表里，关掉重开原位原样。",
+  "icon": "sticky-note",
+  "entry": "index.html",
+  "dbVersion": 5,
+  "author": "内置工具",
+  "capabilities": [
+    "gallery",
+    "task",
+    "kv",
+    "shell"
+  ],
+  "schema": {
+    "tables": [
+      {
+        "name": "notes",
+        "columns": [
+          {
+            "name": "id",
+            "type": "text",
+            "pk": true
+          },
+          {
+            "name": "title",
+            "type": "text"
+          },
+          {
+            "name": "body",
+            "type": "text"
+          },
+          {
+            "name": "tag",
+            "type": "text"
+          },
+          {
+            "name": "board",
+            "type": "text"
+          },
+          {
+            "name": "x",
+            "type": "integer"
+          },
+          {
+            "name": "y",
+            "type": "integer"
+          },
+          {
+            "name": "w",
+            "type": "integer"
+          },
+          {
+            "name": "h",
+            "type": "integer"
+          },
+          {
+            "name": "color",
+            "type": "text"
+          },
+          {
+            "name": "z",
+            "type": "integer"
+          },
+          {
+            "name": "gallery_id",
+            "type": "text"
+          },
+          {
+            "name": "thumb",
+            "type": "text"
+          },
+          {
+            "name": "remind_at",
+            "type": "text"
+          },
+          {
+            "name": "remind_task",
+            "type": "text"
+          },
+          {
+            "name": "created_at",
+            "type": "text"
+          },
+          {
+            "name": "kind",
+            "type": "text"
+          },
+          {
+            "name": "items",
+            "type": "text"
+          },
+          {
+            "name": "links",
+            "type": "text"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "created_at"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "boards",
+        "columns": [
+          {
+            "name": "id",
+            "type": "text",
+            "pk": true
+          },
+          {
+            "name": "name",
+            "type": "text"
+          },
+          {
+            "name": "sort",
+            "type": "integer"
+          },
+          {
+            "name": "created_at",
+            "type": "text"
+          }
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "sort"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -336,11 +336,14 @@ const tools = await loadTools();
 check("内置工具已注册", tools.length >= 1, `实际: ${tools.length} 个`);
 check("图片裁剪工具在列", tools.some((t) => t.id === "image-crop"));
 check("异常单号登记在列", tools.some((t) => t.id === "abnormal-ticket"));
-// 2026-10-26 整理：工具区只留这两个。尺码表 / 便签 / 模板 / AI 生成 / WPS 绑定
-// 已从仓库删掉（各自的测试也跟着删了），这里钉住"别再冒出来"。
+// 便签在 2026-10-26 晚以「白板便签」重做后**正式回到 tools/**（2.3.x，dbVersion 5），
+// 所以它不再属于"已删掉、别再冒出来"那一类。
+check("便签在列", tools.some((t) => t.id === "scratchpad"));
+// 2026-10-26 整理：尺码表 / 笔记 / 模板 / AI 生成 / WPS 绑定已从仓库删掉
+// （各自的测试也跟着删了），这里钉住"别再冒出来"。
 check(
-  "已删掉的五个工具没有复活",
-  !["size-chart", "notes", "scratchpad", "ai-gen", "wpslink"].some((id) =>
+  "已删掉的四个工具没有复活",
+  !["size-chart", "notes", "ai-gen", "wpslink"].some((id) =>
     tools.some((t) => t.id === id),
   ),
   tools.map((t) => t.id).join(","),

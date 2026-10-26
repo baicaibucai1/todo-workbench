@@ -1,0 +1,2760 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>便签</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23f2d98b'/%3E%3Crect x='9' y='8' width='14' height='16' rx='2' fill='%23ffffff' opacity='.95'/%3E%3Crect x='12' y='12' width='8' height='1.6' rx='.8' fill='%23a9914a'/%3E%3Crect x='12' y='16' width='8' height='1.6' rx='.8' fill='%23a9914a'/%3E%3Crect x='12' y='20' width='5' height='1.6' rx='.8' fill='%23a9914a'/%3E%3C/svg%3E">
+<!--
+  白板便签。工具的第二身份没变：**「工具怎么用宿主的能力」的样板**。
+
+  数据在宿主替它建的 tool_scratchpad_notes（manifest 里的 notes 表）：
+    id / title / body / x / y / w / h / color / z / gallery_id / thumb / remind_at / remind_task / created_at
+  · x/y 白板坐标，w/h 便签尺寸，z 叠放次序（都是像素/整数）
+  · gallery_id 指向**工作台图床**里的一条记录，thumb 是 320px 缩略图（dataURL）
+    —— 图片字节不进这张表，图床才是唯一真值源；便签只存引用，删便签不动图床
+  · remind_at 是设的提醒时刻，remind_task 是宿主里那条待办的 id
+
+  三条「写工具就该这么写」的经验：
+    1. **探列降级**：老宿主没声明新列时 row.update 会报「列不在声明里」，
+       探一次就退回「位置/尺寸/图片/提醒只在本页有效」，别让升级把工具卡死。
+    2. **图片自己压 320**：上传前手里就有字节，顺手 canvas 压一张缩略图存进
+       thumb 列，白板打开时不用去图床逐张取（那是几十次 IPC）。
+    3. **提醒落待办用 task.remind**：宿主负责建/删待办并盖来源章；
+       工具只记 taskId，取消时拿它去删。别自己去写 core_tasks。
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #ffffff; --fg: #2c2c2a; --fg2: #5f5e5b; --dim: #918f89;
+    --line: #e6e4dd; --chip: #f2f0ea; --accent: #378add; --danger: #a32d2d;
+    --board: #faf9f6; --dot: #e3e0d8; --wire: rgba(44, 44, 42, .3);
+  }
+  html[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #1c1c1a; --fg: #e8e6e0; --fg2: #b3b0a8; --dim: #8a8780;
+    --line: #35342f; --chip: #2a2925; --accent: #5b9de8; --danger: #e07272;
+    --board: #191918; --dot: #2e2d29;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; overflow: hidden; display: flex; flex-direction: column;
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+
+  /* ---------------- 顶栏 ---------------- */
+  .bar {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 7px;
+    padding: 5px 12px; border-bottom: 1px solid var(--line); background: var(--bg);
+  }
+  .bar h1 { margin: 0; font-size: 15px; font-weight: 600; flex: 0 0 auto; cursor: default; }
+  .count { color: var(--dim); font-size: 12px; white-space: nowrap; flex: 0 0 auto; }
+  /* 缩放条：浮在画布右下角（顶栏只留主操作）。压在便签之上，但不吃画布事件 */
+  .zoom {
+    position: absolute; right: 10px; bottom: 10px; z-index: 30;
+    display: flex; align-items: center; gap: 0; padding: 1px;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--bg);
+    opacity: .86;
+  }
+  .zoom:hover { opacity: 1; }
+  .zoom button {
+    font: inherit; font-size: 11.5px; line-height: 1.2; padding: 1px 6px;
+    border: none; border-radius: 5px; background: transparent;
+    color: var(--fg2); cursor: pointer; min-width: 0;
+  }
+  .zoom button:hover { background: var(--chip); color: var(--fg); }
+  #zoomPct { min-width: 38px; font-variant-numeric: tabular-nums; }
+  .bar button {
+    flex: 0 0 auto; font: inherit; font-size: 12.5px; padding: 4px 11px; height: 27px;
+    border-radius: 7px; border: 1px solid var(--line); background: var(--bg);
+    color: var(--fg); cursor: pointer; white-space: nowrap;
+  }
+  .bar button:hover { background: var(--chip); }
+  #add { border-color: transparent; background: var(--accent); color: #fff; }
+  /* 分裂按钮悬停：左右两半一起亮 —— 只亮半边会在接缝处断开 */
+  .newgrp:hover #add, .newgrp:hover #addMore { filter: brightness(1.06); }
+  /* 窄屏只留最要紧的：标签 + 新建便签 */
+  @media (max-width: 720px) { .count { display: none; } }
+
+  /* ---------------- 白板标签栏 ---------------- */
+  /* 白板标签就住在顶栏里：吃掉中间剩余宽度，太多时横向滚动（隐藏滚动条） */
+  .tabs {
+    display: flex; align-items: center; gap: 4px;
+    flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none;
+  }
+  /* 弹簧：让「＋ 白板」紧跟最后一个标签，右侧按钮仍靠右 */
+  .bar .sp { flex: 1 1 auto; min-width: 0; }
+  .tabs::-webkit-scrollbar { display: none; }
+  /* 标签多到装不下时，右端渐隐，暗示"后面还有"（只在真溢出时由 JS 加 .more） */
+  .tabs.more {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+  }
+  .tab {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 4px; max-width: 170px; height: 26px;
+    padding: 0 5px 0 9px; border-radius: 7px; border: 1px solid transparent;
+    background: transparent; color: var(--dim); font: inherit; font-size: 12.5px;
+    white-space: nowrap; cursor: pointer;
+  }
+  .tab:hover { background: var(--chip); color: var(--fg2); }
+  .tab.active { background: var(--chip); border-color: var(--line); color: var(--fg); font-weight: 600; }
+  .tab .nm { overflow: hidden; text-overflow: ellipsis; }
+  .tab .x {
+    flex: 0 0 auto; width: 16px; height: 16px; padding: 0; border: none; border-radius: 4px;
+    background: none; color: inherit; opacity: 0; cursor: pointer; font: inherit; font-size: 13px;
+    line-height: 1;
+  }
+  .tab:hover .x, .tab.active .x { opacity: .45; }
+  .tab .x:hover { opacity: 1; background: rgba(0, 0, 0, .08); }
+  .tab input.ren {
+    width: 108px; padding: 0; border: none; background: transparent; color: var(--fg);
+    font: inherit; font-size: 12.5px; font-weight: 600; outline: none;
+  }
+  #addBoard {
+    flex: 0 0 auto; font: inherit; font-size: 12.5px; height: 26px; padding: 0 9px;
+    border-radius: 7px; border: 1px dashed var(--line); background: transparent;
+    color: var(--dim); cursor: pointer; white-space: nowrap;
+  }
+  #addBoard:hover { color: var(--fg); border-color: var(--dim); background: var(--chip); }
+
+  /* ---------------- 白板 ---------------- */
+  #stage { position: relative; flex: 1 1 auto; min-height: 0; }
+  #scroll { position: absolute; inset: 0; overflow: auto; background: var(--board); }
+  /* 缩放靠 transform 做在 #board 上，外层 #canvas 负责撑出"缩放后的尺寸" ——
+     否则 transform 不改布局，放大之后滚不到右边/下边的内容。 */
+  #canvas { position: relative; }
+  #board {
+    position: absolute; left: 0; top: 0; width: 1600px; height: 1000px;
+    cursor: default; touch-action: none; transform-origin: 0 0;
+    background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  /* 中键拖动平移：指针跑到便签上也保持"抓着"的手势，别闪回普通箭头 */
+  #stage.panning, #stage.panning * { cursor: grabbing !important; }
+  /* 空白拖动不再平移，顺手把白板上的误选中掐掉（输入框/正文照样能选字） */
+  #board, .note { user-select: none; }
+  #board textarea, #board input, #board .title, #board .ttext { user-select: text; }
+  #empty {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--dim); font-size: 13px; pointer-events: none; text-align: center; line-height: 2;
+  }
+
+  /* ---------------- 便签 ---------------- */
+  .note {
+    position: absolute; display: flex; flex-direction: column;
+    min-width: 180px; min-height: 130px;
+    border-radius: 12px; border: 1px solid rgba(0, 0, 0, .10);
+    box-shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 6px 16px rgba(16, 24, 40, .05);
+    transition: box-shadow .14s ease;
+  }
+  .note:hover { box-shadow: 0 2px 4px rgba(16, 24, 40, .08), 0 12px 26px rgba(16, 24, 40, .09); }
+  html[data-theme="dark"] .note { border-color: rgba(255, 255, 255, .13); box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
+  html[data-theme="dark"] .note:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, .5); }
+  .note.dragging { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .note .head {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 5px;
+    height: 32px; padding: 0 5px 0 6px; cursor: grab;
+  }
+  .note .head:active { cursor: grabbing; }
+  .grip {
+    flex: 0 0 auto; width: 13px; text-align: center; font-size: 12px; line-height: 1;
+    opacity: .38; letter-spacing: -1px;
+  }
+  /* 换颜色：外圈是 22×22 的**点击区**，里面 12px 才是色点。
+     整个标题栏都是拖动区，11px 的圆点太容易点偏成"拖动"了。 */
+  .note .dot {
+    flex: 0 0 auto; width: 22px; height: 22px; padding: 0; border: none;
+    background: none; border-radius: 50%; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .note .dot:hover { background: rgba(0, 0, 0, .07); }
+  html[data-theme="dark"] .note .dot:hover { background: rgba(255, 255, 255, .1); }
+  .note .dotc {
+    display: block; width: 12px; height: 12px; border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, .22);
+  }
+  .note .title {
+    flex: 1 1 auto; min-width: 0; height: 21px; padding: 0 4px;
+    border: none; border-radius: 4px; background: transparent; color: inherit;
+    font: inherit; font-size: 13.5px; font-weight: 600; outline: none;
+    cursor: grab;
+  }
+  .note .title::placeholder { color: currentColor; opacity: .32; font-weight: 400; }
+  /* 只读态 = 标题只是"看起来像字"的一条，整条标题栏都能拖；
+     双击才切成可编辑（readonly 属性由 JS 控制），编辑时才给文字光标与底色 */
+  .note .title:not([readonly]) { cursor: text; }
+  .note .title:not([readonly]):focus { background: rgba(255, 255, 255, .5); }
+  html[data-theme="dark"] .note .title:not([readonly]):focus { background: rgba(0, 0, 0, .14); }
+  .iconbtn {
+    flex: 0 0 auto; width: 22px; height: 22px; padding: 0; border: none; border-radius: 4px;
+    background: none; color: inherit; opacity: .42; cursor: pointer; display: flex;
+    align-items: center; justify-content: center;
+  }
+  .iconbtn:hover { opacity: .95; background: rgba(0, 0, 0, .07); }
+  html[data-theme="dark"] .iconbtn:hover { background: rgba(255, 255, 255, .1); }
+  .iconbtn.on { opacity: 1; color: var(--accent); }
+  .iconbtn.bell.on:hover { background: rgba(55, 138, 221, .12); }
+  .iconbtn svg { width: 14px; height: 14px; }
+
+  .note .body {
+    flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+    overflow: hidden; border-radius: 0 0 12px 12px;
+  }
+  .imgwrap { position: relative; flex: 0 0 auto; height: 0; overflow: hidden; }
+  .imgwrap img {
+    display: block; width: 100%; height: 100%; object-fit: cover; cursor: zoom-in;
+  }
+  .imgdel {
+    position: absolute; top: 5px; right: 5px; width: 18px; height: 18px; padding: 0;
+    border: none; border-radius: 50%; background: rgba(0, 0, 0, .45); color: #fff;
+    font: inherit; font-size: 12px; line-height: 1; cursor: pointer; opacity: .78;
+  }
+  .imgdel:hover { opacity: 1; }
+  .note textarea {
+    flex: 1 1 auto; min-height: 0; display: block; width: 100%;
+    padding: 0 9px 7px; border: none; background: transparent; color: inherit;
+    font: inherit; font-size: 13px; line-height: 1.55; resize: none; outline: none;
+    overflow: auto;
+  }
+  .note textarea::placeholder { color: currentColor; opacity: .35; }
+
+  .remind {
+    flex: 0 0 auto; padding: 0 9px 6px; font-size: 11.5px; opacity: .72;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .remind.over { color: var(--danger); opacity: 1; }
+
+  .rs {
+    position: absolute; right: 0; bottom: 0; width: 14px; height: 14px;
+    cursor: nwse-resize; opacity: 0; transition: opacity .12s;
+    background: linear-gradient(135deg, transparent 46%, rgba(0, 0, 0, .3) 46%);
+    border-radius: 0 0 11px 0;
+  }
+  .note:hover .rs { opacity: 1; }
+
+  /* 调色板 / 提醒面板：便签内的浮层 */
+  .pop {
+    position: absolute; top: 32px; right: 4px; z-index: 40;
+    display: flex; flex-direction: column; gap: 6px; padding: 8px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+    color: var(--fg); font-size: 12.5px; min-width: 200px;
+  }
+  .pop .swatches { display: flex; gap: 6px; }
+  .pop .swatches button {
+    width: 18px; height: 18px; padding: 0; border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, .18); cursor: pointer;
+  }
+  .pop .swatches .cus {
+    position: relative; width: 18px; height: 18px; border-radius: 50%; overflow: hidden;
+    border: 1px solid rgba(0, 0, 0, .18); cursor: pointer;
+    background: conic-gradient(#f6a5a5, #f6e0a5, #b7e3b7, #a9cdea, #d8b7ea, #f6a5a5);
+  }
+  .pop .swatches .cus input[type="color"] {
+    position: absolute; inset: -6px; width: 30px; height: 30px; padding: 0;
+    border: none; background: transparent; cursor: pointer; opacity: 0;
+  }
+  .pop input[type="datetime-local"] {
+    width: 100%; font: inherit; font-size: 12.5px; padding: 4px 6px;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg);
+  }
+  .pop .quick { display: flex; gap: 5px; flex-wrap: wrap; }
+  .pop .quick button, .pop .row button {
+    font: inherit; font-size: 12px; padding: 3px 8px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg);
+  }
+  .pop .quick button:hover, .pop .row button:hover { background: var(--chip); }
+  .pop .row { display: flex; gap: 6px; justify-content: flex-end; }
+  .pop .row .primary { border-color: transparent; background: var(--accent); color: #fff; }
+  .pop .row .danger { color: var(--danger); }
+  .pop.rm { width: 250px; }
+  .calhead { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .calhead button {
+    flex: 0 0 auto; width: 22px; height: 22px; padding: 0; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+    font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+  }
+  .calhead button:hover { background: var(--chip); }
+  .calhead span { font-size: 12.5px; font-weight: 600; }
+  .calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .calgrid .dow { text-align: center; font-size: 11px; color: var(--dim); padding: 2px 0; }
+  .calgrid .day {
+    height: 26px; padding: 0; border: 1px solid transparent; border-radius: 6px;
+    background: transparent; color: var(--fg); font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .calgrid .day:hover { background: var(--chip); }
+  .calgrid .day.today { border-color: var(--line); font-weight: 600; }
+  .calgrid .day.sel { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
+  .calrow { display: flex; gap: 6px; align-items: center; }
+  .calrow input.tm {
+    flex: 1 1 auto; min-width: 0; font: inherit; font-size: 12.5px; padding: 4px 6px;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg);
+  }
+  .calrow .day { flex: 0 0 auto; }
+
+  /* ---------------- 大图 / 提示条 ---------------- */
+  #lightbox {
+    position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, .74);
+    display: flex; align-items: center; justify-content: center; padding: 28px;
+  }
+  #lightbox img { max-width: 100%; max-height: 100%; border-radius: 6px; }
+  #lbClose {
+    position: absolute; top: 14px; right: 16px; width: 30px; height: 30px;
+    border: none; border-radius: 50%; background: rgba(255, 255, 255, .16); color: #fff;
+    font: inherit; font-size: 18px; line-height: 1; cursor: pointer;
+  }
+  #lbClose:hover { background: rgba(255, 255, 255, .3); }
+  #toast {
+    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(8px);
+    display: flex; align-items: center; gap: 10px;
+    background: var(--chip); color: var(--fg2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 12px; font-size: 12.5px;
+    opacity: 0; transition: .18s; pointer-events: none; z-index: 120;
+  }
+  #toast.on { opacity: 1; transform: translateX(-50%); pointer-events: auto; }
+  #toast button {
+    font: inherit; font-size: 12.5px; border: none; background: none; cursor: pointer;
+    color: var(--accent); padding: 0; flex: 0 0 auto;
+  }
+  /* ---------------- 便签形态：图片 / 待办 / 链接 ---------------- */
+
+  /* 图片便签：整张图就是便签本身，不留标题栏 */
+  .note.kind-image { padding: 0; overflow: hidden; background: #fff; }
+  .note.kind-image .coverwrap { position: absolute; inset: 0; }
+  .note.kind-image img.cover {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+    cursor: grab; user-select: none; -webkit-user-drag: none;
+  }
+  .note.kind-image.dragging img.cover { cursor: grabbing; }
+  /* 右上角一条小工具条：两枚方形按钮共用一块半透明白底，压在照片上也看得清 */
+  .coverbtns {
+    position: absolute; top: 6px; right: 6px; z-index: 2;
+    display: flex; gap: 1px; padding: 2px;
+    border-radius: 8px; background: rgba(255, 255, 255, .88);
+    border: 1px solid rgba(0, 0, 0, .07);
+    opacity: 0; transition: opacity .12s;
+  }
+  .note.kind-image:hover .coverbtns,
+  .note.kind-image .coverbtns:focus-within { opacity: 1; }
+  .coverbtns button {
+    width: 21px; height: 21px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    border: none; border-radius: 6px; background: none;
+    color: #3a3a38; font: inherit; line-height: 1; cursor: pointer;
+  }
+  .coverbtns button:hover { background: rgba(0, 0, 0, .09); }
+  .coverbtns button.del:hover { background: rgba(163, 45, 45, .13); color: var(--danger); }
+  .coverbtns svg { width: 13px; height: 13px; }
+  /* 图片便签没有标题栏，关联标签浮在图片左下角，读得出来才点得到 */
+  .note.kind-image .rel {
+    position: absolute; left: 6px; right: 6px; bottom: 6px; padding: 0;
+    max-height: 46px; overflow: hidden;
+  }
+  .note.kind-image .rel .rchip {
+    background: rgba(255, 255, 255, .9); border-color: transparent; color: #333;
+    backdrop-filter: blur(2px);
+  }
+
+  /* 待办表 */
+  .todo {
+    flex: 1 1 auto; min-height: 0; overflow: auto;
+    display: flex; flex-direction: column; gap: 2px; padding: 4px 10px 6px;
+  }
+  .trow { display: flex; align-items: flex-start; gap: 5px; }
+  .trow input[type="checkbox"] {
+    flex: 0 0 auto; width: 13px; height: 13px; margin: 4px 0 0; padding: 0;
+    accent-color: var(--accent); cursor: pointer;
+  }
+  .trow .ttext {
+    flex: 1 1 auto; min-width: 0; padding: 1px 0; border: none; background: transparent;
+    color: inherit; font: inherit; font-size: 12.5px; line-height: 1.5; outline: none;
+  }
+  .trow .ttext::placeholder { color: currentColor; opacity: .34; }
+  .trow.done .ttext { text-decoration: line-through; opacity: .48; }
+  .trow .tdel {
+    flex: 0 0 auto; width: 16px; height: 16px; padding: 0; border: none; border-radius: 4px;
+    background: none; color: inherit; font: inherit; font-size: 13px; line-height: 1;
+    cursor: pointer; opacity: 0;
+  }
+  .trow:hover .tdel { opacity: .45; }
+  .trow .tdel:hover { opacity: 1; background: rgba(0, 0, 0, .07); }
+  .todo .tadd {
+    align-self: flex-start; margin-top: 2px; padding: 1px 4px; border: none; border-radius: 5px;
+    background: none; color: inherit; font: inherit; font-size: 12px; opacity: .5; cursor: pointer;
+  }
+  .todo .tadd:hover { opacity: .85; background: rgba(0, 0, 0, .06); }
+
+  /* 链接便签 */
+  .linkcard { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; padding: 5px 10px 8px; }
+  .linkopen {
+    display: flex; align-items: flex-start; gap: 7px; width: 100%; padding: 7px 9px;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+    color: var(--fg); font: inherit; text-align: left; cursor: pointer;
+  }
+  .linkopen:hover { background: var(--chip); }
+  .linkopen .lglyph { flex: 0 0 auto; width: 15px; height: 15px; margin-top: 1px; color: var(--fg2); }
+  .linkopen .ltxt { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .linkopen .lhost { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .linkopen .lpath { font-size: 11px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lrow { display: flex; gap: 4px; }
+  .lrow button {
+    flex: 0 0 auto; padding: 1px 7px; border: 1px solid var(--line); border-radius: 5px;
+    background: transparent; color: var(--fg2); font: inherit; font-size: 11.5px; cursor: pointer;
+  }
+  .lrow button:hover { background: var(--chip); color: var(--fg); }
+
+  /* 关联项小标签 */
+  .rel { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 10px 6px; }
+  .rel[hidden] { display: none; }
+  .rel .rchip {
+    display: inline-flex; align-items: center; gap: 3px; max-width: 100%;
+    padding: 0 5px; border-radius: 9px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--fg2); font: inherit; font-size: 11px;
+    line-height: 17px; cursor: pointer;
+  }
+  .rel .rchip:hover { background: var(--chip); color: var(--fg); }
+  .rel .rchip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rel .rchip b { font-weight: 400; opacity: .45; padding: 0 1px; }
+  .rel .rchip:hover b:hover { opacity: 1; }
+
+  /* 关联线（画在白板里，跟着缩放一起缩） */
+  #wires { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+  #wires line { stroke: var(--wire); stroke-width: 1.5; }
+  #wires circle { fill: var(--wire); }
+
+  /* 关联模式：目标便签描边强调 */
+  #board.linking .note { outline: 1.5px dashed rgba(55, 138, 221, .5); outline-offset: 2px; }
+  #board.linking .note.linkfrom { outline: 2px solid var(--accent); }
+  #board.linking .note:hover { outline: 2px solid var(--accent); }
+  .note.flash { animation: flashNote .45s ease-in-out 2; }
+  @keyframes flashNote {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(55, 138, 221, 0); }
+    50% { box-shadow: 0 0 0 3px rgba(55, 138, 221, .45); }
+  }
+
+  /* 新建菜单 */
+  .newgrp { flex: 0 0 auto; display: flex; }
+  .newgrp #add { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  /* 分裂按钮的右半：跟左边同一块蓝底，中间只留一道半透明白线 ——
+     原来这半边是白底描边，跟蓝按钮拼在一起像两个控件没对齐。 */
+  .newgrp #addMore {
+    border-top-left-radius: 0; border-bottom-left-radius: 0;
+    padding: 0 7px; font-size: 10px;
+    border-color: transparent;
+    border-left: 1px solid rgba(255, 255, 255, .34);
+    background: var(--accent); color: #fff;
+  }
+  .newgrp #addMore:hover { background: var(--accent); color: #fff; }
+  .menu {
+    position: fixed; z-index: 120; min-width: 178px; padding: 4px;
+    display: flex; flex-direction: column; gap: 1px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 9px;
+  }
+  .menu[hidden] { display: none; }
+  .menu button {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 0;
+    padding: 5px 9px; border: none; border-radius: 6px; background: none;
+    font: inherit; font-size: 12.5px; color: var(--fg); text-align: left; cursor: pointer;
+  }
+  .menu button span { font-size: 10.5px; color: var(--dim); }
+  .menu button:hover { background: var(--chip); }
+
+  /* 追问输入框（自绘 ask 的输入态） */
+  .askinput {
+    width: 100%; margin: 0 0 12px; padding: 6px 9px; box-sizing: border-box;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--bg);
+    color: var(--fg); font: inherit; font-size: 12.5px; outline: none;
+  }
+  .askinput:focus { border-color: var(--accent); }
+  .askinput[hidden] { display: none; }
+
+  /* 自绘确认框：WebView2 里 window.confirm 不保证弹（见工具坑清单） */
+  #ask {
+    position: fixed; inset: 0; z-index: 200; background: rgba(0, 0, 0, .34);
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .askcard {
+    width: 330px; max-width: 100%; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px 18px 14px; box-shadow: 0 18px 44px rgba(0, 0, 0, .2);
+  }
+  .askcard h3 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+  .askcard p { margin: 0 0 14px; font-size: 12.5px; color: var(--fg2); line-height: 1.6; }
+  .askrow { display: flex; gap: 8px; justify-content: flex-end; }
+  .askrow button {
+    font: inherit; font-size: 12.5px; padding: 6px 14px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer;
+  }
+  .askrow button:hover { background: var(--chip); }
+  #askYes { border-color: transparent; background: var(--danger); color: #fff; }
+  #askYes:hover { filter: brightness(1.06); background: var(--danger); }
+</style>
+</head>
+<body>
+<div class="bar">
+  <h1 title="滚轮缩放 · 中键拖动平移 · 双击空白处新建 · 拖标题栏移动 · Ctrl+V 粘图片 · 便签右上角链条可关联另一张">便签</h1>
+  <div class="tabs" id="tabs"></div>
+  <button id="addBoard" type="button" title="新建一块白板">＋ 白板</button>
+  <span class="sp"></span>
+  <span class="count" id="count"></span>
+  <span class="newgrp">
+    <button id="add" type="button">＋ 新建便签</button>
+    <button id="addMore" type="button" title="新建其他类型（图片 / 待办表 / 链接）" aria-haspopup="menu">▾</button>
+  </span>
+</div>
+<div id="newmenu" class="menu" role="menu" hidden>
+  <button type="button" data-kind="text" role="menuitem">文字便签<span>双击空白处也能建</span></button>
+  <button type="button" data-kind="image" role="menuitem">图片便签<span>整张图就是一张便签</span></button>
+  <button type="button" data-kind="todo" role="menuitem">待办表<span>可勾选的清单</span></button>
+  <button type="button" data-kind="link" role="menuitem">链接便签<span>存个网址，点开就用</span></button>
+</div>
+<div id="stage">
+  <div id="scroll"><div id="canvas"><div id="board"></div></div></div>
+  <div id="empty">双击空白处新建便签 · 中键拖动平移 · 图片可直接粘上来<br>顶栏「＋ 新建便签 ▾」里还有 图片便签 / 待办表 / 链接便签</div>
+  <div class="zoom">
+    <button id="zoomOut" type="button" title="缩小（滚轮也可以）">－</button>
+    <button id="zoomPct" type="button" title="回到 100%">100%</button>
+    <button id="zoomIn" type="button" title="放大（滚轮也可以）">＋</button>
+  </div>
+</div>
+<input type="file" id="file" accept="image/*" multiple hidden>
+<div id="lightbox" hidden><img id="lbImg" alt=""><button id="lbClose" type="button">×</button></div>
+<div id="toast"></div>
+<div id="ask" hidden>
+  <div class="askcard">
+    <h3 id="askTitle">确认</h3>
+    <p id="askText"></p>
+    <input id="askInput" class="askinput" type="text" hidden>
+    <div class="askrow">
+      <button id="askNo" type="button">取消</button>
+      <button id="askYes" type="button">确定</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOOL_SOURCE = "workbench-tool";
+  var HOST_SOURCE = "workbench-host";
+  var MIN_W = 180, MIN_H = 130, MAX_W = 680, MAX_H = 760;
+  var DEF_W = 240, DEF_H = 180;
+  /** 白板缩放范围。低于 0.4 字就看不清了，高于 2.5 只是浪费滚动 */
+  var MIN_SCALE = 0.4, MAX_SCALE = 2.5;
+
+  var seq = 0;
+  var waiting = new Map();
+  var ctx = null;
+  var pendingIntent = null;
+  /** 从待办详情跳回来时要定位的便签 id（数据没读完就先存着） */
+  var pendingFocus = "";
+  var booted = false;
+
+  var COLORS = [
+    { id: "yellow", bg: "#fdf3c8", fg: "#3a3320", dot: "#e6cf7a" },
+    { id: "pink",   bg: "#fbe0e6", fg: "#4a2430", dot: "#efb6c6" },
+    { id: "green",  bg: "#dff0e6", fg: "#1c3a2c", dot: "#aed8c1" },
+    { id: "blue",   bg: "#dcecf9", fg: "#1f3549", dot: "#a9cdea" },
+    { id: "plain",  bg: "#fbfbfa", fg: "#3a3320", dot: "#dcdbd6" }
+  ];
+
+  var state = {
+    notes: [],
+    boards: [],
+    boardId: "",
+    posOk: null,
+    zTop: 0,
+    drag: null,
+    resize: null,
+    pan: null,
+    timers: {},
+    lastPanAt: 0,
+    /** 白板缩放（1 = 100%）。坐标仍以白板单位存库，缩放只活在界面上 */
+    scale: 1,
+    boardW: 1600,
+    boardH: 1000,
+    /** 提醒面板里正在编辑的日期（YYYY-MM-DD）与时刻（HH:mm） */
+    pickDate: "",
+    pickTime: "09:00",
+    pickMonth: null,
+    /** 关联模式：正在从哪张便签拉线 */
+    linkFrom: "",
+    /** 这一轮拖动有没有真的移动过（图片便签靠它区分"点开看大图"和"拖走"） */
+    dragMoved: false,
+    /** 图片便签用的原图缓存（gallery_id → dataUrl），一张只取一次 */
+    imgCache: {},
+    imgPending: {}
+  };
+
+  var stage, scroll, canvas, board, empty, toastEl, fileInput;
+
+  /* ---------------- 与宿主通信 ---------------- */
+
+  function call(op, payload) {
+    var id = "r" + ++seq;
+    return new Promise(function (resolve, reject) {
+      waiting.set(id, { resolve: resolve, reject: reject });
+      parent.postMessage({ source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} }, "*");
+      setTimeout(function () {
+        if (waiting.delete(id)) reject(new Error("宿主没有回应（" + op + "）"));
+      }, 20000);
+    }).then(function (res) {
+      if (!res.ok) throw new Error(String(res.error || "宿主拒绝了这次请求"));
+      return res.data;
+    });
+  }
+
+  window.addEventListener("message", function (e) {
+    var m = e.data;
+    if (!m || m.source !== HOST_SOURCE) return;
+
+    if (m.type === "tool:response") {
+      var w = waiting.get(m.id);
+      if (w) { waiting.delete(m.id); w.resolve({ ok: m.ok, data: m.data, error: m.error }); }
+      return;
+    }
+    if (m.type === "tool:context") {
+      ctx = m.data;
+      document.body.dataset.bindState = "bound";
+      if (ctx) document.documentElement.dataset.theme = ctx.theme || "light";
+      return;
+    }
+    if (m.type === "tool:intent") {
+      var d = m.data || {};
+      // 宿主从待办详情跳回来：{intent:"focus", ref:"<便签 id>"}
+      if (d.intent === "focus") {
+        if (booted) void focusNoteById(String(d.ref || ""));
+        else pendingFocus = String(d.ref || "");
+        return;
+      }
+      var text = String(d.body || d.text || d.title || "");
+      if (!text) { try { text = JSON.stringify(d, null, 2); } catch (err) { text = String(d); } }
+      if (booted) void addNote(null, text);
+      else pendingIntent = text;
+      return;
+    }
+    if (m.type === "tool:event" && m.event === "schema:reset") {
+      state.notes = [];
+      board.textContent = "";
+      updateChrome();
+      void load();
+      toast("这段数据已被清空");
+    }
+  });
+
+  /* ---------------- 小工具 ---------------- */
+
+  function genId() {
+    return "n-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+  }
+  function isNum(v) {
+    if (v === null || v === undefined || v === "") return false;
+    return isFinite(Number(v));
+  }
+  function num(v) { return isNum(v) ? Number(v) : 0; }
+  /**
+   * 纸色：五套预设 + **自定义 hex**（调色板里那个取色器写进来的 #rrggbb）。
+   * 自定义色的文字色按亮度自动选黑/白 —— 浅色纸配深字，深色纸配白字，
+   * 不然用户在深色便签上根本看不清字。
+   */
+  function colorOf(id) {
+    var s = String(id || "");
+    if (s.charAt(0) === "#" && /^#[0-9a-f]{6}$/i.test(s)) {
+      var r = parseInt(s.slice(1, 3), 16) / 255;
+      var g = parseInt(s.slice(3, 5), 16) / 255;
+      var b = parseInt(s.slice(5, 7), 16) / 255;
+      var lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      return { id: s, bg: s, fg: lum > 0.58 ? "#2c2c2a" : "#f7f6f2", dot: s };
+    }
+    for (var i = 0; i < COLORS.length; i++) if (COLORS[i].id === id) return COLORS[i];
+    return COLORS[0];
+  }
+  function noteEl(id) {
+    var all = board.querySelectorAll(".note");
+    for (var i = 0; i < all.length; i++) if (all[i].dataset.id === id) return all[i];
+    return null;
+  }
+  function byId(id) {
+    for (var i = 0; i < state.notes.length; i++) if (state.notes[i].id === id) return state.notes[i];
+    return null;
+  }
+  function firstLine(s) {
+    var t = String(s || "").split("\n")[0].trim();
+    return t.length > 40 ? t.slice(0, 40) + "…" : t;
+  }
+  /**
+   * 能力被拒时宿主报的是「这个扩展没有申请 task 能力」——
+   * 十有八九是宿主还没重启、内存里仍是旧 manifest。翻译成一句能动手的话。
+   */
+  function friendly(err) {
+    var msg = String((err && err.message) || err || "");
+    if (msg.indexOf("没有申请") >= 0) return "工作台还没读到新版便签 —— 重启一次工作台再试";
+    return msg;
+  }
+  function pad(n) { return n < 10 ? "0" + n : String(n); }
+  function timeText(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return (d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+  function readAsDataURL(file) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(String(fr.result || "")); };
+      fr.onerror = function () { reject(new Error("读不了这个文件")); };
+      fr.readAsDataURL(file);
+    });
+  }
+  /** 320px 缩略图（白板上只显示它，原图去图床取） */
+  function makeThumb(dataUrl, max) {
+    return new Promise(function (resolve) {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var scale = Math.min(1, max / Math.max(img.width || 1, img.height || 1));
+          var c = document.createElement("canvas");
+          c.width = Math.max(1, Math.round((img.width || 1) * scale));
+          c.height = Math.max(1, Math.round((img.height || 1) * scale));
+          var g = c.getContext("2d");
+          g.drawImage(img, 0, 0, c.width, c.height);
+          resolve(c.toDataURL("image/jpeg", 0.82));
+        } catch (err) { resolve(""); }
+      };
+      img.onerror = function () { resolve(""); };
+      img.src = dataUrl;
+    });
+  }
+
+  /* ---------------- 提示条 ---------------- */
+
+  var toastTimer = null;
+  var toastAction = null;
+  function toast(text, actionLabel, action, ms) {
+    toastEl.textContent = "";
+    var span = document.createElement("span");
+    span.textContent = text;
+    toastEl.appendChild(span);
+    toastAction = null;
+    if (actionLabel && action) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = actionLabel;
+      b.addEventListener("click", function () {
+        toastEl.classList.remove("on");
+        var fn = toastAction;
+        toastAction = null;
+        if (fn) fn();
+      });
+      toastEl.appendChild(b);
+      toastAction = action;
+    }
+    toastEl.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      toastEl.classList.remove("on");
+      toastAction = null;
+    }, ms || 2800);
+  }
+
+  /* ---------------- 自绘确认框 ---------------- */
+
+  var askResolve = null;
+  var askWantsInput = false;
+
+  /** 返回 Promise<boolean>：点「确定」= true，取消/遮罩/ESC = false */
+  function ask(title, text, okLabel) {
+    return new Promise(function (resolve) {
+      askResolve = resolve;
+      askWantsInput = false;
+      document.getElementById("askInput").hidden = true;
+      document.getElementById("askTitle").textContent = title;
+      document.getElementById("askText").textContent = text || "";
+      document.getElementById("askYes").textContent = okLabel || "确定";
+      document.getElementById("ask").hidden = false;
+      var no = document.getElementById("askNo");
+      if (no && no.focus) no.focus();
+    });
+  }
+
+  /** 同一个弹窗的"问一句话"版本：返回 Promise<string|null> */
+  function askInput(title, text, value) {
+    return new Promise(function (resolve) {
+      askResolve = resolve;
+      askWantsInput = true;
+      document.getElementById("askTitle").textContent = title;
+      document.getElementById("askText").textContent = text || "";
+      var inp = document.getElementById("askInput");
+      inp.hidden = false;
+      inp.value = value || "";
+      document.getElementById("askYes").textContent = "确定";
+      document.getElementById("ask").hidden = false;
+      setTimeout(function () {
+        if (inp.focus) inp.focus();
+        if (inp.select) inp.select();
+      }, 0);
+    });
+  }
+
+  function closeAsk(ok) {
+    var box = document.getElementById("ask");
+    if (!box || box.hidden) return;
+    var inp = document.getElementById("askInput");
+    var text = ok ? String(inp.value || "").trim() : null;
+    box.hidden = true;
+    inp.hidden = true;
+    var r = askResolve;
+    var wantsInput = askWantsInput;
+    askResolve = null;
+    askWantsInput = false;
+    if (r) r(wantsInput ? text : ok);
+  }
+
+  /* ---------------- 数据 ---------------- */
+
+  function toRow(n) {
+    var row = {
+      id: n.id,
+      title: n.title || "",
+      body: n.body || "",
+      tag: "",
+      created_at: n.created_at || new Date().toISOString()
+    };
+    if (state.posOk !== false) {
+      row.board = String(n.board || state.boardId || "");
+      row.x = Math.round(num(n.x));
+      row.y = Math.round(num(n.y));
+      row.w = Math.round(num(n.w) || DEF_W);
+      row.h = Math.round(num(n.h) || DEF_H);
+      row.color = String(n.color || "");
+      row.z = Math.round(num(n.z));
+      row.gallery_id = String(n.gallery_id || "");
+      row.thumb = String(n.thumb || "");
+      row.remind_at = String(n.remind_at || "");
+      row.remind_task = String(n.remind_task || "");
+      row.kind = String(n.kind || "");
+      row.items = String(n.items || "");
+      row.links = String(n.links || "");
+    }
+    return row;
+  }
+
+  async function probePos() {
+    try {
+      await call("row.update", {
+        table: "notes",
+        id: "__probe__",
+        patch: {
+          board: "__probe__", x: 0, y: 0, w: DEF_W, h: DEF_H, color: "__probe__", z: 0,
+          gallery_id: "", thumb: "", remind_at: "", remind_task: "",
+          kind: "__probe__", items: "", links: ""
+        }
+      });
+      state.posOk = true;
+    } catch (err) {
+      state.posOk = false;
+    }
+  }
+
+  /** 位置/尺寸/图片/提醒这些「新列」的写入，老宿主没有就跳过 */
+  function saveNew(n, patch) {
+    if (state.posOk === false) return;
+    call("row.update", { table: "notes", id: n.id, patch: patch }).catch(function (err) {
+      toast("存不进去：" + err.message);
+    });
+  }
+
+  function normalize(r) {
+    return {
+      id: String(r.id),
+      title: String(r.title || ""),
+      body: String(r.body || ""),
+      board: String(r.board || ""),
+      x: isNum(r.x) ? Number(r.x) : null,
+      y: isNum(r.y) ? Number(r.y) : null,
+      w: isNum(r.w) ? Math.min(MAX_W, Math.max(MIN_W, Number(r.w))) : DEF_W,
+      h: isNum(r.h) ? Math.min(MAX_H, Math.max(MIN_H, Number(r.h))) : DEF_H,
+      color: String(r.color || ""),
+      z: Math.round(num(r.z)),
+      gallery_id: String(r.gallery_id || ""),
+      thumb: String(r.thumb || ""),
+      remind_at: String(r.remind_at || ""),
+      remind_task: String(r.remind_task || ""),
+      kind: String(r.kind || ""),
+      items: String(r.items || ""),
+      links: String(r.links || ""),
+      created_at: String(r.created_at || ""),
+      _savedTitle: String(r.title || ""),
+      _savedBody: String(r.body || "")
+    };
+  }
+
+  function byStack(a, b) {
+    if (num(a.z) !== num(b.z)) return num(a.z) - num(b.z);
+    return String(a.created_at).localeCompare(String(b.created_at));
+  }
+
+  async function load() {
+    await loadBoards();
+
+    var rows = [];
+    var total = 0;
+    try {
+      do {
+        var res = await call("row.select", {
+          table: "notes", orderBy: "created_at", orderDir: "asc", limit: 200, offset: rows.length
+        });
+        var page = res.rows || [];
+        rows = rows.concat(page);
+        total = Number(res.total || rows.length);
+        if (!page.length) break;
+      } while (rows.length < total);
+    } catch (err) {
+      empty.textContent = "读不到数据：" + err.message;
+      return;
+    }
+
+    state.notes = rows.map(normalize);
+
+    // 老数据的 board 是空的（2.2.0 之前没有这一列）：归到第一块白板
+    var firstBoard = state.boards.length ? state.boards[0].id : "";
+    state.notes.forEach(function (n) { if (!n.board) n.board = firstBoard; });
+
+    var gi = 0;
+    state.notes.forEach(function (n) {
+      if (state.posOk === false || n.x === null || n.y === null) {
+        n.x = 40 + (gi % 4) * (DEF_W + 40);
+        n.y = 40 + Math.floor(gi / 4) * (DEF_H + 30);
+        gi++;
+      }
+    });
+
+    state.notes.sort(byStack);
+    state.zTop = state.notes.reduce(function (m, n) { return Math.max(m, num(n.z)); }, 0);
+    renderAll();
+  }
+
+  /* ---------------- 白板（boards 表） ---------------- */
+
+  function genBoardId() {
+    return "b-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7);
+  }
+
+  /** 读白板清单；一块都没有时建第一块（老用户第一次升级就是这条路） */
+  async function loadBoards() {
+    var list = [];
+    try {
+      var res = await call("row.select", { table: "boards", orderBy: "sort", orderDir: "asc", limit: 200 });
+      list = (res.rows || []).map(function (b) {
+        return { id: String(b.id), name: String(b.name || "白板"), sort: Math.round(num(b.sort)), created_at: String(b.created_at || "") };
+      });
+    } catch (err) {
+      list = [];
+    }
+
+    if (!list.length) {
+      var first = { id: genBoardId(), name: "白板 1", sort: 0, created_at: new Date().toISOString() };
+      try { await call("row.insert", { table: "boards", row: first }); } catch (err) {}
+      list = [first];
+    }
+
+    state.boards = list;
+    // 当前白板：先看 kv 里记的，再看第一块
+    var saved = "";
+    try {
+      var kv = await call("kv.get", { key: "board.current" });
+      saved = String((kv && kv.value) || "");
+    } catch (err) {}
+    var hit = list.filter(function (b) { return b.id === saved; })[0];
+    state.boardId = hit ? hit.id : list[0].id;
+    // 第一次进来（或记的那块已经被删了）就把当前这块写回 kv，下次直接落到同一块
+    if (saved !== state.boardId) {
+      call("kv.set", { key: "board.current", value: state.boardId }).catch(function () {});
+    }
+    renderTabs();
+  }
+
+  function boardName(id) {
+    var b = state.boards.filter(function (x) { return x.id === id; })[0];
+    return b ? b.name : "白板";
+  }
+
+  function renderTabs() {
+    var host = document.getElementById("tabs");
+    if (!host) return;
+    host.textContent = "";
+    state.boards.forEach(function (b) {
+      var tab = document.createElement("button");
+      tab.type = "button";
+      tab.className = "tab" + (b.id === state.boardId ? " active" : "");
+      tab.dataset.board = b.id;
+      tab.title = "双击改名";
+
+      var nm = document.createElement("span");
+      nm.className = "nm";
+      nm.textContent = b.name;
+      tab.appendChild(nm);
+
+      var x = document.createElement("button");
+      x.type = "button";
+      x.className = "x";
+      x.textContent = "×";
+      x.title = "删除这块白板（连同上面的便签）";
+      x.addEventListener("click", function (e) {
+        e.stopPropagation();
+        void removeBoard(b);
+      });
+      tab.appendChild(x);
+
+      tab.addEventListener("click", function () { switchBoard(b.id); });
+      tab.addEventListener("dblclick", function (e) {
+        e.stopPropagation();
+        beginRename(tab, b);
+      });
+      host.appendChild(tab);
+    });
+    syncTabsFade();
+  }
+
+  /** 标签溢出就加 .more（右端渐隐）；没溢出就摘掉，避免误伤最后一个标签 */
+  function syncTabsFade() {
+    var host = document.getElementById("tabs");
+    if (!host) return;
+    host.classList.toggle("more", host.scrollWidth > host.clientWidth + 1);
+  }
+
+  function beginRename(tab, b) {
+    var input = document.createElement("input");
+    input.className = "ren";
+    input.value = b.name;
+    tab.textContent = "";
+    tab.appendChild(input);
+    input.focus();
+    input.select();
+    var done = false;
+    var commit = function (save) {
+      if (done) return;
+      done = true;
+      var name = String(input.value || "").trim();
+      if (save && name && name !== b.name) {
+        b.name = name.slice(0, 40);
+        call("row.update", { table: "boards", id: b.id, patch: { name: b.name } }).catch(function (err) {
+          toast("改名没存上：" + err.message);
+        });
+      }
+      renderTabs();
+    };
+    input.addEventListener("blur", function () { commit(true); });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); commit(true); }
+      if (e.key === "Escape") { e.preventDefault(); commit(false); }
+    });
+  }
+
+  async function switchBoard(id) {
+    if (!id || id === state.boardId) return;
+    state.boardId = id;
+    try { await call("kv.set", { key: "board.current", value: id }); } catch (err) {}
+    renderTabs();
+    renderAll();
+  }
+
+  async function addBoard() {
+    var maxSort = state.boards.reduce(function (m, b) { return Math.max(m, num(b.sort)); }, -1);
+    var b = {
+      id: genBoardId(),
+      name: "白板 " + (state.boards.length + 1),
+      sort: maxSort + 1,
+      created_at: new Date().toISOString()
+    };
+    try {
+      await call("row.insert", { table: "boards", row: b });
+    } catch (err) {
+      toast("建不了白板：" + err.message);
+      return;
+    }
+    state.boards.push(b);
+    await switchBoard(b.id);
+    toast("新白板建好了，双击标签可以改名");
+  }
+
+  async function removeBoard(b) {
+    if (state.boards.length <= 1) {
+      toast("至少留一块白板");
+      return;
+    }
+    var mine = state.notes.filter(function (n) { return n.board === b.id; });
+    var ok = await ask(
+      "删除白板「" + b.name + "」？",
+      mine.length ? "上面的 " + mine.length + " 张便签会一起删掉，撤不回来。" : "这块白板是空的。",
+      "删掉"
+    );
+    if (!ok) return;
+
+    for (var i = 0; i < mine.length; i++) {
+      try { await call("row.delete", { table: "notes", id: mine[i].id }); } catch (err) {}
+    }
+    try { await call("row.delete", { table: "boards", id: b.id }); } catch (err) {}
+
+    state.boards = state.boards.filter(function (x) { return x.id !== b.id; });
+    state.notes = state.notes.filter(function (n) { return n.board !== b.id; });
+    if (state.boardId === b.id) state.boardId = state.boards[0].id;
+    renderTabs();
+    renderAll();
+    toast("白板已删除");
+  }
+
+  /* ---------------- 渲染 ---------------- */
+
+  function boardNotes() {
+    return state.notes.filter(function (n) { return n.board === state.boardId; });
+  }
+
+  function renderAll() {
+    board.textContent = "";
+    // 关联线画在最底层：先建 svg，再往上摆便签
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("id", "wires");
+    board.appendChild(svg);
+
+    var list = boardNotes();
+    state.zTop = list.reduce(function (m, n) { return Math.max(m, num(n.z)); }, 0);
+    list.forEach(function (n) { renderNote(n); });
+    updateChrome();
+    growBoard();
+  }
+
+  function applyColor(root, id) {
+    var c = colorOf(id);
+    root.style.background = c.bg;
+    root.style.color = c.fg;
+    var dot = root.querySelector(".dotc");
+    if (dot) dot.style.background = c.dot;
+  }
+
+  /* ---------------- 便签形态 ---------------- */
+
+  var CHAIN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7 0l2.5-2.5a5 5 0 0 0-7-7L11 5"/><path d="M14 11a5 5 0 0 0-7 0l-2.5 2.5a5 5 0 0 0 7 7L13 19"/></svg>';
+
+  function noteKind(n) { return n.kind || "text"; }
+
+  function noteLabel(n) {
+    var t = String(n.title || "").trim();
+    if (t) return t;
+    var k = noteKind(n);
+    if (k === "image") return "图片";
+    if (k === "link") return hostOf(n.body) || "链接";
+    if (k === "todo") {
+      var list = todoList(n);
+      for (var i = 0; i < list.length; i++) if (list[i].t) return list[i].t;
+      return "待办表";
+    }
+    return firstLine(n.body) || "空便签";
+  }
+
+  function buildResize(n, root) {
+    var rs = document.createElement("div");
+    rs.className = "rs";
+    rs.title = "拖动改大小";
+    rs.addEventListener("pointerdown", function (e) { onResizeStart(e, n, root); });
+    return rs;
+  }
+
+  /** 通用标题栏：拖动把手 + 色点 + 标题 + 关联 + 提醒 + 删除 */
+  function buildHead(root, n) {
+    var head = document.createElement("div");
+    head.className = "head";
+    head.addEventListener("pointerdown", function (e) { onDragStart(e, n, root); });
+
+    var grip = document.createElement("span");
+    grip.className = "grip";
+    grip.textContent = "⠿";
+    grip.title = "按住拖动";
+
+    var dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = "dot";
+    dot.title = "换个颜色";
+    // ★ 色点必须在**建出来的时候**就上色：renderNote 里 applyColor 跑在
+    // 标题栏创建之前（那时还没有 .dotc），只在建完之后补一次就够了。
+    var dotc = document.createElement("span");
+    dotc.className = "dotc";
+    dotc.style.background = colorOf(n.color).dot;
+    dot.appendChild(dotc);
+    dot.addEventListener("click", function (e) { e.stopPropagation(); toggleColorPop(root, n); });
+
+    var title = document.createElement("input");
+    title.className = "title";
+    title.placeholder = "标题";
+    title.value = n.title || "";
+    // 平时只读：整条标题栏都能当拖动把手，鼠标不会变成输入光标卡在里面。
+    // 双击才切到可编辑 —— 这是"整条标题栏都能拖"的前提，否则一按标题就开始选字。
+    title.readOnly = true;
+    title.addEventListener("dblclick", function (e) {
+      e.stopPropagation();
+      beginEditTitle(title);
+    });
+    title.addEventListener("input", function () { onTitle(n, title); });
+    title.addEventListener("blur", function () {
+      title.readOnly = true;
+      flushTitle(n, title);
+    });
+    title.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") title.blur();
+      if (e.key === "Escape") { title.value = n.title || ""; title.blur(); }
+    });
+
+    var linkBtn = document.createElement("button");
+    linkBtn.type = "button";
+    linkBtn.className = "iconbtn lnk";
+    linkBtn.title = "关联到另一张便签";
+    linkBtn.innerHTML = CHAIN_SVG;
+    linkBtn.addEventListener("click", function (e) { e.stopPropagation(); toggleLinkMode(n); });
+
+    var bell = document.createElement("button");
+    bell.type = "button";
+    bell.className = "iconbtn bell";
+    bell.title = "设提醒（会出现在待办里）";
+    bell.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>';
+    bell.addEventListener("click", function (e) { e.stopPropagation(); toggleRemindPop(root, n); });
+
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "iconbtn";
+    del.title = "删除这张便签";
+    del.textContent = "\u00d7";
+    del.style.fontSize = "15px";
+    del.addEventListener("click", function (e) { e.stopPropagation(); void removeNote(n); });
+
+    head.appendChild(grip);
+    head.appendChild(dot);
+    head.appendChild(title);
+    head.appendChild(linkBtn);
+    head.appendChild(bell);
+    head.appendChild(del);
+    return head;
+  }
+
+  /** 文字便签的正文：可挂一张图 + 多行文字 */
+  function buildTextBody(root, n) {
+    var body = document.createElement("div");
+    body.className = "body";
+
+    var wrap = document.createElement("div");
+    wrap.className = "imgwrap";
+    wrap.hidden = true;
+    var img = document.createElement("img");
+    img.alt = "";
+    img.addEventListener("load", function () { fitImage(root, n); });
+    img.addEventListener("click", function () { void openLightbox(n); });
+    var imgDel = document.createElement("button");
+    imgDel.type = "button";
+    imgDel.className = "imgdel";
+    imgDel.textContent = "\u00d7";
+    imgDel.title = "移除图片（不会删图床里的原图）";
+    imgDel.addEventListener("click", function (e) { e.stopPropagation(); void detachImage(n, root); });
+    wrap.appendChild(img);
+    wrap.appendChild(imgDel);
+
+    var ta = document.createElement("textarea");
+    ta.value = n.body || "";
+    ta.placeholder = "写点什么\u2026（Ctrl+V 粘图片）";
+    ta.addEventListener("input", function () { onText(n, ta); });
+    ta.addEventListener("blur", function () { flushText(n, ta); });
+    ta.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+
+    body.appendChild(wrap);
+    body.appendChild(ta);
+    return body;
+  }
+
+  /**
+   * 图片便签别拿 320 的缩略图铺满 —— 在 HiDPI 屏上放大就是糊的。
+   * 做法：缩略图只当占位，随后把图床里的原图换上来（同一张图只取一次，缓存在内存里）。
+   */
+  function loadFullImage(n, root) {
+    var img = root && root.querySelector("img.cover");
+    if (!img || !n.gallery_id) return;
+    var hit = state.imgCache[n.gallery_id];
+    if (hit) {
+      if (img.getAttribute("src") !== hit) img.src = hit;
+      return;
+    }
+    if (state.imgPending[n.gallery_id]) return;
+    state.imgPending[n.gallery_id] = true;
+    call("gallery.get", { id: n.gallery_id }).then(function (it) {
+      delete state.imgPending[n.gallery_id];
+      if (!it || !it.dataUrl) return;
+      state.imgCache[n.gallery_id] = it.dataUrl;
+      // 同一张图可能挂在不止一张便签上，一起换掉
+      boardNotes().forEach(function (m) {
+        if (m.gallery_id !== n.gallery_id) return;
+        var el = noteEl(m.id);
+        var im = el && el.querySelector("img.cover");
+        if (im && im.getAttribute("src") !== it.dataUrl) im.src = it.dataUrl;
+      });
+    }).catch(function () {
+      delete state.imgPending[n.gallery_id];
+    });
+  }
+
+  /** 图片便签：整张图铺满，没有标题栏（悬停才出删除/关联） */
+  function buildImageCard(n) {
+    var wrap = document.createElement("div");
+    wrap.className = "coverwrap";
+
+    var img = document.createElement("img");
+    img.className = "cover";
+    img.alt = "";
+    img.draggable = false;
+    if (n.thumb) img.src = n.thumb;
+    img.title = "按住拖动 · 点开看原图";
+    img.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (state.dragMoved) return;          // 拖完那一下不算"点开"
+      void openLightbox(n);
+    });
+    wrap.appendChild(img);
+
+    var tools = document.createElement("div");
+    tools.className = "coverbtns";
+
+    var linkBtn = document.createElement("button");
+    linkBtn.type = "button";
+    linkBtn.className = "lnk";
+    linkBtn.title = "关联到另一张便签";
+    linkBtn.innerHTML = CHAIN_SVG;
+    linkBtn.addEventListener("click", function (e) { e.stopPropagation(); toggleLinkMode(n); });
+
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "del";
+    del.title = "删除这张便签";
+    del.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+    del.addEventListener("click", function (e) { e.stopPropagation(); void removeNote(n); });
+
+    tools.appendChild(linkBtn);
+    tools.appendChild(del);
+    wrap.appendChild(tools);
+    wrap.appendChild(renderRel(n));
+    return wrap;
+  }
+
+  /* ---------------- 待办表 ---------------- */
+
+  function parseItems(raw) {
+    if (!raw) return [];
+    try {
+      var a = JSON.parse(raw);
+      if (!Array.isArray(a)) return [];
+      return a.map(function (x) {
+        return { t: String((x && x.t) || ""), d: x && x.d ? 1 : 0 };
+      });
+    } catch (e) { return []; }
+  }
+
+  /** 空清单也保留一行，否则便签上没有任何可点的地方 */
+  function todoList(n) {
+    var list = parseItems(n.items);
+    if (!list.length) list = [{ t: "", d: 0 }];
+    return list;
+  }
+
+  function renderTodo(n) {
+    var box = document.createElement("div");
+    box.className = "todo";
+    paintTodo(box, n);
+    return box;
+  }
+
+  function paintTodo(box, n) {
+    box.textContent = "";
+    var list = todoList(n);
+
+    list.forEach(function (it, i) {
+      var row = document.createElement("div");
+      row.className = "trow" + (it.d ? " done" : "");
+
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!it.d;
+      cb.title = it.d ? "标记为未完成" : "标记为已完成";
+      cb.addEventListener("click", function (e) { e.stopPropagation(); });
+      cb.addEventListener("change", function () {
+        var cur = todoList(n);
+        if (!cur[i]) return;
+        cur[i].d = cb.checked ? 1 : 0;
+        commitTodo(n, cur);
+      });
+
+      var tx = document.createElement("input");
+      tx.className = "ttext";
+      tx.type = "text";
+      tx.value = it.t || "";
+      tx.placeholder = "待办事项";
+      tx.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+      tx.addEventListener("input", function () {
+        var cur = todoList(n);
+        if (!cur[i]) return;
+        cur[i].t = tx.value;
+        n.items = JSON.stringify(cur);
+        var key = "it" + n.id;
+        if (state.timers[key]) clearTimeout(state.timers[key]);
+        state.timers[key] = setTimeout(function () {
+          delete state.timers[key];
+          saveNew(n, { items: JSON.stringify(todoList(n)) });
+        }, 500);
+      });
+      tx.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          var cur = todoList(n);
+          cur.splice(i + 1, 0, { t: "", d: 0 });
+          commitTodo(n, cur);
+          focusTodoRow(box, i + 1);
+        } else if (e.key === "Backspace" && !tx.value) {
+          e.preventDefault();
+          removeTodoRow(box, n, i);
+        }
+      });
+
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "tdel";
+      del.textContent = "\u00d7";
+      del.title = "删掉这一项";
+      del.addEventListener("click", function (e) { e.stopPropagation(); removeTodoRow(box, n, i); });
+
+      row.appendChild(cb);
+      row.appendChild(tx);
+      row.appendChild(del);
+      box.appendChild(row);
+    });
+
+    var add = document.createElement("button");
+    add.type = "button";
+    add.className = "tadd";
+    add.textContent = "\uff0b 添加一项";
+    add.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var cur = todoList(n);
+      cur.push({ t: "", d: 0 });
+      commitTodo(n, cur);
+      focusTodoRow(box, cur.length - 1);
+    });
+    box.appendChild(add);
+  }
+
+  function commitTodo(n, list) {
+    n.items = JSON.stringify(list);
+    saveNew(n, { items: n.items });
+    var el = noteEl(n.id);
+    var box = el && el.querySelector(".todo");
+    if (box) paintTodo(box, n);
+  }
+
+  function focusTodoRow(box, i) {
+    if (!box) return;
+    var rows = box.querySelectorAll(".ttext");
+    var el = rows[i] || rows[rows.length - 1];
+    if (el && el.focus) el.focus();
+  }
+
+  function removeTodoRow(box, n, i) {
+    var cur = todoList(n);
+    cur.splice(i, 1);
+    if (!cur.length) cur = [{ t: "", d: 0 }];
+    commitTodo(n, cur);
+    focusTodoRow(box, Math.max(0, i - 1));
+  }
+
+  /* ---------------- 链接便签 ---------------- */
+
+  function hostOf(url) {
+    var s = String(url || "").trim();
+    if (!s) return "";
+    try { return new URL(s).host.replace(/^www\./, ""); } catch (e) {}
+    var m = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)/i.exec(s);
+    return m ? m[1].replace(/^www\./, "") : "";
+  }
+
+  function pathOf(url) {
+    var s = String(url || "").trim();
+    if (!s) return "";
+    try {
+      var u = new URL(s);
+      var p = u.pathname + u.search;
+      if (p === "/") p = "";
+      try { p = decodeURI(p); } catch (e) {}
+      return (p || "/").slice(0, 90);
+    } catch (e) {
+      return s.slice(0, 90);
+    }
+  }
+
+  function renderLink(n) {
+    var box = document.createElement("div");
+    box.className = "linkcard";
+
+    var open = document.createElement("button");
+    open.type = "button";
+    open.className = "linkopen";
+    open.title = "点击打开；打不开会自动复制链接";
+    open.innerHTML = '<svg class="lglyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></svg>';
+
+    var txt = document.createElement("span");
+    txt.className = "ltxt";
+    var host = document.createElement("span");
+    host.className = "lhost";
+    host.textContent = hostOf(n.body) || "（还没有地址）";
+    var path = document.createElement("span");
+    path.className = "lpath";
+    path.textContent = pathOf(n.body) || n.body || "";
+    txt.appendChild(host);
+    txt.appendChild(path);
+    open.appendChild(txt);
+    open.addEventListener("click", function (e) { e.stopPropagation(); void openLink(n); });
+
+    var row = document.createElement("div");
+    row.className = "lrow";
+    var copy = document.createElement("button");
+    copy.type = "button";
+    copy.textContent = "复制链接";
+    copy.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (copyText(String(n.body || ""))) toast("链接已复制");
+      else toast("链接：" + n.body, null, null, 6000);
+    });
+    var edit = document.createElement("button");
+    edit.type = "button";
+    edit.textContent = "改地址";
+    edit.addEventListener("click", function (e) { e.stopPropagation(); void editLink(n); });
+    row.appendChild(copy);
+    row.appendChild(edit);
+
+    box.appendChild(open);
+    box.appendChild(row);
+    return box;
+  }
+
+  async function openLink(n) {
+    var url = String(n.body || "").trim();
+    if (!url) { toast("这张便签还没有链接"); return; }
+    try {
+      await call("shell.open", { url: url });
+      return;
+    } catch (err) {
+      // 宿主没申请 shell 能力、或 Rust 的协议白名单不放 http(s)：退回复制
+    }
+    if (copyText(url)) toast("已复制链接，粘到浏览器里打开");
+    else toast("链接：" + url, null, null, 6000);
+  }
+
+  function copyText(text) {
+    var s = String(text || "");
+    if (!s) return false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(s).catch(function () {});
+        return true;
+      }
+    } catch (e) {}
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = s;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand && document.execCommand("copy");
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch (e) { return false; }
+  }
+
+  function normalizeUrl(s) {
+    var v = String(s || "").trim();
+    if (!v) return "";
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(v)) v = "https://" + v;
+    try { new URL(v); } catch (e) { return ""; }
+    return v;
+  }
+
+  async function editLink(n) {
+    var url = await askInput("改链接地址", "粘贴一个网址", n.body || "");
+    if (url === null) return;
+    var clean = normalizeUrl(url);
+    if (!clean) { toast("这个地址看起来不对"); return; }
+    n.body = clean;
+    saveNew(n, { body: clean });
+    refreshNote(n);
+  }
+
+  /* ---------------- 便签之间的关联 ---------------- */
+
+  function parseLinks(n) {
+    var raw = n && n.links;
+    if (!raw) return [];
+    try {
+      var a = JSON.parse(raw);
+      if (!Array.isArray(a)) return [];
+      var out = [];
+      a.forEach(function (x) {
+        var id = String(x || "");
+        if (id && out.indexOf(id) < 0) out.push(id);
+      });
+      return out;
+    } catch (e) { return []; }
+  }
+
+  function renderRel(n) {
+    var box = document.createElement("div");
+    box.className = "rel";
+    var ids = parseLinks(n);
+    if (!ids.length) { box.hidden = true; return box; }
+
+    ids.forEach(function (id) {
+      var other = byId(id);
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "rchip";
+      chip.title = "点一下跳到那张便签；点 \u00d7 断开";
+      var label = document.createElement("span");
+      label.textContent = other ? noteLabel(other) : "（已删除）";
+      var x = document.createElement("b");
+      x.textContent = "\u00d7";
+      x.title = "断开关联";
+      x.addEventListener("click", function (e) {
+        e.stopPropagation();
+        void unlink(n, id);
+      });
+      chip.appendChild(label);
+      chip.appendChild(x);
+      chip.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (other) focusNote(other);
+      });
+      box.appendChild(chip);
+    });
+    return box;
+  }
+
+  function refreshNote(n) {
+    var el = noteEl(n.id);
+    if (el) el.remove();
+    renderNote(n);
+    updateChrome();
+    growBoard();
+  }
+
+  function toggleLinkMode(n) {
+    if (state.linkFrom) { cancelLink(); return; }
+    state.linkFrom = n.id;
+    board.classList.add("linking");
+    var el = noteEl(n.id);
+    if (el) el.classList.add("linkfrom");
+    toast("点另一张便签建立关联（Esc 或点空白处取消）");
+  }
+
+  function cancelLink() {
+    state.linkFrom = "";
+    board.classList.remove("linking");
+    var el = board.querySelector(".note.linkfrom");
+    if (el) el.classList.remove("linkfrom");
+  }
+
+  async function completeLink(target) {
+    var fromId = state.linkFrom;
+    if (!fromId) return;
+    cancelLink();
+    if (fromId === target.id) return;
+    var a = byId(fromId);
+    if (!a) return;
+    if (a.board !== target.board) { toast("两块白板之间还不能连"); return; }
+    var la = parseLinks(a);
+    var lb = parseLinks(target);
+    if (la.indexOf(target.id) >= 0) { toast("这两张已经连着了"); return; }
+    la.push(target.id);
+    lb.push(a.id);
+    try {
+      await call("row.update", { table: "notes", id: a.id, patch: { links: JSON.stringify(la) } });
+      await call("row.update", { table: "notes", id: target.id, patch: { links: JSON.stringify(lb) } });
+    } catch (err) { toast("连不上：" + friendly(err)); return; }
+    a.links = JSON.stringify(la);
+    target.links = JSON.stringify(lb);
+    refreshNote(a);
+    refreshNote(target);
+    toast("已关联「" + noteLabel(target) + "」");
+  }
+
+  async function unlink(a, id) {
+    var b = byId(id);
+    var la = parseLinks(a).filter(function (x) { return x !== id; });
+    a.links = JSON.stringify(la);
+    try {
+      await call("row.update", { table: "notes", id: a.id, patch: { links: a.links } });
+      if (b) {
+        var lb = parseLinks(b).filter(function (x) { return x !== a.id; });
+        b.links = JSON.stringify(lb);
+        await call("row.update", { table: "notes", id: b.id, patch: { links: b.links } });
+      }
+    } catch (err) { toast("断开失败：" + friendly(err)); return; }
+    refreshNote(a);
+    if (b) refreshNote(b);
+  }
+
+  /**
+   * 从待办详情跳回来：定位到那张便签。
+   * 它可能在**另一块白板**上，所以先切板（切板会重建 DOM，之后才能找到元素）。
+   */
+  async function focusNoteById(id) {
+    if (!id) return;
+    var n = byId(id);
+    if (!n) { toast("这张便签已经不在了（可能已被删除）"); return; }
+    if (n.board && n.board !== state.boardId) await switchBoard(n.board);
+    setTimeout(function () {
+      var cur = byId(id);
+      if (!cur) return;
+      var el = noteEl(cur.id);
+      if (el) {
+        state.zTop += 1;
+        cur.z = state.zTop;
+        el.style.zIndex = String(cur.z);
+        saveNew(cur, { z: cur.z });
+      }
+      focusNote(cur);
+    }, 30);
+  }
+
+  /** 点关联小标签：把目标便签滚到视野中间并闪两下 */
+  function focusNote(n) {
+    var s = state.scale || 1;
+    var cx = (num(n.x) + (num(n.w) || DEF_W) / 2) * s;
+    var cy = (num(n.y) + (num(n.h) || DEF_H) / 2) * s;
+    scroll.scrollLeft = Math.max(0, cx - (scroll.clientWidth || 0) / 2);
+    scroll.scrollTop = Math.max(0, cy - (scroll.clientHeight || 0) / 2);
+    var el = noteEl(n.id);
+    if (!el) return;
+    el.classList.remove("flash");
+    el.classList.add("flash");
+    setTimeout(function () { el.classList.remove("flash"); }, 1300);
+  }
+
+  /** 在白板里画关联线（线在便签下面，跟着缩放一起缩） */
+  function renderWires() {
+    var svg = document.getElementById("wires");
+    if (!svg) return;
+    var w = parseFloat(board.style.width) || board.offsetWidth || 1600;
+    var h = parseFloat(board.style.height) || board.offsetHeight || 1000;
+    svg.setAttribute("width", Math.round(w));
+    svg.setAttribute("height", Math.round(h));
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    var list = boardNotes();
+    var map = {};
+    list.forEach(function (n) { map[n.id] = n; });
+
+    var NS = "http://www.w3.org/2000/svg";
+    var seen = {};
+    list.forEach(function (n) {
+      parseLinks(n).forEach(function (id) {
+        var b = map[id];
+        if (!b) return;                                  // 另一块白板上的不画
+        var key = n.id < id ? n.id + "|" + id : id + "|" + n.id;
+        if (seen[key]) return;
+        seen[key] = 1;
+        var x1 = num(n.x) + (num(n.w) || DEF_W) / 2;
+        var y1 = num(n.y) + (num(n.h) || DEF_H) / 2;
+        var x2 = num(b.x) + (num(b.w) || DEF_W) / 2;
+        var y2 = num(b.y) + (num(b.h) || DEF_H) / 2;
+
+        var line = document.createElementNS(NS, "line");
+        line.setAttribute("x1", Math.round(x1));
+        line.setAttribute("y1", Math.round(y1));
+        line.setAttribute("x2", Math.round(x2));
+        line.setAttribute("y2", Math.round(y2));
+        svg.appendChild(line);
+
+        [[x1, y1], [x2, y2]].forEach(function (p) {
+          var dot = document.createElementNS(NS, "circle");
+          dot.setAttribute("cx", Math.round(p[0]));
+          dot.setAttribute("cy", Math.round(p[1]));
+          dot.setAttribute("r", 2.4);
+          svg.appendChild(dot);
+        });
+      });
+    });
+  }
+
+  function renderNote(n) {
+    var kind = noteKind(n);
+    var root = document.createElement("div");
+    root.className = "note kind-" + kind;
+    root.dataset.id = n.id;
+    root.style.left = Math.round(num(n.x)) + "px";
+    root.style.top = Math.round(num(n.y)) + "px";
+    root.style.width = Math.round(num(n.w) || DEF_W) + "px";
+    root.style.height = Math.round(num(n.h) || DEF_H) + "px";
+    root.style.zIndex = String(Math.max(1, Math.round(num(n.z))));
+    applyColor(root, n.color);
+
+    // 关联模式：这一下点击用来"选中目标"，不该再拖、不该再点按钮
+    root.addEventListener("pointerdown", function (e) {
+      if (!state.linkFrom) return;
+      if (e.preventDefault) e.preventDefault();
+      if (e.stopPropagation) e.stopPropagation();
+      void completeLink(n);
+    }, true);
+    root.addEventListener("pointerdown", function () { bringToFront(n, root); });
+
+    if (kind === "image") {
+      root.appendChild(buildImageCard(n));
+      root.appendChild(buildResize(n, root));
+      root.addEventListener("pointerdown", function (e) { onDragStart(e, n, root); });
+      board.appendChild(root);
+      loadFullImage(n, root);
+      renderWires();
+      return root;
+    }
+
+    root.appendChild(buildHead(root, n));
+
+    if (kind === "todo") root.appendChild(renderTodo(n));
+    else if (kind === "link") root.appendChild(renderLink(n));
+    else root.appendChild(buildTextBody(root, n));
+
+    root.appendChild(renderRel(n));
+
+    var remind = document.createElement("div");
+    remind.className = "remind";
+    remind.hidden = true;
+    root.appendChild(remind);
+    root.appendChild(buildResize(n, root));
+
+    board.appendChild(root);
+    renderImage(root, n);
+    renderRemind(root, n);
+    syncBell(root, n);
+    return root;
+  }
+
+  /** 图片高度：按便签宽度等比缩放，最多占正文一半 */
+  function fitImage(root, n) {
+    var wrap = root.querySelector(".imgwrap");
+    var img = wrap && wrap.querySelector("img");
+    if (!wrap || !img || wrap.hidden) return;
+    var natW = img.naturalWidth || 0, natH = img.naturalHeight || 0;
+    if (!natW || !natH) return;
+    var boxW = Math.max(60, (num(n.w) || DEF_W) - 2);
+    var maxH = Math.max(96, (num(n.h) || DEF_H) * 0.52);
+    var h = Math.min(maxH, natH * (boxW / natW));
+    wrap.style.height = Math.round(Math.max(56, h)) + "px";
+  }
+
+  function renderImage(root, n) {
+    // 图片便签：整张图铺满，没有 .imgwrap
+    var cover = root.querySelector("img.cover");
+    if (cover) {
+      if (n.thumb && !cover.getAttribute("src")) cover.src = n.thumb;
+      loadFullImage(n, root);
+      return;
+    }
+    var wrap = root.querySelector(".imgwrap");
+    var img = wrap && wrap.querySelector("img");
+    if (!wrap || !img) return;
+    if (n.thumb) {
+      wrap.hidden = false;
+      if (img.getAttribute("src") !== n.thumb) img.src = n.thumb;
+      fitImage(root, n);
+      return;
+    }
+    if (n.gallery_id) {
+      // 老数据只有 gallery_id：取一次原图、压成缩略图再缓存进表（别把原图塞进 thumb 列）
+      wrap.hidden = false;
+      void call("gallery.get", { id: n.gallery_id }).then(function (it) {
+        if (!it || !it.dataUrl) return;
+        return makeThumb(it.dataUrl, 320).then(function (t) {
+          if (!t) return;
+          n.thumb = t;
+          img.src = t;
+          fitImage(root, n);
+          saveNew(n, { thumb: t });
+        });
+      }).catch(function () {});
+      return;
+    }
+    wrap.hidden = true;
+    wrap.style.height = "0px";
+    img.removeAttribute("src");
+  }
+
+  /** 铃铛：设了提醒就点亮（换成实心 + 强调色），没设就是空心灰 */
+  function syncBell(root, n) {
+    var bell = root.querySelector(".bell");
+    if (!bell) return;
+    var on = !!n.remind_at;
+    bell.classList.toggle("on", on);
+    var svg = bell.querySelector("svg");
+    if (svg) svg.setAttribute("fill", on ? "currentColor" : "none");
+  }
+
+  function renderRemind(root, n) {
+    var el = root.querySelector(".remind");
+    if (!el) return;
+    if (!n.remind_at) { el.hidden = true; el.textContent = ""; el.classList.remove("over"); return; }
+    var t = new Date(n.remind_at);
+    var over = !isNaN(t.getTime()) && t.getTime() < Date.now();
+    el.hidden = false;
+    el.classList.toggle("over", over);
+    el.textContent = (over ? "提醒已过：" : "提醒：") + timeText(n.remind_at);
+    el.title = over ? "这条提醒已经过点了，可以在待办里看到它" : "到点会出现在待办里";
+  }
+
+  function updateChrome() {
+    var n = boardNotes().length;
+    document.getElementById("count").textContent = n ? "共 " + n + " 张" : "";
+    empty.hidden = n > 0;
+  }
+
+  function growBoard() {
+    var w = Math.max(1600, (scroll.clientWidth || 0) + 800);
+    var h = Math.max(1000, (scroll.clientHeight || 0) + 600);
+    var maxR = 0, maxB = 0;
+    boardNotes().forEach(function (n) {
+      maxR = Math.max(maxR, num(n.x) + (num(n.w) || DEF_W));
+      maxB = Math.max(maxB, num(n.y) + (num(n.h) || DEF_H));
+    });
+    state.boardW = Math.round(Math.max(w, maxR + 240));
+    state.boardH = Math.round(Math.max(h, maxB + 200));
+    board.style.width = state.boardW + "px";
+    board.style.height = state.boardH + "px";
+    applyZoom();
+    renderWires();
+  }
+
+  /**
+   * 缩放的两半：
+   *   #board 用 transform 缩（坐标仍是白板单位，存库不受缩放影响）
+   *   #canvas 撑出"缩放后的尺寸"，让滚动条跟着变长 —— transform 不改布局，
+   *   少了这一步放大后右边/下边的内容就滚不到。
+   */
+  function applyZoom() {
+    board.style.transform = "scale(" + state.scale + ")";
+    if (canvas) {
+      canvas.style.width = Math.round(state.boardW * state.scale) + "px";
+      canvas.style.height = Math.round(state.boardH * state.scale) + "px";
+    }
+    var pct = document.getElementById("zoomPct");
+    if (pct) pct.textContent = Math.round(state.scale * 100) + "%";
+  }
+
+  /** 以 (cx, cy) 为锚点缩放：光标底下那一点在白板上保持不动 */
+  function setZoom(next, cx, cy) {
+    var prev = state.scale;
+    next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, next));
+    if (Math.abs(next - prev) < 0.001) return;
+    var rect = scroll.getBoundingClientRect();
+    var ox = typeof cx === "number" ? cx - rect.left : (scroll.clientWidth || 800) / 2;
+    var oy = typeof cy === "number" ? cy - rect.top : (scroll.clientHeight || 600) / 2;
+    var bx = (scroll.scrollLeft + ox) / prev;
+    var by = (scroll.scrollTop + oy) / prev;
+    state.scale = next;
+    applyZoom();
+    scroll.scrollLeft = bx * next - ox;
+    scroll.scrollTop = by * next - oy;
+  }
+
+  /* ---------------- 新建 / 删除 ---------------- */
+
+  function centerPoint(nw, nh) {
+    // 「当前视图的中点」—— 不是白板的中点，也不是级联偏移：
+    // 用户滚动到哪儿，新便签就落在他正看着的那块地方。
+    var w = scroll.clientWidth || 800;
+    var h = scroll.clientHeight || 600;
+    var bw = nw || DEF_W, bh = nh || DEF_H;
+    return {
+      x: scroll.scrollLeft + Math.max(0, w / 2 - bw / 2),
+      y: scroll.scrollTop + Math.max(0, h / 2 - bh / 2)
+    };
+  }
+
+  async function addNote(at, text, opts) {
+    opts = opts || {};
+    var kind = opts.kind || "text";
+    var nw = opts.w || DEF_W, nh = opts.h || DEF_H;
+    var c = centerPoint(nw, nh);
+    var n = {
+      id: genId(),
+      title: opts.title || "",
+      body: text || "",
+      kind: kind,
+      items: opts.items || "",
+      links: "",
+      board: state.boardId,
+      x: Math.max(0, Math.round(at ? at.x : c.x)),
+      y: Math.max(0, Math.round(at ? at.y : c.y)),
+      w: nw,
+      h: nh,
+      color: COLORS[state.notes.length % COLORS.length].id,
+      z: state.zTop + 1,
+      gallery_id: "",
+      thumb: "",
+      remind_at: "",
+      remind_task: "",
+      created_at: new Date().toISOString(),
+      _savedTitle: opts.title || "",
+      _savedBody: text || ""
+    };
+    try {
+      await call("row.insert", { table: "notes", row: toRow(n) });
+    } catch (err) {
+      toast("贴不上去：" + err.message);
+      return null;
+    }
+    state.zTop += 1;
+    state.notes.push(n);
+    var root = renderNote(n);
+    updateChrome();
+    growBoard();
+    // 文字便签：新建后直接落到标题上，敲字就是标题
+    if (kind === "text") {
+      var t = root.querySelector(".title");
+      if (t) beginEditTitle(t);
+    } else if (kind === "todo") {
+      focusTodoRow(root.querySelector(".todo"), 0);
+    }
+    return n;
+  }
+
+  /** 让标题进入可编辑态并全选。双击标题、以及刚新建完都走这里 */
+  function beginEditTitle(input) {
+    if (!input) return;
+    input.readOnly = false;
+    if (input.focus) input.focus();
+    if (input.select) input.select();
+  }
+
+  async function removeNote(n) {
+    try {
+      await call("row.delete", { table: "notes", id: n.id });
+    } catch (err) { toast("删不掉：" + err.message); return; }
+    var i = state.notes.indexOf(n);
+    if (i >= 0) state.notes.splice(i, 1);
+    var el = noteEl(n.id);
+    if (el) el.remove();
+    updateChrome();
+    toast("已删除一张便签", "撤销", function () { void restoreNote(n); }, 6000);
+  }
+
+  async function restoreNote(n) {
+    try {
+      await call("row.insert", { table: "notes", row: toRow(n) });
+    } catch (err) { toast("恢复失败：" + err.message); return; }
+    state.notes.push(n);
+    state.notes.sort(byStack);
+    renderNote(n);
+    updateChrome();
+    growBoard();
+  }
+
+  /* ---------------- 文字 ---------------- */
+
+  function onTitle(n, input) {
+    n.title = input.value;
+    if (state.timers["t" + n.id]) clearTimeout(state.timers["t" + n.id]);
+    state.timers["t" + n.id] = setTimeout(function () { flushTitle(n, input); }, 500);
+  }
+  function flushTitle(n, input) {
+    if (state.timers["t" + n.id]) { clearTimeout(state.timers["t" + n.id]); delete state.timers["t" + n.id]; }
+    if (n._savedTitle === n.title) return;
+    n._savedTitle = n.title;
+    call("row.update", { table: "notes", id: n.id, patch: { title: n.title } }).catch(function (err) {
+      toast("存不进去：" + err.message);
+    });
+  }
+  function onText(n, ta) {
+    n.body = ta.value;
+    if (state.timers[n.id]) clearTimeout(state.timers[n.id]);
+    state.timers[n.id] = setTimeout(function () { flushText(n, ta); }, 500);
+  }
+  function flushText(n, ta) {
+    if (state.timers[n.id]) { clearTimeout(state.timers[n.id]); delete state.timers[n.id]; }
+    if (n._savedBody === n.body) return;
+    n._savedBody = n.body;
+    call("row.update", { table: "notes", id: n.id, patch: { body: n.body } }).catch(function (err) {
+      toast("存不进去：" + err.message);
+    });
+  }
+
+  /* ---------------- 拖动便签 ---------------- */
+
+  function onDragStart(e, n, root) {
+    var t = e.target;
+    if (t && t.closest) {
+      if (t.closest("button") || t.closest("textarea")) return;
+      // 标题只读时它也是把手的一部分（整条标题栏都能拖）；正在敲标题就不拖
+      var inp = t.closest("input");
+      if (inp && !inp.readOnly) return;
+    }
+    if (typeof e.button === "number" && e.button !== 0) return;
+    closePops();
+    state.dragMoved = false;
+    state.drag = { n: n, root: root, sx: e.clientX, sy: e.clientY, bx: num(n.x), by: num(n.y) };
+    root.classList.add("dragging");
+    document.addEventListener("pointermove", onDragMove);
+    document.addEventListener("pointerup", onDragEnd);
+    if (e.preventDefault) e.preventDefault();
+  }
+  function onDragMove(e) {
+    var d = state.drag;
+    if (!d) return;
+    // 指针位移是屏幕像素，除以缩放才是白板单位 —— 2 倍缩放下拖 100px 只该走 50
+    if (Math.abs(e.clientX - d.sx) > 3 || Math.abs(e.clientY - d.sy) > 3) state.dragMoved = true;
+    d.n.x = Math.max(0, d.bx + (e.clientX - d.sx) / state.scale);
+    d.n.y = Math.max(0, d.by + (e.clientY - d.sy) / state.scale);
+    d.root.style.left = Math.round(d.n.x) + "px";
+    d.root.style.top = Math.round(d.n.y) + "px";
+    growBoard();
+  }
+  function onDragEnd() {
+    var d = state.drag;
+    if (!d) return;
+    state.drag = null;
+    document.removeEventListener("pointermove", onDragMove);
+    document.removeEventListener("pointerup", onDragEnd);
+    d.root.classList.remove("dragging");
+    saveNew(d.n, { x: Math.round(d.n.x), y: Math.round(d.n.y) });
+  }
+
+  function bringToFront(n, root) {
+    if (n.z === state.zTop) return;
+    state.zTop += 1;
+    n.z = state.zTop;
+    root.style.zIndex = String(n.z);
+    saveNew(n, { z: n.z });
+  }
+
+  /* ---------------- 缩放便签 ---------------- */
+
+  function onResizeStart(e, n, root) {
+    if (typeof e.button === "number" && e.button !== 0) return;
+    closePops();
+    state.resize = { n: n, root: root, sx: e.clientX, sy: e.clientY, bw: num(n.w) || DEF_W, bh: num(n.h) || DEF_H };
+    document.addEventListener("pointermove", onResizeMove);
+    document.addEventListener("pointerup", onResizeEnd);
+    if (e.preventDefault) e.preventDefault();
+    if (e.stopPropagation) e.stopPropagation();
+  }
+  function onResizeMove(e) {
+    var d = state.resize;
+    if (!d) return;
+    d.n.w = Math.min(MAX_W, Math.max(MIN_W, d.bw + (e.clientX - d.sx) / state.scale));
+    d.n.h = Math.min(MAX_H, Math.max(MIN_H, d.bh + (e.clientY - d.sy) / state.scale));
+    d.root.style.width = Math.round(d.n.w) + "px";
+    d.root.style.height = Math.round(d.n.h) + "px";
+    fitImage(d.root, d.n);
+    growBoard();
+  }
+  function onResizeEnd() {
+    var d = state.resize;
+    if (!d) return;
+    state.resize = null;
+    document.removeEventListener("pointermove", onResizeMove);
+    document.removeEventListener("pointerup", onResizeEnd);
+    saveNew(d.n, { w: Math.round(d.n.w), h: Math.round(d.n.h) });
+  }
+
+  /* ---------------- 平移白板 ---------------- */
+
+  function onBoardDown(e) {
+    if (state.linkFrom) { cancelLink(); return; }   // 关联模式下点空白 = 取消
+    var btn = typeof e.button === "number" ? e.button : 0;
+    // 中键：在哪儿按都能拖白板（便签上、空白处都行）—— 左键拖动会误选文字，所以平移归中键
+    if (btn === 1) { startPan(e); return; }
+    if (btn !== 0) return;
+    if (e.target !== board) return;          // 左键只认空白处
+    closePops();                             // 左键点空白：只负责收起浮层
+  }
+
+  function startPan(e) {
+    if (e.preventDefault) e.preventDefault();
+    closePops();
+    state.pan = {
+      sx: e.clientX, sy: e.clientY,
+      sl: scroll.scrollLeft, st: scroll.scrollTop,
+      moved: false
+    };
+    stage.classList.add("panning");
+    document.addEventListener("pointermove", onPanMove);
+    document.addEventListener("pointerup", onPanEnd);
+  }
+  function onPanMove(e) {
+    var p = state.pan;
+    if (!p) return;
+    var dx = e.clientX - p.sx, dy = e.clientY - p.sy;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) p.moved = true;
+    scroll.scrollLeft = p.sl - dx;
+    scroll.scrollTop = p.st - dy;
+    if (p.moved && e.cancelable) e.preventDefault();
+  }
+  function onPanEnd() {
+    var p = state.pan;
+    if (!p) return;
+    state.pan = null;
+    stage.classList.remove("panning");
+    document.removeEventListener("pointermove", onPanMove);
+    document.removeEventListener("pointerup", onPanEnd);
+    if (p.moved) state.lastPanAt = Date.now();
+  }
+
+  /* ---------------- 浮层：颜色 / 提醒 ---------------- */
+
+  function closePops() {
+    var all = board.querySelectorAll(".pop");
+    for (var i = 0; i < all.length; i++) all[i].remove();
+  }
+
+  function toggleColorPop(root, n) {
+    var had = root.querySelector(".pop.sw");
+    closePops();
+    if (had) return;
+    bringToFront(n, root);   // 浮层挂在便签里，便签不抬到最上面就会被别的便签压住
+    var p = document.createElement("div");
+    p.className = "pop sw";
+    var row = document.createElement("div");
+    row.className = "swatches";
+    COLORS.forEach(function (c) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.dataset.color = c.id;
+      b.title = c.id;
+      b.style.background = c.bg;
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        n.color = c.id;
+        applyColor(root, c.id);
+        p.remove();
+        saveNew(n, { color: c.id });
+      });
+      row.appendChild(b);
+    });
+
+    /* 自定义颜色：最后一个是取色器（原生 input[type=color]，WebView2 里是系统色板）。
+       取完之后直接落库成 #rrggbb —— colorOf 认得这种值。 */
+    var custom = document.createElement("label");
+    custom.className = "cus";
+    custom.title = "自己调一个颜色";
+    var picker = document.createElement("input");
+    picker.type = "color";
+    picker.value = /^#[0-9a-f]{6}$/i.test(String(n.color || "")) ? n.color : "#fdf3c8";
+    picker.addEventListener("input", function () {
+      n.color = picker.value;
+      applyColor(root, picker.value);
+    });
+    picker.addEventListener("change", function () {
+      saveNew(n, { color: n.color });
+      p.remove();
+    });
+    custom.appendChild(picker);
+    row.appendChild(custom);
+
+    p.appendChild(row);
+    root.appendChild(p);
+  }
+
+  /**
+   * 提醒面板：自绘的日历 + 时刻。
+   *
+   * 为什么不用 <input type="datetime-local">：它的样子完全由 WebView2 决定
+   * （灰扑扑一个系统控件），而且要点开两级系统弹层；这里要的是"点两下就定好"。
+   * 结构：月份头 → 7×6 的日格（周一开头）→ 时刻 + 今天/明天 → 取消/设提醒。
+   */
+  function toggleRemindPop(root, n) {
+    var had = root.querySelector(".pop.rm");
+    closePops();
+    if (had) return;
+    bringToFront(n, root);   // 浮层挂在便签里，便签不抬到最上面会被别的便签压住
+
+    var seed = n.remind_at ? new Date(n.remind_at) : defaultRemind();
+    if (isNaN(seed.getTime())) seed = defaultRemind();
+    state.pickDate = dateStr(seed);
+    state.pickTime = pad(seed.getHours()) + ":" + pad(seed.getMinutes());
+    state.pickMonth = new Date(seed.getFullYear(), seed.getMonth(), 1);
+
+    var p = document.createElement("div");
+    p.className = "pop rm";
+
+    var cal = document.createElement("div");
+    cal.className = "cal";
+    p.appendChild(cal);
+    drawCal(cal, p);
+
+    var row2 = document.createElement("div");
+    row2.className = "calrow";
+    var tm = document.createElement("input");
+    tm.type = "time";
+    tm.className = "tm";
+    tm.value = state.pickTime;
+    tm.addEventListener("change", function () {
+      state.pickTime = tm.value || "09:00";
+      tm.value = state.pickTime;
+    });
+    var bToday = document.createElement("button");
+    bToday.type = "button";
+    bToday.textContent = "今天";
+    bToday.addEventListener("click", function () {
+      state.pickDate = dateStr(new Date());
+      state.pickMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+      drawCal(cal, p);
+    });
+    var bTomorrow = document.createElement("button");
+    bTomorrow.type = "button";
+    bTomorrow.textContent = "明天";
+    bTomorrow.addEventListener("click", function () {
+      var d = new Date();
+      d.setDate(d.getDate() + 1);
+      state.pickDate = dateStr(d);
+      state.pickMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+      drawCal(cal, p);
+    });
+    row2.appendChild(tm);
+    row2.appendChild(bToday);
+    row2.appendChild(bTomorrow);
+    p.appendChild(row2);
+
+    var row = document.createElement("div");
+    row.className = "row";
+    if (n.remind_at) {
+      var cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "danger";
+      cancel.textContent = "取消提醒";
+      cancel.addEventListener("click", function () { void cancelReminder(n, root, p); });
+      row.appendChild(cancel);
+    }
+    var ok = document.createElement("button");
+    ok.type = "button";
+    ok.className = "primary";
+    ok.textContent = n.remind_at ? "改时间" : "设提醒";
+    ok.addEventListener("click", function () {
+      var d = new Date(state.pickDate + "T" + state.pickTime + ":00");
+      if (isNaN(d.getTime())) { toast("先选一个日期和时刻"); return; }
+      void setReminder(n, root, d, p);
+    });
+    row.appendChild(ok);
+    p.appendChild(row);
+    root.appendChild(p);
+  }
+
+  /** 画一份月历（点箭头换月、点日子选日期，都就地重画这一块） */
+  function drawCal(cal, pop) {
+    cal.textContent = "";
+    var y = state.pickMonth.getFullYear();
+    var m = state.pickMonth.getMonth();
+
+    var head = document.createElement("div");
+    head.className = "calhead";
+    var prev = document.createElement("button");
+    prev.type = "button";
+    prev.textContent = "\u2039";
+    prev.title = "上个月";
+    prev.addEventListener("click", function () {
+      state.pickMonth = new Date(y, m - 1, 1);
+      drawCal(cal, pop);
+    });
+    var title = document.createElement("span");
+    title.textContent = y + " 年 " + (m + 1) + " 月";
+    var next = document.createElement("button");
+    next.type = "button";
+    next.textContent = "\u203a";
+    next.title = "下个月";
+    next.addEventListener("click", function () {
+      state.pickMonth = new Date(y, m + 1, 1);
+      drawCal(cal, pop);
+    });
+    head.appendChild(prev);
+    head.appendChild(title);
+    head.appendChild(next);
+
+    var grid = document.createElement("div");
+    grid.className = "calgrid";
+    ["一", "二", "三", "四", "五", "六", "日"].forEach(function (d) {
+      var s = document.createElement("span");
+      s.className = "dow";
+      s.textContent = d;
+      grid.appendChild(s);
+    });
+
+    var firstDow = (new Date(y, m, 1).getDay() + 6) % 7;   // 周一 = 0
+    var days = new Date(y, m + 1, 0).getDate();
+    var todayS = dateStr(new Date());
+    for (var i = 0; i < firstDow; i++) grid.appendChild(document.createElement("span"));
+    for (var d = 1; d <= days; d++) {
+      (function (day) {
+        var ds = y + "-" + pad(m + 1) + "-" + pad(day);
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "day" + (ds === state.pickDate ? " sel" : "") + (ds === todayS ? " today" : "");
+        b.dataset.date = ds;
+        b.textContent = String(day);
+        b.addEventListener("click", function () {
+          state.pickDate = ds;
+          drawCal(cal, pop);
+        });
+        grid.appendChild(b);
+      })(d);
+    }
+
+    cal.appendChild(head);
+    cal.appendChild(grid);
+  }
+
+  /** 本地日期 YYYY-MM-DD（不用 toISOString，会被时区推到前一天） */
+  function dateStr(d) {
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+
+  function toLocalInput(d) {
+    if (!(d instanceof Date) || isNaN(d.getTime())) return "";
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+      "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+  function defaultRemind() {
+    var d = new Date(Date.now() + 60 * 60000);
+    d.setSeconds(0, 0);
+    return d;
+  }
+
+  async function setReminder(n, root, when, pop) {
+    var title = (n.title || firstLine(n.body) || "便签提醒").slice(0, 190);
+    try {
+      // 已经有提醒：先撤掉旧的，避免同一张便签挂两条待办
+      if (n.remind_task) {
+        try { await call("task.remind", { action: "cancel", taskId: n.remind_task }); } catch (err) {}
+      }
+      var res = await call("task.remind", {
+        title: title,
+        dueAt: when.toISOString(),
+        note: String(n.body || "").slice(0, 500),
+        ref: String(n.id)
+      });
+      n.remind_at = String(res.remindAt || when.toISOString());
+      n.remind_task = String(res.taskId || "");
+      saveNew(n, { remind_at: n.remind_at, remind_task: n.remind_task });
+      renderRemind(root, n);
+      syncBell(root, n);
+      if (pop) pop.remove();
+      toast("提醒已放进待办（" + (res.listName || "清单") + "），有提醒的那天会出现在「今天」");
+    } catch (err) {
+      toast("设提醒失败：" + friendly(err));
+    }
+  }
+
+  async function cancelReminder(n, root, pop) {
+    var taskId = n.remind_task;
+    n.remind_at = "";
+    n.remind_task = "";
+    if (taskId) {
+      try { await call("task.remind", { action: "cancel", taskId: taskId }); } catch (err) {}
+    }
+    saveNew(n, { remind_at: "", remind_task: "" });
+    renderRemind(root, n);
+    syncBell(root, n);
+    if (pop) pop.remove();
+    toast("提醒取消了");
+  }
+
+  /* ---------------- 图片（图床） ---------------- */
+
+  async function attachImage(n, root, file) {
+    if (!file || !/^image\//.test(file.type || "")) { toast("只支持图片文件"); return; }
+    toast("正在存进图床…", null, null, 1400);
+    try {
+      var dataUrl = await readAsDataURL(file);
+      var thumb = await makeThumb(dataUrl, 320);
+      var item = await call("gallery.put", {
+        dataUrl: dataUrl,
+        title: (n.title || firstLine(n.body) || "便签图片").slice(0, 80),
+        note: "来自便签"
+      });
+      n.gallery_id = item.id;
+      n.thumb = thumb || item.thumb || "";
+      saveNew(n, { gallery_id: n.gallery_id, thumb: n.thumb });
+      renderImage(root, n);
+      toast("图片已存进图床");
+    } catch (err) {
+      toast("图片没存进去：" + friendly(err));
+    }
+  }
+
+  async function detachImage(n, root) {
+    n.gallery_id = "";
+    n.thumb = "";
+    saveNew(n, { gallery_id: "", thumb: "" });
+    renderImage(root, n);
+    toast("已从便签移除（图床里的原图还在）");
+  }
+
+  /** 读图片原始尺寸；读不到（或无头环境没有解码）就退回默认尺寸 */
+  function imageSize(file) {
+    return new Promise(function (resolve) {
+      var done = false;
+      var finish = function (v) {
+        if (done) return;
+        done = true;
+        resolve(v || {});
+      };
+      setTimeout(function () { finish({}); }, 400);
+      try {
+        var url = URL.createObjectURL(file);
+        var im = new Image();
+        im.onload = function () {
+          var r = { w: im.naturalWidth || 0, h: im.naturalHeight || 0 };
+          try { URL.revokeObjectURL(url); } catch (e) {}
+          finish(r);
+        };
+        im.onerror = function () {
+          try { URL.revokeObjectURL(url); } catch (e) {}
+          finish({});
+        };
+        im.src = url;
+      } catch (e) { finish({}); }
+    });
+  }
+
+  /** 图片便签：整张图就是一张便签，宽高按原图比例 */
+  async function addImageNote(file, at) {
+    if (!file || !/^image\//.test(file.type || "")) { toast("只支持图片文件"); return; }
+    var size = await imageSize(file);
+    var w = 260;
+    var h = size.w && size.h ? Math.round(w * (size.h / size.w)) : 190;
+    h = Math.max(110, Math.min(430, h));
+    var n = await addNote(at ? { x: at.x - w / 2, y: at.y - h / 2 } : null, "", { kind: "image", w: w, h: h });
+    if (!n) return;
+    var root = noteEl(n.id);
+    if (root) await attachImage(n, root, file);
+  }
+
+  /** 新建菜单：fixed 定位 + 按触发按钮算坐标并钳进视口（别用 absolute right:0） */
+  function openNewMenu(anchor) {
+    var m = document.getElementById("newmenu");
+    m.hidden = false;
+    var r = anchor.getBoundingClientRect();
+    var w = m.offsetWidth || 186;
+    var h = m.offsetHeight || 168;
+    var left = Math.min(window.innerWidth - w - 8, Math.max(8, r.right - w));
+    var top = r.bottom + 6;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+    m.style.left = Math.round(left) + "px";
+    m.style.top = Math.round(top) + "px";
+  }
+
+  /** 菜单里选的那一格 → 真的建一张 */
+  async function createByKind(kind) {
+    if (kind === "image") { fileInput.click(); return; }
+    if (kind === "todo") { await addNote(null, "", { kind: "todo", items: "[]" }); return; }
+    if (kind === "link") {
+      var raw = await askInput("添加链接", "粘贴一个网址，便签上点一下就能打开", "");
+      if (raw === null) return;
+      var url = normalizeUrl(raw);
+      if (!url) { toast("这个地址看起来不对"); return; }
+      await addNote(null, url, { kind: "link", title: hostOf(url) });
+      return;
+    }
+    await addNote();
+  }
+
+  async function openLightbox(n) {
+    if (!n.gallery_id) return;
+    var box = document.getElementById("lightbox");
+    var lb = document.getElementById("lbImg");
+    var hit = state.imgCache[n.gallery_id];
+    if (hit) { lb.src = hit; box.hidden = false; return; }
+    try {
+      var it = await call("gallery.get", { id: n.gallery_id });
+      if (!it || !it.dataUrl) throw new Error("图床里没有这张图");
+      state.imgCache[n.gallery_id] = it.dataUrl;
+      lb.src = it.dataUrl;
+      box.hidden = false;
+    } catch (err) { toast("取原图失败：" + err.message); }
+  }
+
+  function boardPoint(clientX, clientY) {
+    // getBoundingClientRect 拿到的是缩放后的矩形，除以 scale 才是白板坐标
+    var r = board.getBoundingClientRect();
+    var s = state.scale || 1;
+    return { x: Math.max(0, (clientX - r.left) / s), y: Math.max(0, (clientY - r.top) / s) };
+  }
+
+  /* ---------------- 启动 ---------------- */
+
+  /* 1.2 秒没等到宿主上下文 = 当作独立运行（浏览器里直接打开这个 html 的情形）。
+     只是给测试与样式一个可判定的状态，不影响任何功能分支。 */
+  setTimeout(function () {
+    if (!ctx) document.body.dataset.bindState = "standalone";
+  }, 1200);
+
+  (async function boot() {
+    stage = document.getElementById("stage");
+    scroll = document.getElementById("scroll");
+    canvas = document.getElementById("canvas");
+    board = document.getElementById("board");
+    empty = document.getElementById("empty");
+    toastEl = document.getElementById("toast");
+    fileInput = document.getElementById("file");
+
+    document.getElementById("add").addEventListener("click", function () { void addNote(); });
+    document.getElementById("addBoard").addEventListener("click", function () { void addBoard(); });
+
+    /* 新建菜单：文字 / 图片 / 待办表 / 链接 */
+    var newMenu = document.getElementById("newmenu");
+    document.getElementById("addMore").addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (!newMenu.hidden) { newMenu.hidden = true; return; }
+      openNewMenu(this);
+    });
+    newMenu.addEventListener("click", function (e) {
+      var b = e.target && e.target.closest ? e.target.closest("button[data-kind]") : null;
+      if (!b) return;
+      newMenu.hidden = true;
+      void createByKind(b.dataset.kind);
+    });
+    document.addEventListener("pointerdown", function (e) {
+      if (newMenu.hidden) return;
+      if (e.target && e.target.closest && (e.target.closest("#newmenu") || e.target.closest("#addMore"))) return;
+      newMenu.hidden = true;
+    }, true);
+    document.getElementById("askInput").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); closeAsk(true); }
+    });
+
+    /* 标签多的时候：滚轮直接横滚（比去拖那条看不见的滚动条顺手） */
+    document.getElementById("tabs").addEventListener("wheel", function (e) {
+      var el = this;
+      if (el.scrollWidth <= el.clientWidth + 1) return;
+      if (!e.deltaY) return;
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    }, { passive: false });
+    window.addEventListener("resize", syncTabsFade);
+
+    /* 自绘确认框的三个出口 */
+    document.getElementById("askNo").addEventListener("click", function () { closeAsk(false); });
+    document.getElementById("askYes").addEventListener("click", function () { closeAsk(true); });
+    document.getElementById("ask").addEventListener("click", function (e) {
+      if (e.target === this) closeAsk(false);
+    });
+
+    /* 缩放：滚轮（含 Ctrl+滚轮）以光标为锚点；Shift+滚轮横向平移 */
+    scroll.addEventListener("wheel", function (e) {
+      if (e.shiftKey) {
+        e.preventDefault();
+        scroll.scrollLeft += e.deltaY;
+        return;
+      }
+      e.preventDefault();
+      var factor = Math.exp(-(e.deltaY || 0) * 0.0015);
+      setZoom(state.scale * factor, e.clientX, e.clientY);
+    }, { passive: false });
+    document.getElementById("zoomIn").addEventListener("click", function () { setZoom(state.scale * 1.2); });
+    document.getElementById("zoomOut").addEventListener("click", function () { setZoom(state.scale / 1.2); });
+    document.getElementById("zoomPct").addEventListener("click", function () { setZoom(1); });
+
+    fileInput.addEventListener("change", function () {
+      var files = [];
+      for (var i = 0; i < fileInput.files.length; i++) files.push(fileInput.files[i]);
+      fileInput.value = "";              // 先抓走再清：Chromium 里清 value 会就地清空 FileList
+      files.forEach(function (f) { void addImageNote(f); });
+    });
+
+    /* 平移：空白处按住拖 */
+    board.addEventListener("pointerdown", onBoardDown);
+
+    /* 双击空白处新建（刚平移过就不算，免得松手就多一张） */
+    board.addEventListener("dblclick", function (e) {
+      if (e.target !== board) return;
+      if (Date.now() - state.lastPanAt < 350) return;
+      var p = boardPoint(e.clientX, e.clientY);
+      void addNote({ x: p.x - DEF_W / 2 + 40, y: p.y - 20 });
+    });
+
+    /* 粘贴图片：便签里粘 = 挂到这张；空白处粘 = 新建一张图片便签 */
+    document.addEventListener("paste", function (e) {
+      var dt = e.clipboardData;
+      if (!dt || !dt.items) return;
+      var file = null;
+      for (var i = 0; i < dt.items.length; i++) {
+        var it = dt.items[i];
+        if (it.kind === "file" && /^image\//.test(it.type)) { file = it.getAsFile(); break; }
+      }
+      if (!file) return;
+      e.preventDefault();
+      var host = e.target && e.target.closest ? e.target.closest(".note") : null;
+      var n = host ? byId(host.dataset.id) : null;
+      if (n && host) { void attachImage(n, host, file); return; }
+      void addImageNote(file);
+    });
+
+    /* 拖文件进来：落在便签上=挂上去，落在空白处=新便签 */
+    document.addEventListener("dragover", function (e) { e.preventDefault(); });
+    document.addEventListener("drop", function (e) {
+      var dt = e.dataTransfer;
+      if (!dt || !dt.files || !dt.files.length) return;
+      e.preventDefault();
+      var host = e.target && e.target.closest ? e.target.closest(".note") : null;
+      var n = host ? byId(host.dataset.id) : null;
+      var p = boardPoint(e.clientX, e.clientY);
+      for (var i = 0; i < dt.files.length; i++) {
+        var f = dt.files[i];
+        if (!/^image\//.test(f.type || "")) continue;
+        if (n && host) { void attachImage(n, host, f); break; }
+        void addImageNote(f, { x: p.x, y: p.y });
+      }
+    });
+
+    document.addEventListener("pointerdown", function (e) {
+      if (!e.target || !e.target.closest) return;
+      if (e.target.closest(".dot") || e.target.closest(".pop") || e.target.closest(".iconbtn")) return;
+      closePops();
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Escape") return;
+      var askBox = document.getElementById("ask");
+      if (askBox && !askBox.hidden) { closeAsk(false); return; }
+      if (state.linkFrom) { cancelLink(); return; }
+      var menu = document.getElementById("newmenu");
+      if (menu && !menu.hidden) { menu.hidden = true; return; }
+      closePops();
+      var lb = document.getElementById("lightbox");
+      if (!lb.hidden) lb.hidden = true;
+    });
+    document.getElementById("lbClose").addEventListener("click", function () {
+      document.getElementById("lightbox").hidden = true;
+    });
+    document.getElementById("lightbox").addEventListener("click", function (e) {
+      if (e.target === this) this.hidden = true;
+    });
+    window.addEventListener("resize", function () { growBoard(); });
+
+    await probePos();
+    await load();
+    if (state.posOk === false) toast("宿主版本较旧：位置、尺寸、图片、提醒只在本页有效");
+
+    booted = true;
+    if (pendingFocus) {
+      var fid = pendingFocus;
+      pendingFocus = "";
+      void focusNoteById(fid);
+    }
+    if (pendingIntent !== null) {
+      var text = pendingIntent;
+      pendingIntent = null;
+      void addNote(null, text);
+    }
+    growBoard();
+  })();
+})();
+</script>
+</body>
+</html>

@@ -97,7 +97,7 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     // 不需要用户导出导入。
     id: "abnormal-ticket",
     name: "异常单号登记",
-    version: "1.20.1",
+    version: "1.21.0",
     description:
       "快递异常单登记：订单号大横条粘 ERP 链接，单号和店铺一起认出来；快递公司 / 情况用胶囊点选，登记时间自动记，要填的只有提醒时刻（到点自动进待办）。流程每步可写描述、可附图，逾期泛红；整单图与步骤图分开摆，图能直接 Ctrl+V 粘，字节存进工作台图床的独立来源。查看页四个筛选、登记 / 提醒两种排序，表格页整本台账一屏铺开、列自己配。WPS 在线台账走 MCP 直连：设置里授权一次就能读写你那张云表格（没有现成的表就直接新建一张，14 个表头一次写好）—— 推送按单号增量写回 14 列（自己加的列一格不碰），拉取先摆逐字段差异再确认，启动自动对账、页头标出「云端有 N 处不同」，每推一次留一条记录。整本台账能导出成一个 JSON 文件、也导得回来（合并只补缺的，覆盖连流水一起换）；图片默认只带缩略图，勾一下才连原图 —— 换机器时这本台账跟着走。",
     // receipt（单据）已在 icons.ts 白名单里；写错会静默退回包裹图标
@@ -176,6 +176,144 @@ const BUILTIN_TOOLS: ToolManifest[] = [
           indexes: [{ columns: ["ticket_id"] }],
         },
       ],
+    },
+  },
+  {
+    // 便签：一块块白板上贴便签。四种形态（文字 / 整张图 / 待办表 / 链接）之间还能互相关联，
+    // 位置、尺寸、纸色、图片、清单、关联全落在自己的 notes / boards 两张表里。
+    // gallery = 图片进工作台图床；task = 提醒落待办（带 ref，待办详情能跳回这张便签）；
+    // kv = 记住当前停在哪块白板；shell = 链接便签点一下交给系统浏览器。
+    id: "scratchpad",
+    name: "便签",
+    version: "2.3.5",
+    description:
+      "白板便签：中键拖动平移、滚轮缩放，双击空白处贴一张；可以开多块白板。便签有文字、图片（整张图就是便签，显示图床原图）、待办表、链接四种，可换纸色、可调大小、可设提醒，便签之间还能关联（板上画线、底部出标签，可跳转可断开）。位置、尺寸、颜色、图片、清单、关联都存在工具自己的私有表里，关掉重开原位原样。",
+    icon: "sticky-note",
+    entry: "index.html",
+    dbVersion: 5,
+    author: "内置工具",
+    capabilities: ["gallery", "task", "kv", "shell"],
+    schema:     {
+      "tables": [
+        {
+          "name": "notes",
+          "columns": [
+            {
+              "name": "id",
+              "type": "text",
+              "pk": true
+            },
+            {
+              "name": "title",
+              "type": "text"
+            },
+            {
+              "name": "body",
+              "type": "text"
+            },
+            {
+              "name": "tag",
+              "type": "text"
+            },
+            {
+              "name": "board",
+              "type": "text"
+            },
+            {
+              "name": "x",
+              "type": "integer"
+            },
+            {
+              "name": "y",
+              "type": "integer"
+            },
+            {
+              "name": "w",
+              "type": "integer"
+            },
+            {
+              "name": "h",
+              "type": "integer"
+            },
+            {
+              "name": "color",
+              "type": "text"
+            },
+            {
+              "name": "z",
+              "type": "integer"
+            },
+            {
+              "name": "gallery_id",
+              "type": "text"
+            },
+            {
+              "name": "thumb",
+              "type": "text"
+            },
+            {
+              "name": "remind_at",
+              "type": "text"
+            },
+            {
+              "name": "remind_task",
+              "type": "text"
+            },
+            {
+              "name": "created_at",
+              "type": "text"
+            },
+            {
+              "name": "kind",
+              "type": "text"
+            },
+            {
+              "name": "items",
+              "type": "text"
+            },
+            {
+              "name": "links",
+              "type": "text"
+            }
+          ],
+          "indexes": [
+            {
+              "columns": [
+                "created_at"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "boards",
+          "columns": [
+            {
+              "name": "id",
+              "type": "text",
+              "pk": true
+            },
+            {
+              "name": "name",
+              "type": "text"
+            },
+            {
+              "name": "sort",
+              "type": "integer"
+            },
+            {
+              "name": "created_at",
+              "type": "text"
+            }
+          ],
+          "indexes": [
+            {
+              "columns": [
+                "sort"
+              ]
+            }
+          ]
+        }
+      ]
     },
   },
   // 这里**没有五子棋**，是故意的。
