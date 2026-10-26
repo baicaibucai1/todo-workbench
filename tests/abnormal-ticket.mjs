@@ -2192,6 +2192,18 @@ console.log("\n15. 备份与恢复：导出一个文件，再导回来（v1.19.0
     !!bak && !!bak.binding && bak.binding.fileId === "575451541893",
     JSON.stringify(bak && bak.binding));
 
+  /* 真机上最可能撞到的一种：File System Access 存在，但跨域 iframe 里**同步抛**
+     SecurityError。那时必须退回普通下载 —— 用 .catch() 接不住同步抛的这类错。 */
+  Object.defineProperty(win, "isSecureContext", { configurable: true, get: () => true });
+  win.showSaveFilePicker = function () { throw new Error("SecurityError: cross-origin"); };
+  bakMsgEl.textContent = "";
+  lastBlob = null;
+  doc.getElementById("bakExport").click();
+  await waitFor(() => /已导出|导出失败/.test(bakText()), 8000);
+  check("「另存为」同步抛错时退回普通下载（不是整条导出失败）",
+    /已导出/.test(bakText()) && !!lastBlob, bakText());
+  win.showSaveFilePicker = undefined;
+
   /* --- 导出（勾上原图） --- */
   doc.getElementById("bakOriginals").checked = true;
   bakMsgEl.textContent = "";

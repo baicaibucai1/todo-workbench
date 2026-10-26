@@ -5333,8 +5333,9 @@
   }
 
   /* 存文件：优先弹系统「另存为」（File System Access），不行就退回普通下载。
-     ★ 工具跑在 sandbox iframe 里，showSaveFilePicker 多半会被跨域限制挡掉 ——
-     所以下面这个 catch 不是"以防万一"，是**正常路径**。 */
+     ★ 工具跑在 sandbox iframe 里，showSaveFilePicker 会被跨域限制挡掉 ——
+     所以这个 catch 不是"以防万一"，是**正常路径**。而且它可能**同步抛**
+     （SecurityError），不是只会 reject：整段必须包在 try 里，用 .catch() 接不住。 */
   function bakDownload(blob, name) {
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
@@ -5346,22 +5347,22 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
     return { ok: true, picked: false, name: name };
   }
-  function bakSave(blob, name) {
+  async function bakSave(blob, name) {
     var can = typeof window.showSaveFilePicker === "function" && window.isSecureContext === true;
-    if (!can) return Promise.resolve(bakDownload(blob, name));
-    return window.showSaveFilePicker({
-      suggestedName: name,
-      types: [{ description: "备份文件", accept: { "application/json": [".json"] } }],
-    }).then(function (h) {
-      return h.createWritable().then(function (w) {
-        return w.write(blob)
-          .then(function () { return w.close(); })
-          .then(function () { return { ok: true, picked: true, name: h.name || name }; });
+    if (!can) return bakDownload(blob, name);
+    try {
+      var h = await window.showSaveFilePicker({
+        suggestedName: name,
+        types: [{ description: "备份文件", accept: { "application/json": [".json"] } }],
       });
-    }).catch(function (err) {
+      var w = await h.createWritable();
+      await w.write(blob);
+      await w.close();
+      return { ok: true, picked: true, name: h.name || name };
+    } catch (err) {
       if (err && err.name === "AbortError") return { ok: false, aborted: true };
       return bakDownload(blob, name);     // 权限 / 跨域限制 → 退回下载
-    });
+    }
   }
 
   $("bakExport").onclick = function () {
