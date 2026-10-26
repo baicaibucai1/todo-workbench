@@ -109,30 +109,6 @@
   button.danger { color: var(--danger); }
   button.mini { padding: 2px 8px; font-size: 12px; border-radius: 4px; }
 
-  /* ---------- 数据库列表（设置页，v1.19.0） ---------- */
-  /* 一行一个库，点行切过去。做法跟"下拉选项"那块一样：整块重画，样式只有这几条。
-     ★ 库名那格必须 min-width:0 + nowrap + ellipsis —— flex 里的裸文本是可压缩的，
-       不给约束的话名字会被挤成一字一列（这个坑在工具区踩过好几次）。 */
-  .dbrow {
-    display: flex; align-items: center; gap: 8px;
-    padding: 8px 10px; margin-bottom: 6px;
-    border: 1px solid var(--line); border-radius: 8px;
-    background: var(--bg); cursor: pointer;
-  }
-  .dbrow:hover { border-color: var(--dim); }
-  .dbrow.on { border-color: var(--fg2); background: var(--chip); }
-  .dbdot {
-    width: 8px; height: 8px; flex: 0 0 auto;
-    border-radius: 50%; border: 1px solid var(--dim);
-  }
-  .dbrow.on .dbdot { background: var(--fg); border-color: var(--fg); }
-  .dbname {
-    flex: 1 1 auto; min-width: 0; font-size: 13px; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis;
-  }
-  .dbsub { flex: 0 0 auto; font-size: 12px; color: var(--dim); white-space: nowrap; }
-
-
   /* ---------- 头部 ---------- */
   /* 头部整条**不许换行**：窄面板（工作台里工具常只有五六百像素）下，
      标题 / 状态点超长就各自截断，meta 截成省略号 —— 推送按钮必须始终一行、贴着右上角 */
@@ -1107,58 +1083,40 @@
     <!-- 在线表格（WPS）：粘一条分享链接 → 认出那张表 → 推 / 拉。
          整张卡标 data-host-only：这几个 op 只能宿主跑（令牌、数据库都在那边），
          独立运行时露出来只会让人点了个必然失败的按钮。 -->
-    <!-- 数据库（v1.19.0）：一个库 = 一套独立台账 + 一张 WPS 表格。
-         整张卡标 data-host-only：库清单与令牌都在宿主那边，独立运行时露出来
-         只会让人点了个必然失败的按钮。 -->
     <div class="card narrow" data-host-only>
-      <h2>数据库</h2>
+      <h2>在线表格（WPS）</h2>
       <p class="note" style="margin:0 0 8px">
-        一个数据库 = <b>一套独立的单号台账</b> + <b>一张 WPS 在线表格</b>。切到哪个库，
-        列表里就只剩那个库的单子；每个库各绑自己的表，推送 / 拉取 / 对账只对它。
-        <b>店铺表、下拉选项、列显示这些是所有库共用的</b>。
+        每张 WPS 授权都有<b>一条分享链接</b> —— 粘一条进来就认出是哪张表，之后就在本工具里
+        <b>推送 / 拉取</b>。<b>只写台账那 14 列</b>：你自己加的备注列、公式列一格都不动，
+        <b>赔款数这类本地列的也不推</b>（它只在工具里记）；
+        <b>推送是增量的</b> —— 按单号比对，只写「本地新增的行」和「值变了的那些格」，
+        表上已有的行不重写，表上有而本地没有的行留着不动；
+        拉取<b>先看差异、确认了才写库</b>。授权在 <b>设置 → WPS 授权</b> 里做一次就行
+        （同一份令牌，不重复授权）。
       </p>
-      <div id="dbList"></div>
+      <input id="wpsLink" placeholder="https://www.kdocs.cn/l/xxxx —— 在 WPS 里点「分享」复制链接" />
       <div class="r" style="margin-top:8px">
-        <button id="dbNew">+ 新建数据库</button>
+        <button class="primary" id="wpsBind">绑定</button>
+        <button id="wpsUnbind" hidden>解绑</button>
+        <span class="hint" id="wpsName" style="margin:0">还没绑定</span>
       </div>
-      <div class="hint" id="dbMsg"></div>
-
-      <!-- ▼ 当前库的表格。其实就是原来那张「在线表格」卡，只是现在挂在某个库下面 -->
-      <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+      <!-- 绑定好了才露出来：表名 + 创建人，推 / 拉两个按钮跟着它走 -->
+      <div id="wpsBound" hidden style="margin-top:8px">
         <div class="r">
-          <b id="dbCur" style="font-size:13px">—</b>
-          <span class="hint" id="wpsName" style="margin:0">还没绑定表格</span>
+          <b id="wpsTitle" style="font-size:13px">—</b>
+          <span class="hint" id="wpsOwner" style="margin:0"></span>
         </div>
-        <input id="wpsLink" style="margin-top:8px"
-               placeholder="https://www.kdocs.cn/l/xxxx —— 在 WPS 里点「分享」复制链接" />
         <div class="r" style="margin-top:8px">
-          <button class="primary" id="wpsBind">绑定</button>
-          <button id="wpsUnbind" hidden>解绑</button>
+          <button id="wpsPush" disabled>推送到表格</button>
+          <button id="wpsPull" disabled>从表格拉取</button>
+          <button id="wpsPushForce" disabled title="连删除一起同步：表上有、本地没有的行会被清空">强制推送</button>
         </div>
-        <!-- 绑定好了才露出来：表名 + 创建人，推 / 拉两个按钮跟着它走 -->
-        <div id="wpsBound" hidden style="margin-top:8px">
-          <div class="r">
-            <b id="wpsTitle" style="font-size:13px">—</b>
-            <span class="hint" id="wpsOwner" style="margin:0"></span>
-          </div>
-          <div class="r" style="margin-top:8px">
-            <button id="wpsPush" disabled>推送到表格</button>
-            <button id="wpsPull" disabled>从表格拉取</button>
-            <button id="wpsPushForce" disabled title="连删除一起同步：表上有、本地没有的行会被清空">强制推送</button>
-          </div>
-          <!-- 两个推送的区别要写在这儿：默认增量，强制才删 -->
-          <div class="hint" style="margin-top:6px">
-            推送只写<b>新增和改动</b>，表上多出来的行留着不动；
-            <b>强制推送</b>会把表格变成和本机一样 —— 表上有、本地没有的记录会被<b>清空</b>（连你自己加的备注列）。
-          </div>
+        <!-- 两个推送的区别要写在这儿：默认增量，强制才删 -->
+        <div class="hint" style="margin-top:6px">
+          推送只写<b>新增和改动</b>，表上多出来的行留着不动；
+          <b>强制推送</b>会把表格变成和本机一样 —— 表上有、本地没有的记录会被<b>清空</b>（连你自己加的备注列）。
         </div>
       </div>
-      <p class="note" style="margin:10px 0 0">
-        每张 WPS 授权都有<b>一条分享链接</b> —— 粘进来就认出是哪张表。<b>只写台账那 14 列</b>：
-        你自己加的备注列、公式列一格都不动，<b>赔款数这类本地列也不推</b>；
-        推送<b>按单号增量</b>比对，拉取<b>先看差异、确认了才写库</b>。
-        授权在 <b>设置 → WPS 授权</b> 里做一次就行（同一份令牌，不重复授权）。
-      </p>
       <div class="hint" id="wpsMsg"></div>
     </div>
 
@@ -1732,17 +1690,6 @@
       return false;
     }
   }
-  /* 数据库归属（v1.19.0）：tickets 表要能写 db_id。老宿主没这列 ——
-     探不到就退化成"多个库共用一本台账、各自绑自己的表"，绝不让人一点就报错。 */
-  async function probeDbCol() {
-    if (!bound()) return true;      // 独立态只有 localStorage，没有列这回事
-    try {
-      await call("row.update", { table: TABLE, id: "__probe_db__", patch: { db_id: "" } });
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
   /* 详情「基本信息」解锁的那一条的 id —— 只对这一条生效，切走 / 存完都自动回锁。
      存行 id 而不是布尔值，是为了换一条单子时它自己就是锁的（不然手滑改的是新那条）。 */
   var baseEditId = "";
@@ -1764,22 +1711,12 @@
   var LS_IMG = "wbtool:" + TOOL_ID + ":imgs";
 
   async function load() {
-    // ★ loadCfg 是 settle 之后才跑的，可能比 bootHost 里的第一次 load 晚 ——
-    //   没有库清单就不知道"哪些行属于当前库"，会筛出一本空台账，所以这里自己兜住。
-    if (!dbs.length) await loadDbs();
-    var all;
     if (bound()) {
-      all = await selectAll(TABLE, "created_at", "desc");
+      rows = await selectAll(TABLE, "created_at", "desc");
     } else {
-      try { all = JSON.parse(localStorage.getItem(LS_ROWS) || "[]"); } catch (e) { all = []; }
+      try { rows = JSON.parse(localStorage.getItem(LS_ROWS) || "[]"); } catch (e) { rows = []; }
     }
-    all = all.map(norm);
-    /* 一个库一本账（v1.19.0）：整本读回来再按当前库筛。
-       为什么不给 row.select 带 where —— 老行的 db_id 是空的（算默认库），
-       等值筛选会把这些行漏在默认库外面。几百上千行的量，内存里筛更稳。
-       宿主没有 db_id 列时（hasDbCol=false）所有库共用一本，
-       总比把单子藏起来让人以为"丢了"强。 */
-    rows = hasDbCol ? dbRowsOf(activeDb, all) : all;
+    rows = rows.map(norm);
     /* 附图：读不到（旧工作台的清单里没有这张表 / 宿主还没建）就整块收起来，
        不能让它把台账也带崩 —— select 失败只影响图片。 */
     if (bound()) {
@@ -1872,15 +1809,12 @@
       o[k] = txt(r[k]);
     }
     o.id = txt(r.id);
-    o.db_id = txt(r.db_id);       // 归属哪个数据库（老行是空串，按 DB_DEFAULT 算）
     o.flow = txt(r.flow);
     o.remind_at = txt(r.remind_at);
     o.remind_task = txt(r.remind_task);
     return o;
   }
   async function insert(row) {
-    // 写进当前库。★ 老宿主没有这列（hasDbCol=false）就别带，带了整条 insert 都会报错
-    if (hasDbCol) row.db_id = activeDb;
     if (bound()) {
       var res = await call("row.insert", { table: TABLE, row: row });
       return norm((res && res.row) || row);
@@ -2335,165 +2269,6 @@
   var tableCols = null;       // { order:[key…], hidden:[key…] } —— 空 = 全显示、按 COLS 顺序
   var wps = { link: "", fileId: "", name: "", sheet: "", owner: "" };
 
-  /* ------------------------------------------------------------------
-   * 数据库（v1.19.0）
-   * ------------------------------------------------------------------
-   * 一个数据库 = **一套独立的本地台账** + **一张 WPS 在线表格**。
-   * 以前是「一张表」：wps 就是那个绑定，tickets 里的行没有归属；现在每行带
-   * db_id，切库就是换一整本单子，互不干扰。
-   *
-   * ★ 三条兼容约定：
-   *   1. 老数据没有 db_id —— 一律算默认库（DB_DEFAULT）。**不批量改写**：
-   *      读的时候按 dbKeyOf() 归一即可，写库时新行才带。
-   *   2. 老的 `wps.sheet` 是"那张表" —— 第一次打开时把它迁成第一个库，
-   *      名字取表名去掉扩展名（「特殊单号.dbt」→「特殊单号」）。
-   *   3. 老宿主没有 db_id 列 —— 探一次（办法同 probeIndemnity），探不到就退化：
-   *      所有库共用一个本地台账、各自绑自己的表。至少不会一点就 no such column。
-   *
-   * 为什么 `wps` 还是全局那一份：推送 / 拉取 / 对账 / 强制推送全读它，
-   * 切库只要 dbSyncWps() 换一份 —— 那几百行一行都不用改。
-   */
-  var DB_DEFAULT = "db_default";
-  var DB_NAME_MAX = 24;
-  var dbs = [];               // [{ id, name, title, link, fileId, sheet, owner }]
-  var activeDb = "";
-  var hasDbCol = true;        // 宿主的 tickets 表有没有 db_id 列
-
-  function dbKeyOf(r) { return txt(r && r.db_id) || DB_DEFAULT; }
-  function dbFind(id) {
-    for (var i = 0; i < dbs.length; i++) if (dbs[i].id === id) return dbs[i];
-    return null;
-  }
-  function dbActive() { return dbFind(activeDb) || dbs[0] || null; }
-  function newDbId() {
-    return "db_" + String(Date.now()).slice(-9) + Math.random().toString(36).slice(2, 5);
-  }
-  /** 当前库 → wps（切库 / 载入后调） */
-  function dbSyncWps() {
-    var d = dbActive();
-    wps = d ? {
-      link: txt(d.link), fileId: txt(d.fileId), name: txt(d.title),
-      sheet: txt(d.sheet), owner: txt(d.owner),
-    } : { link: "", fileId: "", name: "", sheet: "", owner: "" };
-  }
-  /** wps → 当前库（绑表 / 解绑之后调）。库名是用户起的，这里不碰 —— 除非它还是系统默认名 */
-  function dbWriteWps() {
-    var d = dbActive();
-    if (!d) return;
-    d.link = txt(wps.link);
-    d.fileId = txt(wps.fileId);
-    d.title = txt(wps.name);
-    d.sheet = txt(wps.sheet);
-    d.owner = txt(wps.owner);
-    /* 名字还是系统给的（「默认数据库」/「数据库 2」）就跟着表名走：
-       绑了「特殊单号.dbt」的库自己叫「特殊单号」，比「默认数据库」好认。
-       用户起过名的一律不动。 */
-    if (/^(默认)?数据库( \d+)?$/.test(txt(d.name))) {
-      var t = txt(wps.name);
-      if (t) d.name = t.replace(/\.[^.]+$/, "").slice(0, DB_NAME_MAX);
-    }
-  }
-  function saveDbs() {
-    return cfgSet("databases", JSON.stringify({ list: dbs, active: activeDb }));
-  }
-  function cleanDb(d) {
-    d = d || {};
-    var name = txt(d.name).trim().slice(0, DB_NAME_MAX);
-    return {
-      id: txt(d.id) || newDbId(),
-      name: name || "数据库",
-      title: txt(d.title),
-      link: txt(d.link),
-      fileId: txt(d.fileId),
-      sheet: txt(d.sheet),
-      owner: txt(d.owner),
-    };
-  }
-  /** 载入库清单；没有就迁一条出来。★ 必须在 load() 之前跑（rows 要按 activeDb 过滤）
-   *
-   * 外面这层是防并发的：bootHost 的 load() 和 settle 之后的 loadCfg() 都会来要库清单，
-   * 两边同时读到"还没有"就会各迁一次 —— 虽然最后只剩一份，但中间会多写一次 kv。
-   * 这里做成"一次任务多人等"，谁先来谁跑，后来的等同一个 promise。 */
-  var dbsTask = null;
-  function loadDbs() {
-    if (dbs.length) return Promise.resolve(dbs);
-    if (!dbsTask) {
-      dbsTask = loadDbsOnce().catch(function () { dbsTask = null; /* 读不出来别把任务钉死，下次再试 */ });
-    }
-    return dbsTask;
-  }
-  async function loadDbsOnce() {
-    var got = null;
-    try { got = JSON.parse((await cfgGet("databases")) || "null"); } catch (e) { got = null; }
-    var list = got && got.list && got.list.length ? got.list : null;
-    if (list) {
-      dbs = list.map(cleanDb);
-      activeDb = txt(got.active);
-    } else {
-      var legacy = null;
-      try { legacy = JSON.parse((await cfgGet("wps.sheet")) || "null"); } catch (e) { legacy = null; }
-      var title = txt(legacy && legacy.name);
-      dbs = [cleanDb({
-        id: DB_DEFAULT,
-        // 老用户打开就该是原来那张表，别让他重绑一次
-        name: title ? title.replace(/\.[^.]+$/, "") : "默认数据库",
-        title: title,
-        link: txt(legacy && legacy.link),
-        fileId: txt(legacy && legacy.fileId),
-        sheet: txt(legacy && legacy.sheet),
-        owner: txt(legacy && legacy.owner),
-      })];
-      activeDb = dbs[0].id;
-      await saveDbs();
-    }
-    if (!dbFind(activeDb)) activeDb = dbs[0] ? dbs[0].id : "";
-    // 兜底：kv 读不出来也别让 rows 被筛成空
-    if (!dbs.length) { dbs = [cleanDb({ id: DB_DEFAULT, name: "默认数据库" })]; activeDb = DB_DEFAULT; }
-    dbSyncWps();
-  }
-  /** 切库：换一整套单子。图片不清（按 ticket_id 挂着），但选中项与对账结果要放掉 */
-  async function switchDb(id) {
-    if (!dbFind(id) || id === activeDb) return;
-    activeDb = id;
-    dbSyncWps();
-    await saveDbs();
-    selectedId = null;
-    recon = null;
-    paintRecon();
-    hideWpsPreview();
-    setWpsMsg("");
-    rows = [];
-    renderAll();
-    renderSettings();
-    await load();
-    if (wps.fileId) void readSheetDiff(true);   // 新库绑着表就顺手对一次账
-  }
-  async function newDb(name) {
-    var d = cleanDb({ id: newDbId(), name: name || ("数据库 " + (dbs.length + 1)) });
-    dbs.push(d);
-    activeDb = d.id;
-    dbSyncWps();
-    await saveDbs();
-    return d;
-  }
-  async function renameDb(id, name) {
-    var d = dbFind(id);
-    if (!d) return false;
-    var v = txt(name).trim().slice(0, DB_NAME_MAX);
-    if (!v) return false;
-    d.name = v;
-    await saveDbs();
-    return true;
-  }
-  /** 这个库有几条单子（含 db_id 为空的老行 —— 它们算默认库） */
-  function dbRowsOf(id, list) {
-    var src = list || rows;
-    var out = [];
-    for (var i = 0; i < src.length; i++) if (dbKeyOf(src[i]) === id) out.push(src[i]);
-    return out;
-  }
-
-
   function parseList(raw) {
     if (!raw) return null;
     try {
@@ -2560,8 +2335,14 @@
       }
       cfg.colors = clean;
     } catch (e) { cfg.colors = {}; }
-    // 数据库清单（含老 wps.sheet 的迁移，见 loadDbs）—— renderSettings 要用它
-    await loadDbs();
+    var w = await cfgGet("wps.sheet");
+    try {
+      var o = w ? JSON.parse(w) : null;
+      if (o && o.fileId) wps = {
+        link: txt(o.link), fileId: txt(o.fileId), name: txt(o.name),
+        sheet: txt(o.sheet), owner: txt(o.owner),
+      };
+    } catch (e) { /* 坏数据当没绑过 */ }
     renderSettings();
     renderCreateForm();
   }
@@ -4360,129 +4141,6 @@
       document.addEventListener("pointercancel", onUp);
     });
   }
-  /* ---------- 数据库列表（v1.19.0） ----------
-   * 一行一个库：点行切过去，行尾两个小按钮改名 / 删除。
-   * 当前库后面带条数 —— 别的库没读进内存，报个数会骗人，所以只报当前这本。 */
-  function renderDbList() {
-    var box = $("dbList");
-    if (!box) return;
-    var html = "";
-    for (var i = 0; i < dbs.length; i++) {
-      var d = dbs[i], on = d.id === activeDb;
-      html += '<div class="dbrow' + (on ? " on" : "") + '" data-db="' + esc(d.id) + '">'
-        + '<span class="dbdot"></span>'
-        + '<span class="dbname">' + esc(d.name) + "</span>"
-        + '<span class="dbsub">' + (d.title ? esc(d.title) : (d.fileId ? "已绑表" : "还没绑表"))
-        + (on ? " · " + rows.length + " 条" : "") + "</span>"
-        + '<button class="mini" data-dbren="' + esc(d.id) + '" title="改名">改名</button>'
-        + (dbs.length > 1 ? '<button class="mini" data-dbdel="' + esc(d.id) + '" title="删掉这个库">删</button>' : "")
-        + "</div>";
-    }
-    box.innerHTML = html;
-  }
-  /** 名字输入弹窗（新建 / 改名共用） */
-  function askDbName(title, hint, value, okText) {
-    var got = "";
-    return ask({
-      title: title,
-      html: '<div class="note" style="margin:0 0 8px">' + esc(hint) + "</div>"
-        + '<input id="dbNameIn" maxlength="' + DB_NAME_MAX + '" value="' + esc(value || "") + '"'
-        + ' placeholder="比如：2026 年台账" style="width:100%" />',
-      ok: okText || "保存",
-      okTone: "primary",
-      focus: "#dbNameIn",       // 打开就能直接打字，不用先点一下输入框
-      collect: function (mask) {
-        var i = mask.querySelector("#dbNameIn");
-        got = i ? i.value : "";
-      },
-    }).then(function (yes) { return yes ? got : null; });
-  }
-  async function onNewDb() {
-    var name = await askDbName("新建数据库", "一个新库是一套空台账，建好可以马上给它绑一张 WPS 表格。", "", "建好并切过去");
-    if (name === null) return;
-    var d = await newDb(txt(name).trim());
-    selectedId = null;
-    renderSettings();
-    await load();
-    setWpsMsg("已经切到「" + d.name + "」—— 给它绑一张表格就能推拉了");
-    setDbMsg("");
-  }
-  async function onRenameDb(id) {
-    var d = dbFind(id);
-    if (!d) return;
-    var name = await askDbName("改个名字", "名字只是给你自己看的，随时能改；不影响台账和绑定的表格。", d.name, "保存");
-    if (name === null) return;
-    if (await renameDb(id, name)) {
-      setDbMsg("");
-      renderSettings();
-    }
-  }
-  async function onDeleteDb(id) {
-    var d = dbFind(id);
-    if (!d || dbs.length <= 1) return;
-    // 别的库没读进内存：现查一次才知道会删掉几条
-    var n = 0;
-    if (id === activeDb) n = rows.length;
-    else if (bound()) {
-      try { n = dbRowsOf(id, (await selectAll(TABLE, "created_at", "desc")).map(norm)).length; }
-      catch (e) { n = 0; }
-    }
-    var ok = await ask({
-      title: "删除数据库「" + d.name + "」？",
-      body: n
-        ? "这个库里的 " + n + " 条单号会一起删掉（图片关联也清），云端表格一格不动。删了找不回来。"
-        : "这个库是空的，删掉只是不再显示它。云端表格一格不动。",
-      ok: "删除",
-    });
-    if (!ok) return;
-    await delDb(id);
-    selectedId = null;
-    renderSettings();
-    await load();
-    setDbMsg("已删除「" + d.name + "」");
-  }
-  /** 真的删：连带这个库的单子与附图关联。图床里的原图不动 —— 那是所有工具共享的素材 */
-  async function delDb(id) {
-    var d = dbFind(id);
-    if (!d || dbs.length <= 1) return false;
-    var mine = dbRowsOf(id);
-    if (!mine.length && bound()) {
-      try { mine = dbRowsOf(id, (await selectAll(TABLE, "created_at", "desc")).map(norm)); }
-      catch (e) { mine = []; }
-    }
-    var ids = {};
-    for (var i = 0; i < mine.length; i++) ids[mine[i].id] = 1;
-    if (bound()) {
-      for (var g = 0; g < imgs.length; g++) {
-        if (!ids[imgs[g].ticket_id]) continue;
-        try { await call("row.delete", { table: TABLE_IMG, id: imgs[g].id }); } catch (e) { /* 删不掉就留着 */ }
-      }
-      for (var k = 0; k < mine.length; k++) {
-        try { await call("row.delete", { table: TABLE, id: mine[k].id }); } catch (e) { /* 同上 */ }
-      }
-    } else {
-      // 独立态：只动内存 + localStorage 镜像
-      rows = rows.filter(function (r) { return !ids[r.id]; });
-      imgs = imgs.filter(function (x) { return !ids[x.ticket_id]; });
-      saveLocal();
-    }
-    dbs = dbs.filter(function (x) { return x.id !== id; });
-    if (activeDb === id) {
-      activeDb = dbs[0].id;
-      dbSyncWps();
-      recon = null;
-      paintRecon();
-    }
-    await saveDbs();
-    return true;
-  }
-  function setDbMsg(text, bad) {
-    var el = $("dbMsg");
-    if (!el) return;
-    el.textContent = text || "";
-    el.className = bad ? "hint bad" : "hint";
-  }
-
   function renderSettings() {
     /* 店铺表 */
     var html = "";
@@ -4523,22 +4181,16 @@
     /* 跟进提醒：间隔（小时） */
     $("optRemindHours").value = String(remindHours());
 
-    /* 数据库：列表 + 当前库名（勾选 / 改名 / 删除都在这张卡里） */
-    renderDbList();
-    var curDb = dbActive();
-    if ($("dbCur")) $("dbCur").textContent = curDb ? curDb.name : "—";
-
-    /* 当前库的表格：绑定了就把表名和创建人摆出来，推 / 拉跟着它走 */
+    /* 在线表格：绑定了就把表名和创建人摆出来，推 / 拉跟着它走 */
     var on = !!wps.fileId;
-    $("wpsName").textContent = on ? "已绑定表格" : "还没绑定表格";
+    $("wpsName").textContent = on ? "已绑定" : "还没绑定";
     $("wpsUnbind").hidden = !on;
     $("wpsBind").textContent = on ? "换一张表" : "绑定";
     $("wpsBound").hidden = !on;
-    // 链接框跟着当前库走：切到没绑表的库，输入框也该是空的（否则像是"这个库绑了那张表"）
-    $("wpsLink").value = wps.link || "";
     if (on) {
       $("wpsTitle").textContent = wps.name || wps.fileId;
       $("wpsOwner").textContent = wps.owner ? "创建人 " + wps.owner : "创建人没读到";
+      $("wpsLink").value = wps.link;
     }
     $("wpsPush").disabled = !on || wpsBusy;
     $("wpsPull").disabled = !on || wpsBusy;
@@ -4615,7 +4267,7 @@
     renderSettings();
     setWpsMsg("正在写入本机…");
     try {
-      var r = await call("wps.mcpApply", { dbId: activeDb }, 60000) || {};
+      var r = await call("wps.mcpApply", {}, 60000) || {};
       var msg = "已写入本机：新增 " + (r.added || 0) + " 条、更新 " + (r.updated || 0) + " 条";
       setWpsMsg(msg);
       toast(msg);
@@ -4639,7 +4291,7 @@
   async function readSheetDiff(silent) {
     if (!wps.fileId) return;
     try {
-      var r = await call("wps.mcpPull", { fileId: wps.fileId, sheet: wps.sheet, dbId: activeDb }, 120000) || {};
+      var r = await call("wps.mcpPull", { fileId: wps.fileId, sheet: wps.sheet }, 120000) || {};
       recon = { adds: r.adds || [], updates: r.updates || [], at: new Date() };
       paintRecon();
       var n = reconCount();
@@ -4673,25 +4325,12 @@
   function hideWpsPreview() {
     wpsPlan = null;
   }
-  /* 绑定信息从「一个 wps.sheet」变成「当前数据库那一条」（v1.19.0）。
-     `wps.sheet` 这个 kv 键不再写 —— 只有 loadDbs() 给老用户迁移时读一次。 */
   async function saveWps() {
-    dbWriteWps();
-    await saveDbs();
+    var payload = JSON.stringify(wps);
+    try { localStorage.setItem(LS_CFG + "wps.sheet", payload); } catch (e) { /* ignore */ }
+    if (bound()) { try { await call("kv.set", { key: "wps.sheet", value: payload }); } catch (e) { /* ignore */ } }
     renderSettings();
   }
-
-  /* 数据库：新建 + 列表点击（切库 / 改名 / 删）。委托挂在容器上 —— 列表是整块重画的 */
-  $("dbNew").onclick = function () { void onNewDb(); };
-  $("dbList").onclick = function (e) {
-    var el = e.target;
-    var ren = el.closest && el.closest("[data-dbren]");
-    if (ren) { void onRenameDb(ren.getAttribute("data-dbren")); return; }
-    var del = el.closest && el.closest("[data-dbdel]");
-    if (del) { void onDeleteDb(del.getAttribute("data-dbdel")); return; }
-    var row = el.closest && el.closest("[data-db]");
-    if (row) void switchDb(row.getAttribute("data-db"));
-  };
 
   $("wpsBind").onclick = function () {
     var link = $("wpsLink").value.trim();
@@ -4744,7 +4383,7 @@
     var dry;
     try {
       dry = await call("wps.mcpPush",
-        { fileId: wps.fileId, sheet: wps.sheet, dryRun: true, force: force, dbId: activeDb }, 120000) || {};
+        { fileId: wps.fileId, sheet: wps.sheet, dryRun: true, force: force }, 120000) || {};
     } catch (err) {
       wpsBusy = false;
       renderSettings();
@@ -4813,7 +4452,7 @@
     setWpsMsg(force ? "正在推送（含清空）…" : "正在推送…");
     try {
       var res = await call("wps.mcpPush",
-        { fileId: wps.fileId, sheet: wps.sheet, dryRun: false, force: force, dbId: activeDb }, 120000) || {};
+        { fileId: wps.fileId, sheet: wps.sheet, dryRun: false, force: force }, 120000) || {};
       var done = [];
       if (res.added) done.push("新增 " + res.added + " 行");
       if (res.changed) done.push("改了 " + res.changed + " 个格");
@@ -4878,12 +4517,7 @@
   }
 
   function logWhere() {
-    var w = {};
-    /* 日志按库分开（v1.19.0）。老记录没有 db_id —— loadLog 开头会补一次
-       （migrateLogDb），补完这里才算得准。 */
-    if (hasDbCol) w.db_id = activeDb;
-    if (logFlt !== "all") w.push_result = logFlt;
-    return Object.keys(w).length ? w : undefined;
+    return logFlt === "all" ? undefined : { push_result: logFlt };
   }
 
   /**
@@ -4906,7 +4540,6 @@
       target: txt(wps.name) || txt(wps.fileId) || "",
       message: txt(message),
     };
-    if (hasDbCol) entry.db_id = activeDb;
     if (bound()) {
       try {
         await call("row.insert", { table: TABLE_LOG, row: entry });
@@ -4920,27 +4553,7 @@
     if (!$("view-log").hidden) void loadLog();
   }
 
-  /* v1.19.0 的一次性迁移：给这之前留下的推送记录补 db_id（都算默认库）。
-     ★ 这是 push_log **唯一**会 update 的地方 —— 它平时只增不改（见上面那段），
-       补列是"给老记录安家"而不是"改记录"，跑过一次就拿 kv 标记锁住。 */
-  var logDbMigrated = false;
-  async function migrateLogDb() {
-    if (logDbMigrated || !hasDbCol || !bound()) return;
-    logDbMigrated = true;
-    if ((await cfgGet("dbLogMigrated")) === "1") return;
-    var all = [];
-    try { all = await selectAll(TABLE_LOG, "id", "desc"); } catch (e) { return; }
-    for (var i = 0; i < all.length; i++) {
-      if (txt(all[i].db_id)) continue;
-      try {
-        await call("row.update", { table: TABLE_LOG, id: all[i].id, patch: { db_id: DB_DEFAULT } });
-      } catch (e) { return; }
-    }
-    await cfgSet("dbLogMigrated", "1");
-  }
-
   async function loadLog() {
-    if (hasDbCol) await migrateLogDb();
     var mine = ++logSeq;
     try {
       if (bound()) {
@@ -5571,8 +5184,6 @@
     /* 流程步附图的 step_uid 列同样探一次：没有就只留下整单图，
        「记一步带图 / 给某步补图」整块不摆（摆了也存不上）。 */
     hasStepCol = await probeStepCol();
-    /* 数据库归属列（v1.19.0）：探完才能决定 load() 要不要按库筛 */
-    hasDbCol = await probeDbCol();
     await load();
     if (!hasIndemnity || !hasStepCol) {
       renderDetail();
