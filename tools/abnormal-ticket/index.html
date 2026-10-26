@@ -701,6 +701,13 @@
   .dsec { margin-top: 10px; font-size: 12px; color: var(--fg); font-weight: 600; }
   .dsec:first-child { margin-top: 2px; }
   .dmore { color: var(--dim); font-size: 11.5px; margin: 2px 0 0 10px; }
+  /* 备份导入的三选一：前面一个控件，后面一段说明。
+     ★ span 必须 flex:1 1 auto + min-width:0，不然那段中文会被压成一字一列 */
+  .bakopt { display: flex; gap: 7px; align-items: flex-start; margin: 7px 0 0; line-height: 1.6; font-size: 12.5px; }
+  .bakopt input { flex: 0 0 auto; margin: 3px 0 0; }
+  .bakopt span { flex: 1 1 auto; min-width: 0; color: var(--fg2); }
+  .bakopt b { color: var(--fg); }
+  .bakinfo { display: grid; gap: 2px; font-size: 12.5px; color: var(--fg2); }
   pre.schema {
     font-family: var(--mono); font-size: 11px; color: var(--dim);
     white-space: pre-wrap; word-break: break-all; margin: 0;
@@ -1167,6 +1174,29 @@
         <button class="primary" id="saveRemind">保存</button>
         <span class="hint" id="remindMsg" style="margin:0"></span>
       </div>
+    </div>
+
+    <div class="card narrow">
+      <h2>备份与恢复</h2>
+      <p class="note" style="margin:0 0 8px">
+        本机这本台账可以<b>导出一个文件</b>，换机器或重装后再<b>导回来</b>。
+        文件里是<b>这个工具的整套数据</b>：单子与流程、图片关联、推送流水、设置（店铺表 / 选项 / 配色 / 列显示）。
+        图片默认只带 <b>320 缩略图</b> —— 原图本来就在工作台图床里，不重复搬；
+        勾「带上原图」才是完整备份（文件会大一个量级，几百张图可能几十 MB）。
+        <b>工作台的「设置 → 数据与备份」不含工具数据</b>，要整本搬走得用这里。
+      </p>
+      <label class="bakopt" style="margin-top:0">
+        <input type="checkbox" id="bakOriginals" />
+        <span>带上图片原图 —— 换台机器时图片才能真正跟过去（不勾则只有缩略图，放大不了）</span>
+      </label>
+      <div class="r" style="margin-top:10px">
+        <button class="primary" id="bakExport">导出为文件</button>
+        <button id="bakImport">从文件导入</button>
+        <span class="hint" id="bakStat" style="margin:0"></span>
+      </div>
+      <div class="hint" id="bakMsg"></div>
+      <!-- 选文件用真正的 input：accept 让系统对话框先筛一遍，省得选到图片才发现不对 -->
+      <input type="file" id="bakFile" accept=".json,application/json" hidden />
     </div>
 
     <details data-host-only style="max-width:var(--formw)">
@@ -2121,9 +2151,11 @@
     cap.textContent = name || "";
   }
 
-  /** 点缩略图 → 整屏看原图。原图要回图床取（缩略图只有 320px） */
-  async function openViewer(gid, name) {
-    if (!gid) return;
+  /** 点缩略图 → 整屏看原图。原图要回图床取（缩略图只有 320px）。
+   *  `thumb` 是下面那张缩略图的 dataURL：取不到原图时至少还能看这一张 ——
+   *  从别的机器的备份导入过来（备份默认只带缩略图）时，这条路是唯一能看见图的。 */
+  async function openViewer(gid, name, thumb) {
+    if (!gid && !thumb) return;
     var vw = $("vw"), im = $("vwImg"), cap = $("vwCap");
     if (!vw || !im) return;
     vw.hidden = false;
@@ -2136,6 +2168,12 @@
       cap.textContent = (name ? name + " · " : "")
         + (got && got.width ? got.width + "×" + got.height : "");
     } catch (e) {
+      if (thumb) {
+        im.src = thumb;
+        cap.textContent = (name ? name + " · " : "")
+          + "原图不在这台机器的图床里（来自别的机器的备份，或已被删）—— 这是 320 缩略图";
+        return;
+      }
       cap.textContent = "取不到原图：" + txt(e && e.message ? e.message : e);
     }
   }
@@ -3475,7 +3513,9 @@
         var dropId = t && t.getAttribute ? t.getAttribute("data-drop") : null;
         if (dropId) { void dropImage(dropId, hintId); return; }   // × 不冒到"看大图"
         var gid = this.getAttribute("data-view");
-        if (gid) void openViewer(gid, this.getAttribute("data-name") || "");
+        // 缩略图就在这一格里，顺带交给预览：取不到原图时它顶上（见 openViewer）
+        var th = this.querySelector("img");
+        if (gid || th) void openViewer(gid, this.getAttribute("data-name") || "", th ? th.src : "");
       };
     }
   }
@@ -4206,6 +4246,12 @@
     if (hdrPush) {
       hdrPush.disabled = !on || wpsBusy;
       hdrPush.textContent = on ? "推送到表格" : "推送到表格（先绑定）";
+    }
+
+    /* 备份卡：先让人看见"这一本有多大"，再决定要不要导 */
+    var bstat = $("bakStat");
+    if (bstat) {
+      bstat.textContent = "本机现有 " + rows.length + " 条单子 · " + imgs.length + " 张图";
     }
   }
 
@@ -5166,6 +5212,444 @@
       renderDetail();
       renderCreateForm();     // 登记页的「默认提醒时间」也按新 N 重算文案与预填
     })();
+  };
+
+  /* ==================================================================
+   * 12. 备份与恢复 —— 整本台账导出成一个文件 / 再导回来（v1.19.0）
+   * ==================================================================
+   * 为什么工具自己带一套：工作台的「设置 → 数据与备份」只搬宿主的列表与任务，
+   * **工具私有表不在里面**（tickets / ticket_images / push_log 由工具自己管）。
+   * 换台机器想接着用这本台账，就得有这条路。
+   *
+   * 三条口径，写在这儿免得以后又来回猜：
+   *  1. 图片默认只带 320 缩略图 —— 和图床/附件备份同一个原则（元数据走备份、
+   *     文件本体不进 JSON）。勾「带上原图」才把字节 base64 塞进来。
+   *  2. `remind_task` 是**本机**待办 id，跨机器毫无意义：导入时一律清空，
+   *     再按每条单子的流程重新订一遍（syncRemind force）。
+   *  3. 覆盖 = 连推送流水一起换；合并 = 只补本机没有的单子，流水一格不动。
+   */
+  var bakBusy = false;
+  /** 原图总量到这儿就收手：再大的 JSON 在浏览器里拼字符串会直接把界面卡死 */
+  var BAK_ORIGINALS_MAX = 160 * 1024 * 1024;
+
+  /** 重号判据：单号 + 登记时刻。
+   *  不单看单号 —— 同一个单号可能两次破损各记一条，那是两个案子；
+   *  也不单看 id —— 换台机器时同一个案子未必还叫这个 id。 */
+  function bakKey(r) {
+    var sn = txt(r && r.order_sn) || txt(r && r.tracking_no);
+    var at = txt(r && r.created_at);
+    return (sn || txt(r && r.id)) + "|" + at;
+  }
+  function bakSize(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + " B";
+    if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1048576).toFixed(1) + " MB";
+  }
+  function bakStamp() {
+    var d = new Date();
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + "-" + p(d.getHours()) + p(d.getMinutes());
+  }
+  /** 配置原样吐成 kv 里那种字符串 —— 导入端直接 cfgSet 回去，不用第二套解析
+   *  （两份解析 = 迟早对不上） */
+  function bakCfg() {
+    return {
+      stores: JSON.stringify(cfg.stores || []),
+      optCouriers: JSON.stringify(cfg.couriers || []),
+      optSituations: JSON.stringify(cfg.situations || []),
+      optFlows: JSON.stringify(cfg.flows || []),
+      remindHours: String(remindHours()),
+      remindOff: JSON.stringify(cfg.remindOff || []),
+      tableCols: tableCols ? JSON.stringify(tableCols) : "",
+      colors: JSON.stringify(cfg.colors || {}),
+    };
+  }
+
+  /** 导出内容。字段一个个抄出来，别整个对象丢进去 —— 宿主给的行里将来多什么字段
+   *  都不该悄悄流进备份文件 */
+  async function bakCollect(withOriginals) {
+    var list = rows.slice();
+    if (bound()) {
+      // 内存这份只代表"这次开机之后"；重读一遍整本，免得别的窗口刚加的单子漏掉
+      try { list = await selectAll(TABLE, "created_at", "desc"); } catch (e) { list = rows.slice(); }
+    }
+    var imgsOut = [];
+    for (var i = 0; i < imgs.length; i++) {
+      imgsOut.push({
+        id: txt(imgs[i].id),
+        ticket_id: txt(imgs[i].ticket_id),
+        gallery_id: txt(imgs[i].gallery_id),
+        thumb: txt(imgs[i].thumb),
+        name: txt(imgs[i].name),
+        step_uid: txt(imgs[i].step_uid),
+        sort: Number(imgs[i].sort) || 0,
+        created_at: txt(imgs[i].created_at),
+      });
+    }
+    var logs = [];
+    if (bound()) {
+      try { logs = await selectAll(TABLE_LOG, "id", "desc"); } catch (e) { logs = []; }
+    } else {
+      try { logs = JSON.parse(localStorage.getItem(LS_LOG) || "[]") || []; } catch (e) { logs = []; }
+    }
+    var originals = 0, bytes = 0, missed = 0;
+    if (withOriginals) {
+      for (var m = 0; m < imgsOut.length; m++) {
+        var im = imgsOut[m];
+        if (!im.gallery_id) continue;
+        setHint("bakMsg", "正在取原图 " + (m + 1) + "/" + imgsOut.length + "…");
+        try {
+          var got = await call("gallery.get", { id: im.gallery_id }, 60000);
+          var du = txt(got && got.dataUrl);
+          if (!du) { missed++; continue; }
+          im.original = du;
+          originals++;
+          bytes += du.length;
+        } catch (e) { missed++; }
+        if (bytes > BAK_ORIGINALS_MAX) { missed += imgsOut.length - m - 1; break; }
+      }
+    }
+    return {
+      app: "todo-workbench",
+      tool: TOOL_ID,
+      kind: "backup",
+      format: 1,
+      exportedAt: nowMinStr(),
+      counts: {
+        tickets: list.length, images: imgsOut.length, logs: logs.length,
+        originals: originals, missed: missed,
+      },
+      tickets: list,
+      images: imgsOut,
+      logs: logs,
+      cfg: bakCfg(),
+      // 绑定信息跟着走：跨机器恢复时通常还是同一张表。导入时只在本机没绑的情况下才写
+      binding: wps.fileId ? {
+        link: txt(wps.link), fileId: txt(wps.fileId), name: txt(wps.name),
+        sheet: txt(wps.sheet), owner: txt(wps.owner),
+      } : null,
+    };
+  }
+
+  /* 存文件：优先弹系统「另存为」（File System Access），不行就退回普通下载。
+     ★ 工具跑在 sandbox iframe 里，showSaveFilePicker 多半会被跨域限制挡掉 ——
+     所以下面这个 catch 不是"以防万一"，是**正常路径**。 */
+  function bakDownload(blob, name) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+    return { ok: true, picked: false, name: name };
+  }
+  function bakSave(blob, name) {
+    var can = typeof window.showSaveFilePicker === "function" && window.isSecureContext === true;
+    if (!can) return Promise.resolve(bakDownload(blob, name));
+    return window.showSaveFilePicker({
+      suggestedName: name,
+      types: [{ description: "备份文件", accept: { "application/json": [".json"] } }],
+    }).then(function (h) {
+      return h.createWritable().then(function (w) {
+        return w.write(blob)
+          .then(function () { return w.close(); })
+          .then(function () { return { ok: true, picked: true, name: h.name || name }; });
+      });
+    }).catch(function (err) {
+      if (err && err.name === "AbortError") return { ok: false, aborted: true };
+      return bakDownload(blob, name);     // 权限 / 跨域限制 → 退回下载
+    });
+  }
+
+  $("bakExport").onclick = function () {
+    void (async function () {
+      if (bakBusy) return;
+      bakBusy = true;
+      var eb = $("bakExport"), ib = $("bakImport");
+      eb.disabled = true; ib.disabled = true;
+      setHint("bakMsg", "正在整理…");
+      try {
+        var withOrig = !!($("bakOriginals") && $("bakOriginals").checked);
+        var data = await bakCollect(withOrig);
+        var blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" });
+        var res = await bakSave(blob, "异常单号台账-" + bakStamp() + ".json");
+        if (res.aborted) { setHint("bakMsg", "已取消，没有生成文件"); return; }
+        var line = "已导出 " + data.counts.tickets + " 条单子 · " + data.counts.images + " 张图"
+          + (withOrig
+            ? "（含原图 " + data.counts.originals + " 张" + (data.counts.missed ? "，" + data.counts.missed + " 张没取到" : "") + "）"
+            : "（只带缩略图）")
+          + " · " + bakSize(blob.size)
+          + (res.picked ? " · 已保存 " + res.name : " · 已交给浏览器下载");
+        setHint("bakMsg", line);
+        toast("已导出备份");
+      } catch (err) {
+        setHint("bakMsg", "导出失败：" + txt(err && err.message ? err.message : err), true);
+      } finally {
+        bakBusy = false;
+        eb.disabled = false; ib.disabled = false;
+      }
+    })();
+  };
+
+  function bakTextOf(file) {
+    if (file && typeof file.text === "function") return file.text();
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(String(fr.result || "")); };
+      fr.onerror = function () { reject(fr.error || new Error("读不出来")); };
+      fr.readAsText(file);
+    });
+  }
+  /** 认一认这是不是本工具的备份。返回空串 = 认了 */
+  function bakCheck(o) {
+    if (!o || typeof o !== "object") return "这不是一个 JSON 对象 —— 可能选错了文件";
+    if (o.kind !== "backup" || txt(o.tool) !== TOOL_ID) {
+      return "这不是「异常单号登记」的备份文件（别的工具或别的软件的备份）";
+    }
+    if (!Array.isArray(o.tickets)) return "备份里没有 tickets 清单，文件可能坏了";
+    return "";
+  }
+
+  /** 覆盖导入前清空：单子、图片关联、推送流水。
+   *  逐条删（宿主没有"清表"这种 op）—— 几百条也就几百次调用，比造一个能一次删光的
+   *  危险接口划算得多。 */
+  async function bakClearAll() {
+    var olds = rows.slice();
+    for (var i = 0; i < olds.length; i++) {
+      try { await removeImgsOf(olds[i].id); } catch (e) { /* 单条清不掉不挡住整本 */ }
+      try { await remove(olds[i].id); } catch (e) { /* 同上 */ }
+    }
+    var rest = imgs.slice();      // 挂在已不存在单子上的孤儿图，一起收掉
+    for (var j = 0; j < rest.length; j++) {
+      try { await deleteImg(rest[j].id); } catch (e) { /* 同上 */ }
+    }
+    rows = [];
+    imgs = [];
+    if (bound()) {
+      var old = [];
+      try { old = await selectAll(TABLE_LOG, "id", "desc"); } catch (e) { old = []; }
+      for (var k = 0; k < old.length; k++) {
+        try { await call("row.delete", { table: TABLE_LOG, id: old[k].id }); } catch (e) { /* 同上 */ }
+      }
+    } else {
+      try { localStorage.removeItem(LS_LOG); } catch (e) { /* ignore */ }
+    }
+  }
+
+  /** 写一条推送流水（导入用；平时这条路由 recordPush 走） */
+  async function bakInsertLog(r) {
+    var row = {
+      id: txt(r.id) || newId(),
+      logged_at: txt(r.logged_at),
+      push_kind: txt(r.push_kind) || "incr",
+      push_result: txt(r.push_result) || "ok",
+      added: Number(r.added) || 0,
+      changed: Number(r.changed) || 0,
+      removed: Number(r.removed) || 0,
+      ticket_count: Number(r.ticket_count) || 0,
+      target: txt(r.target),
+      message: txt(r.message),
+    };
+    if (bound()) {
+      try { await call("row.insert", { table: TABLE_LOG, row: row }); } catch (e) { /* 流水少一条不影响台账 */ }
+      return;
+    }
+    var all = [];
+    try { all = JSON.parse(localStorage.getItem(LS_LOG) || "[]") || []; } catch (e) { all = []; }
+    all.push(row);
+    try { localStorage.setItem(LS_LOG, JSON.stringify(all)); } catch (e) { /* 满了就算了 */ }
+  }
+
+  /** 真正写库。mode = "merge" | "replace" */
+  async function bakApply(o, mode, withCfg) {
+    var st = { add: 0, skip: 0, img: 0, imgFail: 0, cfg: false, binding: false };
+    if (mode === "replace") {
+      setHint("bakMsg", "正在清空本机台账…");
+      await bakClearAll();
+    }
+
+    /* 1) 单子：id 原样保留 —— remindOff 这些配置是按 id 记的，换了 id 就对不上了；
+          合并模式下"重不重"由 bakKey 判，不靠 id */
+    var have = {};
+    if (mode === "merge") {
+      for (var h = 0; h < rows.length; h++) {
+        have["i:" + txt(rows[h].id)] = 1;
+        have["k:" + bakKey(rows[h])] = 1;
+      }
+    }
+    var kept = {}, byId = {};
+    var list = Array.isArray(o.tickets) ? o.tickets : [];
+    for (var n = 0; n < list.length; n++) {
+      var src = list[n] || {};
+      var row = norm(src);              // 只留这本台账认识的列
+      row.id = txt(src.id) || newId();
+      row.remind_task = "";             // 本机的待办 id 带不过来
+      if (!hasIndemnity) delete row.indemnity;
+      if (mode === "merge") {
+        var k1 = "i:" + row.id, k2 = "k:" + bakKey(row);
+        if (have[k1] || have[k2]) { st.skip++; continue; }
+        have[k1] = 1; have[k2] = 1;
+      }
+      try {
+        await insert(row);
+        kept[row.id] = 1;
+        byId[row.id] = row;
+        st.add++;
+      } catch (e) { st.skip++; }
+      if (n % 10 === 0) setHint("bakMsg", "正在写入单子 " + (n + 1) + "/" + list.length + "…");
+    }
+
+    /* 2) 图片关联：只给真进来了的单子挂；带原图的重新进一次图床（旧 gallery_id 在这台机器上是空的） */
+    var pics = Array.isArray(o.images) ? o.images : [];
+    for (var m = 0; m < pics.length; m++) {
+      var s2 = pics[m] || {};
+      var tid = txt(s2.ticket_id);
+      if (!kept[tid]) continue;         // 单子被判成重复 → 图也跟着不进来
+      var gid = txt(s2.gallery_id);
+      if (txt(s2.original) && bound() && hasImages) {
+        try {
+          var put = await call("gallery.put",
+            { dataUrl: txt(s2.original), title: attachLabel(byId[tid]) }, 120000);
+          if (put && put.id) gid = txt(put.id);
+        } catch (e) { st.imgFail++; }
+      }
+      var ir = {
+        id: txt(s2.id) || newId(),
+        ticket_id: tid,
+        gallery_id: gid,
+        thumb: txt(s2.thumb),
+        name: txt(s2.name),
+        sort: Number(s2.sort) || 0,
+        created_at: txt(s2.created_at) || nowMinStr(),
+      };
+      if (hasStepCol) ir.step_uid = txt(s2.step_uid);
+      try { await insertImg(ir); st.img++; } catch (e) { st.imgFail++; }
+      if (m % 5 === 0) setHint("bakMsg", "正在恢复图片 " + (m + 1) + "/" + pics.length + "…");
+    }
+
+    /* 3) 推送流水：只有覆盖模式才写 —— 合并时把两边的流水搅在一起没人看得懂 */
+    if (mode === "replace" && Array.isArray(o.logs)) {
+      for (var q = 0; q < o.logs.length; q++) await bakInsertLog(o.logs[q] || {});
+    }
+
+    /* 4) 设置：勾了才动。写的是 kv（cfgSet 会先落镜像），写完由 loadCfg 统一重读 */
+    if (withCfg && o.cfg && typeof o.cfg === "object") {
+      var keys = ["stores", "optCouriers", "optSituations", "optFlows",
+        "remindHours", "remindOff", "tableCols", "colors"];
+      for (var w = 0; w < keys.length; w++) {
+        var v = o.cfg[keys[w]];
+        if (typeof v === "string") await cfgSet(keys[w], v);
+      }
+      st.cfg = true;
+    }
+    // 本机还没绑表时把文件里的绑定接过来；已经绑着就以本机为准（不偷偷换目标表）
+    if (o.binding && txt(o.binding.fileId) && !wps.fileId) {
+      await cfgSet("wps.sheet", JSON.stringify({
+        link: txt(o.binding.link), fileId: txt(o.binding.fileId), name: txt(o.binding.name),
+        sheet: txt(o.binding.sheet), owner: txt(o.binding.owner),
+      }));
+      st.binding = true;
+    }
+
+    setHint("bakMsg", "正在刷新界面…");
+    await loadCfg();        // cfg / tableCols / wps 重读，设置页跟着重画
+    await load();           // 整本重读 + renderAll
+    // ★ renderAll 不管设置页 —— 备份卡上「本机现有 N 条」是这时才准的
+    renderSettings();
+
+    /* 5) 提醒重订：导入的单子在本机还没有对应的待办。
+          force = 哪怕算出来的时刻跟文件里一模一样也要订 —— 不然幂等判断会当成"已经有了"。 */
+    var ids = [];
+    for (var id in kept) if (Object.prototype.hasOwnProperty.call(kept, id)) ids.push(id);
+    for (var z = 0; z < ids.length; z++) {
+      var rr = findRow(ids[z]);
+      if (!rr) continue;
+      try { await syncRemind(rr, true); } catch (e) { /* 订不上就只留时刻，界面照样显示 */ }
+      if (z % 5 === 0) setHint("bakMsg", "正在重订跟进提醒 " + (z + 1) + "/" + ids.length + "…");
+    }
+    return st;
+  }
+
+  async function bakReadAndAsk(file) {
+    setHint("bakMsg", "正在读 " + txt(file && file.name) + "…");
+    var text = "";
+    try { text = await bakTextOf(file); }
+    catch (e) { setHint("bakMsg", "读不出这个文件：" + txt(e && e.message ? e.message : e), true); return; }
+    var o = null;
+    try { o = JSON.parse(text); } catch (e) { o = null; }
+    var bad = bakCheck(o);
+    if (bad) { setHint("bakMsg", bad, true); return; }
+
+    var list = o.tickets || [], pics = Array.isArray(o.images) ? o.images : [];
+    var orig = 0;
+    for (var i = 0; i < pics.length; i++) if (txt(pics[i].original)) orig++;
+    var logs = Array.isArray(o.logs) ? o.logs.length : 0;
+
+    var html = '<div class="dsec">文件里有什么</div>'
+      + '<div class="bakinfo">'
+      + "<div>导出时间：" + esc(txt(o.exportedAt) || "没记") + "</div>"
+      + "<div>内容：" + list.length + " 条单子 · " + pics.length + " 张图"
+      + (orig ? "（" + orig + " 张带原图）" : "（只有缩略图）")
+      + (logs ? " · " + logs + " 条推送记录" : "") + "</div>"
+      + "<div>本机现在：" + rows.length + " 条单子 · " + imgs.length + " 张图</div>"
+      + "</div>"
+      + '<div class="dsec">怎么导</div>'
+      + '<label class="bakopt"><input type="radio" name="bakMode" value="merge" checked />'
+      + "<span><b>合并</b> —— 只补本机没有的单子（按单号 + 登记时刻认重），现有的原样不动</span></label>"
+      + '<label class="bakopt"><input type="radio" name="bakMode" value="replace" />'
+      + "<span><b>覆盖</b> —— 清空本机这 " + rows.length + " 条单子和全部推送流水，整本换成文件里的</span></label>"
+      + '<label class="bakopt"><input type="checkbox" id="bakCfgChk" />'
+      + "<span>连设置一起恢复 —— 店铺表、下拉选项、配色、列显示（<b>会盖掉本机的</b>）</span></label>";
+
+    var mode = "merge", withCfg = false;
+    var go = await ask({
+      title: "导入备份",
+      html: html,
+      ok: "开始导入",
+      cancel: "取消",
+      okTone: "primary",
+      wide: true,
+      collect: function (mask) {
+        var r = mask.querySelector('input[name="bakMode"]:checked');
+        mode = r ? r.value : "merge";
+        var c = mask.querySelector("#bakCfgChk");
+        withCfg = !!(c && c.checked);
+      },
+    });
+    if (!go) { setHint("bakMsg", "已取消，本机没动"); return; }
+    if (bakBusy) return;
+    bakBusy = true;
+    var eb = $("bakExport"), ib = $("bakImport");
+    eb.disabled = true; ib.disabled = true;
+    try {
+      var st = await bakApply(o, mode, withCfg);
+      var msg = (mode === "replace" ? "已覆盖导入" : "已合并导入")
+        + "：" + st.add + " 条单子 · " + st.img + " 张图";
+      if (st.skip) msg += "、跳过 " + st.skip + " 条（本机已有）";
+      if (st.imgFail) msg += "、" + st.imgFail + " 张图没恢复";
+      if (st.cfg) msg += " · 设置已恢复";
+      if (st.binding) msg += " · 表格绑定也接了过来";
+      setHint("bakMsg", msg);
+      toast("导入完成");
+    } catch (err) {
+      setHint("bakMsg", "导入失败：" + txt(err && err.message ? err.message : err), true);
+    } finally {
+      bakBusy = false;
+      eb.disabled = false; ib.disabled = false;
+    }
+  }
+
+  $("bakImport").onclick = function () {
+    if (!bakBusy) $("bakFile").click();
+  };
+  $("bakFile").onchange = function () {
+    // ★ 先把 files 搬进真数组再清 value：Chromium 里 value="" 会就地清空 FileList
+    var fs = filesOf(this);
+    if (!fs.length || bakBusy) return;
+    void bakReadAndAsk(fs[0]);
   };
 
   async function bootHost() {

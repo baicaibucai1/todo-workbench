@@ -2145,6 +2145,151 @@ console.log("\n14. 缩略图这条链路（宿主回空串时工具自己出图�
     (mine[0]?.thumb || "").length < 200, String((mine[0]?.thumb || "").length));
 }
 
+console.log("\n15. 备份与恢复：导出一个文件，再导回来（v1.19.0）");
+{
+  /* 存文件这条路在 jsdom 里没有：createObjectURL 不存在、a.click() 会被当成导航
+     （跑出 "Not implemented: navigation" 的 jsdomError，把"全程没报错"这条弄红）。
+     两样都替掉，只留"Blob 里到底是什么"这一件要验的事。 */
+  let lastBlob = null;
+  win.URL.createObjectURL = (b) => { lastBlob = b; return "blob:bak"; };
+  win.URL.revokeObjectURL = () => {};
+  win.HTMLAnchorElement.prototype.click = function () { /* 不真跳 */ };
+
+  const bakMsgEl = doc.getElementById("bakMsg");
+  const bakText = () => (bakMsgEl.textContent || "");
+
+  doc.getElementById("tab-settings").click();
+  await sleep(80);
+  check("设置页有「备份与恢复」那张卡",
+    !!doc.getElementById("bakExport") && !!doc.getElementById("bakImport"));
+  check("卡上写着这本台账有多大", /条单子/.test(bakText() || doc.getElementById("bakStat").textContent),
+    doc.getElementById("bakStat").textContent);
+
+  /* --- 导出（默认：只带缩略图） --- */
+  doc.getElementById("bakOriginals").checked = false;
+  bakMsgEl.textContent = "";
+  doc.getElementById("bakExport").click();
+  await waitFor(() => /已导出/.test(bakText()), 8000);
+  check("点导出会生成文件并回一句结果", /已导出/.test(bakText()), bakText());
+  check("这句话交代了带没带原图", /只带缩略图/.test(bakText()), bakText());
+
+  let bak = null;
+  try { bak = JSON.parse(await lastBlob.text()); } catch (e) { bak = null; }
+  check("导出的是合法 JSON", !!bak);
+  check("文件带自己的身份（app / tool / kind / format）",
+    !!bak && bak.app === "todo-workbench" && bak.tool === "abnormal-ticket"
+    && bak.kind === "backup" && bak.format === 1,
+    bak ? [bak.app, bak.tool, bak.kind, bak.format].join(" / ") : "解析失败");
+  check("单子一条不少", !!bak && bak.tickets.length === store.length,
+    (bak ? bak.tickets.length : "?") + " vs " + store.length);
+  check("图片关联也带上了", !!bak && bak.images.length === imgStore.length,
+    (bak ? bak.images.length : "?") + " vs " + imgStore.length);
+  check("默认不带原图（只带 320 缩略图）",
+    !!bak && bak.images.every((r) => !r.original));
+  check("设置也进了文件（店铺表 + 列显示）",
+    !!bak && /拼5/.test(bak.cfg.stores) && !!bak.cfg.tableCols);
+  check("绑定信息跟着走（换台机器也知道该推哪张表）",
+    !!bak && !!bak.binding && bak.binding.fileId === "575451541893",
+    JSON.stringify(bak && bak.binding));
+
+  /* --- 导出（勾上原图） --- */
+  doc.getElementById("bakOriginals").checked = true;
+  bakMsgEl.textContent = "";
+  doc.getElementById("bakExport").click();
+  await waitFor(() => /已导出/.test(bakText()), 15000);
+  let bak2 = null;
+  try { bak2 = JSON.parse(await lastBlob.text()); } catch (e) { bak2 = null; }
+  const withOrig = bak2 ? bak2.images.filter((r) => r.original).length : 0;
+  check("勾了原图，图床里的图真的进了文件", withOrig > 0, String(withOrig));
+  check("原图是 data URL（导回来能直接往图床塞）",
+    !!bak2 && bak2.images.every((r) => !r.original || /^data:image\//.test(r.original)));
+  doc.getElementById("bakOriginals").checked = false;
+
+  /* --- 导入 --- */
+  const openImport = async (obj) => {
+    bakMsgEl.textContent = "";
+    pickFiles(doc, win, "bakFile", [
+      new win.File([JSON.stringify(obj)], "bak.json", { type: "application/json" }),
+    ]);
+  };
+  /** 选模式 → 确定/取消。返回结果提示 */
+  const answerDlg = async (mode, withCfg, yes) => {
+    await waitFor(() => !!doc.querySelector(".dlgm #dlgYes"), 3000);
+    const r = doc.querySelector('.dlgm input[name="bakMode"][value="' + mode + '"]');
+    if (r) r.checked = true;
+    const c = doc.querySelector(".dlgm #bakCfgChk");
+    if (c) c.checked = !!withCfg;
+    doc.querySelector(yes ? ".dlgm #dlgYes" : ".dlgm #dlgNo").click();
+    await waitFor(() => /导入|已取消|失败|不是/.test(bakText()), 20000);
+    return bakText();
+  };
+
+  const extra = {
+    id: "imp-t1", order_sn: "20200101000000000001", tracking_no: "", courier: "中通",
+    shipped_at: "2026-10-26 10:00", store: "拼5", category: "缺少物流",
+    title: "从备份带回来的一条", handling: "", result: "", settled: "", note: "",
+    flow: "", remind_at: "", remind_task: "", created_at: "2026-10-26 10:00",
+    updated_at: "2026-10-26 10:00", indemnity: "",
+  };
+  const storeBefore = store.length;
+  const idsBefore = store.map((r) => r.id);
+  const kvStoresBefore = kv["stores"];
+
+  await openImport({
+    ...bak, tickets: bak.tickets.concat([extra]),
+    counts: { ...bak.counts, tickets: bak.counts.tickets + 1 },
+  });
+  let msg = await answerDlg("merge", false, true);
+  check("合并导入：只补本机没有的那一条", store.length === storeBefore + 1,
+    msg + " · " + storeBefore + " → " + store.length);
+  check("补进来的单号对得上", store.some((r) => r.order_sn === "20200101000000000001"));
+  check("界面回了「已合并导入」", /已合并导入/.test(msg), msg);
+  check("原有那几条一条没少（合并不是覆盖）",
+    idsBefore.every((id) => store.some((r) => r.id === id)), String(store.length));
+  check("没勾「连设置」就不动设置", kv["stores"] === kvStoresBefore);
+
+  /* 同一个文件再导一次：一条都不该重复进 */
+  const afterMerge = store.length;
+  await openImport({ ...bak, tickets: bak.tickets.concat([extra]) });
+  msg = await answerDlg("merge", false, true);
+  check("同一个文件再导一次，不会重复进", store.length === afterMerge, String(store.length));
+  check("重复的都被数出来了（跳过 N 条）", /跳过/.test(msg), msg);
+
+  /* 点取消：什么都不该发生 */
+  const beforeCancel = store.length;
+  await openImport({ ...bak, tickets: bak.tickets.concat([extra]) });
+  msg = await answerDlg("merge", false, false);
+  check("确认框点取消 → 本机一条没动", store.length === beforeCancel && /已取消/.test(msg), msg);
+
+  /* 选错文件 */
+  await openImport({ hello: 1 });
+  await waitFor(() => /不是/.test(bakText()), 3000);
+  check("别的 JSON 会被拦住（不弹确认框、不动数据）",
+    /不是「异常单号登记」的备份文件/.test(bakText()) && store.length === beforeCancel, bakText());
+
+  /* 覆盖导入：整本换掉，推送流水一起换 */
+  const small = { ...bak, tickets: [bak.tickets[0]], images: [], logs: [] };
+  const logsBefore = pushLog.length;
+  await openImport(small);
+  msg = await answerDlg("replace", false, true);
+  check("覆盖后只剩文件里那一条", store.length === 1, String(store.length));
+  check("推送流水也一起换了（本机原来是 " + logsBefore + " 条）",
+    pushLog.length === 0 && pushLogDeletes > 0, "剩 " + pushLog.length);
+
+  /* 连设置一起恢复 */
+  const cfgFile = {
+    ...small,
+    cfg: { ...bak.cfg, stores: JSON.stringify([{ name: "备份里的店", mallcsid: "cs_9" }]) },
+  };
+  await openImport(cfgFile);
+  msg = await answerDlg("replace", true, true);
+  check("勾了才恢复设置，并写在结果里", /设置已恢复/.test(msg), msg);
+  check("店铺表换成了文件里的", /备份里的店/.test(kv["stores"] || ""), String(kv["stores"]).slice(0, 80));
+  check("列显示也跟着回来了", !!kv["tableCols"], String(kv["tableCols"] || "").slice(0, 40));
+
+  check("备份/恢复这一路没有新报错", errors.length === 0, errors.join(" | "));
+}
+
 console.log("\n====================================================");
 console.log(`    通过 ${pass} / 失败 ${fail}`);
 if (failures.length) {
