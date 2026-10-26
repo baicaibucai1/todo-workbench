@@ -51,6 +51,39 @@ export function addDays(dateStr: string, days: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/**
+ * 「今天」的判定条件（列表与角标共用一份，避免两处漂移）。
+ *
+ * 四条并集：
+ *   1. 手动加进来的（my_day = 1）
+ *   2. 今天到期的（due_date = 今天）
+ *   3. 每天重复的（repeat = 'daily'）
+ *   4. **今天有提醒的**（remind_at 落在本地今天）
+ *
+ * 第 4 条是 2026-10-26 补的：工具（便签 / 异常单号）订的提醒往往**只有提醒时刻、
+ * 没有截止日期** —— 提醒 ≠ 期限，硬把 due_date 写成提醒时间是篡改语义。
+ * 光看前三条的话，这类待办当天在「今天」里根本不存在，只在所属清单里躺着。
+ *
+ * remind_at 存的是 `new Date().toISOString()`（带 Z 的 ISO 串），所以用
+ * **本地日界换算出的两个 ISO 串**做字符串区间比较就够，不依赖 SQLite 的
+ * datetime()（内存库不认）。
+ */
+function mydayClause(): { sql: string; params: string[] } {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return {
+    sql:
+      "(my_day = 1 OR due_date = ? OR repeat = 'daily'" +
+      // ★ 这里**不能**给最后一个分支再套一层括号：内存库那套极简 SQL 解析器
+      // 只认「顶层 OR → 各分支 AND」，嵌套的 AND 分组它当成一条认不出的条件
+      // （直接判 false）。不套括号，AND 的优先级本来也更高，SQLite 语义一致。
+      " OR remind_at IS NOT NULL AND remind_at >= ? AND remind_at < ?)",
+    params: [today(), start.toISOString(), end.toISOString()],
+  };
+}
+
 /** SQLite 用 0/1 存布尔，这里统一做双向转换 */
 type RawTask = Omit<Task, "done" | "important" | "myDay" | "deleted" | "originTool"> & {
   done: number;
@@ -223,12 +256,13 @@ export async function fetchTasks(q: TaskQuery): Promise<Task[]> {
   const params: (string | number | null)[] = [];
 
   switch (q.view) {
-    case "myday":
-      // 「我的一天」是三种任务的并集：
-      //   手动加进来的、今天到期的、以及每天重复的
-      where.push("(my_day = 1 OR due_date = ? OR repeat = 'daily')");
-      params.push(today());
+    case "myday": {
+      // 「我的一天」是四条并集：手动加进来的 / 今天到期的 / 每天重复的 / 今天有提醒的
+      const my = mydayClause();
+      where.push(my.sql);
+      params.push(...my.params);
       break;
+    }
     case "orders":
       // 「流程任务」视图一张待办都不该有。
       // 这里必须显式返回空：switch 没有 default，未知视图会落到"不加条件"，
@@ -496,11 +530,12 @@ export async function fetchCounts(): Promise<{
   /** 图床条目总数 */
   imagebed: number;
 }> {
+  const my = mydayClause();
   const [myday, all, byList, orderRows, stageRows, imagebed] = await Promise.all([
     db().select<{ c: number }>(
       `SELECT COUNT(*) AS c FROM core_tasks
-        WHERE deleted = 0 AND done = 0 AND (my_day = 1 OR due_date = ? OR repeat = 'daily')`,
-      [today()],
+        WHERE deleted = 0 AND done = 0 AND ${my.sql}`,
+      my.params,
     ),
     db().select<{ c: number }>(
       `SELECT COUNT(*) AS c FROM core_tasks WHERE deleted = 0 AND done = 0`,

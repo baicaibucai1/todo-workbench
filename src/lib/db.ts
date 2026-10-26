@@ -319,6 +319,23 @@ class MemoryDb implements Db {
         // SQLite 中布尔以 0/1 存储，JS 侧做宽松比较
         const l = typeof left === "boolean" ? (left ? 1 : 0) : left;
         const r = typeof right === "boolean" ? (right ? 1 : 0) : right;
+        /**
+         * 大小比较要跟 SQLite 的**亲和性**一致：
+         * 两边都是字符串 → 按字典序（ISO 时刻串就是靠这个比的：
+         * `remind_at >= '2026-10-26T16:00:00.000Z'`）；
+         * 否则按数字。以前一律 `Number()`，字符串会变成 NaN，
+         * 于是所有日期区间的比较都静默为 false —— 桌面走 SQLite 看不出来，
+         * 浏览器 demo / e2e 里就是"提醒一条都不进今天"。
+         */
+        const cmpNum = (): number => {
+          if (typeof l === "string" && typeof r === "string") {
+            return l < r ? -1 : l > r ? 1 : 0;
+          }
+          const ln = Number(l);
+          const rn = Number(r);
+          if (Number.isNaN(ln) || Number.isNaN(rn)) return NaN;
+          return ln < rn ? -1 : ln > rn ? 1 : 0;
+        };
         switch (op) {
           case "=":
             if (l !== r) return false;
@@ -328,16 +345,16 @@ class MemoryDb implements Db {
             if (l === r) return false;
             break;
           case ">":
-            if (!((l as number) > (r as number))) return false;
+            if (!(cmpNum() > 0)) return false;
             break;
           case "<":
-            if (!((l as number) < (r as number))) return false;
+            if (!(cmpNum() < 0)) return false;
             break;
           case ">=":
-            if (!((l as number) >= (r as number))) return false;
+            if (!(cmpNum() >= 0)) return false;
             break;
           case "<=":
-            if (!((l as number) <= (r as number))) return false;
+            if (!(cmpNum() <= 0)) return false;
             break;
         }
         continue;
