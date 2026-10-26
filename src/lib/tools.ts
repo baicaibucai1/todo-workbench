@@ -78,10 +78,10 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     // 用 <script src> 加载）。**整目录缺失不影响使用**，只是智能填充退回纯 JS ——
     // 所以打包时没有带上那 50MB，工具仍然完整可用。
     id: "image-crop",
-    name: "图片裁剪",
-    version: "2.0.0",
+    name: "图片编辑",
+    version: "2.0.1",
     description:
-      "图片编辑器 Image Studio：裁剪 / 尺寸与比例 / 镜像 / 选区填充 / 批量导出；可从工作台图床直接取图，导出的图默认自动存回图床（开关可关）",
+      "裁剪 / 尺寸与比例 / 镜像 / 选区填充 / 批量导出；可从工作台图床直接取图，导出的图默认自动存回图床（开关可关）",
     icon: "crop",
     entry: "index.html",
     dbVersion: 1,

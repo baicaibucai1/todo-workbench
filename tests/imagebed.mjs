@@ -196,7 +196,7 @@ if (FRESH) {
 await page.waitForSelector("aside", { timeout: 20000 });
 await page.waitForTimeout(900);
 
-// 图床是**选装模块**，但默认值是**开** —— 它是便签 / AI 生成 / 图片裁剪的
+// 图床是**选装模块**，但默认值是**开** —— 它是便签 / AI 生成 / 图片编辑的
 // 共同落点，关着的话这些工具的附图能力直接不可用（2026-10-04 用户报过
 // "图库不能工作、图传不上去"）。用户仍可在 设置 → 行为 里关掉，
 // 而且**关过之后不会再被默认值翻回来** —— 那件事由本套件最后那节
@@ -398,9 +398,9 @@ check("刷新后图床还有 3 条", await waitCards(3), String(await cardCountN
 check("重命名保留了下来",
   (await cards().filter({ hasText: "红色主图-改过" }).count()) === 1);
 
-/* --------------------- 9. 与图片裁剪工具双向往返 --------------------- */
+/* --------------------- 9. 与图片编辑工具双向往返 --------------------- */
 
-console.log("\n9. 图床 ↔ 图片裁剪：取出来 → 改 → 存回去");
+console.log("\n9. 图床 ↔ 图片编辑：取出来 → 改 → 存回去");
 
 /** 打开一个工具并拿到它的 iframe 上下文（工具都跑在沙箱 iframe 里） */
 async function openTool(id, settle = 1500) {
@@ -414,7 +414,7 @@ async function openTool(id, settle = 1500) {
 }
 
 const fc = await openTool("image-crop");
-check("图片裁剪能作为工具打开", !!fc, "没找到 iframe");
+check("图片编辑能作为工具打开", !!fc, "没找到 iframe");
 if (fc) {
   const gate = await fc.evaluate(() => ({
     openHidden: document.getElementById("btnOpenFromImagebed").hidden,
@@ -525,7 +525,7 @@ if (fc) {
   });
   check("回图床视图条数对得上", await waitCards(expectCards),
     `期望 ${expectCards}，实际 ${await cardCountNow()}`);
-  check("新条目带着「图片裁剪」徽标",
+  check("新条目带着「图片编辑」徽标",
     (await page.locator('[data-gallery-origin="image-crop"]').count()) >= 1,
     String(await page.locator('[data-gallery-origin="image-crop"]').count()));
 }

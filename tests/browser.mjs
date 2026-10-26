@@ -91,7 +91,7 @@ check("显示我的一天", sidebarText.includes("我的一天"));
 check("显示重要", sidebarText.includes("重要"));
 check("显示全部", sidebarText.includes("全部"));
 check("显示工具分区", sidebarText.includes("工具"));
-check("显示内置图片裁剪工具", sidebarText.includes("图片裁剪"));
+check("显示内置图片编辑工具", sidebarText.includes("图片编辑"));
 check("显示工作列表", sidebarText.includes("工作"));
 check("显示个人列表", sidebarText.includes("个人"));
 check("显示新建列表入口", sidebarText.includes("新建列表"));
@@ -222,11 +222,11 @@ check("新列表出现在侧边栏", listText.includes("测试清单"));
 check("自动切换到新列表", (await page.locator("h1").first().innerText()) === "测试清单");
 
 console.log("\n12. 工具模块");
-await navItem("图片裁剪").click();
+await navItem("图片编辑").click();
 await page.waitForTimeout(900);
 const toolText = await page.locator("body").innerText();
 check("退出待办进入工具页", !(await page.locator("h1").first().isVisible().catch(() => false)));
-check("显示工具名", toolText.includes("图片裁剪"));
+check("显示工具名", toolText.includes("图片编辑"));
 // 工具是跑在 iframe 里的**真页面**。
 // 契约说明页（「工具接入契约」「manifect.json」「数据隔离」那些）只在
 // 入口解析不出来时才兜底显示 —— 工具能正常加载时页面里根本没有这些字，

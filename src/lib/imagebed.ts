@@ -436,7 +436,7 @@ export async function deleteImagebedItem(id: string): Promise<string | null> {
 const ORIGIN_LABEL: Record<ImagebedOrigin, string> = {
   manual: "手动导入",
   "ai-gen": "AI 生成",
-  "image-crop": "图片裁剪",
+  "image-crop": "图片编辑",
   "size-chart": "尺码表",
   "abnormal-ticket": "异常单号登记",
 };

@@ -58,7 +58,7 @@ const SCREENS = [
   { nav: "all", file: "04-all.png", kind: "view", title: "全部" },
   { nav: "orders", file: "05-orders.png", kind: "view", title: "流程任务" },
   { nav: "imagebed", file: "07-imagebed.png", kind: "imagebed", title: "图床" },
-  { nav: "tool:image-crop", file: "11-tool-image-crop.png", kind: "tool", id: "image-crop", name: "图片裁剪" },
+  { nav: "tool:image-crop", file: "11-tool-image-crop.png", kind: "tool", id: "image-crop", name: "图片编辑" },
   { nav: "settings", file: "20-settings.png", kind: "modal", title: "设置" },
   // 设置里的第二个分屏：工具管理。`tab` 指定打开哪一个分区，
   // `must` 钉住"确实切过去了"—— 只看 h1 的话，分区没切成功也会截出

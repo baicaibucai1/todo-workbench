@@ -89,7 +89,7 @@ if ((await toolRow.count()) === 0 || !(await toolRow.isVisible().catch(() => fal
 const toolCount = await page.locator("aside button").count();
 info("侧边栏按钮总数", toolCount);
 check(`侧边栏出现「${TOOL_NAME}」`, (await toolRow.count()) > 0);
-check("图片裁剪工具仍在（未破坏已有工具）", (await page.locator("aside button").filter({ hasText: "图片裁剪" }).count()) > 0);
+check("图片编辑工具仍在（未破坏已有工具）", (await page.locator("aside button").filter({ hasText: "图片编辑" }).count()) > 0);
 
 console.log("\n3. 点开工具，宿主容器正确");
 await toolRow.click();

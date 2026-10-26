@@ -2006,7 +2006,7 @@ section("25. 工具的启用、状态保持与单文件导入");
 
   /* --- 过滤与选中：App 与工具区共用同一个判断 --- */
   const fake = [
-    { id: "image-crop", name: "图片裁剪", version: "2.0.0", entry: "index.html", dbVersion: 1, source: "bundled" },
+    { id: "image-crop", name: "图片编辑", version: "2.0.1", entry: "index.html", dbVersion: 1, source: "bundled" },
     { id: "my-tool", name: "我的工具", version: "1.0.0", entry: "index.html", dbVersion: 1, source: "user" },
   ];
   const tl = await import("../src/lib/tools.ts");

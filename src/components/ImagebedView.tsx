@@ -398,7 +398,7 @@ function EmptyState({
         <p className="mt-1.5 text-[12px] leading-relaxed text-fg-dim">
           {filtered
             ? "换个筛选条件或清空搜索词试试。"
-            : "AI 生成的结果、图片裁剪的导出、尺码表的成品都会落到这里；也可以直接把本机图片拖进来。"}
+            : "AI 生成的结果、图片编辑的导出都会落到这里；也可以直接把本机图片拖进来。"}
         </p>
         {!filtered && (
           <button

@@ -168,7 +168,7 @@ INSERT INTO core_settings (key, value)
 ```json
 {
   "id": "image-crop",
-  "name": "图片裁剪",
+  "name": "图片编辑",
   "version": "2.0.0",
   "description": "……",
   "icon": "crop",

@@ -277,7 +277,7 @@ console.log("\n6. 隔离：工具够不着宿主的表");
 console.log("\n7. schema.info 与 tools.list");
 fr = await readFrame();
 check("schema.info 拿到了表结构", fr && fr.schemaJson.includes("notes") && fr.schemaJson.includes("created_at"), (fr && fr.schemaJson || "").slice(0, 120));
-check("tools.list 列出了同机器的其他工具", !!fr && /图片裁剪|尺码表生成器|AI 生成/.test(fr.peers), fr && fr.peers);
+check("tools.list 列出了同机器的其他工具", !!fr && /图片编辑|图片裁剪|尺码表生成器|AI 生成/.test(fr.peers), fr && fr.peers);
 fr && info("同伴清单", fr.peers);
 
 console.log("\n8. 联动：把一条内容交给别的工具");

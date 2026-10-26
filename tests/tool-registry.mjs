@@ -33,7 +33,7 @@
  * 合并进 tools.disabled，只合并、不动用户自己停用过/启用过的项）。
  */
 
-/** 全部内置工具 id（2026-10-26 起只留两个：图片裁剪、异常单号登记） */
+/** 全部内置工具 id（2026-10-26 起只留两个：图片编辑、异常单号登记） */
 export const ALL_TOOL_IDS = [
   "image-crop",
   "abnormal-ticket",
@@ -58,7 +58,7 @@ export const ENABLED_TOOL_IDS = [
  * 短名只用在日志里，跟 manifest 里的 name 不必一字不差（那边是完整名称）。
  */
 export const THEME_TOOLS = [
-  ["image-crop", "图片裁剪"],
+  ["image-crop", "图片编辑"],
   ["abnormal-ticket", "异常单号"],
 ];
 

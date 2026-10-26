@@ -254,12 +254,12 @@ console.log("\n=== 3. 尺码表 size-chart ===");
 }
 
 /* ==================================================================
- * 4. 图片裁剪（image-crop）
+ * 4. 图片编辑（image-crop）
  * ================================================================== */
-console.log("\n=== 4. 图片裁剪 image-crop ===");
+console.log("\n=== 4. 图片编辑 image-crop ===");
 {
-  const s = await expectCommon("image-crop", "图片裁剪", "file");
-  check("图片裁剪：状态条写着「独立运行」",
+  const s = await expectCommon("image-crop", "图片编辑", "file");
+  check("图片编辑：状态条写着「独立运行」",
     (await page.evaluate(() => document.getElementById("hostState")?.textContent)) === "独立运行",
     String(await page.evaluate(() => document.getElementById("hostState")?.textContent)));
   void s;
@@ -272,11 +272,11 @@ console.log("\n=== 4. 图片裁剪 image-crop ===");
     hint: document.getElementById("listHint").textContent,
     thumbs: document.querySelectorAll("#thumbList *").length,
   }));
-  check("图片裁剪：能打开一张图（缩略图列表进了一条）", after.hint !== before && /1 张/.test(after.hint),
+  check("图片编辑：能打开一张图（缩略图列表进了一条）", after.hint !== before && /1 张/.test(after.hint),
     `${before} → ${after.hint}`);
-  check("图片裁剪：缩略图列表真的渲染出了东西", after.thumbs > 0, `thumbs=${after.thumbs}`);
+  check("图片编辑：缩略图列表真的渲染出了东西", after.thumbs > 0, `thumbs=${after.thumbs}`);
 
-  await expectCommon("image-crop", "图片裁剪", "http");
+  await expectCommon("image-crop", "图片编辑", "http");
 }
 
 /* ==================================================================

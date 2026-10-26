@@ -1124,7 +1124,7 @@ section("7. system prompt：权限、时间、技能摘要、动作协议都在�
     now: new Date("2026-09-23T21:40:00"),
     permissions: ALL_PERMS,
     tools: [
-      { id: "image-crop", name: "图片裁剪", hasSchema: false },
+      { id: "image-crop", name: "图片编辑", hasSchema: false },
       { id: "overtime-log", name: "加班记录", hasSchema: true },
     ],
     lists: ["工作", "个人"],
@@ -1137,7 +1137,7 @@ section("7. system prompt：权限、时间、技能摘要、动作协议都在�
   check("给了明天 / 昨天的日期（免得它自己算错）", p.includes("今天 = 2026-09-23") && p.includes("明天 = 2026-09-24") && p.includes("昨天 = 2026-09-22"));
   check("说明了是本地墙上时间不是 UTC", p.includes("不是 UTC"));
   check("桌面端说明是「能读写本机文件」", p.includes("桌面版（能读写本机文件）"));
-  check("工具清单带 id、名字与有无数据表", p.includes("image-crop（图片裁剪）") && p.includes("overtime-log（加班记录，有数据表）"));
+  check("工具清单带 id、名字与有无数据表", p.includes("image-crop（图片编辑）") && p.includes("overtime-log（加班记录，有数据表）"));
   check("清单列表进来了", p.includes("工作、个人"));
   check("三项权限都标了 ✅", (p.match(/✅/g) ?? []).length === 3, String((p.match(/✅/g) ?? []).length));
   check("权限全开时没有 ⛔", !p.includes("⛔"));
@@ -1450,7 +1450,7 @@ section("9. 停下来问用户：协议、三个新动作、强制确认门、�
     await loadTools();
     const ow = await describeConfirm("install_tool", { id: "image-crop", overwrite: true });
     check("覆盖已装的工具要确认", !!ow);
-    check("覆盖确认卡写清了现在装的是哪个版本", ow.detail.includes("图片裁剪"), ow.detail);
+    check("覆盖确认卡写清了现在装的是哪个版本", ow.detail.includes("图片编辑"), ow.detail);
     check(
       "覆盖确认卡警告了手工改动会一起消失",
       ow.detail.includes("一起消失"),
