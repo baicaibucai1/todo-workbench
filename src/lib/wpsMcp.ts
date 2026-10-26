@@ -213,6 +213,41 @@ export async function mcpListFiles(token: string, clientId: string): Promise<Mcp
 }
 
 /**
+ * 新建一张台账表格（.ksheet），第一行就是 14 个台账表头。
+ *
+ * 与「粘链接绑定」并列的另一条路：用户没有现成的表时，不必先跑到 WPS 里
+ * 手搓一张（手搓最容易漏列、表头写错一个字就整本推不上去）。
+ *
+ * 表头**不由调用方传**：Rust 侧照 `COLUMNS` 写，保证和推送端同一份约定。
+ */
+export type McpCreate = {
+  file_id: string;
+  /** 服务端给的访问链接；没给就是空串 */
+  link: string;
+  name: string;
+  /** 工作表名（拉取 / 推送按它选表） */
+  sheet: string;
+  owner: string;
+};
+
+export async function mcpCreateSheet(
+  name: string,
+  sheet: string,
+  owner: string,
+  token: string,
+  clientId: string,
+): Promise<McpCreate> {
+  if (!isTauri()) desktopOnly();
+  return invoke<McpCreate>("wps_mcp_create_sheet", {
+    token,
+    clientId,
+    name,
+    sheetName: sheet,
+    owner,
+  });
+}
+
+/**
  * 拉取在线表格 → 按台账列名映射成本地行。
  *
  * 语义与原来那条直连路一致（整行全空跳过、只认 14 个中文表头），

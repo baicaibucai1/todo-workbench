@@ -101,6 +101,8 @@ const kv = {};             // 工具 kv
 const ops = [];            // 收到的 op 流水
 const args = [];           // 每个 op 的参数（要看推送第一步是不是 dryRun）
 let shellFail = null;      // 模拟旧宿主（不认识 shell.open）或系统唤不起来
+let createUnsupported = false; // 模拟 0.3.3 及更早的宿主（没有 wps.mcpCreate）
+const created = [];        // 新建表格的请求流水（看名字有没有原样递上去）
 
 // 预置店铺表：其中一个挂着客服 ID 987654 —— ERP 链接里就写这个，
 // 好验证「粘链接 → 店铺自动认出来」这条路。
@@ -271,6 +273,28 @@ function host(win, e) {
     case "wps.mcpApply":
       reply(win, m.id, true, { added: 1, updated: 0 });
       return;
+    /* 新建台账表格（宿主 0.3.4）。回包形状与 toolBridge 的 wps.mcpCreate 一致：
+       { sheet: { link, fileId, name, sheet, owner } } —— 与「粘链接绑定」同一个 wps 对象形状，
+       所以工具里新建完和绑定完走同一条推 / 拉的路。 */
+    case "wps.mcpCreate": {
+      if (createUnsupported) {
+        reply(win, m.id, false, null, "不支持的操作：wps.mcpCreate");
+        return;
+      }
+      if (!p.name) { reply(win, m.id, false, null, "先给新表格起个名字"); return; }
+      const raw = String(p.name).replace(/\.(ksheet|xlsx|xls|et)$/i, "");
+      created.push({ name: p.name, sheet: p.sheet });
+      reply(win, m.id, true, {
+        sheet: {
+          link: "https://www.kdocs.cn/l/cNewMade001",
+          fileId: "made-" + created.length,
+          name: raw + ".ksheet",
+          sheet: p.sheet || "台账",
+          owner: "大苏打",
+        },
+      });
+      return;
+    }
     /* ---- 唤起客户端（宿主侧 ShellExecute，工具只递链接） ---- */
     case "shell.open":
       if (shellFail) { reply(win, m.id, false, null, shellFail); return; }
@@ -997,6 +1021,83 @@ console.log("\n5d. 布局：分栏能拖、列宽按权重");
   const sum = w.reduce((a, b) => a + b, 0);
   check("列宽百分比加起来是 100", Math.abs(sum - 100) < 0.5, String(sum));
 }
+
+console.log("\n5b. 新建表格（没有现成的表也能开工）");
+doc.getElementById("tab-settings").click();
+await sleep(60);
+check("没绑表时给出「新建一张台账表格」", doc.getElementById("wpsNewRow").hidden === false);
+check("没绑表时按钮就写「绑定」", doc.getElementById("wpsBind").textContent === "绑定",
+  doc.getElementById("wpsBind").textContent);
+
+/* 名字清空 → 不该发请求、也不该进绑定态 */
+doc.getElementById("wpsNew").click();
+await sleep(60);
+let nd = doc.querySelector(".dlgm");
+check("点新建弹出命名框", !!nd && !!nd.querySelector("#newSheetName"));
+check("默认名字带年月（按月分表）",
+  /^异常单号台账 \d{4}-\d{2}$/.test((nd && nd.querySelector("#newSheetName").value) || ""),
+  nd ? nd.querySelector("#newSheetName").value : "没弹窗");
+const beforeCreate = created.length;
+nd.querySelector("#newSheetName").value = "   ";
+nd.querySelector("#dlgYes").click();
+await sleep(150);
+check("名字空着不发请求", created.length === beforeCreate, String(created.length));
+check("名字空着会说清原因", /名字不能空着/.test(doc.getElementById("wpsMsg").textContent || ""),
+  doc.getElementById("wpsMsg").textContent);
+check("名字空着没进绑定态", doc.getElementById("wpsName").textContent === "还没绑定",
+  doc.getElementById("wpsName").textContent);
+
+/* 正常建：名字原样递上去（后缀由宿主规范化），工作表名一起带 */
+doc.getElementById("wpsNew").click();
+await sleep(60);
+nd = doc.querySelector(".dlgm");
+nd.querySelector("#newSheetName").value = "  8 月台账.xlsx ";
+nd.querySelector("#dlgYes").click();
+await sleep(300);
+const made = created[created.length - 1] || {};
+check("新建请求发出去了", created.length === beforeCreate + 1, String(created.length));
+check("名字原样递给宿主（后缀交给宿主规范化）", made.name === "8 月台账.xlsx", JSON.stringify(made));
+check("工作表名一起带上（拉 / 推按它选表）", made.sheet === "台账", JSON.stringify(made));
+check("建完就进绑定态", doc.getElementById("wpsName").textContent === "已绑定",
+  doc.getElementById("wpsName").textContent);
+check("建完表名与创建人摆出来",
+  /8 月台账/.test(doc.getElementById("wpsTitle").textContent || "")
+  && /大苏打/.test(doc.getElementById("wpsOwner").textContent || ""),
+  doc.getElementById("wpsTitle").textContent + " / " + doc.getElementById("wpsOwner").textContent);
+check("新建的绑定也写进 kv", /made-1/.test(String(kv["wps.sheet"] || "")),
+  String(kv["wps.sheet"]).slice(0, 160));
+check("建完「新建」收起来（不然容易误建第二本）", doc.getElementById("wpsNewRow").hidden === true);
+check("建完推 / 拉解禁",
+  doc.getElementById("wpsPush").disabled === false && doc.getElementById("wpsPull").disabled === false);
+check("建完自动对了一次账（本地几条还没推上去）",
+  ops.filter((o) => o === "wps.mcpPull").length >= 1,
+  String(ops.filter((o) => o === "wps.mcpPull").length));
+
+/* 解绑，回到未绑定 —— 后面那节测的是「粘链接绑定」 */
+doc.getElementById("wpsUnbind").click();
+await sleep(100);
+check("解绑后回到未绑定态",
+  doc.getElementById("wpsName").textContent === "还没绑定"
+  && doc.getElementById("wpsNewRow").hidden === false,
+  doc.getElementById("wpsName").textContent);
+
+/* 旧宿主（0.3.3 及更早）没有这个 op：要说成版本问题，不能让人以为是网络 */
+createUnsupported = true;
+doc.getElementById("wpsNew").click();
+await sleep(60);
+nd = doc.querySelector(".dlgm");
+nd.querySelector("#newSheetName").value = "旧宿主试验";
+nd.querySelector("#dlgYes").click();
+await sleep(250);
+check("老宿主会明说要 0.3.4 以上",
+  /0\.3\.4/.test(doc.getElementById("wpsMsg").textContent || ""),
+  doc.getElementById("wpsMsg").textContent);
+check("老宿主失败后没进绑定态", doc.getElementById("wpsName").textContent === "还没绑定",
+  doc.getElementById("wpsName").textContent);
+check("老宿主失败后按钮没卡死（wpsBusy 复位）",
+  doc.getElementById("wpsPush").disabled === true && doc.getElementById("wpsBind").textContent === "绑定",
+  doc.getElementById("wpsBind").textContent);
+createUnsupported = false;
 
 console.log("\n6. 绑定在线表格（分享链路）");
 doc.getElementById("tab-settings").click();

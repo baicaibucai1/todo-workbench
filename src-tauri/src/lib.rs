@@ -244,6 +244,9 @@ pub fn run() {
             wps_mcp::wps_mcp_bridge,
             wps_mcp::wps_mcp_sheet_pull,
             wps_mcp::wps_mcp_sheet_push,
+            // 新建台账表格（.ksheet + 14 个表头一次写好）。用户不必先在
+            // WPS 里手搓一张表再来绑 —— 「新建」和「绑定」是两条平等的路。
+            wps_mcp::wps_mcp_create_sheet,
             // 授权页必须在**程序内**弹出来：webview 里 window.open 静默无效
             wps_mcp::wps_mcp_open_auth,
             wps_mcp::wps_mcp_close_auth,

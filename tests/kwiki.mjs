@@ -184,21 +184,36 @@ section("2. COLUMNS 与 Rust 侧逐条一致");
     /id="wpsLink"/.test(html) && /<div class="card[^"]*"[^>]*data-host-only[^>]*>\s*\n\s*<h2>在线表格/.test(html),
   );
   check(
-    "工具只喊推 / 拉 / 确认，自己不做比对",
+    "工具只喊推 / 拉 / 确认（新建也只递个名字）",
     html.includes('"wps.mcpPush"') &&
       html.includes('"wps.mcpPull"') &&
       html.includes('"wps.mcpApply"') &&
       html.includes('"wps.mcpLink"') &&
+      html.includes('"wps.mcpCreate"') &&
+      // 新建表格时**表头不许工具自己拼**：只递名字，14 个列名由宿主按 COLUMNS 写。
+      // 工具里要是出现 rangeData，说明又有人在页面里抄了一份表头。
+      !/rangeData\s*:/.test(html) &&
       // 工具页里不许再出现一份"认列/写列"的实现
       !/planPull|COLUMNS\s*=\s*\[/.test(html),
   );
   const bridge = read("src/lib/toolBridge.ts");
   check(
-    "桥接开了这四个 op，且都在 wps 能力门里",
-    ["wps.mcpLink", "wps.mcpPush", "wps.mcpPull", "wps.mcpApply"].every((op) =>
+    "桥接开了这五个 op，且都在 wps 能力门里",
+    ["wps.mcpLink", "wps.mcpCreate", "wps.mcpPush", "wps.mcpPull", "wps.mcpApply"].every((op) =>
       bridge.includes(`"${op}"`),
     ),
   );
+  {
+    const rs = read("src-tauri/src/wps_mcp.rs");
+    check(
+      "新建表格走 create_file_with_content，表头取 COLUMNS（与推送端同一份）",
+      rs.includes("create_file_with_content") && /fn header_ops\(\)[\s\S]{0,500}COLUMNS/.test(rs),
+    );
+    check(
+      "新建表格限定成 .ksheet（不是「随便建云文档」的口子）",
+      /fn sheet_file_name\(raw: &str\)[\s\S]{0,600}\.ksheet/.test(rs),
+    );
+  }
   check(
     "对账仍走 Rust 那份 plan_cloud_write（不是工具侧另算）",
     bridge.includes("mcpSheetPush") && bridge.includes("readLedger") && bridge.includes("planPull"),

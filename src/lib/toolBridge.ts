@@ -147,6 +147,7 @@ import {
 } from "./wpsLink";
 import {
   mcpBridgeTool,
+  mcpCreateSheet,
   mcpProbe,
   mcpSheetPull,
   mcpSheetPush,
@@ -237,6 +238,7 @@ export type ToolOp =
    *   给一份关键保护开第二份实现 —— 改一处必漏另一处。
    */
   | "wps.mcpLink"
+  | "wps.mcpCreate"
   | "wps.mcpPush"
   | "wps.mcpPull"
   | "wps.mcpApply";
@@ -490,6 +492,8 @@ interface ToolRequest {
     dryRun?: boolean;
     /** wps.mcpPush：true = 强制同步，表上有本地没有的行会被清空（默认不动） */
     force?: boolean;
+    /** wps.mcpCreate：新表里那张工作表叫什么（不传 = 台账） */
+    sheetName?: string;
   };
 }
 
@@ -1449,6 +1453,7 @@ export function createToolBridge(
         op === "wps.mcpDocWrite" ||
         op === "wps.mcpSheetWrite" ||
         op === "wps.mcpLink" ||
+        op === "wps.mcpCreate" ||
         op === "wps.mcpPush" ||
         op === "wps.mcpPull" ||
         op === "wps.mcpApply"
@@ -1475,6 +1480,7 @@ export function createToolBridge(
           op === "wps.mcpLink" ||
           op === "wps.mcpFiles" ||
           op === "wps.mcpBind" ||
+          op === "wps.mcpCreate" ||
           op === "wps.mcpRead" ||
           op === "wps.mcpDocWrite" ||
           op === "wps.mcpSheetWrite" ||
@@ -1567,6 +1573,35 @@ export function createToolBridge(
             if (!fileId) return reply(id, false, "缺少 fileId（要绑定哪份文件）");
             if (!name) return reply(id, false, "缺少文件名");
             return reply(id, true, { binding: { mcp: true, id: fileId, name, kind: fileKind } });
+          }
+
+          /* 新建一张台账表格：.ksheet + 14 个表头一起建好，建完就是绑定态。
+           *
+           * 表头由 Rust 侧按 COLUMNS 写（不是工具传进来）—— 见 wps_mcp.rs
+           * 里那段注释：表头只要和推送端不是一个来源，漏改一处就会变成
+           * 「表头认不出 → 一点推送就报错」。 */
+          if (op === "wps.mcpCreate") {
+            const name = typeof payload?.name === "string" ? payload.name.trim() : "";
+            if (!name) return reply(id, false, "先给新表格起个名字");
+            const tab = typeof payload?.sheetName === "string" ? payload.sheetName.trim() : "";
+            const made = await mcpCreateSheet(
+              name,
+              tab,
+              String(settings[SETTINGS.wpsMcpUser] || ""),
+              mcpToken,
+              mcpClientId,
+            );
+            return reply(id, true, {
+              // 形状对齐工具里那个 wps 对象（link/fileId/name/sheet/owner），
+              // 这样「新建」和「绑定已有」出来是同一种绑定，后面的推拉不用分叉
+              sheet: {
+                link: made.link,
+                fileId: made.file_id,
+                name: made.name,
+                sheet: made.sheet,
+                owner: made.owner,
+              },
+            });
           }
 
           if (op === "wps.mcpRead") {

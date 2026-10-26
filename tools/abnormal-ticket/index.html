@@ -594,6 +594,8 @@
   .logbar select { width: auto; min-width: 120px; }
   /* ★ 它同时是 .r（display:flex）—— hidden 属性压不住，得显式写一条 */
   #logMoreWrap[hidden] { display: none; }
+  /* 同理：新建表格那一行也是 .r（flex）。不写这条，绑好表之后它还赖在页面上 */
+  #wpsNewRow[hidden] { display: none; }
   .colpanel {
     /* ★ fixed，不是 absolute（v1.14.0 修）：它原来挂在工具栏里 `right:0` 往左展开，
        窗口一窄就整个溢出到 main 左边，被 `main{overflow:auto}` 裁掉 ——
@@ -1093,17 +1095,24 @@
     <div class="card narrow" data-host-only>
       <h2>在线表格（WPS）</h2>
       <p class="note" style="margin:0 0 8px">
-        每张 WPS 授权都有<b>一条分享链接</b> —— 粘一条进来就认出是哪张表，之后就在本工具里
-        <b>推送 / 拉取</b>。<b>只写台账那 14 列</b>：你自己加的备注列、公式列一格都不动，
-        <b>赔款数这类本地列的也不推</b>（它只在工具里记）；
+        没有现成的表就<b>在这儿新建一张</b> —— 建的时候把台账那 14 个表头一起写好，
+        不用你先去 WPS 里手搓；已经有表就粘一条<b>分享链接</b>绑上来。
+        绑好之后就在本工具里<b>推送 / 拉取</b>。<b>只写台账那 14 列</b>：
+        你自己加的备注列、公式列一格都不动，<b>赔款数这类本地列的也不推</b>（它只在工具里记）；
         <b>推送是增量的</b> —— 按单号比对，只写「本地新增的行」和「值变了的那些格」，
         表上已有的行不重写，表上有而本地没有的行留着不动；
         拉取<b>先看差异、确认了才写库</b>。授权在 <b>设置 → WPS 授权</b> 里做一次就行
         （同一份令牌，不重复授权）。
       </p>
+      <!-- 新建：只在本机还没绑表时出现 —— 已经绑着的时候建新表多半是误点 -->
+      <div class="r" id="wpsNewRow">
+        <button class="primary" id="wpsNew">新建一张台账表格</button>
+        <span class="hint" style="margin:0">建在你的云文档根目录，表头一起写好</span>
+      </div>
+      <div class="hint" id="wpsOr" style="margin:10px 0 6px">已经有表了：粘它的分享链接</div>
       <input id="wpsLink" placeholder="https://www.kdocs.cn/l/xxxx —— 在 WPS 里点「分享」复制链接" />
       <div class="r" style="margin-top:8px">
-        <button class="primary" id="wpsBind">绑定</button>
+        <button id="wpsBind">绑定</button>
         <button id="wpsUnbind" hidden>解绑</button>
         <span class="hint" id="wpsName" style="margin:0">还没绑定</span>
       </div>
@@ -4225,6 +4234,10 @@
     var on = !!wps.fileId;
     $("wpsName").textContent = on ? "已绑定" : "还没绑定";
     $("wpsUnbind").hidden = !on;
+    // 已绑定就不再劝人新建（那时点新建=换一本台账，容易误伤）；换表走下面那条链接
+    $("wpsNewRow").hidden = on;
+    // 绑着的时候输入框里就是当前链接，不需要再挂一句说明（否则"换一张表"出现三遍）
+    $("wpsOr").hidden = on;
     $("wpsBind").textContent = on ? "换一张表" : "绑定";
     $("wpsBound").hidden = !on;
     if (on) {
@@ -4378,6 +4391,70 @@
     renderSettings();
   }
 
+  /* 新建一张台账表格：不用户先跑去 WPS 手搓（手搓十个有九个漏列/写错表头）。
+   * 名字可改，默认带上年月 —— 按月分表是最常见的用法，明年再建一张就是新的。 */
+  $("wpsNew").onclick = function () {
+    if (wpsBusy) return;
+    var d = new Date();
+    var def = "异常单号台账 " + d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2);
+    var want = def;
+    ask({
+      title: "新建一张台账表格",
+      ok: "建好并绑定",
+      okTone: "primary",
+      html:
+        '<div class="hint" style="margin:0 0 8px;line-height:1.5">'
+        + "建在你的云文档根目录，第一行写好台账那 14 个表头，建完就绑上。"
+        + "重名不会覆盖（WPS 会自动改名），所以放心建。</div>"
+        + '<input id="newSheetName" value="' + esc(def) + '" placeholder="表格名字" />',
+      focus: "#newSheetName",
+      collect: function (mask) {
+        var el = mask.querySelector("#newSheetName");
+        // 必须自己 trim：服务端与宿主不替我们清空格，留着会建出「   .ksheet」
+        want = txt(el && el.value).trim();
+      },
+    }).then(function (ok) {
+      if (!ok) return;
+      if (!want) { setWpsMsg("名字不能空着", true); return; }
+      wpsBusy = true;
+      renderSettings();
+      hideWpsPreview();
+      setWpsMsg("正在建表（会写 14 个表头）…");
+      return call("wps.mcpCreate", { name: want, sheet: "台账" }, 120000)
+        .then(function (r) {
+          var s = (r && r.sheet) || {};
+          if (!txt(s.fileId)) throw new Error("建表返回里没有文件 id");
+          // 和「粘链接绑定」写出同一种 wps 对象，后面的推 / 拉不用分叉
+          wps = {
+            link: txt(s.link),
+            fileId: txt(s.fileId),
+            name: txt(s.name),
+            sheet: txt(s.sheet),
+            owner: txt(s.owner),
+          };
+          return saveWps().then(function () {
+            setWpsMsg("已新建并绑定「" + (wps.name || wps.fileId) + "」"
+              + (wps.link ? "" : " —— 没拿到访问链接，去 WPS 里看这张表"));
+          });
+        })
+        .catch(function (err) {
+          var msg = txt(err && err.message ? err.message : err);
+          // 0.3.3 及更早的宿主没有 wps.mcpCreate 这个 op —— 说清楚，别让人
+          // 以为是网络问题
+          if (/不支持|未知|unknown|not.?support/i.test(msg)) {
+            msg = "这台客户端还没有「新建表格」（要 0.3.4 以上）—— 可以先粘链接绑定已有的表";
+          }
+          setWpsMsg(msg, true);
+        })
+        .then(function () {
+          wpsBusy = false;
+          renderSettings();
+          // 建完就对一次账：空表 + 本地 N 条，页头会标出「云端有 N 处不同」，
+          // 相当于告诉用户"接下来点推送"。和「粘链接绑定」走同一条路。
+          if (wps.fileId) void readSheetDiff(true);
+        });
+    });
+  };
   $("wpsBind").onclick = function () {
     var link = $("wpsLink").value.trim();
     if (!link) { setWpsMsg("先粘一条分享链接", true); return; }

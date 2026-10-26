@@ -1223,6 +1223,209 @@ fn cell_op(row: usize, col: usize, formula: &str) -> Json {
 }
 
 /* ------------------------------------------------------------------ */
+/* 新建台账表格                                                        */
+/* ------------------------------------------------------------------ */
+
+/// 新建表格的结果。字段与前端 `wpsMcp.ts` 的 `McpCreate` 逐字对应。
+#[derive(Debug, Serialize)]
+pub struct WpsMcpCreate {
+    pub file_id: String,
+    /// 服务端给的访问链接（kdocs.cn/l/xxx）；没给就是空串
+    pub link: String,
+    /// 实际建出来的文件名（可能被服务端重命名过，比如同名）
+    pub name: String,
+    /// 工作表名 —— 拉取 / 推送都按它选表
+    pub sheet: String,
+    /// 创建人（授权账号，前端从设置里带下来）
+    pub owner: String,
+}
+
+/// 把用户输入的名字整理成 `xxx.ksheet`。
+///
+/// 三条规矩，都是踩过或能预见的：
+///   · 用户可能顺手把后缀也打进来（「台账.xlsx」）—— 不去掉就会变成
+///     `台账.xlsx.ksheet`，WPS 里看着像两个后缀；
+///   · 空名字不能发出去（服务端会拒），给个兜底名；
+///   · 太长的名字服务端会截断，不如这边先按**字符**截（别按字节，中文会切坏）。
+fn sheet_file_name(raw: &str) -> String {
+    let mut n = raw.trim().trim_end_matches(['.', ' ', '\u{3000}']).to_string();
+    let lower = n.to_lowercase();
+    for suf in [".ksheet", ".xlsx", ".xls", ".et"] {
+        if lower.ends_with(suf) {
+            n.truncate(n.len() - suf.len());
+            break;
+        }
+    }
+    let n = n.trim();
+    let n = if n.is_empty() { "异常单号台账" } else { n };
+    let clipped: String = n.chars().take(60).collect();
+    format!("{}.ksheet", clipped.trim_end())
+}
+
+/// 表头那 14 格。
+///
+/// ★ 键是**蛇形**（`row_from` 这套）—— `create_file_with_content` 的入参形状
+/// 与 `sheet.update_range_data` 的驼峰不是同一套，混了服务端直接报"必填"。
+fn header_ops() -> Vec<Json> {
+    COLUMNS
+        .iter()
+        .enumerate()
+        .map(|(i, (_key, label))| {
+            json!({ "row_from": 0, "row_to": 0, "col_from": i, "col_to": i, "formula": label })
+        })
+        .collect()
+}
+
+/// 有些工具（`list_drive_roles` / `share_file`）的信封比别人的多一层：
+/// `data` 里还套一个 `data`。这里一次钻到底 —— 最多两层，够用且不会
+/// 误钻（普通信封第一层就没有 `data` 键）。
+fn nested_data(v: &Json) -> &Json {
+    let mut cur = v;
+    for _ in 0..2 {
+        match cur.get("data") {
+            Some(inner) => cur = inner,
+            None => break,
+        }
+    }
+    cur
+}
+
+/// 建完表顺手开一个「任何人可查看」的分享链接。
+///
+/// 不是锦上添花：**不开分享，`link_url` 是死链** —— 匿名元数据接口直接
+/// 403（2026-10-26 实测：同一份返回里的 link_url，分享前后一个 403 一个 200），
+/// 用户把链接发给同事打不开；解绑之后想再粘回来绑定也认不出来。
+///
+/// 失败**不阻塞建表**：表已经在云文档里了，只是暂时没有对外链接。
+async fn share_anyone(
+    client: &reqwest::Client,
+    token: &str,
+    client_id: &str,
+    session: &str,
+    file_id: &str,
+    drive_id: &str,
+) -> Option<String> {
+    // ① 先拿角色 id：它是每个云盘自己的，写死别人的会失败
+    let roles = mcp_biz(
+        &rpc(
+            client,
+            token,
+            client_id,
+            Some(session),
+            json!({
+                "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+                "params": {"name": "list_drive_roles", "arguments": {"drive_id": drive_id}}
+            }),
+        )
+        .await
+        .ok()?
+        .body?,
+    )
+    .ok()?;
+    let items = nested_data(&roles).get("items").and_then(Json::as_array)?;
+    // 优先「可查看」—— 比"能看但没有编辑权"保守；拿不到就退第一个
+    let role = items
+        .iter()
+        .find(|r| r.get("role_code").and_then(Json::as_str) == Some("viewable"))
+        .or_else(|| items.first())?;
+    let role_id = pick_str(role, &["id"])?;
+
+    // ② 开分享（scope=anyone：有链接就能看，和用户在 WPS 里点「分享」一样）
+    let shared = mcp_biz(
+        &rpc(
+            client,
+            token,
+            client_id,
+            Some(session),
+            json!({
+                "jsonrpc": "2.0", "id": 6, "method": "tools/call",
+                "params": {
+                    "name": "share_file",
+                    "arguments": {"file_id": file_id, "scope": "anyone", "role_id": role_id}
+                }
+            }),
+        )
+        .await
+        .ok()?
+        .body?,
+    )
+    .ok()?;
+    pick_str(nested_data(&shared), &["url"]).filter(|u| !u.is_empty())
+}
+
+/// 新建一张台账表格：建 `.ksheet` 的同时把 14 个中文表头写进第一行。
+///
+/// ★ 为什么表头在宿主写、而不是工具传进来：表头必须和 `plan_cloud_sync`
+/// 认的是**同一份 COLUMNS**。工具自己拼一遍，改列时漏一处，症状是
+/// 「表头认不出 → 推送直接报错」，而且要到用户真的点推送才暴露。
+///
+/// 只建表格（.ksheet 写死）—— 这是台账专用能力，不是"随便建个云文档"的入口。
+#[tauri::command]
+pub async fn wps_mcp_create_sheet(
+    token: String,
+    client_id: String,
+    name: String,
+    sheet_name: Option<String>,
+    owner: Option<String>,
+) -> Result<WpsMcpCreate, String> {
+    let (token, client_id) = (token.trim(), client_id.trim());
+    if token.is_empty() || client_id.is_empty() {
+        return Err("WPS MCP 还没连接（缺令牌或 client id）".into());
+    }
+    let file = sheet_file_name(&name);
+    let tab = sheet_name
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let tab = if tab.is_empty() { "台账".to_string() } else { tab };
+
+    let client = http()?;
+    let session = open_session(&client, token, &client_id).await?;
+    let heads = header_ops();
+
+    let body = rpc(
+        &client,
+        token,
+        &client_id,
+        Some(&session),
+        json!({
+            "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": {
+                "name": "create_file_with_content",
+                "arguments": {
+                    "name": file,
+                    "file_extension": "ksheet",
+                    "sheet_name": tab,
+                    "rangeData": heads
+                }
+            }
+        }),
+    )
+    .await?
+    .body
+    .ok_or("新建表格返回了空体")?;
+    let data = mcp_biz(&body)?;
+
+    let file_id = pick_str(&data, &["file_id"]).ok_or("建表成功了，但服务端没给文件 id")?;
+    let drive_id = pick_str(&data, &["drive_id"]).unwrap_or_default();
+    let mut link = pick_str(&data, &["link_url", "url"]).unwrap_or_default();
+    // 开分享：拿到真·可匿名打开的链接才换掉（见 share_anyone 的注释）
+    if !drive_id.is_empty() {
+        if let Some(url) = share_anyone(&client, token, &client_id, &session, &file_id, &drive_id).await {
+            link = url;
+        }
+    }
+    let made = pick_str(&data, &["name"]).unwrap_or_else(|| file.clone());
+    Ok(WpsMcpCreate {
+        file_id,
+        link,
+        name: made,
+        sheet: tab,
+        owner: owner.unwrap_or_default().trim().to_string(),
+    })
+}
+
+/* ------------------------------------------------------------------ */
 /* 测试：只覆盖纯逻辑                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -1275,5 +1478,58 @@ mod tests {
         assert_eq!(b.len(), 16);
         assert!(b.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
         assert_ne!(rand_hex(8).unwrap(), rand_hex(8).unwrap());
+    }
+
+    /// 名字整理：别把用户打的后缀叠成两个（`台账.xlsx.ksheet` 在 WPS 里很难看）
+    #[test]
+    fn create_name_normalised() {
+        assert_eq!(sheet_file_name("异常单号台账"), "异常单号台账.ksheet");
+        assert_eq!(sheet_file_name("  台账.xlsx "), "台账.ksheet");
+        assert_eq!(sheet_file_name("台账.KSHEET"), "台账.ksheet");
+        assert_eq!(sheet_file_name("台账.et"), "台账.ksheet");
+        // 只剩个后缀时不能变成 ".ksheet"
+        assert_eq!(sheet_file_name(".xlsx"), "异常单号台账.ksheet");
+        assert_eq!(sheet_file_name("   "), "异常单号台账.ksheet");
+        // 中文按字符截，60 个字 = 60 个汉字（按字节截会切出乱码）
+        let long = "台".repeat(80);
+        let made = sheet_file_name(&long);
+        assert_eq!(made.chars().count(), 60 + ".ksheet".chars().count());
+    }
+
+    /// 表头 op：14 格、0-based、**蛇形键**（create_file_with_content 的形状）。
+    /// 键写成驼峰会静默失败 —— 服务端只报「range.rowFrom 为必填」。
+    #[test]
+    fn header_ops_shape() {
+        let ops = header_ops();
+        assert_eq!(ops.len(), COLUMNS.len());
+        for (i, op) in ops.iter().enumerate() {
+            assert_eq!(op.get("row_from").and_then(Json::as_u64), Some(0));
+            assert_eq!(op.get("col_from").and_then(Json::as_u64), Some(i as u64));
+            assert_eq!(op.get("col_to").and_then(Json::as_u64), Some(i as u64));
+            assert_eq!(
+                op.get("formula").and_then(Json::as_str),
+                Some(COLUMNS[i].1),
+                "第 {i} 格的表头文字不对"
+            );
+            assert!(op.get("rowFrom").is_none(), "不该出现驼峰键");
+        }
+    }
+
+    /// 开分享那两个工具的信封多套一层 `data`（实测返回），
+    /// 少钻一层就会拿不到 items / url —— 表现为"分享静默失败、链接还是死链"
+    #[test]
+    fn nested_data_unwraps_both_shapes() {
+        let one: Json = json!({"code":0,"data":{"items":[{"id":"19370741"}]}});
+        assert!(nested_data(&one).get("items").is_some());
+
+        let two: Json = json!({"code":0,"data":{"code":0,"data":{"url":"https://x/y"}}});
+        assert_eq!(
+            nested_data(&two).get("url").and_then(Json::as_str),
+            Some("https://x/y")
+        );
+
+        // 没有 data 的信封原样返回，别钻成 Null
+        let plain: Json = json!({"code":0,"message":"成功"});
+        assert_eq!(nested_data(&plain).get("code").and_then(Json::as_i64), Some(0));
     }
 }
