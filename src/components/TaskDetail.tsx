@@ -14,7 +14,8 @@ import {
   Link2,
   Plus,
   MousePointerClick,
-  Bell,
+  ExternalLink,
+  Wrench,
 } from "lucide-react";
 import { useStore } from "../store";
 import { addDays, today } from "../lib/repo";
@@ -618,9 +619,13 @@ function DetailBody({
 
       {/* 分区变多之后，固定高度会把备注挤没，所以中间整块可滚动 */}
       <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-        {/* 来源工具说明：这条待办是工具代订的提醒（宿主盖的章，见 toolBridge 的 task.remind）。
-            放在快捷开关上面 —— 它回答的是"这条待办是哪来的"，比开关更要紧 */}
-        {task.originTool && <ToolOriginNote toolId={task.originTool} />}
+        {/* 工具代订的待办：右侧不摆常规字段（备注/日期/清单/子任务…），
+            而是把「工具提交了什么」摊开，并给一条回到那条内容的跳转。
+            判断依据只有 originTool —— 它是宿主在桥接里盖的章，工具自报的不算。 */}
+        {task.originTool ? (
+          <ToolTaskPanel task={task} />
+        ) : (
+          <>
         {/* 快捷开关：与 To Do 一致，做成整行的胶囊 */}
         <div className="flex flex-col gap-1.5 px-4">
           <QuickToggle
@@ -649,6 +654,8 @@ function DetailBody({
         {/* 工具注入的分区（见 components/InjectedTools.tsx）：排在内置分区之后，
             因为它属于"用户自己加的东西"，不该把备注、子任务这些挤到后面 */}
         <InjectedDetailSections taskId={task.id} />
+          </>
+        )}
       </div>
 
       {/* 底部：时间信息与删除 */}
@@ -1099,18 +1106,80 @@ function formatWhen(iso: string): string {
  * 显示时按注册表现查中文名；工具被卸载后查不到，退回显示 id ——
  * 至少还能对上账，比编一个"未知来源"诚实。
  */
-function ToolOriginNote({ toolId }: { toolId: string }) {
+/**
+ * 工具提交的待办：右侧显示**它提交了什么**，而不是常规的备注/日期/清单表单。
+ *
+ * 两件事必须成立，否则这块面板就是一句废话：
+ *   1. 内容要真来自那条待办（标题、说明、提醒时刻），让用户不必打开工具就知道是什么；
+ *   2. 能回到源头 —— origin_ref 是工具自己的 id，宿主原样交给工具
+ *      （{intent:"focus", ref}），由工具把自己定位到那一条。
+ *
+ * 跳转失败（工具被卸载/停用）就把宿主那句人话原样贴在面板里，
+ * 而不是弹一个技术错误 —— 这与 openToolWithIntent 的三种回绝口径一致。
+ */
+function ToolTaskPanel({ task }: { task: Task }) {
   const tools = useStore((s) => s.tools);
-  const name = tools.find((t) => t.id === toolId)?.name ?? toolId;
+  const openToolWithIntent = useStore((s) => s.openToolWithIntent);
+  const openTool = useStore((s) => s.openTool);
+  const tool = tools.find((t) => t.id === task.originTool);
+  const name = tool?.name ?? task.originTool;
+  const [err, setErr] = useState("");
+  // 老数据（v25 之前）把 ref 拼在备注里当"来源引用：便签 xxx"。
+  // 能解析出来就照样能定位；解析不出来就只打开工具、不定位 —— 别给一个禁用按钮，
+  // 那看起来像坏了，而"打开工具"本身仍然是有用的。
+  const legacyRef = /来源引用：\s*(?:便签\s*)?([A-Za-z0-9_-]{4,64})\s*$/.exec(task.note || "");
+  const ref = task.originRef || (legacyRef ? legacyRef[1] : "");
+  const noteText = task.note.replace(/(^|\n)来源引用：[^\n]*/g, "").trim();
+
   return (
-    <div
-      data-tool-origin-detail={toolId}
-      className="mx-4 mb-1.5 flex items-start gap-2 rounded-lg border border-line bg-card px-3 py-2 text-[12.5px] leading-relaxed text-fg-dim"
-    >
-      <Bell size={14} className="mt-0.5 shrink-0" />
-      <span>
-        这条待办是工具「{name}」代订的提醒 —— 到点会弹提醒卡片；完成或删掉它，提醒就结束了。
-      </span>
+    <div data-tool-task-panel={task.originTool} className="mx-4 mt-3 overflow-hidden rounded-xl border border-line bg-card">
+      <div className="flex items-center gap-2 border-b border-line px-3 py-2.5">
+        <span className="grid size-6 shrink-0 place-items-center rounded-md bg-chip text-fg-2">
+          <Wrench size={13} />
+        </span>
+        <div className="min-w-0">
+          <div className="truncate text-[12.5px] font-medium text-fg">来自「{name}」</div>
+          <div className="truncate text-[11px] text-fg-dim">这条待办由工具代订，内容以工具里那条为准</div>
+        </div>
+        <button
+          onClick={async () => {
+            setErr("");
+            try {
+              if (ref) {
+                await openToolWithIntent(task.originTool, { intent: "focus", ref });
+              } else {
+                // 没有条目引用：至少把工具打开，用户自己找
+                openTool(task.originTool);
+              }
+            } catch (e) {
+              setErr(e instanceof Error ? e.message : String(e));
+            }
+          }}
+          title={ref ? `打开「${name}」并定位到这一条` : `打开「${name}」（这条没有条目引用，只能打开工具）`}
+          className="ml-auto flex shrink-0 items-center gap-1 rounded-lg border border-line px-2 py-1 text-[12px] text-fg-2 transition-colors hover:bg-hover"
+        >
+          <ExternalLink size={12} />
+          在工具里打开
+        </button>
+      </div>
+
+      <div className="flex flex-col gap-2.5 px-3 py-3">
+        <ToolField label="标题" value={task.title} />
+        {noteText && <ToolField label="说明" value={noteText} multiline />}
+        {task.remindAt && <ToolField label="提醒" value={formatDateTime(task.remindAt)} />}
+        {err && <div className="rounded-md bg-chip px-2 py-1.5 text-[11.5px] text-fg-dim">{err}</div>}
+      </div>
+    </div>
+  );
+}
+
+function ToolField({ label, value, multiline }: { label: string; value: string; multiline?: boolean }) {
+  return (
+    <div>
+      <div className="mb-0.5 text-[11px] text-fg-dim">{label}</div>
+      <div className={`text-[13px] leading-relaxed text-fg-2 ${multiline ? "whitespace-pre-wrap break-words" : "truncate"}`}>
+        {value}
+      </div>
     </div>
   );
 }

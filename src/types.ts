@@ -95,6 +95,14 @@ export interface Task {
    * 空串 = 用户自己建的。
    */
   originTool: string;
+  /**
+   * 来源条目在**那个工具里**的 id（便签 id / 异常单行 id）。
+   *
+   * 宿主不认识它的格式，只负责原样搬运：详情面板据此提供"回到那一条"，
+   * 工具收到 {intent:"focus", ref} 自己定位。空串 = 没有可跳转的条目
+   * （例如工具只订了个提醒、没指向具体内容）。
+   */
+  originRef: string;
   /** 重复规则，daily 表示每日任务 */
   repeat: Repeat;
   /**

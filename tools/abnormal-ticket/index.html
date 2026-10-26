@@ -1677,6 +1677,16 @@
       if (w) { waiting.delete(m.id); w.resolve({ ok: m.ok, data: m.data, error: m.error }); }
       return;
     }
+    if (m.type === "tool:intent") {
+      /* 宿主从待办详情跳过来：{intent:"focus", ref:"<这条单子的 id>"}。
+         数据可能还没读完 —— 记下来，load() 末尾再选中。 */
+      var it = m.data || {};
+      if (it.intent === "focus" && it.ref) {
+        if (rows.length) focusTicket(String(it.ref));
+        else pendingFocusId = String(it.ref);
+      }
+      return;
+    }
     if (m.type === "tool:context") {
       if (m.data && m.data.theme) document.documentElement.dataset.theme = m.data.theme;
       document.body.dataset.gallery = m.data && m.data.gallery ? "on" : "off";
@@ -1706,6 +1716,8 @@
    * ================================================================== */
   var rows = [];          // 全量（台账量级：几百到几千，一次拉全最简单也最不容易错）
   var selectedId = null;
+  /* 从待办详情跳回来时带来的单子 id：数据还没读完就先进这儿，load() 末尾再选中 */
+  var pendingFocusId = "";
   /* 库里的 tickets 表**有没有 indemnity（赔款数）列**。
      1.6.0 新增这一列，但**给人补列的是工作台**：旧版工作台只跑 CREATE IF NOT EXISTS，
      对已有表一句废话，写这个字段会报 "no such column" —— 那种失败发生在点「登记」的
@@ -1782,6 +1794,7 @@
     // 摆了也存不上，不如不摆（.f 是 flex，hidden 得靠 CSS 那条规则压）
     if ($("fImgSect")) $("fImgSect").hidden = !hasImages;
     renderAll();
+    if (pendingFocusId) { var pf = pendingFocusId; pendingFocusId = ""; focusTicket(pf); }
     void normalizeTimes(rows.slice());   // 老数据的时间写法就地统一（只写变了的）
   }
 
@@ -1894,6 +1907,28 @@
   function findRow(id) {
     for (var i = 0; i < rows.length; i++) if (rows[i].id === id) return rows[i];
     return null;
+  }
+
+  /**
+   * 从待办详情跳回来时用：选中这条单子，并把左栏滚到它。
+   *
+   * 先把搜索与四个筛选清空 —— 跳转的语义是"让我看到这一条"，
+   * 如果它正好被当前筛选挡住，选中了却在列表里看不到，比不跳更让人困惑。
+   */
+  function focusTicket(id) {
+    var r = findRow(id);
+    if (!r) { toast("这条单子已经不在了（可能已被删除）"); return; }
+    if ($("search")) $("search").value = "";
+    ["fltStore", "fltStatus", "fltCourier", "fltCategory"].forEach(function (k) {
+      if ($(k)) $(k).value = "";
+    });
+    selectedId = r.id;
+    renderList();
+    renderDetail();
+    var el = document.querySelector('.ticket[data-id="' + r.id + '"]');
+    if (el && el.scrollIntoView) {
+      try { el.scrollIntoView({ block: "nearest" }); } catch (e) { el.scrollIntoView(); }
+    }
   }
 
   /* ==================================================================

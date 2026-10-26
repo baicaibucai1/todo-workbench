@@ -1072,19 +1072,16 @@ export function createToolBridge(
         // 「今天有提醒的」并集（见 repo.ts 的 mydayClause），而不是在这里
         // 把提醒时间冒充成截止日期。
         //
-        // ref 不单独存列（待办没有这个概念），拼进备注，将来要认账时搜得到
-        const fullNote = ref
-          ? note
-            ? `${note}\n来源引用：${ref}`
-            : `来源引用：${ref}`
-          : note;
-
+        // ref 从 v25 起单独存 origin_ref（以前拼进备注当人话看）。
+        // 详情面板据此给一个「回到那一条」的跳转，宿主只搬运、
+        // 不解释它的格式 —— 便签 id、异常单行 id 都由工具自己认。
         const task = await createTask({
           listId: list.id,
           title,
-          note: fullNote,
+          note,
           remindAt,
           originTool: toolId, // ★ 来源由宿主盖章；工具传什么都不看
+          originRef: ref,
         });
         notifyTasksChanged();
         return reply(id, true, {
@@ -1092,6 +1089,7 @@ export function createToolBridge(
           listId: list.id,
           listName: list.name,
           remindAt,
+          originRef: task.originRef,
         });
       }
 

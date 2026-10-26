@@ -102,6 +102,7 @@ type RawTask = Omit<Task, "done" | "important" | "myDay" | "deleted" | "originTo
   repeat_done_on?: string | null;
   // v23 才加的列：工具代订提醒的来源标记（宿主盖的章，'' = 用户自己建的）
   origin_tool?: string;
+  origin_ref?: string;
 };
 
 type RawList = Omit<TaskList, "deleted" | "sortOrder" | "createdAt" | "updatedAt"> & {
@@ -124,6 +125,7 @@ const toTask = (r: RawTask): Task => ({
   completedAt: r.completed_at,
   // 老库迁移前 origin_tool 还不存在（SELECT * 不会有这一列），按"用户自己建的"兜底
   originTool: r.origin_tool ?? "",
+  originRef: r.origin_ref ?? "",
   repeat: (r.repeat as Repeat) ?? "none",
   repeatDoneOn: r.repeat_done_on ?? null,
   sortOrder: r.sort_order,
@@ -343,6 +345,8 @@ export interface NewTaskInput {
    * 反查 tool_id，工具自报的不认。其余调用方一律不传（''）。
    */
   originTool?: string;
+  /** 来源条目在工具里的 id（与 originTool 配套，宿主只搬运） */
+  originRef?: string;
 }
 
 export async function createTask(input: NewTaskInput): Promise<Task> {
@@ -365,6 +369,7 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
     remindAt: input.remindAt ?? null,
     completedAt: null,
     originTool: input.originTool ?? "",
+    originRef: input.originRef ?? "",
     repeat: input.repeat ?? "none",
     repeatDoneOn: null,
     sortOrder,
@@ -376,8 +381,8 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
   await db().execute(
     `INSERT INTO core_tasks
        (id, list_id, title, note, done, important, my_day, due_date, remind_at,
-        completed_at, origin_tool, sort_order, repeat, repeat_done_on, deleted, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, 0, ?, ?)`,
+        completed_at, origin_tool, origin_ref, sort_order, repeat, repeat_done_on, deleted, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, 0, ?, ?)`,
     [
       task.id,
       task.listId,
@@ -388,6 +393,7 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
       task.dueDate,
       task.remindAt,
       task.originTool,
+      task.originRef,
       task.sortOrder,
       task.repeat,
       task.createdAt,

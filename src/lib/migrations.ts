@@ -1006,6 +1006,29 @@ export const migrations: Migration[] = [
       ]);
     },
   },
+  {
+    /*
+     * v25：待办的「来源条目」指针（core_tasks.origin_ref）。
+     *
+     * task.remind 一直收得到工具传来的 `ref`（便签的便签 id、异常单的行 id），
+     * 但从 v23 起只把工具名记进 origin_tool，ref 被拼进备注当人话看 ——
+     * 于是详情面板只能告诉用户"这来自某个工具"，没法**跳回去那一条**。
+     *
+     * 现在把它单独存一列：详情面板据此显示"在「便签」里打开"，
+     * 宿主把 {intent:"focus", ref} 交给工具，工具自己定位到对应的便签 / 单子。
+     *
+     * 存的是**工具自己的 id**，宿主不认识也不该认识它的格式 ——
+     * 与 origin_tool 同一套 provenance 规矩：宿主只搬运，解释权归工具。
+     *
+     * ALTER 追加 + NOT NULL DEFAULT ''：老行补空串，零迁移成本；
+     * 两个驱动（SQLite / MemoryDb）的 ALTER 分支一致。
+     */
+    version: 25,
+    name: "add_task_origin_ref",
+    sql: `
+      ALTER TABLE core_tasks ADD COLUMN origin_ref TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];
 
 /** 当前代码期望的 schema 版本 */
