@@ -147,25 +147,6 @@ await shot("orders");
 }
 await shot("order-detail");
 
-/** 启用一个**默认停用的工具**（设置 → 工具 → 开关）。
- *  「模板」（tools/scratchpad）是样板工具，默认不出现在侧边栏，
- *  但 README 里挂着它的界面，所以这里按真实界面把它打开再拍。
- *  跟 _enable-module 一样走界面不抄近路 —— 顺带把"设置里找得到它"一起验了。 */
-const enableTool = async (id) => {
-  await page.locator('aside[data-sidebar-width] [data-nav="settings"]').first().click();
-  await page.waitForTimeout(600);
-  await page.locator('[data-section="tools"]').first().click();
-  await page.waitForTimeout(500);
-  const sw = page.locator(`[data-switch="tool-enable-${id}"]`);
-  if ((await sw.count()) === 0) {
-    throw new Error(`设置 → 工具 里没有「${id}」的开关（工具列表由 tools/ 下的 manifest 生成）`);
-  }
-  if ((await sw.getAttribute("aria-checked")) !== "true") {
-    await sw.click();
-    await page.waitForTimeout(700);
-  }
-};
-
 await nav("imagebed");
 await shot("imagebed");
 
@@ -183,9 +164,7 @@ await page.locator('[data-section="sync"]').click();
 await shot("settings-sync");
 
 // 工具：每个工具位都进去截一张，README 里按 <id> 引用。
-// 先打开「模板」—— 它是样板工具，默认停用，不开就拍不到，README 那格会一直挂着旧图。
-await enableTool("scratchpad");
-
+// 2026-10-26 起工具区只有两个（图片裁剪、异常单号），都在侧边栏里，不用先启用谁。
 const toolNavs = page.locator('aside[data-sidebar-width] [data-nav^="tool:"]');
 const toolCount = await toolNavs.count();
 const wantTools = !ONLY || [...ONLY].some((x) => x.startsWith("tool-"));

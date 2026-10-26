@@ -29,7 +29,7 @@ npm run tool:new <id> --name "工具名" --icon crop
 
 它会：
 
-1. 从 **`tools/scratchpad`** 派生一份界面（正牌模板就是它，见 §五）
+1. 从 **`tools/abnormal-ticket`** 派生一份界面（结构样板照它，见 §五）
 2. 生成 `tools/<id>/manifest.json`
 3. 自动同步其余登记点（下面那张表里的 2–6）
 
@@ -37,7 +37,7 @@ npm run tool:new <id> --name "工具名" --icon crop
 
 | 参数 | 作用 |
 |---|---|
-| `--blank` | 不用 scratchpad，用 `scripts/tool-skeleton.html` 那个最小骨架 |
+| `--blank` | 不用样板工具，用 `scripts/tool-skeleton.html` 那个最小骨架 |
 | `--from <id>` | 从另一个已有工具派生 |
 | `--template` | 打上 `tags:["template"]`（样板工具：设置页挂徽章、默认停用） |
 | `--dry-run` | 只看会改什么，不落盘 |
@@ -170,38 +170,29 @@ zip 从网址来同样先看到包里有什么再确认。
 **工具存的数据不动** —— 表还在，只是 `dbVersion` 可能 +1（schema 变了才加）。
 
 --------------------------------------------------------------------------
-## 四、镜像工具（源文件在仓库外）
+## 四、镜像工具（源文件在仓库外）—— 目前没有
 
-`size-chart` 与 `image-crop` 是外部 HTML 的**逐字节镜像**，源文件不在 git 里：
+`tools/` 里每个工具的 `index.html` 就是唯一一份，改它就是改工具本身。
 
-```js
-// scripts/sync-tools.mjs
-const SOURCES = {
-  "size-chart": "../图片裁剪/尺码生成器/size-chart.html",
-  "image-crop": "../图片裁剪/图片裁剪工具/index.html",
-};
-```
+以前 `size-chart` 与 `image-crop` 还各有一份仓库外的源文件（`../图片裁剪/…`），
+靠 `scripts/sync-tools.mjs` 的 `SOURCES` 做逐字节守卫。2026-10-26 整理目录时
+外部源删了（旧版 HTML 一并清掉），`SOURCES` 现在是空的 —— 机制没变，只是暂时没有对象。
 
-**只改 `tools/<id>/index.html` 会被 `npm run tools:sync` 冲掉**（方向是 源 → 工具）。
-所以改完之后必须**回灌**：
-
-```bash
-cp tools/<id>/index.html <源路径>
-npm run tools:check      # 复检
-```
-
-动手前先把源文件 `cp` 一份 `.bak-<时间戳>`。
-`npm run tool:audit` 的第 5 节也会盯这件事，镜像不一致它会直接报错。
+再出现"同一份 HTML 的两次投递"就往 `SOURCES` 里加一条，方向仍是 **源 → 工具**：
+只改 `tools/<id>/index.html` 会被 `npm run tools:sync` 冲掉，改完记得回灌。
+`npm run tool:audit` 的第 5 节会盯这件事。
 
 --------------------------------------------------------------------------
-## 五、模板：改的是 `tools/scratchpad`
+## 五、模板：照 `tools/abnormal-ticket` / `tools/image-crop` 派生
 
-这个项目里**唯一的正牌模板**是 `tools/scratchpad`（设置页挂「参考模板」徽章、默认停用）。
+2026-10-26 之前这里有个专门的样板工具 `tools/scratchpad`（设置页挂「参考模板」徽章、
+默认停用）。它已经从仓库里删了 —— 目的就是把工具区收成"只有真在用的两个"。
 
-- 要改模板 → 改 `tools/scratchpad` 本身
-- 要新写工具 → 照它派生（`npm run tool:new` 默认就是这么做的）
-- **别的 AI / 会话来读这个项目时，也以它为参考** —— 宿主状态机、主题跟随、
-  数据层门面、独立运行兜底那四段的写法都在它里面，不要另起一套
+- 要新写工具 → `npm run tool:new <id> --from abnormal-ticket`；或者 `--blank` 用最小骨架
+- 结构参考：`tools/abnormal-ticket`（自建表 + 图床 + WPS + `shell.open`、
+  独立运行兜底都在里面）与 `tools/image-crop`（单文件重度交互 + 可选附属目录 `ai/`）
+- **别的 AI / 会话来读这个项目时，也以这两个为参考** —— 宿主状态机、主题跟随、
+  数据层门面、独立运行兜底那四段的写法都在它们里面，不要另起一套
 
 它演示的正是这四段：
 

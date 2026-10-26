@@ -69,8 +69,10 @@ export const TOOL_TAG_NAMES = ["template"] as const;
  */
 const BUILTIN_TOOLS: ToolManifest[] = [
   {
-    // 图片编辑器 Image Studio：与隔壁 图片裁剪/图片裁剪工具/index.html 是同一份文件，
-    // 由 scripts/sync-tools.mjs 守着 SHA-256 一致性，改一边记得同步另一边。
+    // 图片编辑器 Image Studio。**这里是唯一一份**：以前隔壁 图片裁剪/图片裁剪工具/
+    // 还有一份独立发行用的副本，靠 scripts/sync-tools.mjs 守 SHA-256 一致；
+    // 2026-10-26 整理目录时把那份删了（旧版 HTML 与尺码表那套一并清掉），
+    // 现在改它就等于改工具本身，没有第二处要同步。
     //
     // 它带一个可选资源目录 ai/（约 50MB 的抠图模型 + ORT wasm，base64 分片，
     // 用 <script src> 加载）。**整目录缺失不影响使用**，只是智能填充退回纯 JS ——
@@ -89,125 +91,15 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     capabilities: ["gallery"],
   },
   {
-    id: "size-chart",
-    name: "尺码表生成器",
-    version: "1.1.0",
-    description: "粘贴 Excel 尺码数据，套用主题生成可直接发布的尺码表图片；导出的图默认在工作台图床留一份（开关可关），同一份内容不重复占条目",
-    icon: "list",
-    entry: "index.html",
-    dbVersion: 1,
-    author: "内置",
-    capabilities: ["gallery"],
-  },
-  {
-    // 它是「一个网页工具怎么用宿主的数据表」的样板：manifest 里声明 schema，
-    // 用结构化 CRUD 读写自己的 tool_scratchpad_notes，并能把一条内容交给别的工具。
-    // 存在它，是为了让这套机制**有一个端到端跑起来的实例** —— 否则它只是文档。
-    id: "scratchpad",
-    // 名字就叫「模板」，不叫「随手记」也不叫「便签本」：
-    // 它的用途是给人照着抄，不是给人日常记东西 —— 叫成便签本只会和旁边的
-    // 「便签」打架，让人以为是两个重复的东西。id 仍是 scratchpad（改名会换
-    // 表名，已经落在用户库里的 tool_scratchpad_notes 就找不着了）。
-    name: "模板",
-    version: "1.0.0",
-    description:
-      "写工具时照着抄的样板：演示一个工具怎么在工作台里建自己的表、用结构化 CRUD 读写它，以及把一条内容交给别的工具。默认停用，不是日常用的便签本",
-    icon: "notebook-pen",
-    // 打上示例标签，设置页会挂一枚「示例」徽章。
-    // 注意它**只管显示**：让这个工具默认不出现的是 settings 里的停用清单。
-    tags: ["template"],
-    entry: "index.html",
-    dbVersion: 1,
-    author: "内置",
-    schema: {
-      tables: [
-        {
-          name: "notes",
-          columns: [
-            { name: "id", type: "text", pk: true },
-            { name: "title", type: "text" },
-            { name: "body", type: "text" },
-            { name: "tag", type: "text" },
-            { name: "created_at", type: "text" },
-          ],
-          indexes: [{ columns: ["created_at"] }],
-        },
-      ],
-    },
-  },
-  {
-    // 卡片式便签。与上面「模板」的区别要说清楚，否则会被当成重复造轮子：
-    //
-    //   · 模板是**列表**，且它的定位是"工具怎么用自己的数据表"的教学样板
-    //     （manifest 里明写了），不该为了好看往里塞 UI；
-    //   · 便签是**给用户用的**：卡片网格、六色、附图、输入即存。
-    //
-    // 两者共用同一套能力（私有表 + 图床），互不干扰 —— 表名按 id 隔离成
-    // tool_notes_notes / tool_scratchpad_notes。
-    //
-    // 附图走图床（gallery.put 拿 id 存进 images 列），不自己存文件：
-    // 图床已经是工作台里图的唯一落点，有缩略图、有界面、别处也能取用；
-    // 便签只记 id，删便签也不会顺手删掉用户的图。
-    id: "notes",
-    name: "便签",
-    version: "1.0.0",
-    description:
-      "卡片式便签：随手记一条、贴几张图，按颜色与标签分类。图床开着时图进图床（别处也能取用），没开就直接随签保存",
-    icon: "sticky-note",
-    entry: "index.html",
-    dbVersion: 1,
-    author: "内置",
-    capabilities: ["gallery"],
-    schema: {
-      tables: [
-        {
-          name: "notes",
-          columns: [
-            { name: "id", type: "text", pk: true },
-            { name: "title", type: "text" },
-            { name: "body", type: "text" },
-            { name: "tag", type: "text" },
-            { name: "color", type: "text" },
-            // 图条目的 JSON 数组。列类型只有 text/integer/real，多条图只能序列化成一列。
-            // 条目两种形态混存：图床开着时是图床 id（宿主盖 origin 章），
-            // 没开时是内联 dataURL（工具自己降级直存，不让选装模块挡住附图）。
-            { name: "images", type: "text" },
-            { name: "created_at", type: "text" },
-            { name: "updated_at", type: "text" },
-          ],
-          indexes: [{ columns: ["created_at"] }],
-        },
-      ],
-    },
-  },
-  {
-    // 已接入 Agnes AI（生图 / 生视频 / 对话，OpenAI 风格接口）。
-    // 服务商与能力都以「描述符」形式写在工具内部的 PROVIDERS 里，
-    // 加一家新 API 只动工具，不用动宿主。
-    id: "ai-gen",
-    name: "AI 生成",
-    version: "0.5.0",
-    description:
-      "文生图 / 图生图、文生视频与对话。已接入阿里云百炼（万相、千问图像、Z-Image 共 21 档，按族走各自接口）与 Agnes AI，出图默认自动存进图床（开关可关）、参考图可从图床挑，生成结果可一键放回参考图继续编辑",
-    icon: "sparkles",
-    entry: "index.html",
-    dbVersion: 1,
-    author: "内置",
-    capabilities: ["gallery"],
-  },
-  {
     // 异常单号登记：登记 → 看 → 推进状态 → 删 的闭环，数据落在自己的私有表里
     // （tool_abnormal_ticket_tickets），与 core_tasks 和别的工具物理隔开。
-    //
-    // 与上面「模板」的区别要说清楚，否则容易被当成两个重复的东西：
-    //   · 模板（scratchpad）是**教学样板**，定位是"工具怎么写"，默认停用；
-    //   · 这个是**给用户用的功能**，为某个具体业务（异常单）量身做的。
-    // 两者都用自己的私有表，表名按 id 隔离，互不干扰。
+    // 它的 WPS 能力走宿主那条 MCP 通道：授权一次之后直接读写那份在线台账，
+    // 不需要用户导出导入。
     id: "abnormal-ticket",
     name: "异常单号登记",
-    version: "1.18.0",
+    version: "1.18.1",
     description:
-      "快递异常单登记：ERP 链接粘进订单号大横条，单号和店铺一起认出来；快递单号 / 快递公司 / 情况用胶囊点选，登记时间自动记，要填的只有提醒时刻（到点自动进待办）。流程进度每步可写描述、可附图，顶上倒计时逾期才泛红；每单能挂多张图（也能直接 Ctrl+V 粘），整单图与步骤图分开摆。查看页四个筛选、登记 / 提醒两种排序，表格页整本台账一屏铺开、列自己配。设置页绑定自己的 WPS 在线表格，按单号增量推拉那 14 列，推送前先摆差异、确认才写。",
+      "快递异常单登记：订单号大横条粘 ERP 链接，单号和店铺一起认出来；快递公司 / 情况用胶囊点选，登记时间自动记，要填的只有提醒时刻（到点自动进待办）。流程每步可写描述、可附图，逾期泛红；整单图与步骤图分开摆，图能直接 Ctrl+V 粘，字节存进工作台图床的独立来源。查看页四个筛选、登记 / 提醒两种排序，表格页整本台账一屏铺开、列自己配。WPS 在线台账走 MCP 直连：设置里授权一次就能读写你那张云表格 —— 推送按单号增量写回 14 列（自己加的列一格不碰），拉取先摆逐字段差异再确认，启动自动对账、页头标出「云端有 N 处不同」，每推一次留一条记录。",
     // receipt（单据）已在 icons.ts 白名单里；写错会静默退回包裹图标
     icon: "receipt",
     entry: "index.html",
@@ -296,25 +188,6 @@ const BUILTIN_TOOLS: ToolManifest[] = [
   // 所以它搬去了 tests/fixtures/gomoku/（2026-09-24）：不进工具包、不进设置页，
   // 但契约测试照跑（npm run gomoku:test，59 项断言把标准逐条钉死）。
   // 标准写在文档里会漂，钉在测试上才不会 —— 只是那份测试现在明确指向夹具目录。
-  {
-    // 读、改、存回 WPS 里的一份表格 / 文档。与「异常单号登记」那套台账同步
-    // 是两条路：那边是固定台账按列写回，这边是任意绑定文件按格编辑。
-    id: "wpslink",
-    name: "WPS 绑定文件",
-    version: "0.5.0",
-    description:
-      "直接读写一份云文档：在「设置 → WPS 授权」里授权一次，点「读取我的文件」列出云文档根目录，点哪份绑哪份 —— 读的就是那份原文件，不复制、不经过知识库。表格按格编辑（可加行加列、删行），Ctrl+S 写回原表（长订单号当文本存，不会丢位）；智能文档改完直接存回。也能绑定知识库里的表格或文档（那条路要账号登录态，保存走「新建 → 删旧 → 改名」）—— MCP 只列得出根目录，知识库里的东西只有那条路进得去。",
-    icon: "file",
-    // 示例型工具：它演示的是「一个工具怎么接 WPS 能力」，不是日常要用的功能。
-    // 设置页据此挂一枚「示例」徽章；**默认不出现靠的是 settings 的停用清单**
-    // （DEFAULT_SETTINGS[tools.disabled] 里有它），要的人自己去 设置 → 工具 打开。
-    tags: ["template"],
-    entry: "index.html",
-    dbVersion: 1,
-    author: "内置",
-    // 读写都会借用户的账号动知识库，所以必须声明（见 toolBridge 的 wps.* 一族）
-    capabilities: ["wps"],
-  },
 ];
 
 /** 内存中的已注册工具 */

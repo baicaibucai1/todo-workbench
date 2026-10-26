@@ -42,8 +42,11 @@ const QUIET = argv.includes("--quiet");
  * 隔壁的 CROP STUDIO 完整版，于是也纳入守卫。
  */
 const SOURCES = {
-  "size-chart": "../图片裁剪/尺码生成器/size-chart.html",
-  "image-crop": "../图片裁剪/图片裁剪工具/index.html",
+  // 2026-10-26：原来这里挂着两处外部源 ——
+  //   size-chart → ../图片裁剪/尺码生成器/size-chart.html（工具已删）
+  //   image-crop → ../图片裁剪/图片裁剪工具/index.html（外部源目录已并入 tools/，
+  //                现在 tools/image-crop 是唯一一份，没有第二处要同步）
+  // 表留着，以后再有"同一份 HTML 的两次投递"就往这里加一条。
 };
 
 /**
@@ -66,9 +69,9 @@ const SOURCES = {
  * 都在跑降级路径，而源目录双击打开却是好的 —— 典型的"两边看起来都对，行为不一样"。
  */
 const DIR_SOURCES = {
-  // image-crop 的 AI 补全：ai/ort.js（运行时）+ ort-wasm.js（wasm 内嵌）+
-  // migan.js（模型）+ LICENSE.txt（MI-GAN 的许可，必须随二进制一起分发）
-  "image-crop": [{ from: "../图片裁剪/图片裁剪工具/ai", to: "ai" }],
+  // 2026-10-26：image-crop 的 ai/ 不再从 ../图片裁剪/图片裁剪工具/ai 单向搬运 ——
+  // 那份外部副本已删，ai/ 就在 tools/image-crop/ai（仍然不进 git，见 .gitignore
+  // 的 tools/*/ai/）。这一档留着，给"大块资源要从别处搬进来"的工具用。
 };
 
 const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");

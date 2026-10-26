@@ -323,6 +323,9 @@ CREATE TABLE IF NOT EXISTS core_tool_schema (
 
 ### 5.2 实际用起来的样子：几乎没有
 
+> 下面几张表里含 **2026-10-26 已从仓库删除**的工具（scratchpad / ai-gen / size-chart / notes）。
+> 这几节是当时的实测记录，保留原样不改；现在仓库里只剩 image-crop 与 abnormal-ticket。
+
 | 工具 | 发 `tools.*` | 收 `tool:intent` | 收 `tool:event` |
 |---|---|---|---|
 | scratchpad（模板） | ✅（`tools.list` / `tools.open`） | ✅ | ✅（含 `schema:reset`） |

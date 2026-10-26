@@ -4,10 +4,12 @@
  *
  * ============================ 默认从哪份模板派生 ============================
  *
- * 默认拷 `tools/scratchpad`（模板工具）的界面当起点 —— 它是这个项目里
- * **唯一的正牌模板**：写工具的人照它抄，AI 助手代写工具时也以它为参考。
- * 想改模板，改的是 scratchpad 本身；这里只是把它的副本递出去。
- * （要一个空白但合规的最小骨架，加 `--blank`。）
+ * 默认用 `scripts/tool-skeleton.html` 那份**最小骨架**（合规但空白）。
+ * 想要一个功能完整的起点就 `--from abnormal-ticket`（自建表 + 图床 + WPS + shell）
+ * 或 `--from image-crop`（单文件重度交互 + 可选附属目录）。
+ *
+ * 2026-10-26 之前默认拷的是 `tools/scratchpad` 那个专门的样板工具 —— 它随
+ * 「工具区只留两个」一起删了，所以改成默认骨架、要样板自己指。
  *
  * ============================ 为什么要有它 ============================
  *
@@ -15,14 +17,13 @@
  *
  *   1. tools/<id>/                 目录 + manifest.json（唯一真源）
  *   2. src/lib/tools.ts            BUILTIN_TOOLS 里再手抄一遍 manifest
- *   3. tests/placeholder-tools.mjs 侧栏工具数（写死）
+ *   3. tests/tool-registry.mjs     工具清单 / 侧栏工具数 / THEME_TOOLS（写死）
  *   4. tests/tool-browser.mjs      设置页工具数（写死）
- *   5. tests/tools-standalone.mjs  THEME_TOOLS（手写数组）
- *   6. README.md                   工具表
- *   7. （镜像工具）sync-tools.mjs  + 回灌外部源文件
+ *   5. README.md                   工具表 + 「表里的 N 个」
+ *   6. （镜像工具）sync-tools.mjs  + 回灌外部源文件
  *
  * 漏掉任何一处**都不报错**，只是界面上有一半不对 —— 这类问题查起来最贵。
- * 这个脚本把 1~6 变成一次执行；第 7 项要人决定，脚本只负责提醒。
+ * 这个脚本把 1~5 变成一次执行；第 6 项要人决定，脚本只负责提醒。
  *
  * ------------------------------------------------------------------
  * 那些写死的数字为什么保留
@@ -36,7 +37,7 @@
  * 用法：
  *   node scripts/new-tool.mjs <id> [--name 名称] [--icon package] [--desc 说明]
  *                             [--version 0.1.0]
- *                             [--blank]       用最小骨架而不是 scratchpad 模板
+ *                             [--blank]       用最小骨架（默认就是它，留个兼容写法）
  *                             [--from <id>]   从另一个已有工具派生
  *                             [--template]    打上样板标签（默认停用、挂"参考模板"徽章）
  *                             [--dry-run] [--no-patch]
@@ -70,8 +71,8 @@ const opts = {
   icon: flag("icon", "package"),
   desc: flag("desc", null),
   version: flag("version", "0.1.0"),
-  // 正牌模板是 scratchpad；--blank 才用最小骨架
-  from: flag("from", argv.includes("--blank") ? null : "scratchpad"),
+  // 默认最小骨架；要完整样板就 --from abnormal-ticket / image-crop
+  from: flag("from", null),
   template: argv.includes("--template"),
 };
 
@@ -129,7 +130,7 @@ const desc =
  * 从已有工具派生一份界面。
  *
  * 换掉的是**写死在源码里的那几处** id（工具内部的 TOOL_ID、注释里提到的
- * 真实表名、<title>）。别做全文无差别替换：说明文字里出现"scratchpad"
+ * 真实表名、<title>）。别做全文无差别替换：说明文字里出现源工具名
  * 多半是在讲它的来历，整段换掉会把话改得不通。
  */
 function deriveFrom(sourceId) {
@@ -142,7 +143,7 @@ function deriveFrom(sourceId) {
   const html = srcHtml
     // 工具内部那个常量：独立运行时它是 localStorage 的键前缀
     .replace(/(var TOOL_ID\s*=\s*")[^"]*(")/, `$1${id}$2`)
-    // 注释/文案里写明的真实表名 tool_scratchpad_notes
+    // 注释/文案里写明的真实表名（tool_<源 id>_…）
     .replaceAll(`tool_${srcUnder}_`, `tool_${under}_`)
     .replace(/<title>[^<]*<\/title>/, `<title>${name}</title>`);
   console.log(`  · 界面从 tools/${sourceId}/ 派生（TOOL_ID 与表名前缀已换成 ${id}）`);
@@ -173,7 +174,7 @@ const manifest = {
   dbVersion: 1,
   author: "内置",
   ...(opts.template ? { tags: ["template"] } : {}),
-  // 从模板派生时连 schema 一起带过来（scratchpad 的那张 notes 表）。
+  // 从已有工具派生时连 schema 一起带过来（它那几张私有表）。
   // 需要改表结构时记住：以后**加列**只能靠 dbVersion +1 + 用户在
   // 「设置 → 数据库」里清理数据（见 docs/tool-authoring-and-injection.md §十一）
   ...(derived.schema ? { schema: derived.schema } : {}),

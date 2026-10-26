@@ -32,17 +32,9 @@ const SUITES = [
   // （tests/fixtures/gomoku/），不进产品也就没有"它在工作台里被装载"可验；
   // 契约那部分不需要浏览器，走 npm run gomoku:test（tests/gomoku-unit.mjs）。
   ["image-crop-ai.mjs", []],
-  ["placeholder-tools.mjs", []],
-  ["ai-gen.mjs", []],
   // 跨源工具桥：dev 下工具与宿主同源，只有这一个套件能挡住 targetOrigin 那类
   // "只在装出来的应用里复现"的断链（详见套件头注释）
   ["cross-origin-bridge.mjs", []],
-  // 便签：卡片式工具的首个样本 —— 注册 → iframe 真加载 → 私有表建出来 →
-  // 新建/改字自动落库（刷新后还在）→ 走 gallery.put 附图。
-  // 它会打开图床模块并往库里留数据，所以排在 imagebed(--fresh) 之前，让它自己清掉。
-  // ⚠️ 套件文件名是 imagebed.mjs，但**能力名仍叫 gallery**（对外契约不改），
-  // 所以上面那句 gallery.put 是对的、不必跟着改名。
-  ["notes-tool.mjs", []],
   ["imagebed.mjs", ["--fresh"]],
   // 「脱离工作台也是 web 工具」：把每个工具的 index.html 用 file:// 与 http://
   // 各打开一次。**不依赖 dev server**（它自带一个静态服务器），

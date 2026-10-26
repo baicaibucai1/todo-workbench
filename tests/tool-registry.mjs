@@ -33,15 +33,10 @@
  * 合并进 tools.disabled，只合并、不动用户自己停用过/启用过的项）。
  */
 
-/** 全部内置工具 id（含默认停用的样板） */
+/** 全部内置工具 id（2026-10-26 起只留两个：图片裁剪、异常单号登记） */
 export const ALL_TOOL_IDS = [
   "image-crop",
-  "size-chart",
-  "notes",
-  "ai-gen",
   "abnormal-ticket",
-  "scratchpad",
-  "wpslink",
 ];
 
 /**
@@ -50,15 +45,10 @@ export const ALL_TOOL_IDS = [
  * 与 ALL_TOOL_IDS 的差集必须**恰好**是 settings.ts 里默认停用的那几个，
  * 由 `npm run tool:audit` 盯着 —— 两边各改一处就会立刻对不上。
  *
- * 现在差集是两个示例型工具：scratchpad（写工具照抄的样板）和
- * wpslink（演示怎么接 WPS 能力的样本）。两者文件都随工具包分发，
- * 要用的到 设置 → 工具 里打开。
+ * 现在差集是**空**：两个工具都是日常要用的，没有"随包发但要你去设置里打开"的样板。
  */
 export const ENABLED_TOOL_IDS = [
   "image-crop",
-  "size-chart",
-  "notes",
-  "ai-gen",
   "abnormal-ticket",
 ];
 
@@ -69,12 +59,7 @@ export const ENABLED_TOOL_IDS = [
  */
 export const THEME_TOOLS = [
   ["image-crop", "图片裁剪"],
-  ["size-chart", "尺码表"],
-  ["notes", "便签"],
-  ["ai-gen", "AI 生成"],
   ["abnormal-ticket", "异常单号"],
-  ["scratchpad", "模板"],
-  ["wpslink", "WPS 绑定文件"],
 ];
 
 /** 给断言用的期望值：侧栏工具数 / 设置页工具行数 */

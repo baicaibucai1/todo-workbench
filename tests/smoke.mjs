@@ -335,8 +335,16 @@ section("7. 工具装载与契约校验");
 const tools = await loadTools();
 check("内置工具已注册", tools.length >= 1, `实际: ${tools.length} 个`);
 check("图片裁剪工具在列", tools.some((t) => t.id === "image-crop"));
-check("尺码表生成器工具在列", tools.some((t) => t.id === "size-chart"));
-check("AI 生成工具在列", tools.some((t) => t.id === "ai-gen"));
+check("异常单号登记在列", tools.some((t) => t.id === "abnormal-ticket"));
+// 2026-10-26 整理：工具区只留这两个。尺码表 / 便签 / 模板 / AI 生成 / WPS 绑定
+// 已从仓库删掉（各自的测试也跟着删了），这里钉住"别再冒出来"。
+check(
+  "已删掉的五个工具没有复活",
+  !["size-chart", "notes", "scratchpad", "ai-gen", "wpslink"].some((id) =>
+    tools.some((t) => t.id === id),
+  ),
+  tools.map((t) => t.id).join(","),
+);
 // 「特殊单号记录」曾经是个 iframe 占位工具（tools/special-orders）。
 // 它现在改成了原生专属视图：时效要跟流转记录、计划表绑在一起，
 // 而工具在物理上碰不到 core_* 表（见第 8/9 节的隔离），塞不进去。
@@ -1896,13 +1904,13 @@ section("25. 工具的启用、状态保持与单文件导入");
   /* --- 停用清单是一条字符串，必须挡得住脏输入 ---
      它躺在 core_settings 里，用户能手改；而 id 会参与表名拼接，
      所以非法值要在入口处丢掉，而不是带着往下走。 */
-  // 示例型工具默认就该是关的：scratchpad（写工具照抄的样板，和「便签」撞脸）
-  // 和 wpslink（演示怎么接 WPS 能力的样本）—— 新装用户的工具区里不该出现
-  // 两个不是日常功能的东西。文件都随工具包分发，要用的到 设置 → 工具 里打开。
-  // （只管新库：withDefaults 是 {...DEFAULT, ...raw}，老库由 v24 迁移回填。）
+  // 2026-10-26 起工具区只有两个（图片裁剪、异常单号），都是日常要用的，
+  // 没有"随包发但要到设置里打开"的样板 —— 所以默认停用清单是空的。
+  // （只管新库：withDefaults 是 {...DEFAULT, ...raw}，老库沿用它自己的值。）
   check(
-    "默认只停用两个示例型工具",
-    st.DEFAULT_SETTINGS[st.SETTINGS.toolsDisabled] === "scratchpad,wpslink",
+    "默认没有停用的工具",
+    st.DEFAULT_SETTINGS[st.SETTINGS.toolsDisabled] === "",
+    st.DEFAULT_SETTINGS[st.SETTINGS.toolsDisabled],
   );
   check(
     "解析逗号分隔的停用清单",

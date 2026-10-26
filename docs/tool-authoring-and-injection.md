@@ -191,7 +191,8 @@ var Db = {
 
 #### 样板与回归
 
-`tools/scratchpad/index.html` 是这套约定的样板（它本来就是"照着抄"用的）。
+`tools/abnormal-ticket/index.html` 与 `tools/image-crop/index.html` 是这套约定的样板
+（工具区 2026-10-26 收成两个，原来那份专门的样板 `tools/scratchpad` 已删）。
 
 回归分两处，因为它们覆盖的是两条不同的路：
 

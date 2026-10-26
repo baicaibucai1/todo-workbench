@@ -200,47 +200,7 @@ if (fa) {
 await page.unrouteAll();
 
 /* ================================================================== */
-console.log("\n2. 跨源下把产出存进图床（AI 生成默认留档走的就是这条）");
-
-await viaRedirect("ai-gen");
-const fg = frameOf("ai-gen");
-check("ai-gen 加载在跨源地址上", !!fg && /127\.0\.0\.1:1421/.test(fg.url()), fg ? fg.url() : "未找到");
-
-if (fg) {
-  const before = await page.evaluate(async () => {
-    const g = await import("/src/lib/imagebed.ts");
-    return (await g.fetchImagebed()).length;
-  });
-
-  const put = await fg.evaluate(async (url) => {
-    try {
-      if (typeof saveResultToImagebed !== "function") return { err: "工具里没有 saveResultToImagebed" };
-      const item = await saveResultToImagebed({ url, prompt: "跨源桥探针" }, 0, false);
-      return { ok: true, id: item && item.id, title: item && item.title };
-    } catch (e) {
-      return { err: String((e && e.message) || e) };
-    }
-  }, `${ALT}/probe.png`);
-  info("gallery.put", put);
-  check("跨源下工具能把产出存进图床", !!put.ok, put.err || "");
-
-  await page.waitForTimeout(1500);
-  const after = await page.evaluate(async () => {
-    const g = await import("/src/lib/imagebed.ts");
-    const all = await g.fetchImagebed();
-    return {
-      n: all.length,
-      last: all[0] ? { origin: all[0].origin, title: all[0].title, rel: all[0].relPath } : null,
-    };
-  });
-  info("图床", { before, after });
-  check("图床真的多了一条", after.n === before + 1, `${before} → ${after.n}`);
-  check("来源被宿主盖成 ai-gen", after.last && after.last.origin === "ai-gen", String(after.last && after.last.origin));
-  check("图真的落盘了（有 relPath）", !!(after.last && after.last.rel), JSON.stringify(after.last));
-}
-
-/* ================================================================== */
-console.log("\n3. 同源场景没有退化");
+console.log("\n2. 同源场景没有退化");
 
 await page.goto(`${HOST}?tool=image-crop`, { waitUntil: "load" });
 await page.waitForSelector('iframe[data-tool-frame="image-crop"]', { timeout: 20000 });
@@ -259,7 +219,7 @@ if (fsame) {
 }
 
 /* ================================================================== */
-console.log("\n4. 控制台");
+console.log("\n3. 控制台");
 check("没有页面错误", errors.length === 0, errors.join(" | "));
 
 await browser.close();

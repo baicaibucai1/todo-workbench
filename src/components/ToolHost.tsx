@@ -437,8 +437,8 @@ await call("row.select",  { table: "records",
 {`await call("tools.list");                  // 这台机器上还有哪些工具
 await call("tools.open", { tool: "image-crop",
   data: { url: "..." } });                 // 拉起它并把数据交给它
-await call("tools.send", { tool: "size-chart",
-  event: "rows", data: [...] });           // 只发给已经在运行的工具
+await call("tools.send", { tool: "abnormal-ticket",
+  event: "focus", data: { id: "..." } });  // 只发给已经在运行的工具
 
 // 自己被拉起时：
 window.addEventListener("message", (e) => {
