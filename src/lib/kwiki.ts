@@ -35,6 +35,15 @@ export const LEDGER_TOOL_ID = "abnormal-ticket";
 const LEDGER_TABLE = "tickets";
 
 /**
+ * 默认数据库的 id（v1.19.0）。
+ *
+ * 必须与 `tools/abnormal-ticket/index.html` 里的 `DB_DEFAULT` 一致：
+ * 工具把 v1.19.0 之前登记的行（db_id 为空）都算这个库，宿主侧按它筛的时候
+ * 也要把 NULL / 空串一起带上，否则老用户的单子会像凭空少了一半。
+ */
+export const DEFAULT_DB_ID = "db_default";
+
+/**
  * 拉取写库后发给工具的事件名。
  *
  * 与工具已有的 `schema:reset`（设置页清数据时发）同一个通道、同一种命名风格。
@@ -280,11 +289,26 @@ async function ensureLedgerTable(): Promise<string> {
  *   · `id` 是拉取更新时的 WHERE 条件，少了它更新会静默匹配不到任何行；
  *   · `flow` 服务于本地的 `_status` 派生。
  * 推送给 Rust 时多带的键无所谓 —— build_xlsx 只按 COLUMNS 取键。
+ *
+ * `dbId`（v1.19.0）：只读这个数据库的行。工具可以建多个库，一个库绑一张云表 ——
+ * 不按库筛的话，推 A 库时会把 B 库的单子一起写进 A 那张表。
+ * 传空 = 老行为（整本读），留给没有库概念的调用方。
  */
-export async function readLedger(): Promise<LedgerRow[]> {
+export async function readLedger(dbId?: string): Promise<LedgerRow[]> {
   const table = await ensureLedgerTable();
+  let where = "";
+  const params: string[] = [];
+  if (dbId) {
+    // 升级前的老行没有 db_id（NULL 或空串），一律算默认库 ——
+    // 只按 `db_id = ?` 筛会把它们漏掉，用户看到的就是"我的单子少了一半"
+    where = dbId === DEFAULT_DB_ID
+      ? " WHERE (db_id IS NULL OR db_id = '' OR db_id = ?)"
+      : " WHERE db_id = ?";
+    params.push(dbId);
+  }
   const rows = await db().select<Record<string, unknown>>(
-    `SELECT * FROM ${table} ORDER BY created_at DESC`,
+    `SELECT * FROM ${table}${where} ORDER BY created_at DESC`,
+    params,
   );
   return rows.map((r) => {
     const row: LedgerRow = {};
@@ -348,7 +372,7 @@ function newId(): string {
  * 写一半停下的后果是"台账多出半页"。事务必须整体成功或整体没有
  * （理由见 db.ts 里 transaction 的注释：IPC 分四次会落不同连接）。
  */
-export async function applyPull(plan: PullPlan): Promise<{ added: number; updated: number }> {
+export async function applyPull(plan: PullPlan, dbId?: string): Promise<{ added: number; updated: number }> {
   const table = await ensureLedgerTable();
   const now = new Date().toISOString();
   const statements: Array<{ sql: string; params?: Array<string | number | null> }> = [];
@@ -363,6 +387,9 @@ export async function applyPull(plan: PullPlan): Promise<{ added: number; update
     vals.flow = "";
     vals.remind_at = "";
     vals.remind_task = "";
+    /* v1.19.0：拉下来的行要落在**当前那个库**里。不带 db_id 的话，
+       在第二个库里点「拉取」，单子会全跑进默认库 —— 切回去就是又少又乱。 */
+    if (dbId) vals.db_id = dbId;
     const cols = Object.keys(vals);
     statements.push({
       sql: `INSERT INTO ${table} (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`,

@@ -1009,9 +1009,16 @@ check("认出了表名", (doc.getElementById("wpsTitle").textContent || "").incl
 check("显示出了创建人", (doc.getElementById("wpsOwner").textContent || "").includes("大苏打"),
   doc.getElementById("wpsOwner").textContent);
 check("绑定信息块露出来了", doc.getElementById("wpsBound").hidden === false);
-check("绑定写进了宿主 kv（wps.sheet）", !!kv["wps.sheet"], Object.keys(kv).join(","));
-check("创建人也一起存下来了",
-  /"owner":"大苏打"/.test(String(kv["wps.sheet"] || "")), String(kv["wps.sheet"]).slice(0, 120));
+/* v1.19.0：绑定不再是单独一条 wps.sheet，而是"当前数据库"那一条（库清单存在 databases） */
+const kvDb = () => {
+  try {
+    const g = JSON.parse(String(kv["databases"] || "null"));
+    if (!g || !Array.isArray(g.list) || !g.list.length) return null;
+    return g.list.find((d) => d.id === g.active) || g.list[0];
+  } catch (e) { return null; }
+};
+check("绑定写进了宿主 kv（databases 里当前库那一条）", !!(kvDb() || {}).fileId, Object.keys(kv).join(","));
+check("创建人也一起存下来了", (kvDb() || {}).owner === "大苏打", JSON.stringify(kvDb() || {}).slice(0, 140));
 check("绑定后推/拉按钮解禁",
   doc.getElementById("wpsPush").disabled === false && doc.getElementById("wpsPull").disabled === false);
 
@@ -1040,6 +1047,53 @@ check("右上角钉了推送按钮（哪个页签都在）",
   doc.getElementById("hdrPush") ? String(doc.getElementById("hdrPush").disabled) : "没有这个按钮");
 doc.getElementById("tab-settings").click();
 await sleep(60);
+
+console.log("\n6b. 数据库（v1.19.0）：一个库一本账、各绑各的表");
+{
+  const dbAll = () => {
+    try { return JSON.parse(String(kv["databases"] || "null")); } catch (e) { return null; }
+  };
+  const dbList = () => {
+    const g = dbAll();
+    return g && Array.isArray(g.list) ? g.list : [];
+  };
+  const rowsNow = () => doc.querySelectorAll("#list .ticket").length;
+
+  check("老的 wps.sheet 被迁成第一个数据库", dbList().length === 1, JSON.stringify(dbAll()).slice(0, 160));
+  check("库名取表名去掉扩展名（测试异常单.ksheet → 测试异常单）",
+    (dbList()[0] || {}).name === "测试异常单", String((dbList()[0] || {}).name));
+  check("迁过来的库带着原来那张表", !!(dbList()[0] || {}).fileId, JSON.stringify(dbList()[0] || {}).slice(0, 140));
+  check("设置页列出这一个库", doc.querySelectorAll("#dbList .dbrow").length === 1,
+    String(doc.querySelectorAll("#dbList .dbrow").length));
+
+  // 第二个库：建完应当立刻成为当前库，而且是空的
+  const before = rowsNow();
+  doc.getElementById("dbNew").click();
+  await waitFor(() => !!doc.getElementById("dbNameIn"));
+  doc.getElementById("dbNameIn").value = "第二个库";
+  doc.getElementById("dlgYes").click();
+  await waitFor(() => doc.querySelectorAll("#dbList .dbrow").length === 2);
+  check("新建后列表里有两个库", doc.querySelectorAll("#dbList .dbrow").length === 2,
+    String(doc.querySelectorAll("#dbList .dbrow").length));
+  check("新库自动成为当前库",
+    /第二个库/.test((doc.querySelector("#dbList .dbrow.on .dbname") || {}).textContent || ""),
+    String((doc.querySelector("#dbList .dbrow.on .dbname") || {}).textContent));
+  check("新库是空台账（老单子不外泄）", rowsNow() === 0, rowsNow() + " vs 0");
+  check("新库还没绑表", !((dbList().find((d) => d.name === "第二个库") || {}).fileId),
+    JSON.stringify(dbList()).slice(0, 200));
+  check("切到没绑表的库后，推 / 拉按钮禁用", doc.getElementById("wpsPush").disabled === true);
+  check("链接输入框跟着清空（不会让人以为这个库绑着上一张表）",
+    doc.getElementById("wpsLink").value === "", doc.getElementById("wpsLink").value);
+
+  // 切回默认库：原来那本单子要原封不动回来
+  doc.querySelectorAll("#dbList .dbrow")[0].click();
+  await waitFor(() => rowsNow() > 0);
+  check("切回原库，原来的单子还在", rowsNow() === before, rowsNow() + " vs " + before);
+  check("切回后推送按钮又解禁了", doc.getElementById("wpsPush").disabled === false);
+  check("两个库都留在 kv 里，active 指回第一个",
+    dbList().length === 2 && dbAll().active === dbList()[0].id,
+    JSON.stringify({ active: dbAll() && dbAll().active, ids: dbList().map((d) => d.id) }));
+}
 
 console.log("\n7. 推送：先弹窗确认，确定才写（默认只推增量）");
 doc.getElementById("wpsPush").click();

@@ -97,9 +97,9 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     // 不需要用户导出导入。
     id: "abnormal-ticket",
     name: "异常单号登记",
-    version: "1.18.1",
+    version: "1.19.0",
     description:
-      "快递异常单登记：订单号大横条粘 ERP 链接，单号和店铺一起认出来；快递公司 / 情况用胶囊点选，登记时间自动记，要填的只有提醒时刻（到点自动进待办）。流程每步可写描述、可附图，逾期泛红；整单图与步骤图分开摆，图能直接 Ctrl+V 粘，字节存进工作台图床的独立来源。查看页四个筛选、登记 / 提醒两种排序，表格页整本台账一屏铺开、列自己配。WPS 在线台账走 MCP 直连：设置里授权一次就能读写你那张云表格 —— 推送按单号增量写回 14 列（自己加的列一格不碰），拉取先摆逐字段差异再确认，启动自动对账、页头标出「云端有 N 处不同」，每推一次留一条记录。",
+      "快递异常单登记：订单号大横条粘 ERP 链接，单号和店铺一起认出来；快递公司 / 情况用胶囊点选，登记时间自动记，要填的只有提醒时刻（到点自动进待办）。流程每步可写描述、可附图，逾期泛红；整单图与步骤图分开摆，图能直接 Ctrl+V 粘，字节存进工作台图床的独立来源。查看页四个筛选、登记 / 提醒两种排序，表格页整本台账一屏铺开、列自己配。设置里可以建多个数据库 —— 一个库是一套独立台账配一张 WPS 在线表格，切库就是换一整套单子，互不干扰。WPS 台账走 MCP 直连：授权一次就能读写云表格 —— 推送按单号增量写回 14 列（自己加的列一格不碰），拉取先摆逐字段差异再确认，启动自动对账、页头标出「云端有 N 处不同」，每推一次留一条记录。",
     // receipt（单据）已在 icons.ts 白名单里；写错会静默退回包裹图标
     icon: "receipt",
     entry: "index.html",
@@ -109,7 +109,7 @@ const BUILTIN_TOOLS: ToolManifest[] = [
     // shell 能力 = shell.open：详情页「呼起客户端」唤起拼多多客户端。
     //   工具自己跳 pddim: 会被 sandbox 拦成「已阻止此内容」，必须借宿主的手
     capabilities: ["task", "wps", "gallery", "shell"],
-    dbVersion: 10,
+    dbVersion: 11,
     author: "内置",
     schema: {
       tables: [
@@ -137,6 +137,8 @@ const BUILTIN_TOOLS: ToolManifest[] = [
             { name: "updated_at", type: "text" },
             // 1.6.0：赔款数（非必填，只在本地记 —— 推送仍只认台账那 14 列）
             { name: "indemnity", type: "text" },
+            // 1.19.0：这一行属于哪个数据库（空 = 升级前的老行，算默认库）
+            { name: "db_id", type: "text" },
           ],
           indexes: [{ columns: ["created_at"] }],
         },
@@ -155,6 +157,8 @@ const BUILTIN_TOOLS: ToolManifest[] = [
             { name: "ticket_count", type: "integer" },
             { name: "target", type: "text" },
             { name: "message", type: "text" },
+            // 1.19.0：这条流水属于哪个数据库（老记录由工具首次打开时补成默认库）
+            { name: "db_id", type: "text" },
           ],
           indexes: [{ columns: ["logged_at"] }],
         },

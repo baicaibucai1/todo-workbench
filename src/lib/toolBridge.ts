@@ -298,6 +298,8 @@ function stringList(v: unknown): string[] {
  * 把计划传进 iframe 再传回来，只是给"工具伪造写库内容"多开一次机会。
  */
 let pendingPull: PullPlan | null = null;
+/** 这份计划属于哪个数据库（v1.19.0）—— 拉取时记下，写库时照着落，别落到默认库去 */
+let pendingPullDb = "";
 
 /** 绑定对象里那个"工作表"字段。payload 的键是宽泛类型，统一这样取 */
 function sheetOf(v: unknown): string {
@@ -490,6 +492,11 @@ interface ToolRequest {
     dryRun?: boolean;
     /** wps.mcpPush：true = 强制同步，表上有本地没有的行会被清空（默认不动） */
     force?: boolean;
+    /**
+     * wps.mcpPush / mcpPull：这次同步只碰哪个数据库（工具里的多库，v1.19.0）。
+     * 空 = 整本台账（老工具不带这个字段，行为不变）。
+     */
+    dbId?: string;
   };
 }
 
@@ -1708,8 +1715,11 @@ export function createToolBridge(
             const pFileId = String(pb.id || payload?.fileId || "").trim();
             const pSheet = sheetOf(payload?.binding) || sheetOf(payload);
             if (!pFileId) return reply(id, false, "还没绑定表格 —— 先在工具设置里粘一条分享链接");
-            const rows = await readLedger();
-            if (!rows.length) return reply(id, false, "本地一条异常单都没有 —— 先登记几例再推");
+            /* v1.19.0：只推**当前这个库**的单子。工具可以建多个库、各绑一张表，
+               不按库筛就等于把别的库的单子也写进这张表。 */
+            const pDbId = String(payload?.dbId ?? "").trim();
+            const rows = await readLedger(pDbId || undefined);
+            if (!rows.length) return reply(id, false, "这个数据库里一条异常单都没有 —— 先登记几例再推");
             // dryRun：先算一遍对账（会覆盖几行、会清空几行），一格都不写。
             // 工具拿到这两个数字，要删东西时先问一句再真推。
             const dry = payload?.dryRun === true;
@@ -1744,11 +1754,14 @@ export function createToolBridge(
             const gSheet = sheetOf(payload?.binding) || sheetOf(payload);
             if (!gFileId) return reply(id, false, "还没绑定表格 —— 先在工具设置里粘一条分享链接");
             const res = await mcpSheetPull(gFileId, gSheet, mcpToken, mcpClientId);
-            const local = await readLedger();
+            // 只跟**当前这个库**的本地行比对（同上：多库不筛会串味）
+            const gDbId = String(payload?.dbId ?? "").trim();
+            const local = await readLedger(gDbId || undefined);
             const plan = planPull(res.rows as unknown as Parameters<typeof planPull>[0], local);
             // 计划留在宿主：工具拿不到令牌也碰不到数据库，传回去再传回来只是
             // 多一次"工具可以伪造写库内容"的机会
             pendingPull = plan;
+            pendingPullDb = gDbId;
             return reply(id, true, {
               header: res.header,
               adds: plan.adds.map(pullBrief),
@@ -1770,8 +1783,10 @@ export function createToolBridge(
           if (op === "wps.mcpApply") {
             if (!pendingPull) return reply(id, false, "没有待写入的结果 —— 先点「拉取」");
             const plan = pendingPull;
+            const planDb = pendingPullDb;
             pendingPull = null;
-            const r = await applyPull(plan);
+            pendingPullDb = "";
+            const r = await applyPull(plan, planDb || undefined);
             return reply(id, true, r);
           }
 

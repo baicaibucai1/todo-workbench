@@ -180,8 +180,8 @@ section("2. COLUMNS 与 Rust 侧逐条一致");
   const mf = JSON.parse(read("tools/abnormal-ticket/manifest.json"));
   check("工具声明了 wps 能力", (mf.capabilities || []).includes("wps"));
   check(
-    "工具设置页有「在线表格」那张卡，且标了 data-host-only",
-    /id="wpsLink"/.test(html) && /<div class="card[^"]*"[^>]*data-host-only[^>]*>\s*\n\s*<h2>在线表格/.test(html),
+    "工具设置页有「数据库」那张卡（原来叫在线表格），且标了 data-host-only",
+    /id="wpsLink"/.test(html) && /<div class="card[^"]*"[^>]*data-host-only[^>]*>\s*\n\s*<h2>数据库/.test(html),
   );
   check(
     "工具只喊推 / 拉 / 确认，自己不做比对",
@@ -347,6 +347,33 @@ section("4. applyPull：写进数据库，再读回来");
   check("id 没变（还是同一条单子）", a1b?.id === a1?.id, `${a1?.id} → ${a1b?.id}`);
   check("补了结果 → 状态翻成已关闭", a1b?._status === "已关闭", a1b?._status);
   check("总数还是 2（更新不是新增）", again.length === 2, String(again.length));
+}
+
+/* ================= 4b. 多库 ================= */
+
+section("4b. 多库（v1.19.0）：各读各的、各写各的");
+{
+  // 接上一节：默认库里有 A1 / A2 两条，它们的 db_id 是空的（v1.19.0 之前的老行）
+  const dft = await K.readLedger(K.DEFAULT_DB_ID);
+  check("老行（db_id 为空）算默认库，一条不少", dft.length === 2, String(dft.length));
+
+  const planB = K.planPull([row({ order_sn: "B1", store: "丙店", category: "破损" })], []);
+  const rb = await K.applyPull(planB, "db_second");
+  check("写进第二个库，报告 新增 1", rb.added === 1, JSON.stringify(rb));
+
+  const onlyB = await K.readLedger("db_second");
+  check("第二个库只读到自己的那 1 条",
+    onlyB.length === 1 && onlyB[0].order_sn === "B1",
+    JSON.stringify(onlyB.map((r) => r.order_sn)));
+  check("拉回来的行带着 db_id（不会漂到默认库去）", onlyB[0]?.db_id === "db_second", onlyB[0]?.db_id);
+
+  const dft2 = await K.readLedger(K.DEFAULT_DB_ID);
+  check("默认库没被写脏（还是 2 条，B1 不在里面）",
+    dft2.length === 2 && !dft2.some((r) => r.order_sn === "B1"),
+    JSON.stringify(dft2.map((r) => r.order_sn)));
+
+  const all = await K.readLedger();
+  check("不带 dbId 时仍是整本（老调用方的行为不变）", all.length === 3, String(all.length));
 }
 
 /* ================= 5. 门禁 ================= */
