@@ -685,7 +685,10 @@ pub fn open_external(url: String) -> Result<(), String> {
 /// 目前只有拼多多客户端（异常单号工具详情页的「呼起客户端」）。
 /// **白名单而不是黑名单**：这条命令的本质是"让一个 iframe 在用户机器上
 /// 启动一个程序"，放开任意协议等于把 `file:` / `ms-msdt:` 这类入口一起交出去。
-const ALLOWED_PROTOCOLS: &[&str] = &["pddim"];
+// pddim：唤起客户端。
+// http/https：工具里的"链接便签"点一下用系统默认浏览器打开（2026-10-26 加）。
+// 仍然只放这三种 —— file:、javascript:、ms-* 之类一律拒绝。
+const ALLOWED_PROTOCOLS: &[&str] = &["pddim", "http", "https"];
 
 /// 用系统默认程序打开一个自定义协议链接（如 `pddim:sendmsg/?...`）。
 ///
