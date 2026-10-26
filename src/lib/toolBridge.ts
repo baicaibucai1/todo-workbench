@@ -1067,6 +1067,16 @@ export function createToolBridge(
         const lists = await fetchLists();
         const list = lists[0] ?? (await createList("个人"));
         const remindAt = due.toISOString();
+        // 提醒同时也是「这件事的期限」：必须落 due_date，那天它才会出现在
+        // 「我的一天 → 今日任务」里 —— fetchTasks 的 myday 分支只认
+        // `my_day = 1 OR due_date = 今天 OR repeat = 'daily'`，**光有 remind_at
+        // 一条都不占**，于是工具订的提醒只在所属清单里躺着，用户当天在「今天」
+        // 根本看不到它。
+        //
+        // 用本地日期拼，不用 remindAt.slice(0, 10)：那是 UTC 日期，
+        // 晚上 8 点之后订的提醒会被算到第二天，白白晚一天冒出来。
+        const pad2 = (n: number) => String(n).padStart(2, "0");
+        const dueDate = `${due.getFullYear()}-${pad2(due.getMonth() + 1)}-${pad2(due.getDate())}`;
         // ref 不单独存列（待办没有这个概念），拼进备注，将来要认账时搜得到
         const fullNote = ref
           ? note
@@ -1079,6 +1089,7 @@ export function createToolBridge(
           title,
           note: fullNote,
           remindAt,
+          dueDate,
           originTool: toolId, // ★ 来源由宿主盖章；工具传什么都不看
         });
         notifyTasksChanged();
