@@ -554,6 +554,36 @@ await call("row.delete", { table: "notes", id: "n-abc" });
 用户点了"发给 XX"却什么都没发生 —— 那是最难查的一类故障。
 显式调用会先把对方拉起来，失败也能报出"它没装 / 被停用了"。
 
+### 唤起本机（`shell.*`）
+
+工具跑在 sandbox iframe 里，**不能**自己 `location.href = "pddim:..."` 或 `file:///...`：
+Chromium 拦下协议导航时会把**整个 iframe** 换成「已阻止此内容」错误页 ——
+不只是打开失败，工具里没提交的东西也一起没了。这类动作一律交给宿主。
+
+三个 op 共用一道 `shell` 能力门。
+
+| op | 参数 | 返回 |
+| --- | --- | --- |
+| `shell.open` | `{ url }` | `{ url }` |
+| `shell.folder` | `{ path }` | `{ path }` |
+| `shell.pickFolder` | — | `{ path }`；用户取消时 `path` 是 **null** |
+| `shell.listFolder` | `{ path, limit? }` | `{ path, name, entries: [{ name, dir }], more }` |
+
+- `shell.open` 只放行 `http` / `https` / `pddim` 三种协议（白名单在 Rust 的
+  `ALLOWED_PROTOCOLS`）。**`file:` 是刻意排除的**：放行它等于允许任何工具点开
+  `file:///C:/…/calc.exe`，整份白名单就白写了。
+- `shell.folder` 收的是**原生路径**（`C:\a\b`、`C:/a/b`、`\\server\share`），不是 URL ——
+  `file:///` 里的百分号编码错一处就是"打不开"。宿主侧只认「已存在且确实是目录」的路径：
+  不存在报「这个文件夹不存在」，是个文件报「只能打开文件夹」。所以它启动不了程序，
+  最坏结果是多开一个资源管理器窗口。
+- `shell.pickFolder` 弹系统选择框，只回一个绝对路径就结束 —— 宿主不替工具读目录内容，
+  工具也不能凭这个 op 遍历磁盘。浏览器演示模式里这条会失败，
+  工具应当降级成「直接粘贴路径」，而不是把按钮变灰。
+- `shell.listFolder` 是**预览级**的目录列举，边界卡得很死，别当文件浏览器用：
+  只回名字和「是不是目录」，不读内容也不 stat 大小；最多扫 400 项就停，
+  所以 `more` 只表示「后面还有」，**不是精确总数**；`limit` 夹在 1..=16。
+  排序是目录在前、名字不区分大小写（`read_dir` 原生的文件系统顺序直接显示会乱）。
+
 ---
 
 ## 六、能力门

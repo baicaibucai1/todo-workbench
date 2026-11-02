@@ -204,6 +204,33 @@ export type ToolOp =
    */
   | "shell.open"
   /**
+   * 打开一个**本地文件夹**（资源管理器），给「链接便签指向目录」这类需求用。
+   *
+   * 为什么不复用 `shell.open`：那条路最终落到 `open_protocol` 的白名单
+   * （http/https/pddim），而 `file:` 是刻意排除的 —— 放行它等于允许 iframe
+   * 点开 `file:///C:/…/calc.exe`，整份白名单就白写了。
+   * 这里收**原生路径**，宿主侧只认「已存在且是目录」的路径，文件一律拒绝。
+   */
+  | "shell.folder"
+  /**
+   * 唤起系统的「选择文件夹」对话框，返回绝对路径；用户取消时 `path` 为 null。
+   *
+   * 为什么要宿主代选：工具跑在 sandbox iframe 里，`<input webkitdirectory>`
+   * 只能拿到目录里的文件（空目录选不了），也拿不到绝对路径 ——
+   * 没有绝对路径就没法「记住这个文件夹，下次点开还是它」。
+   * 选完只回一个字符串，宿主不替工具读目录内容。
+   */
+  | "shell.pickFolder"
+  /**
+   * 列一个文件夹的「前几项」，给文件夹便签做内容预览。
+   *
+   * 边界刻意卡得很死，因为这已经碰到"让工具看磁盘"了：
+   *   · 只回名字和"是不是目录"，不读内容、不 stat 大小；
+   *   · 最多扫 400 项就停（`more` 只表示"后面还有"，不是精确总数）；
+   *   · `limit` 夹在 1..=16 —— 这是预览，不是文件浏览器，没有翻页。
+   */
+  | "shell.listFolder"
+  /**
    * 绑定一份 WPS 知识库文件并读写它。
    *
    * 四个 op 共用一道 `wps` 能力门：list 列可绑定的文件、bindLink 把分享链接
@@ -434,6 +461,7 @@ interface ToolRequest {
     /** 排序列名（必须是表里声明过的），只支持单列 */
     orderBy?: string;
     orderDir?: "asc" | "desc";
+    /** row.select 的每页条数（≤200）；shell.listFolder 的条数（1..=16，宿主会夹） */
     limit?: number;
     offset?: number;
     /** tools.open / tools.send */
@@ -445,6 +473,8 @@ interface ToolRequest {
     dataUrl?: string;
     /** gallery.put 的另一条入口：给网址，由宿主下载（见 handler 里的说明） */
     url?: string;
+    /** shell.folder：要打开的**本地文件夹**原生路径（不是 URL，中文不用编码） */
+    path?: string;
     title?: string;
     prompt?: string;
     note?: string;
@@ -956,6 +986,67 @@ export function createToolBridge(
           reply(id, true, { url });
         } catch (err) {
           reply(id, false, err instanceof Error ? err.message : String(err));
+        }
+        return;
+      }
+
+      /*
+       * shell.folder / shell.pickFolder / shell.listFolder —— 本地文件夹的三件小事。
+       *
+       * 为什么不是"把 file: 加进 open_protocol 的白名单"：
+       * 那条白名单的语义是「允许 iframe 在用户机器上启动一个程序」，
+       * 放行 file: 就等于允许点开 `file:///C:/…/calc.exe`，整份白名单失效。
+       * 这里换成更窄的契约：宿主侧只认「已存在且确实是目录」的路径，
+       * 传文件路径会被明确拒绝（见 Rust 的 open_folder）。
+       *
+       * pickFolder 走系统的选择框，只回一个绝对路径就结束 ——
+       * 宿主不替工具读目录内容，工具也不能凭这个 op 遍历磁盘。
+       */
+      if (op === "shell.folder" || op === "shell.pickFolder" || op === "shell.listFolder") {
+        const state = capabilityState(currentSettings(), toolId, "shell");
+        if (state !== "on") {
+          return reply(id, false, `打开本地文件夹不可用：${capabilityError(state, "shell")}`);
+        }
+
+        if (op === "shell.listFolder") {
+          const path = typeof payload?.path === "string" ? payload.path.trim() : "";
+          if (!path) return reply(id, false, "缺少要列出的文件夹路径");
+          try {
+            // 只拿名字；条目数、排序、扫描上限都在 Rust 侧夹死（见 list_folder）
+            const data = await invoke("list_folder", { path, limit: payload?.limit });
+            reply(id, true, data);
+          } catch (err) {
+            reply(id, false, err instanceof Error ? err.message : String(err));
+          }
+          return;
+        }
+
+        if (op === "shell.folder") {
+          const path = typeof payload?.path === "string" ? payload.path.trim() : "";
+          if (!path) return reply(id, false, "缺少要打开的文件夹路径");
+          try {
+            await invoke("open_folder", { path });
+            reply(id, true, { path });
+          } catch (err) {
+            reply(id, false, err instanceof Error ? err.message : String(err));
+          }
+          return;
+        }
+
+        try {
+          const { open } = await import("@tauri-apps/plugin-dialog");
+          const picked = await open({
+            directory: true,
+            multiple: false,
+            title: "选择要链接的文件夹",
+          });
+          reply(id, true, { path: typeof picked === "string" ? picked : null });
+        } catch (err) {
+          reply(
+            id,
+            false,
+            `选择框打不开（可能是在浏览器里预览）：${err instanceof Error ? err.message : String(err)}`,
+          );
         }
         return;
       }

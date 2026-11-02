@@ -200,6 +200,13 @@ pub fn run() {
             // 唤起客户端：工具在 sandbox iframe 里不能自己跳自定义协议
             // （Chromium 会把整个 iframe 换成「已阻止此内容」），只能交给宿主。
             attachments::open_protocol,
+            // 打开本地文件夹（链接便签指向目录时）。与 open_protocol 分开：
+            // 那条白名单只放 http/https/pddim，`file:` 放进去等于能点开 exe。
+            // 这条只接受"已存在且是目录"的路径，最坏是开一个资源管理器窗口。
+            attachments::open_folder,
+            // 文件夹便签的预览：只回名字与"是不是目录"，最多扫 400 项，
+            // 不读内容也不做全量计数（大目录全量遍历会卡死界面）。
+            attachments::list_folder,
             // 工具包下载。前端自己 fetch 会被 CORS 挡住，而工具包挂在
             // GitHub Release 上，给不给跨域头不由我们决定（见 toolpkg.rs 顶部）。
             toolpkg::tool_download,

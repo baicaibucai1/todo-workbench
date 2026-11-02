@@ -742,6 +742,162 @@ pub fn open_protocol(url: String) -> Result<(), String> {
     }
 }
 
+/// 用资源管理器打开一个**本地文件夹**（便签的「文件夹」便签点一下就走这里）。
+///
+/// 为什么不把 `file:` 加进 `ALLOWED_PROTOCOLS` 了事：那条白名单的语义是
+/// "允许 iframe 在用户机器上启动一个程序"。`file:` 一旦放行，
+/// `file:///C:/Windows/System32/calc.exe` 就能被任何工具点开 —— 等于绕过整份白名单。
+///
+/// 这里换一个更窄的契约：**路径必须已存在、且确实是目录**。
+/// 就算工具传进来一个 exe 的路径也只会得到「只能打开文件夹」，
+/// 最坏结果是多开一个资源管理器窗口，而不是执行任何东西。
+///
+/// 收的是**原生路径**而不是 URL：中文/空格在 `file:///` 里要做百分号编码，
+/// 编码错一处就是"打不开"，而 ShellExecuteW 本来就吃原样路径。
+#[tauri::command]
+pub fn open_folder(path: String) -> Result<(), String> {
+    let raw = path.trim();
+    if raw.is_empty() {
+        return Err("缺少文件夹路径".to_string());
+    }
+    // 控制字符会把日志/命令行搞乱，且路径里本来不该有
+    if raw.chars().any(|c| c.is_control()) {
+        return Err("路径里含控制字符".to_string());
+    }
+
+    let dir = Path::new(raw);
+    if !dir.exists() {
+        return Err(format!("这个文件夹不存在：{raw}"));
+    }
+    if !dir.is_dir() {
+        return Err("只能打开文件夹，不能打开文件".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let verb: Vec<u16> = "open\0".encode_utf16().collect();
+        let file: Vec<u16> = format!("{raw}\0").encode_utf16().collect();
+        let ret = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                file.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        } as isize;
+        if ret <= 32 {
+            return Err(format!("系统没能打开这个文件夹（ShellExecute 返回 {ret}）"));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(raw)
+            .spawn()
+            .map_err(|e| format!("打开失败: {e}"))?;
+        Ok(())
+    }
+}
+
+/// `list_folder` 里的一条：**只有名字**，不带完整路径、不带内容。
+#[derive(Serialize)]
+pub struct DirItem {
+    name: String,
+    dir: bool,
+}
+
+#[derive(Serialize)]
+pub struct FolderListing {
+    path: String,
+    name: String,
+    entries: Vec<DirItem>,
+    /// 后面还有没列出来的（只扫了有限几项，不遍历整个目录）
+    more: bool,
+}
+
+/// 单次列目录最多扫多少条（决定 `more` 的准确性，也是防卡死的闸）
+const LIST_SCAN_MAX: usize = 400;
+/// 一次最多回多少条给工具
+const LIST_RETURN_MAX: u32 = 16;
+
+/// 读一个文件夹的「前几项」，给便签的文件夹卡片做预览。
+///
+/// 三条边界，都是"别把工具变成文件浏览器"：
+///   · 只回名字和"是不是目录"，**不读内容、不 stat 大小**；
+///   · 最多扫 `LIST_SCAN_MAX` 项就停，不做全量计数 —— 拿 `C:\Windows` 当路径时
+///     全量遍历是几十万次系统调用，界面会卡死在这儿；
+///   · `limit` 夹在 1..=16，工具要的是"前几个"，不该有翻页能力。
+#[tauri::command]
+pub fn list_folder(path: String, limit: Option<u32>) -> Result<FolderListing, String> {
+    let raw = path.trim();
+    if raw.is_empty() {
+        return Err("缺少文件夹路径".to_string());
+    }
+    if raw.chars().any(|c| c.is_control()) {
+        return Err("路径里含控制字符".to_string());
+    }
+    let dir = Path::new(raw);
+    if !dir.is_dir() {
+        return Err(format!("这个文件夹不存在：{raw}"));
+    }
+
+    let want = limit.unwrap_or(6).clamp(1, LIST_RETURN_MAX) as usize;
+    let mut items: Vec<DirItem> = Vec::new();
+    let mut scanned = 0usize;
+    let mut more = false;
+
+    let iter = fs::read_dir(dir).map_err(|e| format!("读不了这个文件夹：{e}"))?;
+    for entry in iter.flatten() {
+        scanned += 1;
+        if scanned > LIST_SCAN_MAX {
+            more = true;
+            break;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.is_empty() || name.starts_with('.') {
+            continue;
+        }
+        // 资源管理器自己也不显示的两个噪音文件
+        if name.eq_ignore_ascii_case("desktop.ini") || name.eq_ignore_ascii_case("thumbs.db") {
+            continue;
+        }
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        items.push(DirItem { name, dir: is_dir });
+    }
+
+    // 目录在前、名字不区分大小写排序 —— read_dir 给的是文件系统顺序，直接展示会乱
+    items.sort_by(|a, b| {
+        b.dir
+            .cmp(&a.dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    if items.len() > want {
+        more = true;
+    }
+    items.truncate(want);
+
+    // 根目录（C:\）没有 file_name，退回原路径
+    let name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| raw.to_string());
+
+    Ok(FolderListing {
+        path: raw.to_string(),
+        name,
+        entries: items,
+        more,
+    })
+}
+
 fn collect_usage(dir: &Path, files: &mut usize, bytes: &mut u64) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;

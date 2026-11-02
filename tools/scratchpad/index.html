@@ -398,6 +398,22 @@
   .linkopen .ltxt { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .linkopen .lhost { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .linkopen .lpath { font-size: 11px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 文件夹：左边一枚大图标，右边名字与路径；下面再挂几条内容预览 */
+  .linkopen.dir { align-items: center; gap: 9px; padding: 8px 9px; }
+  .linkopen.dir .dbig { flex: 0 0 auto; width: 26px; height: 26px; color: var(--fg2); }
+  .linkopen.dir .dbig svg { display: block; width: 26px; height: 26px; }
+  .linkopen.dir .lhost { font-size: 13px; }
+  .lfiles { display: flex; flex-direction: column; padding: 0 1px; }
+  .lfrow {
+    display: flex; align-items: center; gap: 6px; min-width: 0;
+    padding: 1px 5px; border-radius: 4px;
+    font-size: 11.5px; line-height: 1.45; color: var(--fg2);
+  }
+  .lfrow svg { flex: 0 0 auto; width: 12px; height: 12px; opacity: .72; }
+  /* 裸文本在 flex 里会被压成一字一列，必须包一层可收缩的 span */
+  .lfrow span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lfempty, .lfmore { padding: 1px 5px; font-size: 11px; color: var(--dim); }
+  .lfmore { cursor: default; }
   .lrow { display: flex; gap: 4px; }
   .lrow button {
     flex: 0 0 auto; padding: 1px 7px; border: 1px solid var(--line); border-radius: 5px;
@@ -487,6 +503,9 @@
     border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer;
   }
   .askrow button:hover { background: var(--chip); }
+  /* 「选文件夹…」靠左，和右边那组「取消 / 确定」分开 */
+  #askPick { margin-right: auto; }
+  #askPick[hidden] { display: none; }
   #askYes { border-color: transparent; background: var(--danger); color: #fff; }
   #askYes:hover { filter: brightness(1.06); background: var(--danger); }
 </style>
@@ -507,7 +526,7 @@
   <button type="button" data-kind="text" role="menuitem">文字便签<span>双击空白处也能建</span></button>
   <button type="button" data-kind="image" role="menuitem">图片便签<span>整张图就是一张便签</span></button>
   <button type="button" data-kind="todo" role="menuitem">待办表<span>可勾选的清单</span></button>
-  <button type="button" data-kind="link" role="menuitem">链接便签<span>存个网址，点开就用</span></button>
+  <button type="button" data-kind="link" role="menuitem">链接便签<span>存个网址或本地文件夹</span></button>
 </div>
 <div id="stage">
   <div id="scroll"><div id="canvas"><div id="board"></div></div></div>
@@ -527,6 +546,7 @@
     <p id="askText"></p>
     <input id="askInput" class="askinput" type="text" hidden>
     <div class="askrow">
+      <button id="askPick" type="button" hidden>选文件夹…</button>
       <button id="askNo" type="button">取消</button>
       <button id="askYes" type="button">确定</button>
     </div>
@@ -769,6 +789,8 @@
       askResolve = resolve;
       askWantsInput = false;
       document.getElementById("askInput").hidden = true;
+      var pick = document.getElementById("askPick");
+      if (pick) pick.hidden = true;
       document.getElementById("askTitle").textContent = title;
       document.getElementById("askText").textContent = text || "";
       document.getElementById("askYes").textContent = okLabel || "确定";
@@ -778,13 +800,18 @@
     });
   }
 
-  /** 同一个弹窗的"问一句话"版本：返回 Promise<string|null> */
-  function askInput(title, text, value) {
+  /** 同一个弹窗的"问一句话"版本：返回 Promise<string|null>
+   *  opts.pick = true 时多一个「选文件夹…」按钮，选完把绝对路径填进输入框
+   *  （仍然要点「确定」才生效 —— 选择框可能是点错了）。 */
+  function askInput(title, text, value, opts) {
+    var wantPick = !!(opts && opts.pick);
     return new Promise(function (resolve) {
       askResolve = resolve;
       askWantsInput = true;
       document.getElementById("askTitle").textContent = title;
       document.getElementById("askText").textContent = text || "";
+      var pick = document.getElementById("askPick");
+      if (pick) pick.hidden = !wantPick;
       var inp = document.getElementById("askInput");
       inp.hidden = false;
       inp.value = value || "";
@@ -804,6 +831,8 @@
     var text = ok ? String(inp.value || "").trim() : null;
     box.hidden = true;
     inp.hidden = true;
+    var pick = document.getElementById("askPick");
+    if (pick) pick.hidden = true;
     var r = askResolve;
     var wantsInput = askWantsInput;
     askResolve = null;
@@ -1471,6 +1500,174 @@
 
   /* ---------------- 链接便签 ---------------- */
 
+  /* ---------------- 本地文件夹（链接便签的另一种去处） ----------------
+
+     链接便签的 body 里只放一个字符串：网址，或者一个本地文件夹路径。
+     不为它新开一种 kind —— 数据形状完全一样，区别只发生在"点开"的那一刻，
+     新开一种就要多一套渲染、多一套迁移，而用户要的只是"点一下把文件夹打开"。
+
+     路径的判断与归一化都放在这里：粘贴进来的可能是 `C:\a\b`、`C:/a/b`、
+     `\\server\share`，也可能是从浏览器地址栏复制的 `file:///C:/a%20b`。
+     后一种必须还原成原生路径再交给宿主 —— ShellExecuteW 吃原样路径，
+     吃不做百分号编码的 URL，中文和空格就是"打不开"。
+
+     真正"能不能开"由宿主定（`open_folder` 只认已存在的目录），
+     这边只负责别把网址当路径、也别把路径当网址。 */
+
+  /** 看起来像本地文件夹路径吗（盘符 / UNC / file://） */
+  function isFolderPath(s) {
+    var v = String(s || "").trim();
+    if (!v) return false;
+    if (/^file:\/\//i.test(v)) return true;
+    if (/^[a-z]:[\\/]/i.test(v)) return true;
+    if (/^\\\\[^\\]/.test(v)) return true;
+    return false;
+  }
+
+  /** `file:///C:/a%20b` → `C:\a b`（正斜杠保留，Windows 两样都吃） */
+  function folderPath(s) {
+    var v = String(s || "").trim();
+    var m = /^file:\/\/(.*)$/i.exec(v);
+    if (!m) return v;
+    var rest = m[1];
+    try { rest = decodeURI(rest); } catch (e) {}
+    // file:///C:/x → "/C:/x"
+    if (/^\/[a-z]:/i.test(rest)) return rest.slice(1);
+    // file://server/share → "server/share"，还原成 UNC
+    if (rest && rest.charAt(0) !== "/") return "\\\\" + rest.replace(/\//g, "\\");
+    return rest;
+  }
+
+  /** 卡片第一行显示什么：文件夹名（根目录显示盘符） */
+  function folderName(p) {
+    var v = String(p || "").replace(/[\\/]+$/, "");
+    if (!v) return "";
+    var root = /^([a-z]):$/i.exec(v);
+    if (root) return root[1].toUpperCase() + ":\\";
+    var i = Math.max(v.lastIndexOf("\\"), v.lastIndexOf("/"));
+    var name = i >= 0 ? v.slice(i + 1) : v;
+    return name || v;
+  }
+
+  /* 条目图标：单色线条，按扩展名粗分七类。够认就行，不做整套文件管理器图标。 */
+  var FILE_GLYPHS = {
+    dir:
+      '<path d="M2.6 6.1A1.5 1.5 0 0 1 4.1 4.6h3.1a1.5 1.5 0 0 1 1.2.6l.9 1.2h6.1a1.5 1.5 0 0 1 1.5 1.5v6.5a1.5 1.5 0 0 1-1.5 1.5H4.1a1.5 1.5 0 0 1-1.5-1.5z"/>',
+    image:
+      '<rect x="2.8" y="3.9" width="14.4" height="12.2" rx="1.6"/><circle cx="6.6" cy="7.6" r="1.2"/>' +
+      '<path d="M3.4 13.6l3.8-3.3 2.9 2.5 2.5-2.1 3.6 3.1"/>',
+    doc:
+      '<path d="M5.4 2.9h5.4l3.8 3.8v10.4H5.4z"/><path d="M10.8 2.9v3.8h3.8"/>' +
+      '<path d="M7.4 9.4h5.2M7.4 11.6h5.2M7.4 13.8h3.2"/>',
+    sheet:
+      '<rect x="3.2" y="3.6" width="13.6" height="12.8" rx="1.4"/>' +
+      '<path d="M3.2 7.2h13.6M3.2 11h13.6M7.6 7.2v9.2"/>',
+    zip:
+      '<path d="M5.4 2.9h5.4l3.8 3.8v10.4H5.4z"/><path d="M10.8 2.9v3.8h3.8"/>' +
+      '<path d="M9.2 8.6v1.1M9.2 10.8v1.1M9.2 13v1.1"/>',
+    code: '<path d="M7 6.8L3.8 10l3.2 3.2M13 6.8L16.2 10 13 13.2"/>',
+    file: '<path d="M5.4 2.9h5.4l3.8 3.8v10.4H5.4z"/><path d="M10.8 2.9v3.8h3.8"/>'
+  };
+
+  function fileKindOf(name, isDir) {
+    if (isDir) return "dir";
+    var s = String(name || "");
+    var dot = s.lastIndexOf(".");
+    var ext = dot > 0 ? s.slice(dot + 1).toLowerCase() : "";
+    if (/^(png|jpe?g|gif|webp|bmp|svg|ico|avif|heic)$/.test(ext)) return "image";
+    if (/^(xlsx?|csv|tsv)$/.test(ext)) return "sheet";
+    if (/^(docx?|pdf|txt|md|rtf|pptx?|wps|et|dps)$/.test(ext)) return "doc";
+    if (/^(zip|rar|7z|tar|gz|bz2|xz)$/.test(ext)) return "zip";
+    if (/^(js|mjs|cjs|ts|tsx|jsx|json|html?|css|scss|py|rs|go|java|c|h|cpp|cs|sh|bat|ps1|cmd|yml|yaml|toml|xml|sql)$/.test(ext)) return "code";
+    return "file";
+  }
+
+  function glyphSvg(kind) {
+    var body = FILE_GLYPHS[kind] || FILE_GLYPHS.file;
+    return (
+      '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25" ' +
+      'stroke-linecap="round" stroke-linejoin="round">' + body + "</svg>"
+    );
+  }
+
+  /* 目录内容只在卡片上露前几条。缓存 60 秒：
+     同一条便签因为拖拽/切白板重渲染时不必再问一次宿主。 */
+  var folderCache = Object.create(null);
+  var FOLDER_TTL = 60000;
+  var FOLDER_ROWS = 3;
+
+  /** 把 entries 画进 .lfiles（data.error 表示读不到） */
+  function paintFolderRows(list, data) {
+    list.textContent = "";
+
+    if (!data || data.error) {
+      var bad = document.createElement("div");
+      bad.className = "lfempty";
+      bad.textContent = "读不到这个文件夹";
+      if (data && data.error) bad.title = String(data.error);
+      list.appendChild(bad);
+      return;
+    }
+
+    var items = data.entries || [];
+    if (!items.length) {
+      var zero = document.createElement("div");
+      zero.className = "lfempty";
+      zero.textContent = "这个文件夹是空的";
+      list.appendChild(zero);
+      return;
+    }
+
+    items.forEach(function (it) {
+      var row = document.createElement("div");
+      row.className = "lfrow";
+      // 图标是固定字符串，名字走 textContent —— 文件名里出现 < > 也不会被当标签
+      row.innerHTML = glyphSvg(fileKindOf(it.name, it.dir));
+      var label = document.createElement("span");
+      label.textContent = String(it.name || "");
+      label.title = String(it.name || "");
+      row.appendChild(label);
+      list.appendChild(row);
+    });
+
+    if (data.more) {
+      var more = document.createElement("div");
+      more.className = "lfmore";
+      more.textContent = "…还有更多";
+      list.appendChild(more);
+    }
+  }
+
+  /** 打开文件夹之后把预览也刷一遍（清掉缓存，重画在那张便签的 .lfiles 里） */
+  function refreshFolderPreview(n, path) {
+    delete folderCache[path];
+    var el = noteEl(n.id);
+    if (el) void loadFolderInto(el, n);
+  }
+
+  async function loadFolderInto(box, n) {
+    var list = box.querySelector(".lfiles");
+    if (!list) return;
+    var path = folderPath(n.body);
+    if (!path) return;
+
+    var hit = folderCache[path];
+    if (hit && Date.now() - hit.at < FOLDER_TTL) {
+      paintFolderRows(list, hit.data);
+      return;
+    }
+
+    try {
+      var res = await call("shell.listFolder", { path: path, limit: FOLDER_ROWS });
+      folderCache[path] = { at: Date.now(), data: res || {} };
+      // 等回来的时候便签可能已经被重渲染/删掉了，别往死节点里画
+      if (box.isConnected) paintFolderRows(list, folderCache[path].data);
+    } catch (err) {
+      folderCache[path] = { at: Date.now(), data: { error: err && err.message ? err.message : String(err) } };
+      if (box.isConnected) paintFolderRows(list, folderCache[path].data);
+    }
+  }
+
   function hostOf(url) {
     var s = String(url || "").trim();
     if (!s) return "";
@@ -1497,20 +1694,34 @@
     var box = document.createElement("div");
     box.className = "linkcard";
 
+    // 同一个 kind 里两种去处：网址 / 本地文件夹。看 body 的形状决定走哪条
+    var isDir = isFolderPath(n.body);
+    var target = isDir ? folderPath(n.body) : String(n.body || "").trim();
+
     var open = document.createElement("button");
     open.type = "button";
-    open.className = "linkopen";
-    open.title = "点击打开；打不开会自动复制链接";
-    open.innerHTML = '<svg class="lglyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></svg>';
+    open.className = isDir ? "linkopen dir" : "linkopen";
+    open.title = isDir
+      ? "点击用资源管理器打开这个文件夹"
+      : "点击打开；打不开会自动复制链接";
+    open.innerHTML = isDir
+      ? '<span class="dbig">' + glyphSvg("dir") + "</span>"
+      : '<svg class="lglyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></svg>';
 
     var txt = document.createElement("span");
     txt.className = "ltxt";
     var host = document.createElement("span");
     host.className = "lhost";
-    host.textContent = hostOf(n.body) || "（还没有地址）";
+    host.textContent = isDir
+      ? (folderName(target) || "本地文件夹")
+      : (hostOf(n.body) || "（还没有地址）");
     var path = document.createElement("span");
     path.className = "lpath";
-    path.textContent = pathOf(n.body) || n.body || "";
+    path.textContent = isDir
+      ? (target || "还没有选文件夹")
+      : (pathOf(n.body) || n.body || "");
+    // 路径常常比卡片宽，悬停能看全
+    if (isDir) path.title = target;
     txt.appendChild(host);
     txt.appendChild(path);
     open.appendChild(txt);
@@ -1520,35 +1731,59 @@
     row.className = "lrow";
     var copy = document.createElement("button");
     copy.type = "button";
-    copy.textContent = "复制链接";
+    copy.textContent = isDir ? "复制路径" : "复制链接";
     copy.addEventListener("click", function (e) {
       e.stopPropagation();
-      if (copyText(String(n.body || ""))) toast("链接已复制");
-      else toast("链接：" + n.body, null, null, 6000);
+      if (copyText(String(n.body || ""))) toast(isDir ? "路径已复制" : "链接已复制");
+      else toast((isDir ? "路径：" : "链接：") + n.body, null, null, 6000);
     });
     var edit = document.createElement("button");
     edit.type = "button";
-    edit.textContent = "改地址";
+    edit.textContent = isDir ? "改路径" : "改地址";
     edit.addEventListener("click", function (e) { e.stopPropagation(); void editLink(n); });
     row.appendChild(copy);
     row.appendChild(edit);
 
     box.appendChild(open);
+    if (isDir) {
+      // 内容预览先占位、异步填 —— 读盘失败也只是少几行，不影响卡片本身
+      var files = document.createElement("div");
+      files.className = "lfiles";
+      box.appendChild(files);
+      void loadFolderInto(box, n);
+    }
     box.appendChild(row);
     return box;
   }
 
   async function openLink(n) {
-    var url = String(n.body || "").trim();
-    if (!url) { toast("这张便签还没有链接"); return; }
+    var raw = String(n.body || "").trim();
+    if (!raw) { toast("这张便签还没有链接"); return; }
+
+    // 文件夹和网址走两条通道：前者只开目录（宿主拒绝文件路径），后者受协议白名单管
+    if (isFolderPath(raw)) {
+      var dir = folderPath(raw);
+      try {
+        await call("shell.folder", { path: dir });
+        // 刚打开通常意味着"我要往里面放东西"，回来时预览该是新的
+        refreshFolderPreview(n, dir);
+        return;
+      } catch (err) {
+        var why = err && err.message ? err.message : String(err);
+        if (copyText(dir)) toast(why + "；路径已复制", null, null, 4200);
+        else toast(why, null, null, 6000);
+        return;
+      }
+    }
+
     try {
-      await call("shell.open", { url: url });
+      await call("shell.open", { url: raw });
       return;
     } catch (err) {
       // 宿主没申请 shell 能力、或 Rust 的协议白名单不放 http(s)：退回复制
     }
-    if (copyText(url)) toast("已复制链接，粘到浏览器里打开");
-    else toast("链接：" + url, null, null, 6000);
+    if (copyText(raw)) toast("已复制链接，粘到浏览器里打开");
+    else toast("链接：" + raw, null, null, 6000);
   }
 
   function copyText(text) {
@@ -1582,12 +1817,37 @@
   }
 
   async function editLink(n) {
-    var url = await askInput("改链接地址", "粘贴一个网址", n.body || "");
-    if (url === null) return;
-    var clean = normalizeUrl(url);
+    var wasDir = isFolderPath(n.body);
+    var raw = await askInput(
+      wasDir ? "改文件夹" : "改链接地址",
+      "粘贴一个网址，或点「选文件夹」链接本地目录",
+      n.body || "",
+      { pick: true }
+    );
+    if (raw === null) return;
+
+    if (isFolderPath(raw)) {
+      var dir = folderPath(raw);
+      n.body = dir;
+      // 标题空着就顺手填文件夹名；用户自己起过名字的不动
+      var patch = { body: dir };
+      if (!String(n.title || "").trim()) { n.title = folderName(dir); patch.title = n.title; }
+      // body / title 都是老列，不必过 saveNew 那道「新列探测」
+      call("row.update", { table: "notes", id: n.id, patch: patch }).catch(function (err) {
+        toast("存不进去：" + err.message);
+      });
+      refreshNote(n);
+      return;
+    }
+
+    var clean = normalizeUrl(raw);
     if (!clean) { toast("这个地址看起来不对"); return; }
     n.body = clean;
-    saveNew(n, { body: clean });
+    var patchUrl = { body: clean };
+    if (!String(n.title || "").trim()) { n.title = hostOf(clean); patchUrl.title = n.title; }
+    call("row.update", { table: "notes", id: n.id, patch: patchUrl }).catch(function (err) {
+      toast("存不进去：" + err.message);
+    });
     refreshNote(n);
   }
 
@@ -2555,8 +2815,20 @@
     if (kind === "image") { fileInput.click(); return; }
     if (kind === "todo") { await addNote(null, "", { kind: "todo", items: "[]" }); return; }
     if (kind === "link") {
-      var raw = await askInput("添加链接", "粘贴一个网址，便签上点一下就能打开", "");
+      var raw = await askInput(
+        "添加链接",
+        "粘贴一个网址，或点「选文件夹」链接本地目录，便签上点一下就能打开",
+        "",
+        { pick: true }
+      );
       if (raw === null) return;
+      // 本地文件夹：不必套 https://，也不做 URL 校验，路径原样存
+      if (isFolderPath(raw)) {
+        var dir = folderPath(raw);
+        // 比普通链接便签高一点：要放得下「文件夹名 + 路径 + 前几条内容 + 按钮」
+        await addNote(null, dir, { kind: "link", title: folderName(dir), h: 220 });
+        return;
+      }
       var url = normalizeUrl(raw);
       if (!url) { toast("这个地址看起来不对"); return; }
       await addNote(null, url, { kind: "link", title: hostOf(url) });
@@ -2606,6 +2878,28 @@
 
     document.getElementById("add").addEventListener("click", function () { void addNote(); });
     document.getElementById("addBoard").addEventListener("click", function () { void addBoard(); });
+
+    /* 弹窗里的「选文件夹…」：让宿主开系统选择框，选完只把路径填进输入框，
+       仍然要点「确定」才生效 —— 选择框点错、或者用户临时改主意都不算数。 */
+    var pickBtn = document.getElementById("askPick");
+    if (pickBtn) {
+      pickBtn.addEventListener("click", async function () {
+        pickBtn.disabled = true;
+        try {
+          var picked = await call("shell.pickFolder", {});
+          var p = picked && picked.path ? String(picked.path) : "";
+          if (p) {
+            var inp = document.getElementById("askInput");
+            inp.value = p;
+            if (inp.focus) inp.focus();
+          }
+        } catch (err) {
+          toast("选不了文件夹：" + (err && err.message ? err.message : err) + "（可以直接粘贴路径）", null, null, 5200);
+        } finally {
+          pickBtn.disabled = false;
+        }
+      });
+    }
 
     /* 新建菜单：文字 / 图片 / 待办表 / 链接 */
     var newMenu = document.getElementById("newmenu");
