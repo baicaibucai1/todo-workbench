@@ -784,6 +784,9 @@ const TOOL_ORIGIN: Record<string, ImagebedOrigin> = {
   // 订单附图单独一档：图床里能只筛出这批「证据图」，
   // 而不是跟着几十张手动素材混在一起
   "abnormal-ticket": "abnormal-ticket",
+  // 便签贴的图（2026-11-02 补）：以前没这一档，便签上传的图全落进「手动导入」，
+  // 图库一按工具分类就露馅了 —— 便签那批素材跟用户自己拖进来的混在一起。
+  scratchpad: "scratchpad",
 };
 
 function originForTool(toolId: string): ImagebedOrigin {

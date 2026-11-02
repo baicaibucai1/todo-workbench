@@ -1029,6 +1029,52 @@ export const migrations: Migration[] = [
       ALTER TABLE core_tasks ADD COLUMN origin_ref TEXT NOT NULL DEFAULT '';
     `,
   },
+
+  {
+    /*
+     * v26：图库分类 —— 自建文件夹 + 标签。
+     *
+     * ============================ 为什么之前"找不到图" ============================
+     * 图库原来只有一排来源 chip（异常单号 / AI 生成 / 图片编辑 / 手动导入），
+     * 和「全部」共用一个平铺网格：图一多，一页几百张缩略图，既认不出是谁的，
+     * 也翻不到。用户要的是**按工具分开的文件夹**，以及自己能建文件夹、打标签。
+     *
+     * ============================ 为什么工具文件夹不落表 ============================
+     * 「异常单号登记」这批图是 origin 决定的**事实**，不是用户可以摆放的位置：
+     * 工具下次上传还会落在同一档。给每个 origin 建一行表记录，等于把事实抄了一遍，
+     * 抄完还要处理"工具新增了但表里没有""表里有但工具没了"这些不一致。
+     * 所以工具文件夹是**虚拟的**：按 origin 分组即可，零维护。
+     * 只有用户自己建的文件夹才落 `core_imagebed_folders`。
+     *
+     * ============================ 两列各自的语义 ============================
+     * folder_id：空串 = 没归类（跟着 origin 走它的工具文件夹）；非空 = 在自建文件夹里。
+     *             **移动即移动** —— 归了类就不再出现在工具文件夹下，否则同一张图
+     *             同时出现在两处，用户会怀疑自己删错了。
+     * tags：      逗号分隔。不单开一张关联表：标签是"跟着图片走的一小串字"，
+     *             不需要按标签反查图片之外的任何东西，一列足够；
+     *             拆表还要多一次 JOIN，而内存库（浏览器 demo）根本不支持 JOIN。
+     *
+     * 两列都 NOT NULL DEFAULT ''：老行自动补齐，且都落在各自工具的默认文件夹里，
+     * 升级后不需要任何数据搬运。
+     */
+    version: 26,
+    name: "imagebed_folders_and_tags",
+    sql: `
+      CREATE TABLE IF NOT EXISTS core_imagebed_folders (
+        id         TEXT PRIMARY KEY,
+        name       TEXT NOT NULL DEFAULT '',
+        sort       INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      ALTER TABLE core_imagebed_items ADD COLUMN folder_id TEXT NOT NULL DEFAULT '';
+      ALTER TABLE core_imagebed_items ADD COLUMN tags TEXT NOT NULL DEFAULT '';
+
+      CREATE INDEX IF NOT EXISTS idx_core_imagebed_folder
+        ON core_imagebed_items(folder_id, deleted);
+    `,
+  },
 ];
 
 /** 当前代码期望的 schema 版本 */

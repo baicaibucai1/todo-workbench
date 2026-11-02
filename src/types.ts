@@ -424,7 +424,33 @@ export type ImagebedOrigin =
    * 反向也成立：订单里删掉一张图只是解除关联，图床里这条记录还在，
    * 靠这个 origin 也找得回来。
    */
-  | "abnormal-ticket";
+  | "abnormal-ticket"
+  /**
+   * 便签里贴的图（2026-11-02 加）。
+   *
+   * 以前便签没进 `TOOL_ORIGIN`，它上传的图全落到「手动导入」里，
+   * 和用户自己拖进来的素材混在一起 —— 图库一分类就露馅了。
+   */
+  | "scratchpad";
+
+/**
+ * 图库里的**自建文件夹**。
+ *
+ * 与「来源」的分工（这两件事以前混在一起，导致图全堆在一页里）：
+ *   · 来源（origin）是**事实**：这张图是谁放进来的，改不了，工具盖章；
+ *   · 文件夹是**归属**：用户想把它归到哪儿，随时可改。
+ * 所以界面上「工具文件夹」是 virtual 的（按 origin 分组，不用建行），
+ * 只有用户自己建的才落这张表。一张图在自建文件夹里时，
+ * 它的 `folder_id` 非空 —— 此时它不再出现在工具文件夹下（移动就是移动）。
+ */
+export interface ImagebedFolder {
+  id: string;
+  name: string;
+  /** 排序，小的在前。新建时取当前最大值 + 10，留出手工插队的余量 */
+  sort: number;
+  createdAt: string;
+  updatedAt: string;
+}
 
 /**
  * 图床条目。
@@ -457,6 +483,17 @@ export interface ImagebedItem {
    */
   prompt: string;
   note: string;
+  /**
+   * 用户把它归到哪个自建文件夹（`core_imagebed_folders.id`）。
+   * 空串 = 还没归类，界面按 `origin` 把它放进对应工具的默认文件夹。
+   */
+  folderId: string;
+  /**
+   * 自由标签。库里是逗号分隔的一列，读出来是数组 ——
+   * 用数组是因为界面要一个个画成 chip，每次拆字符串是浪费也是隐患
+   * （标签里不允许逗号，`joinTags` 会把逗号换成空格）。
+   */
+  tags: string[];
   createdAt: string;
   /**
    * 最后一次改动时间（改标题 / 备注 / 尺寸，或删除）。

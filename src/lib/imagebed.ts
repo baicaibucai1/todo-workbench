@@ -34,7 +34,7 @@ import {
   SIZE_LIMIT,
 } from "./attachments";
 import { refCountByHash } from "./repo";
-import type { ImagebedItem, ImagebedKind, ImagebedOrigin } from "../types";
+import type { ImagebedFolder, ImagebedItem, ImagebedKind, ImagebedOrigin } from "../types";
 
 /* ------------------------------------------------------------------ */
 /* 行 ↔ 模型                                                           */
@@ -59,6 +59,10 @@ interface RawImagebed {
   created_at: string;
   /** v14 起才有。老行为 NULL —— 读的时候用 created_at 兜底 */
   updated_at: string | null;
+  /** v26 起才有：自建文件夹 id（空串=按 origin 归到工具文件夹） */
+  folder_id: string | null;
+  /** v26 起才有：逗号分隔的标签 */
+  tags: string | null;
 }
 
 function toItem(r: RawImagebed): ImagebedItem {
@@ -79,6 +83,8 @@ function toItem(r: RawImagebed): ImagebedItem {
     origin: (r.origin || "manual") as ImagebedOrigin,
     prompt: r.prompt,
     note: r.note,
+    folderId: r.folder_id ?? "",
+    tags: parseTags(r.tags),
     createdAt: r.created_at,
     // v14 之前的行没有 updated_at，用 created_at 兜底：
     // 留空会让这些老条目在合并时被判成"最小时间戳"，永远赢不了新改动
@@ -100,14 +106,23 @@ export interface ImagebedQuery {
   limit?: number;
 }
 
-/** 关键词匹配。大小写不敏感 —— 与 SQLite 的 LIKE 默认行为保持一致。 */
-function matches(q: ImagebedItem, needle: string): boolean {
+/**
+ * 关键词匹配。大小写不敏感 —— 与 SQLite 的 LIKE 默认行为保持一致。
+ *
+ * 导出是因为图床界面现在把**全部条目取回来后在内存里筛**（要按文件夹、
+ * 标签、类型一起组合过滤，而内存库不支持 JOIN/OFFSET）。如果界面自己再写一份
+ * 匹配规则，两处迟早不一致：搜索框说"有"，工具 `gallery.list` 说"没有"。
+ */
+export function matchesImagebed(q: ImagebedItem, needle: string): boolean {
   if (!needle) return true;
   const n = needle.toLowerCase();
   return (
     q.title.toLowerCase().includes(n) ||
     q.prompt.toLowerCase().includes(n) ||
-    q.note.toLowerCase().includes(n)
+    q.note.toLowerCase().includes(n) ||
+    // 标签也要能搜：用户给图打了「破损」，在搜索框里敲这两个字
+    // 却搜不到，会以为标签没存上
+    q.tags.some((t) => t.toLowerCase().includes(n))
   );
 }
 
@@ -142,7 +157,7 @@ export async function fetchImagebed(query: ImagebedQuery = {}): Promise<Imagebed
 
   const rows = await db().select<RawImagebed>(sql, params);
   const items = rows.map(toItem);
-  return search ? items.filter((i) => matches(i, search)).slice(0, query.limit || undefined) : items;
+  return search ? items.filter((i) => matchesImagebed(i, search)).slice(0, query.limit || undefined) : items;
 }
 
 /**
@@ -193,6 +208,157 @@ export async function getImagebedItem(id: string): Promise<ImagebedItem | null> 
     [id],
   );
   return rows[0] ? toItem(rows[0]) : null;
+}
+
+/* ------------------------------------------------------------------ */
+/* 文件夹与标签                                                        */
+/* ------------------------------------------------------------------ */
+
+/** 每张图最多挂几个标签 / 单个标签多长。图库是给人扫的，chip 一行塞不下就别塞。 */
+export const TAG_MAX = 8;
+export const TAG_LEN_MAX = 16;
+
+/** 库里的逗号串 → 标签数组。中文逗号也认，用户从别处粘过来常常是全角的。 */
+export function parseTags(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  const out: string[] = [];
+  for (const part of String(raw).split(/[,，]/)) {
+    const t = part.trim();
+    if (!t || out.includes(t)) continue;
+    out.push(t);
+  }
+  return out;
+}
+
+/**
+ * 标签数组 → 库里那一列。
+ *
+ * 顺手做两件清洗：**去掉逗号**（否则一个标签会把列切成两个），
+ * 截断过长/过多的标签。清洗只在这一处做，读的时候不再截，
+ * 免得"存进去的是 20 个字、读出来 16 个"，用户以为丢字了。
+ */
+export function joinTags(tags: string[]): string {
+  const out: string[] = [];
+  for (const raw of tags) {
+    const t = String(raw).replace(/[,，]/g, " ").trim().slice(0, TAG_LEN_MAX);
+    if (!t || out.includes(t)) continue;
+    out.push(t);
+    if (out.length >= TAG_MAX) break;
+  }
+  return out.join(",");
+}
+
+/** 一条图在侧栏里归到哪一格：自建文件夹优先，否则按来源落到工具文件夹 */
+export function folderKeyOf(item: ImagebedItem): string {
+  return item.folderId ? `folder:${item.folderId}` : `tool:${item.origin}`;
+}
+
+/** 工具文件夹的键。origin 是工具盖章的事实，不用建行 */
+export function toolFolderKey(origin: ImagebedOrigin): string {
+  return `tool:${origin}`;
+}
+
+interface RawFolder {
+  id: string;
+  name: string;
+  sort: number | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+function toFolder(r: RawFolder): ImagebedFolder {
+  return {
+    id: r.id,
+    name: r.name || "未命名文件夹",
+    sort: Number(r.sort ?? 0),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at ?? r.created_at,
+  };
+}
+
+export async function fetchImagebedFolders(): Promise<ImagebedFolder[]> {
+  // 只按 sort 排不够稳定（同一批建的 sort 可能相同），补 created_at 兜底
+  const rows = await db().select<RawFolder>(
+    `SELECT * FROM core_imagebed_folders ORDER BY sort ASC, created_at ASC`,
+  );
+  return rows.map(toFolder);
+}
+
+const FOLDER_NAME_MAX = 24;
+
+export async function createImagebedFolder(name: string): Promise<ImagebedFolder> {
+  const clean = name.trim().slice(0, FOLDER_NAME_MAX);
+  if (!clean) throw new Error("文件夹名不能为空");
+
+  const all = await fetchImagebedFolders();
+  // 重名直接拦：侧栏里两个「客户投诉」，点哪个都对又都不对
+  if (all.some((f) => f.name === clean)) throw new Error(`已经有叫「${clean}」的文件夹了`);
+
+  const at = nowIso();
+  const folder: ImagebedFolder = {
+    id: `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    name: clean,
+    sort: all.reduce((m, f) => Math.max(m, f.sort), 0) + 10,
+    createdAt: at,
+    updatedAt: at,
+  };
+  await db().execute(
+    `INSERT INTO core_imagebed_folders (id, name, sort, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [folder.id, folder.name, folder.sort, folder.createdAt, folder.updatedAt],
+  );
+  return folder;
+}
+
+export async function renameImagebedFolder(id: string, name: string): Promise<void> {
+  const clean = name.trim().slice(0, FOLDER_NAME_MAX);
+  if (!clean) throw new Error("文件夹名不能为空");
+  const all = await fetchImagebedFolders();
+  if (all.some((f) => f.id !== id && f.name === clean)) {
+    throw new Error(`已经有叫「${clean}」的文件夹了`);
+  }
+  await db().execute(
+    `UPDATE core_imagebed_folders SET name = ?, updated_at = ? WHERE id = ?`,
+    [clean, nowIso(), id],
+  );
+}
+
+/**
+ * 删文件夹，**不删图**：里面的图退回各自的工具文件夹（folder_id = ''）。
+ *
+ * 返回被退回的张数，界面用它说一句人话。
+ * 顺序必须是"先退图、再删文件夹"：反过来的话，中间任一时刻失败
+ * 都会留下一批指向不存在文件夹的图 —— 侧栏里没有那个文件夹，
+ * 于是它们在「全部」以外任何地方都看不见，等于凭空消失。
+ */
+export async function deleteImagebedFolder(id: string): Promise<number> {
+  const rows = await db().select<{ c: number }>(
+    `SELECT COUNT(*) AS c FROM core_imagebed_items WHERE folder_id = ? AND deleted = 0`,
+    [id],
+  );
+  const moved = Number(rows[0]?.c ?? 0);
+  await db().execute(
+    `UPDATE core_imagebed_items SET folder_id = '', updated_at = ? WHERE folder_id = ?`,
+    [nowIso(), id],
+  );
+  await db().execute(`DELETE FROM core_imagebed_folders WHERE id = ?`, [id]);
+  return moved;
+}
+
+/** 把一张图挪进自建文件夹（folderId 传空串 = 退回它的工具文件夹） */
+export async function setImagebedFolder(id: string, folderId: string): Promise<void> {
+  await db().execute(
+    `UPDATE core_imagebed_items SET folder_id = ?, updated_at = ? WHERE id = ?`,
+    [folderId || "", nowIso(), id],
+  );
+}
+
+/** 覆盖式写标签（传空数组 = 清空） */
+export async function setImagebedTags(id: string, tags: string[]): Promise<void> {
+  await db().execute(
+    `UPDATE core_imagebed_items SET tags = ?, updated_at = ? WHERE id = ?`,
+    [joinTags(tags), nowIso(), id],
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -329,6 +495,10 @@ export async function addToImagebed(input: AddMediaInput): Promise<ImagebedItem>
     origin: input.origin,
     prompt: input.prompt ?? "",
     note: input.note ?? "",
+    // 新上传的图先不归类：folder_id 空 = 按 origin 落进对应工具的文件夹。
+    // 用户要放进自建文件夹，是在图库里「移到」那一步的事
+    folderId: "",
+    tags: [],
     createdAt: at,
     updatedAt: at,
   };
@@ -439,6 +609,7 @@ const ORIGIN_LABEL: Record<ImagebedOrigin, string> = {
   "image-crop": "图片编辑",
   "size-chart": "尺码表",
   "abnormal-ticket": "异常单号登记",
+  scratchpad: "便签",
 };
 
 export function originLabel(o: ImagebedOrigin): string {
@@ -453,6 +624,8 @@ export const ORIGIN_COLOR: Record<ImagebedOrigin, string> = {
   "size-chart": "#1d9e75",
   // 与工具里「异常」的警示橙同色，一眼能从图床里认出来
   "abnormal-ticket": "#c9820b",
+  // 便签用纸色（偏暖的褐），和异常单的橙拉开一点距离
+  scratchpad: "#a06a4a",
 };
 
 /** 一键摘要，给卡片底部那行小字用 */
