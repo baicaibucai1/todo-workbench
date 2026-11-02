@@ -129,7 +129,7 @@ export type LocalAttachResult = {
 export interface ToolIntent {
   /** 投递序号，纯用来做 React 的 key —— 队列出队不靠它 */
   seq: number;
-  /** 谁发起的；null 表示是宿主自己（比如图床里"用某工具打开"） */
+  /** 谁发起的；null 表示是宿主自己（比如多媒体文件里"用某工具打开"） */
   from: string | null;
   data: unknown;
 }
@@ -1360,7 +1360,7 @@ export const useStore = create<State>((set, get) => ({
    * 贴网址添加附件。
    *
    * 流程是「先下下来，再决定怎么存」——**类型由真实内容决定，不由网址后缀决定**。
-   * 很多图床的地址根本没有 `.jpg`，反过来也有把 `.jpg` 指向一个 HTML 页面的。
+   * 很多多媒体文件的地址根本没有 `.jpg`，反过来也有把 `.jpg` 指向一个 HTML 页面的。
    * 按后缀猜就会同时犯两种错：该存的没存、不该当图片的当成了图片。
    *
    * 下下来之后：

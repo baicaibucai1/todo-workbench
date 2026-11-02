@@ -123,7 +123,7 @@ class MemoryDb implements Db {
      * 用户看到的是"对话记录凭空消失"。而真 SQLite 那边是好的，
      * 于是同一个 bug 只在浏览器 demo 里出现 —— 最难查的那种。
      *
-     * RENAME TO 也有实现了：v21 把图床那张表整体改名要用它。
+     * RENAME TO 也有实现了：v21 把多媒体文件那张表整体改名要用它。
      * DROP COLUMN 仍没有 —— 没有迁移在用，等真要用时再补。
      */
     // ALTER TABLE <old> RENAME TO <new> —— 连表名带数据一起搬。

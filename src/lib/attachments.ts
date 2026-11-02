@@ -38,8 +38,37 @@ export const SIZE_LIMIT: Record<"image" | "video", number> = {
   video: 200 * 1024 * 1024,
 };
 
-/** 选本地文件时的扩展名白名单 —— 只收图片和视频，其余一律走链接 */
+/**
+ * 「多媒体文件」的三分法。
+ *
+ * 与附件（`AttachmentKind`）的差别只有一条：**多了 audio**。
+ * 附件是流程任务的附件，音频在那种语境里没有位置；而多媒体文件是
+ * "工作台里所有素材的存放处"，音频（配音、录音、提示音）是正常素材。
+ * 两套类型就这么分着，别为了省一个类型把附件也拖下水。
+ */
+export type MediaKind = "image" | "video" | "audio";
+
+/**
+ * 多媒体文件的单文件上限。
+ *
+ * 音频给 60 MB：无损一整张专辑约 300–500 MB，那已经不是"一段素材"了，
+ * 该走网盘；而 60 MB 足够放下 60 分钟的 mp3（128 kbps）或半小时无损人声。
+ */
+export const MEDIA_SIZE_LIMIT: Record<MediaKind, number> = {
+  image: SIZE_LIMIT.image,
+  video: SIZE_LIMIT.video,
+  audio: 60 * 1024 * 1024,
+};
+
+/** 选本地文件时的扩展名白名单（多媒体文件用，含音频） */
 export const MEDIA_EXTENSIONS = [
+  "png", "jpg", "jpeg", "webp", "gif", "avif", "bmp", "svg",
+  "mp4", "webm", "mov", "mkv", "avi", "m4v",
+  "mp3", "wav", "m4a", "aac", "ogg", "flac", "opus", "weba",
+];
+
+/** 壁纸 / 封面这类"只能看图"的地方用的白名单 */
+export const IMAGE_VIDEO_EXTENSIONS = [
   "png", "jpg", "jpeg", "webp", "gif", "avif", "bmp", "svg",
   "mp4", "webm", "mov", "mkv", "avi", "m4v",
 ];
@@ -64,6 +93,29 @@ export function kindFromMime(mime: string): AttachmentKind {
 
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif", "avif", "bmp", "svg", "ico"]);
 const VIDEO_EXT = new Set(["mp4", "webm", "mov", "mkv", "avi", "m4v", "ogv"]);
+const AUDIO_EXT = new Set(["mp3", "wav", "m4a", "aac", "ogg", "oga", "flac", "opus", "weba"]);
+
+/**
+ * MIME → 多媒体类型。
+ *
+ * 兜底是 **image** 而不是 link：图库的格子画的是缩略图，
+ * 落到 image 至少还会显示"文件缺失"；落成 link 就什么也画不出来，
+ * 用户只看到一片空白，还以为是丢数据了。
+ */
+export function mediaKindFromMime(mime: string): MediaKind {
+  const m = (mime || "").split(";")[0].trim().toLowerCase();
+  if (m.startsWith("video/")) return "video";
+  if (m.startsWith("audio/")) return "audio";
+  return "image";
+}
+
+/** 按扩展名猜多媒体类型（最终仍以落盘后的真实 MIME 为准） */
+export function mediaKindFromUrl(url: string): MediaKind {
+  const ext = extFromName(url);
+  if (AUDIO_EXT.has(ext)) return "audio";
+  if (VIDEO_EXT.has(ext)) return "video";
+  return "image";
+}
 
 /** 按扩展名先猜一下类型。只用于"要不要提示用户"，最终以真实 MIME 为准。 */
 export function guessKindFromUrl(url: string): AttachmentKind {
@@ -551,7 +603,7 @@ export function __resetAttachmentStore(): void {
 /**
  * 仅供测试注入替身。
  *
- * 为什么必须有这个口子：数据层（图床/附件）里最值钱的那几条规则 ——
+ * 为什么必须有这个口子：数据层（多媒体文件/附件）里最值钱的那几条规则 ——
  * 「先落文件再写元数据」「文件按内容去重、删除前跨表数引用」——
  * 全都发生在"仓库"与"数据库"的**交界处**，而真实仓库在单测环境里
  * 要么要 IndexedDB（jsdom 没有），要么要 Tauri 命令（更不可能）。
@@ -568,20 +620,23 @@ export function __setAttachmentStore(s: AttachmentStore | null): void {
 /* ------------------------------------------------------------------ */
 
 /**
- * 拉起本机文件选择器，只允许图片和视频。
+ * 拉起本机文件选择器。
  *
+ * 默认只收图片和视频（壁纸这类场景）；`audio: true` 时把音频也放进来 ——
+ * 多媒体文件是"所有素材的存放处"，而壁纸只需要图。
  * 其它类型**故意不支持**：本地文件不像网址那样有个可以存下来的链接，
- * 而产品约定是"文件用链接"。与其把一个本机路径伪装成链接（换台机器就失效），
- * 不如直接说清楚——界面上也是这么提示的。
+ * 而产品约定是"文件用链接"。
  */
-export async function pickLocalMedia(): Promise<PickedLocal> {
+export async function pickLocalMedia(opts?: { audio?: boolean }): Promise<PickedLocal> {
+  const withAudio = opts?.audio === true;
+  const exts = withAudio ? MEDIA_EXTENSIONS : IMAGE_VIDEO_EXTENSIONS;
   if (isTauri()) {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const picked = await open({
       multiple: true,
       directory: false,
-      title: "选择图片或视频",
-      filters: [{ name: "图片与视频", extensions: MEDIA_EXTENSIONS }],
+      title: withAudio ? "选择图片 / 视频 / 音频" : "选择图片或视频",
+      filters: [{ name: withAudio ? "图片、视频与音频" : "图片与视频", extensions: exts }],
     });
     if (!picked) return [];
     return Array.isArray(picked) ? picked : [picked];
@@ -592,7 +647,7 @@ export async function pickLocalMedia(): Promise<PickedLocal> {
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
-    input.accept = "image/*,video/*";
+    input.accept = withAudio ? "image/*,video/*,audio/*" : "image/*,video/*";
     input.style.display = "none";
     document.body.appendChild(input);
     input.addEventListener("change", () => {

@@ -162,9 +162,9 @@ section(`1. 迁移：v${CURRENT_SCHEMA_VERSION} 是当前版本，v14 加的是�
   // 历史迁移是既成事实：v14 当年往那张表加列时它就叫这个名字，
   // v21 才把它改名成 core_imagebed_items。改名脚本不该抹掉这段历史，
   // 否则"v14 干了什么"就无从考证了（新库也是先建旧名表、再由 v21 改名）。
-  check("v14 给图床加 updated_at", /core_gallery_items ADD COLUMN updated_at/.test(sql));
+  check("v14 给多媒体文件加 updated_at", /core_gallery_items ADD COLUMN updated_at/.test(sql));
   check(
-    "v21 把图床那张表改了名（老库升级不丢图）",
+    "v21 把多媒体文件那张表改了名（老库升级不丢图）",
     /core_gallery_items RENAME TO core_imagebed_items/.test(
       (migrations.find((m) => m.version === 21)?.sql ?? "").replace(/\s+/g, " "),
     ),
@@ -468,7 +468,7 @@ section("13. 分片选择器与配置读取");
 
   check("空值回落成只同步待办", JSON.stringify(C.parseShards(undefined)) === '["tasks"]');
   check("空串回落成只同步待办", JSON.stringify(C.parseShards("")) === '["tasks"]');
-  check("全是非法值回落成只同步待办", JSON.stringify(C.parseShards("图床,xxx")) === '["tasks"]');
+  check("全是非法值回落成只同步待办", JSON.stringify(C.parseShards("多媒体文件,xxx")) === '["tasks"]');
   check("合法值按固定顺序输出", JSON.stringify(C.parseShards("attachments,tasks")) === '["tasks","attachments"]');
   check("去重", JSON.stringify(C.parseShards("tasks,tasks,tasks")) === '["tasks"]');
   check("忽略未知项保留已知项", JSON.stringify(C.parseShards("orders,不存在")) === '["orders"]');
@@ -776,19 +776,19 @@ section("20. 只勾待办时，别的分片的表一行都不动");
   const merged = S.mergeShard("tasks", local, local);
   await applyShardPayload("tasks", merged.payload);
 
-  check("图床没动", (await repo.fetchAllImagebed()).length === beforeImagebed);
+  check("多媒体文件没动", (await repo.fetchAllImagebed()).length === beforeImagebed);
   check("流程任务没动", (await repo.fetchWorkOrders({ view: "all", includeDone: true })).length === beforeOrders);
   check("附件没动", (await repo.fetchAllAttachments()).length === beforeAtt);
   check("流程模板没动", (await repo.fetchFlows()).length === beforeFlows);
 }
 
-section("21. 图床与附件分片各自往返");
+section("21. 多媒体文件与附件分片各自往返");
 {
   const galLocal = await exportShardPayload("gallery");
-  check("图床导出是个 items 数组", Array.isArray(galLocal.items));
+  check("多媒体文件导出是个 items 数组", Array.isArray(galLocal.items));
   const gm = S.mergeShard("gallery", galLocal, galLocal);
   await applyShardPayload("gallery", gm.payload);
-  check("图床往返不炸", (await repo.fetchAllImagebed()).length === galLocal.items.length);
+  check("多媒体文件往返不炸", (await repo.fetchAllImagebed()).length === galLocal.items.length);
 
   const attLocal = await exportShardPayload("attachments");
   check("附件导出是个 items 数组", Array.isArray(attLocal.items));

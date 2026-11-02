@@ -1,0 +1,3724 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>模板视频</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23378add'/%3E%3Crect x='7' y='9' width='18' height='14' rx='2.5' fill='%23fff' opacity='.95'/%3E%3Cpath d='M19 13.2v5.6l4.2-2.8z' fill='%23378add'/%3E%3C/svg%3E">
+<!--
+  模板视频 —— 一批照片 → 一条能直接发出去的短片。
+
+  ============================ 它到底怎么"出片" ============================
+  没有 ffmpeg、没有服务端：画面是 canvas 一帧一帧画出来的，声音是 Web Audio
+  解出来的，两条轨一起喂给 MediaRecorder 录。所以：
+
+  · **录制是真·实时**。MediaRecorder 的时间戳跟着墙上的钟走，画得快没用 ——
+    想"快进渲染"只能自己写编码器。24 秒的片子就得录 24 秒，这一点绕不过去。
+  · **解码后的音频必须带 CORS**。`<audio>` 放歌不需要 CORS，但要把它接进
+    AudioContext 混流录下来就必须有 —— 否则录出来是一段静音，而且是**无声
+    失败**，控制台一句报错都没有。所以在线配乐只认维基共享资源：
+    upload.wikimedia.org 对音频文件明确回 `access-control-allow-origin: *`，
+    其余所谓"免费音乐站"大多不放开，点了也录不进去。
+  · 结果带许可名与作者，需要署名时直接抄走（导出的是本地文件，不帮你挂水印）。
+
+  ============================ 几个踩过的坑 ============================
+  1. `[hidden]` 打不过作者样式 → 全局补 `[hidden]{display:none!important}`。
+  2. 全局别写 `input{width:100%}`：它连复选框一起算，复选框被撑成整行宽，
+     旁边那句中文只剩一个字宽、竖着排。这里只给文本框写宽度。
+  3. 图片导入后**先缩到长边 2560**再留着：原图 4000×3000 一张就 48MB，
+     三十张能把标签页拖死；1080p 的片子用不到那么多像素。
+  4. `input.value=""` 会就地清空 FileList（Chromium），必须先拷成真数组。
+  5. 导出用的 canvas 不能 `display:none` —— 不在文档流里的画布 Chrome 不保证
+     出帧，要挂在页面上、缩到 1px、opacity 0。
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #ffffff; --fg: #2c2c2a; --fg2: #5f5e5b; --dim: #918f89;
+    --line: #e6e4dd; --chip: #f2f0ea; --accent: #378add; --danger: #a32d2d;
+    --ok: #2f9e63; --stage: #111110; --mask: rgba(30, 29, 26, .38);
+  }
+  html[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #1c1c1a; --fg: #e8e6e0; --fg2: #b3b0a8; --dim: #8a8780;
+    --line: #3a3934; --chip: #2a2925; --accent: #5b9de8; --danger: #e07272;
+    --ok: #4ec78a; --stage: #0b0b0a; --mask: rgba(0, 0, 0, .58);
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; overflow: hidden; display: flex; flex-direction: column;
+    background: var(--bg); color: var(--fg);
+    font: 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button {
+    font: inherit; font-size: 12.5px; padding: 5px 11px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+    cursor: pointer; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { background: var(--chip); }
+  button:disabled { opacity: .42; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.06); }
+  /* 只给文本框定宽；范围 / 复选一律走浏览器默认宽度 */
+  input[type="text"], input[type="search"] {
+    font: inherit; font-size: 12.5px; color: var(--fg); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px;
+    outline: none; min-width: 0;
+  }
+  input[type="text"]:focus, input[type="search"]:focus { border-color: var(--accent); }
+  input[type="range"] { accent-color: var(--accent); min-width: 0; }
+  input[type="checkbox"] {
+    width: auto; height: auto; padding: 0; border: none; background: none;
+    border-radius: 0; accent-color: var(--accent); margin: 0;
+  }
+  select {
+    font: inherit; font-size: 12.5px; color: var(--fg); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 7px; padding: 4px 6px;
+    outline: none; max-width: 100%;
+  }
+
+  /* ---------------- 顶栏 ---------------- */
+  .bar {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px; border-bottom: 1px solid var(--line);
+  }
+  .bar h1 { margin: 0; font-size: 14.5px; font-weight: 600; flex: 0 0 auto; }
+  .bar .sp { flex: 1 1 auto; min-width: 0; }
+  .count { color: var(--dim); font-size: 12px; white-space: nowrap; flex: 0 0 auto; }
+  .dot {
+    flex: 0 0 auto; font-size: 11.5px; color: var(--dim); white-space: nowrap;
+    border: 1px solid var(--line); border-radius: 999px; padding: 0 8px;
+  }
+  .dot.ok { color: var(--ok); }
+  .dot.warn { color: var(--danger); }
+
+  /* ---------------- 主体两栏 ---------------- */
+  .wrap { flex: 1 1 auto; display: flex; min-height: 0; }
+
+  .side {
+    flex: 0 0 292px; min-width: 0; display: flex; flex-direction: column;
+    border-right: 1px solid var(--line); background: var(--bg);
+  }
+  .sidehead {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+    padding: 8px 10px 6px; border-bottom: 1px solid var(--line);
+  }
+  .sidehead strong { font-size: 12.5px; font-weight: 600; flex: 0 0 auto; }
+  .sidehead .hint {
+    flex: 1 1 auto; min-width: 0; font-size: 11.5px; color: var(--dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .clips {
+    flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .clips.empty { align-items: center; justify-content: center; }
+  .clips.over { outline: 2px solid var(--accent); outline-offset: -4px; border-radius: 8px; }
+  .dropnote {
+    margin: 10px; padding: 22px 14px; text-align: center; color: var(--dim);
+    font-size: 12.5px; line-height: 1.75; border: 1px dashed var(--line);
+    border-radius: 8px;
+  }
+  .dropnote b { display: block; color: var(--fg2); font-weight: 600; margin-bottom: 4px; }
+
+  .clip {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    padding: 5px 6px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); cursor: grab; touch-action: none;
+    user-select: none; -webkit-user-select: none;
+  }
+  .clip:hover { background: var(--chip); }
+  .clip.dragging { opacity: .55; border-style: dashed; cursor: grabbing; background: var(--chip); }
+  .clip.sel { border-color: var(--accent); }
+  .clip .idx {
+    flex: 0 0 auto; width: 17px; text-align: center; font-size: 11px;
+    color: var(--dim); font-variant-numeric: tabular-nums;
+  }
+  .clip img {
+    flex: 0 0 auto; width: 54px; height: 36px; object-fit: cover;
+    border-radius: 4px; background: var(--chip); pointer-events: none;
+  }
+  .clip .nm {
+    flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--fg2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .clip .x {
+    flex: 0 0 auto; width: 22px; height: 22px; padding: 0; line-height: 1;
+    border: none; background: none; color: var(--dim); font-size: 15px; border-radius: 5px;
+  }
+  .clip .x:hover { background: var(--chip); color: var(--danger); }
+  .sidefoot {
+    flex: 0 0 auto; display: flex; gap: 6px; padding: 8px 10px;
+    border-top: 1px solid var(--line);
+  }
+  .sidefoot button { flex: 1 1 0; min-width: 0; }
+  .sidefoot button.armed { color: var(--danger); border-color: var(--danger); }
+  .bar button.icon {
+    width: 30px; min-width: 30px; padding: 0; font-size: 14px; line-height: 1;
+  }
+
+  .main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; overflow: auto; }
+
+  /* ---------------- 预览 ---------------- */
+  /* 预览吃掉剩下的高度：定死高度的话，窗口一矮，下面那排参数和配乐行
+     就被挤到需要滚动 —— 而「配乐」正是这个工具的主入口，不能藏在折叠线下面。
+     所以这里 flex:1 + min-height 兜底，永远不滚动。 */
+  .stage {
+    flex: 1 1 auto; min-height: 150px; display: flex;
+    align-items: center; justify-content: center;
+    padding: 10px; background: var(--stage);
+  }
+  .stage canvas { display: block; max-width: 100%; max-height: 100%; border-radius: 3px; }
+
+  .ctrl {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; border-bottom: 1px solid var(--line);
+  }
+  #play {
+    flex: 0 0 auto; width: 30px; height: 30px; padding: 0; border-radius: 50%;
+    background: var(--fg); border-color: var(--fg); color: var(--bg);
+    font-size: 11px; line-height: 1;
+  }
+  #play:hover:not(:disabled) { background: var(--fg); filter: brightness(1.2); }
+  #time {
+    flex: 0 0 auto; font-size: 11.5px; color: var(--dim);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+
+  /* ---------------- 时间轨道 ---------------- */
+  /* 每段宽度 = 这张的实际时长占比（flex-grow 按秒数给，避免百分比舍入
+     加起来超过 100% 把最后一段挤没）。右端发蓝的一截是转场区。 */
+  .tl {
+    position: relative; flex: 1 1 auto; min-width: 60px; height: 34px;
+    display: flex; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--chip); overflow: hidden; cursor: pointer;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  .tlempty {
+    flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
+    font-size: 11.5px; color: var(--dim); pointer-events: none;
+  }
+  .tlseg {
+    position: relative; flex: 1 1 0; min-width: 3px; height: 100%;
+    background: var(--bg); border-right: 1px solid var(--line); overflow: hidden;
+  }
+  .tlseg:last-child { border-right: none; }
+  .tlseg .sn {
+    position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; font-size: 10.5px; color: var(--dim);
+    font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none;
+  }
+  .tlseg .tz {
+    position: absolute; top: 0; right: 0; bottom: 0; pointer-events: none;
+    background: linear-gradient(to left, rgba(55, 138, 221, .16), rgba(55, 138, 221, 0));
+  }
+  .tlseg.sel { box-shadow: inset 0 0 0 2px var(--accent); z-index: 1; }
+  .tlph {
+    position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px;
+    background: var(--accent); pointer-events: none; z-index: 2;
+  }
+
+  /* 选中某张后的时长编辑行 */
+  .tledit {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px 2px; font-size: 12px; color: var(--fg2);
+  }
+  .tledit .lbl {
+    flex: 0 1 auto; min-width: 0; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tledit input[type="range"] { flex: 1 1 auto; min-width: 60px; }
+  .tledit input[type="text"] { flex: 1 1 auto; min-width: 0; }
+  .tledit select { flex: 0 0 auto; font-size: 11.5px; padding: 2px 4px; }
+  .tledit .k { flex: 0 0 auto; font-size: 11.5px; color: var(--dim); }
+  .tledit .v {
+    flex: 0 0 auto; min-width: 58px; text-align: right;
+    font-variant-numeric: tabular-nums; color: var(--fg2); font-size: 11.5px;
+  }
+  .tledit button { flex: 0 0 auto; font-size: 11.5px; padding: 3px 9px; }
+
+  /* ---------------- 参数 ---------------- */
+  .opts {
+    flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 7px 14px;
+    padding: 10px 12px 12px;
+  }
+  .opt { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .opt > .k { flex: 0 0 auto; font-size: 12px; color: var(--fg2); white-space: nowrap; }
+  .opt input[type="range"] { flex: 1 1 auto; min-width: 50px; }
+  .opt .v {
+    flex: 0 0 auto; font-size: 11.5px; color: var(--dim); min-width: 34px;
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .opt select { flex: 1 1 auto; min-width: 0; }
+  .opt.wide { grid-column: 1 / -1; }
+  .opt.wide input[type="text"] { flex: 1 1 auto; }
+  .opt.chk { grid-column: 1 / -1; margin-top: -2px; }
+  .opt.chk label {
+    display: flex; align-items: center; gap: 6px; font-size: 12px;
+    color: var(--fg2); cursor: pointer; white-space: nowrap;
+  }
+
+  /* ---------------- 配乐行 ---------------- */
+  .musicrow {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    margin: 0 12px 12px; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--chip);
+  }
+  .musicrow .mi {
+    flex: 0 0 auto; width: 22px; height: 22px; border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg); border: 1px solid var(--line); font-size: 12px; color: var(--fg2);
+  }
+  .musicrow .mt {
+    flex: 1 1 auto; min-width: 0; font-size: 12.5px; color: var(--fg2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .musicrow .mt b { color: var(--fg); font-weight: 600; }
+  .musicrow button { flex: 0 0 auto; background: var(--bg); }
+
+  /* ---------------- 配乐对话框 ---------------- */
+  #mdlg {
+    position: fixed; inset: 0; z-index: 60; display: flex;
+    align-items: center; justify-content: center; padding: 20px; background: var(--mask);
+  }
+  .mcard {
+    display: flex; flex-direction: column; width: min(560px, 100%);
+    max-height: min(78vh, 560px); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden;
+  }
+  .mhead {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; border-bottom: 1px solid var(--line);
+  }
+  .mhead strong { font-size: 13px; flex: 0 0 auto; }
+  .mhead .hint {
+    flex: 1 1 auto; min-width: 0; font-size: 11.5px; color: var(--dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mhead .x {
+    flex: 0 0 auto; width: 24px; height: 24px; padding: 0; line-height: 1;
+    font-size: 16px; color: var(--dim); border: none; background: none;
+  }
+  .msearch { flex: 0 0 auto; display: flex; gap: 6px; padding: 10px 12px 0; }
+  .msearch input { flex: 1 1 auto; }
+  .chips { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 12px 0; }
+  .chip {
+    font: inherit; font-size: 11.5px; padding: 2px 9px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg2); cursor: pointer;
+  }
+  .chip:hover { background: var(--chip); color: var(--fg); }
+  .mstat { flex: 0 0 auto; padding: 8px 12px 0; font-size: 11.5px; color: var(--dim); min-height: 20px; }
+  .mstat.bad { color: var(--danger); }
+  .mlist { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 6px 12px 10px; }
+  .mres {
+    display: flex; align-items: center; gap: 8px; padding: 7px 8px;
+    border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px;
+  }
+  .mres:hover { background: var(--chip); }
+  .mres .mi2 { flex: 1 1 auto; min-width: 0; }
+  .mres .mt2 {
+    font-size: 12.5px; color: var(--fg);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mres .mm2 {
+    font-size: 11px; color: var(--dim); margin-top: 1px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mres button { flex: 0 0 auto; font-size: 11.5px; padding: 3px 9px; }
+  .mfoot {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+    padding: 9px 12px; border-top: 1px solid var(--line); background: var(--bg);
+  }
+  .mfoot .sp { flex: 1 1 auto; }
+
+  /* ---------------- 导出进度 ---------------- */
+  #exp {
+    position: fixed; inset: 0; z-index: 70; display: flex;
+    align-items: center; justify-content: center; padding: 20px; background: var(--mask);
+  }
+  .ecard {
+    width: min(370px, 100%); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px;
+  }
+  .ecard h3 { margin: 0 0 4px; font-size: 13.5px; font-weight: 600; }
+  .ecard .sub { font-size: 12px; color: var(--fg2); margin-bottom: 12px; line-height: 1.65; }
+  .ebar { height: 4px; border-radius: 2px; background: var(--chip); overflow: hidden; }
+  .ebar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .18s linear; }
+  .ecard .stat {
+    font-size: 11.5px; color: var(--dim); margin-top: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .ecard .erow { display: flex; gap: 8px; margin-top: 14px; }
+  .ecard .erow button { flex: 1 1 0; }
+
+  /* ---------------- 提示条 ---------------- */
+  /* 提示条放右上角，不放底部居中：底部压着「配乐」那一行，而它正是
+     最需要看见确认结果的地方（"配乐已就绪"的提示反而把曲名盖住）。 */
+  #toast {
+    position: fixed; right: 14px; top: 52px; z-index: 90; max-width: 62%;
+    padding: 7px 14px; border-radius: 7px;
+    background: rgba(30, 29, 26, .92); color: #fff; font-size: 12.5px;
+    opacity: 0; pointer-events: none; transition: opacity .18s;
+  }
+  #toast.on { opacity: 1; }
+
+  /* ---------------- 脚本 / 批量 ---------------- */
+  /* 这一屏同时是「工程文件」和「批处理任务表」：上面的文本框是 JSON，
+     下面按 job 列进度。录制是实时的，批量跑 N 条就得等 N 条的总时长。 */
+  #sdlg {
+    position: fixed; inset: 0; z-index: 72; display: flex;
+    align-items: center; justify-content: center; padding: 16px; background: var(--mask);
+  }
+  .scard {
+    display: flex; flex-direction: column; width: min(720px, 100%);
+    height: min(86vh, 620px); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  }
+  .scode {
+    flex: 1 1 auto; min-height: 132px; margin: 0 12px; padding: 9px 10px;
+    font: 11.5px/1.55 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    color: var(--fg); background: var(--chip); border: 1px solid var(--line);
+    border-radius: 8px; resize: vertical; white-space: pre; tab-size: 2;
+  }
+  .scode:focus { outline: none; border-color: var(--accent); }
+  .stools { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 0; }
+  .stools button { font-size: 11.5px; padding: 4px 10px; }
+  .stools button.armed { color: var(--danger); border-color: var(--danger); }
+  .sstat {
+    padding: 8px 12px 0; font-size: 11.5px; color: var(--dim);
+    line-height: 1.6; max-height: 74px; overflow: auto;
+  }
+  .sstat.bad { color: var(--danger); }
+  .sstat .warn { color: var(--warn, #b8860b); }
+  .sjobs { padding: 8px 12px 4px; overflow: auto; }
+  .sjob {
+    display: flex; align-items: center; gap: 8px; font-size: 12px;
+    padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px;
+    margin-bottom: 5px; background: var(--bg);
+  }
+  .sjob .n {
+    flex: 1 1 auto; min-width: 0; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; color: var(--fg2);
+  }
+  .sjob .st { flex: 0 0 auto; font-size: 11.5px; color: var(--dim); }
+  .sjob.doing { border-color: var(--accent); }
+  .sjob.done .st { color: var(--ok, #2f7d32); }
+  .sjob.fail .st { color: var(--danger); }
+
+  /* 文字卡的列表缩略图（没有图片可显示，用底色 + 一个「文」） */
+  .clip .tcard {
+    flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+    width: 54px; height: 36px; border-radius: 4px;
+    background: #1b1a18; color: #d8d4cc; font-size: 13px; letter-spacing: .5px;
+    pointer-events: none;
+  }
+
+  /* ---------------- 模板（先定参数，后传图） ---------------- */
+  #tdlg {
+    position: fixed; inset: 0; z-index: 71; display: flex;
+    align-items: center; justify-content: center; padding: 16px; background: var(--mask);
+  }
+  .tplcard {
+    display: flex; flex-direction: column; width: min(620px, 100%);
+    background: var(--bg); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden;
+  }
+  .tplbody { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+  .tplrow {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px;
+    font-size: 12px; color: var(--fg2); min-width: 0;
+  }
+  .tplrow .k { flex: 0 0 auto; color: var(--fg2); white-space: nowrap; }
+  .tplrow input[type="number"] { flex: 0 0 62px; width: 62px; }
+  .tplrow input[type="text"] { flex: 1 1 140px; min-width: 0; }
+  .tplrow select { flex: 0 0 auto; }
+  .tplrow .mt {
+    flex: 1 1 auto; min-width: 0; font-size: 12.5px; color: var(--fg2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tplrow .mt b { color: var(--fg); font-weight: 600; }
+  .tplchips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tplchips .chip.on {
+    border-color: var(--accent); color: var(--fg); background: var(--chip);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .tplrow label.chk {
+    display: flex; align-items: center; gap: 6px; font-size: 12px;
+    color: var(--fg2); white-space: nowrap; cursor: pointer;
+  }
+  .tplrow .calc { flex: 0 0 auto; font-size: 11.5px; color: var(--dim); }
+  .tplbody .sstat { padding: 0; max-height: 60px; }
+
+  @media (max-width: 720px) {
+    .side { flex-basis: 232px; }
+    .opts { grid-template-columns: 1fr; }
+    .dot { display: none; }
+  }
+</style>
+</head>
+<body data-bind-state="booting">
+
+<div class="bar">
+  <h1>模板视频</h1>
+  <span class="count" id="count">0 张</span>
+  <span class="sp"></span>
+  <button id="undoBtn" class="icon" disabled title="撤销（Ctrl+Z）">↶</button>
+  <button id="redoBtn" class="icon" disabled title="重做（Ctrl+Shift+Z）">↷</button>
+  <span class="dot" id="hostState">连接中…</span>
+  <button id="tplBtn" title="先定风格/片长/配乐，之后只传图片">模板</button>
+  <button id="scriptBtn" title="工程即脚本：导出 / 编辑 / 批量跑">脚本</button>
+  <button id="addBtn" class="primary">添加图片</button>
+  <button id="exportBtn" disabled>导出视频</button>
+</div>
+
+<div class="wrap">
+  <div class="side">
+    <div class="sidehead">
+      <strong>图片顺序</strong>
+      <span class="hint" id="orderHint">按住拖动排序</span>
+    </div>
+    <div class="clips empty" id="clips">
+      <div class="dropnote" id="dropnote">
+        <b>把图片拖到这里</b>
+        也可以点下面「添加图片」<br>jpg / png / webp / gif
+      </div>
+    </div>
+    <div class="sidefoot">
+      <button id="addBtn2">添加图片</button>
+      <button id="textBtn" title="插一张纯文字卡（片头、章节、片尾）">文字卡</button>
+      <button id="clearBtn" disabled>清空</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="stage"><canvas id="cv" width="960" height="540"></canvas></div>
+    <div class="ctrl">
+      <button id="play" disabled title="预览（空格）">▶</button>
+      <div class="tl" id="tl" title="点/拖定位；点某一段选中这张图"></div>
+      <span id="time">0:00 / 0:00</span>
+    </div>
+    <div class="tledit" id="tledit" hidden>
+      <span class="lbl" id="teLabel"></span>
+      <input type="range" id="teDur" min="0.5" max="10" step="0.1" value="2.6">
+      <span class="v" id="teVal"></span>
+      <button id="teReset" type="button" title="这张回到跟随上面「每张」的秒数">用全局秒数</button>
+      <button id="teClose" type="button" title="取消选中">×</button>
+    </div>
+    <div class="tledit" id="tedetail" hidden>
+      <span class="k">转场</span>
+      <select id="teTrans" title="这一张切到下一张时用什么转场">
+        <option value="">跟随全局</option>
+        <option value="fade">淡化</option>
+        <option value="slide">横移</option>
+        <option value="zoom">推近</option>
+        <option value="wipe">擦除</option>
+        <option value="cut">硬切</option>
+      </select>
+      <span class="k" id="teFitK">构图</span>
+      <select id="teFit" title="铺满会裁掉边；完整会把整张塞进来，两边用模糊放大补满">
+        <option value="">铺满</option>
+        <option value="contain">完整（模糊补边）</option>
+      </select>
+      <input type="text" id="teText" maxlength="80" placeholder="这张卡上显示的文字（脚本里可用 \n 换行）" hidden>
+    </div>
+    <div class="opts">
+      <div class="opt">
+        <span class="k">模板</span>
+        <select id="preset">
+          <option value="custom">自定义</option>
+          <option value="soft">温柔回忆</option>
+          <option value="beat">快节奏卡点</option>
+          <option value="cine">电影感横移</option>
+          <option value="cut">干净硬切</option>
+        </select>
+      </div>
+      <div class="opt">
+        <span class="k">画面</span>
+        <select id="ratio">
+          <option value="16:9">横屏 16:9</option>
+          <option value="9:16">竖屏 9:16</option>
+          <option value="1:1">方形 1:1</option>
+        </select>
+      </div>
+      <div class="opt">
+        <span class="k">清晰度</span>
+        <select id="size">
+          <option value="1080">1080p</option>
+          <option value="720">720p</option>
+          <option value="540">540p（快）</option>
+        </select>
+      </div>
+      <div class="opt">
+        <span class="k">每张</span>
+        <input type="range" id="dur" min="0.8" max="8" step="0.2" value="2.6">
+        <span class="v" id="durVal">2.6s</span>
+      </div>
+      <div class="opt">
+        <span class="k">转场</span>
+        <select id="trans">
+          <option value="fade">交叉淡化</option>
+          <option value="slide">横移</option>
+          <option value="zoom">推近</option>
+          <option value="wipe">擦除</option>
+          <option value="cut">硬切</option>
+        </select>
+      </div>
+      <div class="opt">
+        <span class="k">转场时长</span>
+        <input type="range" id="td" min="0.2" max="1.6" step="0.1" value="0.7">
+        <span class="v" id="tdVal">0.7s</span>
+      </div>
+      <div class="opt wide">
+        <span class="k">输出</span>
+        <select id="fps" style="flex:0 0 104px" title="帧率：24 更有电影感，30 更顺">
+          <option value="30">30 帧</option>
+          <option value="25">25 帧</option>
+          <option value="24">24 帧（电影）</option>
+        </select>
+        <select id="quality" style="flex:0 0 104px" title="画质越高文件越大">
+          <option value="high">画质 高</option>
+          <option value="std">画质 标准</option>
+          <option value="small">体积 小</option>
+        </select>
+        <span class="hint" id="outHint" style="flex:1 1 auto;font-size:11.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+      </div>
+      <div class="opt chk">
+        <label><input type="checkbox" id="kb" checked> 镜头缓推（每张慢慢放大／缩小）</label>
+      </div>
+      <div class="opt wide">
+        <span class="k">标题</span>
+        <input type="text" id="title" placeholder="可选，开头几秒显示在画面左下" maxlength="60" value="">
+      </div>
+    </div>
+    <div class="musicrow">
+      <span class="mi">♪</span>
+      <span class="mt" id="musicTxt">没有配乐</span>
+      <input type="range" id="vol" min="0" max="100" step="5" value="85" title="配乐音量" style="flex:0 0 72px">
+      <button id="musicPick">选择配乐</button>
+    </div>
+  </div>
+</div>
+
+<!-- 配乐：在线搜公开版权 -->
+<div id="mdlg" hidden>
+  <div class="mcard">
+    <div class="mhead">
+      <strong>配乐 · 公开版权</strong>
+      <span class="hint">来自维基共享资源，全部自由许可，可商用；署名信息见每条结果</span>
+      <button class="x" id="mClose" type="button" title="关闭">×</button>
+    </div>
+    <div class="msearch">
+      <input type="search" id="mq" placeholder="搜曲子，例如 piano / ambient / guitar / cinematic">
+      <button class="primary" id="mgo" type="button">搜索</button>
+    </div>
+    <div class="chips" id="mchips">
+      <button class="chip" type="button" data-q="piano music">钢琴</button>
+      <button class="chip" type="button" data-q="ambient music">环境</button>
+      <button class="chip" type="button" data-q="acoustic guitar">吉他</button>
+      <button class="chip" type="button" data-q="cinematic music">电影感</button>
+      <button class="chip" type="button" data-q="upbeat music">轻快</button>
+      <button class="chip" type="button" data-q="lofi music">lofi</button>
+    </div>
+    <div class="mstat" id="mstat">先搜一个关键词，或者直接用本地音频文件。</div>
+    <div class="mlist" id="mlist"></div>
+    <div class="mfoot">
+      <button id="mLocal" type="button">用本地文件</button>
+      <button id="mNone" type="button">不要配乐</button>
+      <span class="sp"></span>
+      <button id="mOk" type="button">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 模板：先定参数，之后只传图片 -->
+<div id="tdlg" hidden>
+  <div class="tplcard">
+    <div class="mhead">
+      <strong>模板</strong>
+      <span class="hint">风格、片长、配乐先定好；图片进来点「一键成片」直接导出</span>
+      <button class="x" id="tplClose" type="button" title="关闭">×</button>
+    </div>
+    <div class="tplbody">
+      <div class="tplrow">
+        <span class="k">风格</span>
+        <div class="tplchips" id="tplStyle">
+          <button class="chip" type="button" data-style="soft">温柔回忆</button>
+          <button class="chip" type="button" data-style="beat">快节奏卡点</button>
+          <button class="chip" type="button" data-style="cine">电影感横移</button>
+          <button class="chip" type="button" data-style="cut">干净硬切</button>
+        </div>
+      </div>
+      <div class="tplrow">
+        <span class="k">总时长</span>
+        <input type="number" id="tplTotal" min="1" max="600" step="1" value="30"> 秒
+        <span class="k">预计张数</span>
+        <input type="number" id="tplCount" min="1" max="120" step="1" value="8"> 张
+        <span class="calc" id="tplCalc"></span>
+      </div>
+      <div class="tplrow">
+        <span class="k">画面</span>
+        <select id="tplRatio">
+          <option value="16:9">横屏 16:9</option>
+          <option value="9:16">竖屏 9:16</option>
+          <option value="1:1">方形 1:1</option>
+        </select>
+        <span class="k">清晰度</span>
+        <select id="tplSize">
+          <option value="1080">1080p</option>
+          <option value="720">720p</option>
+          <option value="540">540p（快）</option>
+        </select>
+      </div>
+      <div class="tplrow">
+        <span class="k">配乐</span>
+        <span class="mt" id="tplMusic">没有配乐</span>
+        <button id="tplPick" type="button">选音乐</button>
+        <button id="tplNoMusic" type="button">不要</button>
+      </div>
+      <div class="tplrow">
+        <label class="chk"><input type="checkbox" id="tplIntro"> 加一张片头文字卡</label>
+        <input type="text" id="tplIntroText" maxlength="40" placeholder="片头写什么（可留空，用标题）">
+      </div>
+      <div class="tplrow">
+        <label class="chk"><input type="checkbox" id="tplAuto"> 图片凑够预计张数就自动导出</label>
+      </div>
+      <div class="sstat" id="tplStat"></div>
+    </div>
+    <div class="mfoot">
+      <span class="hint" id="tplPool">素材池：0 个文件</span>
+      <span class="sp"></span>
+      <button id="tplClose2" type="button">关闭</button>
+      <button class="primary" id="tplGo" type="button">一键成片</button>
+    </div>
+  </div>
+</div>
+
+<!-- 脚本 / 批量 -->
+<div id="sdlg" hidden>
+  <div class="scard">
+    <div class="mhead">
+      <strong>脚本</strong>
+      <span class="hint">这个工具的全部状态就是一段 JSON：能存成工程、能改完再跑，还能一次排一批案子</span>
+      <button class="x" id="sClose" type="button" title="关闭">×</button>
+    </div>
+    <div class="stools">
+      <button id="sGen" type="button">从当前工程生成</button>
+      <button id="sCheck" type="button">校验</button>
+      <button id="sApply" type="button">应用到工程</button>
+      <button id="sRun" class="primary" type="button">批量运行</button>
+      <button id="sSample" type="button">插入示例</button>
+      <button id="sSave" type="button">存成 .json</button>
+      <button id="sOpen" type="button">打开 .json</button>
+      <button id="sDir" type="button">加入文件夹素材</button>
+    </div>
+    <textarea id="scode" class="scode" spellcheck="false"></textarea>
+    <div class="sstat" id="sstat">点「从当前工程生成」能看到当前这条片子的脚本；把 clips 改一改再点「应用到工程」就换一条片子。</div>
+    <div class="sjobs" id="sjobs"></div>
+    <div class="mfoot">
+      <span class="hint" id="spool">素材池：0 个文件</span>
+      <span class="sp"></span>
+      <button id="sOpenDlgDone" type="button">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 导出进度 -->
+<div id="exp" hidden>
+  <div class="ecard">
+    <h3 id="expTitle">正在录制…</h3>
+    <div class="sub" id="expSub">画面是实时录的，片子多长就要等多久。</div>
+    <div class="ebar"><i id="expBar"></i></div>
+    <div class="stat" id="expStat">0%</div>
+    <div class="erow" id="expRow"><button id="expCancel" type="button">取消</button></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<input type="file" id="fileImg" accept="image/*" multiple hidden>
+<input type="file" id="fileDir" accept="image/*" multiple webkitdirectory directory hidden>
+<input type="file" id="fileJson" accept=".json,application/json" hidden>
+<input type="file" id="fileAudio" accept="audio/*" hidden>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOOL_ID = "template-video";
+  var TOOL_SOURCE = "workbench-tool";
+  var HOST_SOURCE = "workbench-host";
+  /** 本地镜像与宿主 kv 用同一个键（独立运行时只有本地这份） */
+  var CFG_KEY = "wbtool:" + TOOL_ID + ":cfg";
+
+  /* ================================================================
+   * 一、和宿主连线
+   * ----------------------------------------------------------------
+   *   booting → 等 tool:context，等到就是 bound。
+   *   等不到、且 parent === window → standalone（单独打开这个 HTML）；
+   *   等不到却明明嵌着 → error（桥没接上，要如实报出来）。
+   *   只用 kv 一项能力：记住参数，不存图片。
+   * ================================================================ */
+
+  var LABEL = { booting: "连接中…", bound: "已连工作台", standalone: "独立运行", error: "未连接宿主" };
+  var hostState = "booting";
+  var seq = 0;
+  var waiting = new Map();
+  var settleResolve = null;
+  var settle = new Promise(function (res) { settleResolve = res; });
+
+  function setState(next) {
+    hostState = next;
+    document.body.dataset.bindState = next;
+    var dot = document.getElementById("hostState");
+    if (dot) {
+      dot.textContent = LABEL[next] || next;
+      dot.className = "dot" + (next === "bound" ? " ok" : next === "booting" ? "" : " warn");
+    }
+    if (next !== "booting" && settleResolve) { var r = settleResolve; settleResolve = null; r(); }
+  }
+  function bound() { return hostState === "bound"; }
+
+  function call(op, payload) {
+    if (!bound()) return Promise.reject(new Error("没有连上工作台"));
+    var id = "r" + ++seq;
+    return new Promise(function (resolve, reject) {
+      waiting.set(id, { resolve: resolve, reject: reject });
+      parent.postMessage({ source: TOOL_SOURCE, type: "tool:request", id: id, op: op, payload: payload || {} }, "*");
+      setTimeout(function () {
+        if (waiting.delete(id)) reject(new Error("宿主没有回应（" + op + "）"));
+      }, 12000);
+    }).then(function (res) {
+      if (!res.ok) throw new Error(String(res.error || "宿主拒绝了这次请求"));
+      return res.data;
+    });
+  }
+
+  window.addEventListener("message", function (e) {
+    var m = e.data;
+    if (!m || m.source !== HOST_SOURCE) return;
+    if (m.type === "tool:response") {
+      var w = waiting.get(m.id);
+      if (w) { waiting.delete(m.id); w.resolve({ ok: m.ok, data: m.data, error: m.error }); }
+      return;
+    }
+    if (m.type === "tool:context") {
+      var ctx = m.data;
+      if (ctx && ctx.theme) document.documentElement.dataset.theme = ctx.theme;
+      setState("bound");
+      return;
+    }
+    if (m.type === "tool:intent") {
+      // 别的工具把东西丢过来：给一串图片地址就当素材导入
+      var d = m.data || {};
+      var urls = Array.isArray(d.images) ? d.images : (d.url ? [d.url] : []);
+      if (urls.length) void addUrls(urls);
+      return;
+    }
+  });
+
+  // 独立打开时跟系统主题走
+  try {
+    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      document.documentElement.dataset.theme = "dark";
+    }
+  } catch (err) {}
+
+  setTimeout(function () {
+    if (hostState !== "booting") return;
+    setState(window.parent === window ? "standalone" : "error");
+  }, 900);
+
+  /* ================================================================
+   * 二、状态
+   * ================================================================ */
+
+  var RATIO = {
+    "16:9": { w: 1920, h: 1080, pw: 960, ph: 540 },
+    "9:16": { w: 1080, h: 1920, pw: 540, ph: 960 },
+    "1:1":  { w: 1080, h: 1080, pw: 720, ph: 720 }
+  };
+
+  var PRESETS = {
+    custom: null,
+    soft: { dur: 3.2, trans: "fade", td: 1.0, kb: true },
+    beat: { dur: 1.2, trans: "zoom", td: 0.3, kb: true },
+    cine: { dur: 3.6, trans: "slide", td: 0.9, kb: true },
+    cut:  { dur: 1.6, trans: "cut", td: 0.2, kb: false }
+  };
+
+  var S = {
+    clips: [],       // { id, type:"img"|"text", name, cv, cw, ch, thumb, dir, dur, trans }
+    dur: 2.6,
+    trans: "fade",
+    td: 0.7,
+    kb: true,
+    ratio: "16:9",
+    size: "1080",    // 导出清晰度：1080 / 720 / 540（按高度算）
+    fps: 30,         // 导出帧率：24 / 25 / 30
+    quality: "std",  // 导出画质：high / std / small
+    title: "",
+    preset: "custom",
+    music: null,     // { kind, title, license, artist, url, page, buffer, dur }
+    vol: 0.85,
+    sel: "",         // 选中的 clip id（时间轨道 / 列表联动）
+    pool: [],        // { rel, name, file } —— 素材池，脚本按名字/通配符取图；只在内存里
+    tpl: null,       // 模板参数（见 tplEnsure），持久化到 kv
+    t: 0,
+    playing: false,
+    exporting: false,
+    cancelExport: false,
+    results: [],
+    lastQuery: "",
+    previewAudio: null,
+    audioSrc: null
+  };
+
+  var MAX_IMAGES = 120;
+  var MAX_EDGE = 2560;
+
+  var cv, g;         // 预览画布 + 上下文
+  var actx = null;   // 共用一个 AudioContext
+
+  function $(id) { return document.getElementById(id); }
+
+  /* ================================================================
+   * 三、小工具
+   * ================================================================ */
+
+  function toast(msg) {
+    var el = $("toast");
+    el.textContent = msg;
+    el.classList.add("on");
+    clearTimeout(el._t);
+    el._t = setTimeout(function () { el.classList.remove("on"); }, 2400);
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+
+  function pad2(n) { return n < 10 ? "0" + n : String(n); }
+
+  /* 播放头读数带 0.1s：没有帧号，但做精确停顿够用了 */
+  function fmtNow(sec) {
+    sec = Math.max(0, Number(sec) || 0);
+    var m = Math.floor(sec / 60);
+    var ss = sec - m * 60;
+    return m + ":" + (ss < 10 ? "0" : "") + ss.toFixed(1);
+  }
+
+  function fmtTime(sec) {
+    sec = Math.max(0, Number(sec) || 0);
+    var m = Math.floor(sec / 60);
+    var s = Math.floor(sec % 60);
+    return m + ":" + pad2(s);
+  }
+
+  function fmtSize(n) {
+    n = Number(n) || 0;
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+    if (n >= 1024) return Math.round(n / 1024) + " KB";
+    return n + " B";
+  }
+
+  function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+
+  function easeInOut(t) {
+    t = clamp(t, 0, 1);
+    return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  }
+
+  function stripTags(html) {
+    var d = document.createElement("div");
+    d.innerHTML = String(html || "");
+    return (d.textContent || "").replace(/\s+/g, " ").trim();
+  }
+
+  /* ---- 时长模型：每张可以单独定时长，dur=0 表示跟随全局 S.dur ---- */
+
+  function effDur(c) { return c.dur && c.dur >= 0.2 ? c.dur : S.dur; }
+
+  function totalDur() {
+    var s = 0;
+    for (var i = 0; i < S.clips.length; i++) s += effDur(S.clips[i]);
+    return S.clips.length ? s : 0;
+  }
+
+  /* 每张在时间轴上的 [start,end)；全工具的时间→画面换算都走它 */
+  function clipBounds() {
+    var out = [], t = 0;
+    for (var i = 0; i < S.clips.length; i++) {
+      var d = Math.max(0.2, effDur(S.clips[i]));
+      out.push({ i: i, start: t, end: t + d, dur: d });
+      t += d;
+    }
+    return out;
+  }
+
+  function clipById(id) {
+    for (var i = 0; i < S.clips.length; i++) if (S.clips[i].id === id) return S.clips[i];
+    return null;
+  }
+
+  function ratioCfg() { return RATIO[S.ratio] || RATIO["16:9"]; }
+
+  /* 导出尺寸：比例决定基准宽高，清晰度再按高度缩一档（都是偶数，编码器要求） */
+  function outSize() {
+    var rc = ratioCfg();
+    var f = S.size === "720" ? 720 / 1080 : S.size === "540" ? 540 / 1080 : 1;
+    function even(n) { return Math.max(2, Math.round(n * f / 2) * 2); }
+    return { w: even(rc.w), h: even(rc.h) };
+  }
+
+  function round1(n) { return Math.round((Number(n) || 0) * 10) / 10; }
+  function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+
+  /* 这张切到下一张时用什么转场：单张覆盖优先，没写就跟随全局 */
+  function effTrans(c) { return (c && c.trans) || S.trans; }
+
+  /* ================================================================
+   * 四、参数持久化（kv）
+   * ----------------------------------------------------------------
+   *   坑：kv.set 要等宿主把 context 推下来（settle）。页面刚打开就改参数，
+   *   宿主还没绑上，只等 kv 的话这次改动会丢 → 先同步写 localStorage 镜像，
+   *   绑定后再补写宿主；读的时候先读镜像。
+   * ================================================================ */
+
+  function readMirror() {
+    try { return JSON.parse(localStorage.getItem(CFG_KEY) || "null"); }
+    catch (e) { return null; }
+  }
+  function writeMirror(cfg) {
+    try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (e) {}
+  }
+
+  function cfgOf() {
+    return {
+      dur: S.dur, td: S.td, trans: S.trans, kb: S.kb, ratio: S.ratio, size: S.size,
+      title: S.title, preset: S.preset, lastQuery: S.lastQuery, vol: S.vol,
+      fps: S.fps, quality: S.quality, tpl: S.tpl
+    };
+  }
+
+  var saveTimer = 0;
+  function saveCfg() {
+    var cfg = cfgOf();
+    writeMirror(cfg);
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      settle.then(function () {
+        if (!bound()) return;
+        call("kv.set", { key: "cfg", value: JSON.stringify(cfg) }).catch(function () {});
+      });
+    }, 400);
+  }
+
+  function applyCfg(cfg) {
+    if (!cfg || typeof cfg !== "object") return;
+    if (isFinite(cfg.dur)) S.dur = clamp(Number(cfg.dur), 0.8, 8);
+    if (isFinite(cfg.td)) S.td = clamp(Number(cfg.td), 0.2, 1.6);
+    if (["fade", "slide", "zoom", "wipe", "cut"].indexOf(cfg.trans) >= 0) S.trans = cfg.trans;
+    if (typeof cfg.kb === "boolean") S.kb = cfg.kb;
+    if (RATIO[cfg.ratio]) S.ratio = cfg.ratio;
+    if (SIZE_SET[String(cfg.size)]) S.size = String(cfg.size);
+    if (typeof cfg.title === "string") S.title = cfg.title.slice(0, 60);
+    if (typeof cfg.preset === "string" && PRESETS.hasOwnProperty(cfg.preset)) S.preset = cfg.preset;
+    if (typeof cfg.lastQuery === "string") S.lastQuery = cfg.lastQuery;
+    if (isFinite(cfg.vol)) S.vol = clamp(Number(cfg.vol), 0, 1);
+    if (cfg.fps === 24 || cfg.fps === 25 || cfg.fps === 30) S.fps = cfg.fps;
+    if (cfg.quality === "high" || cfg.quality === "std" || cfg.quality === "small") S.quality = cfg.quality;
+    if (cfg.tpl && typeof cfg.tpl === "object") S.tpl = cfg.tpl;
+  }
+
+  function loadCfg() {
+    applyCfg(readMirror());
+    syncControls();
+    if (!bound()) return;
+    call("kv.get", { key: "cfg" }).then(function (r) {
+      var raw = r && r.value !== undefined ? r.value : r;
+      if (!raw) return;
+      var cfg = typeof raw === "string" ? JSON.parse(raw) : raw;
+      applyCfg(cfg);
+      syncControls();
+      draw();
+      histReset();
+    }).catch(function () {});
+  }
+
+  /* ================================================================
+   * 五、参数控件
+   * ================================================================ */
+
+  function syncControls() {
+    $("dur").value = String(S.dur);
+    $("durVal").textContent = S.dur.toFixed(1) + "s";
+    $("td").value = String(S.td);
+    $("tdVal").textContent = S.td.toFixed(1) + "s";
+    $("trans").value = S.trans;
+    $("ratio").value = S.ratio;
+    $("preset").value = S.preset;
+    $("kb").checked = !!S.kb;
+    if ($("title").value !== S.title) $("title").value = S.title;
+    $("size").value = S.size;
+    $("fps").value = String(S.fps);
+    $("quality").value = S.quality;
+    $("td").disabled = S.trans === "cut";
+    $("td").parentNode.style.opacity = S.trans === "cut" ? ".45" : "";
+    if (!$("vol").matches(":active")) $("vol").value = String(Math.round(S.vol * 100));
+
+    var rc = ratioCfg();
+    if (cv.width !== rc.pw || cv.height !== rc.ph) {
+      cv.width = rc.pw;
+      cv.height = rc.ph;
+    }
+    g = cv.getContext("2d", { alpha: false });
+    var os = outSize();
+    $("outHint").textContent = os.w + "×" + os.h + " · " + S.fps + "fps · " +
+      (S.quality === "high" ? "高画质" : S.quality === "small" ? "小体积" : "标准");
+    refreshTimeline();
+  }
+
+  function refreshTimeline() {
+    var tt = totalDur();
+    if (S.t > tt) S.t = tt;
+    renderTimeline();
+    $("play").disabled = !S.clips.length || S.exporting;
+    $("exportBtn").disabled = !S.clips.length || S.exporting || batchRunning;
+    $("clearBtn").disabled = !S.clips.length;
+    $("count").textContent = S.clips.length + " 段 · " + fmtTime(tt);
+    $("orderHint").textContent = S.clips.length > 1 ? "按住拖动排序" : "再拖几张进来";
+    $("time").textContent = fmtNow(S.t) + " / " + fmtTime(tt);
+  }
+
+  function bindControls() {
+    $("dur").addEventListener("input", function () {
+      S.dur = Number(this.value);
+      S.preset = "custom"; $("preset").value = "custom";
+      $("durVal").textContent = S.dur.toFixed(1) + "s";
+      refreshTimeline(); draw(); saveCfg();
+    });
+    $("td").addEventListener("input", function () {
+      S.td = Number(this.value);
+      S.preset = "custom"; $("preset").value = "custom";
+      $("tdVal").textContent = S.td.toFixed(1) + "s";
+      draw(); saveCfg();
+    });
+    $("trans").addEventListener("change", function () {
+      S.trans = this.value;
+      S.preset = "custom"; $("preset").value = "custom";
+      syncControls(); draw(); saveCfg();
+    });
+    $("ratio").addEventListener("change", function () {
+      S.ratio = this.value;
+      syncControls(); draw(); saveCfg();
+    });
+    $("size").addEventListener("change", function () {
+      S.size = this.value;
+      syncControls(); draw(); saveCfg();
+    });
+    $("fps").addEventListener("change", function () {
+      S.fps = Number(this.value) || 30;
+      syncControls(); saveCfg();
+    });
+    $("quality").addEventListener("change", function () {
+      S.quality = this.value;
+      syncControls(); saveCfg();
+    });
+    $("kb").addEventListener("change", function () { S.kb = this.checked; draw(); saveCfg(); });
+    $("title").addEventListener("input", function () { S.title = this.value; draw(); saveCfg(); });
+
+    $("preset").addEventListener("change", function () {
+      var p = PRESETS[this.value];
+      S.preset = this.value;
+      if (p) { S.dur = p.dur; S.trans = p.trans; S.td = p.td; S.kb = p.kb; }
+      syncControls(); draw(); saveCfg();
+    });
+
+    $("vol").addEventListener("input", function () {
+      S.vol = Number(this.value) / 100;
+      if (S.audioSrc && S.audioSrc._gain) {
+        try { S.audioSrc._gain.gain.value = S.vol; } catch (e) {}
+      }
+      saveCfg();
+    });
+
+    $("play").addEventListener("click", function () { if (S.playing) pause(); else play(); });
+    $("exportBtn").addEventListener("click", function () { void exportVideo(); });
+
+    $("addBtn").addEventListener("click", pickImages);
+    $("textBtn").addEventListener("click", function () {
+      var c = makeTextClip("在这里写一句话");
+      appendClip(c);
+      S.sel = c.id;
+      renderClips(); refreshTimeline(); syncSel(); draw();
+      commit("addtext");
+      var box = $("teText");
+      if (box) { box.focus(); box.select(); }
+    });
+    $("addBtn2").addEventListener("click", pickImages);
+    /* 清空是这页里唯一"没了就真没了"的批量操作（图片不落盘），给一道
+       3 秒内点第二次才生效的闸：按钮自己变红变字，不弹框打断手。 */
+    var clearArmUntil = 0, clearArmTimer = 0;
+    $("clearBtn").addEventListener("click", function () {
+      var btn = this;
+      if (!S.clips.length) return;
+      if (Date.now() < clearArmUntil) {
+        clearTimeout(clearArmTimer);
+        clearArmUntil = 0;
+        btn.textContent = "清空";
+        btn.classList.remove("armed");
+        pause();
+        S.clips = [];
+        S.sel = "";
+        S.t = 0;
+        S._autoFired = false;
+        renderClips(); refreshTimeline(); syncSel(); draw();
+        toast("已清空");
+        commit("clear");
+        return;
+      }
+      clearArmUntil = Date.now() + 3000;
+      btn.textContent = "再点一次清空";
+      btn.classList.add("armed");
+      clearArmTimer = setTimeout(function () {
+        clearArmUntil = 0;
+        btn.textContent = "清空";
+        btn.classList.remove("armed");
+      }, 3000);
+    });
+
+    $("fileImg").addEventListener("change", function () {
+      // ★ 先拷成真数组再清空：input.value="" 会就地清掉 FileList
+      var files = filesOf(this);
+      this.value = "";
+      void addFiles(files);
+    });
+    $("fileAudio").addEventListener("change", function () {
+      var files = filesOf(this);
+      this.value = "";
+      if (files[0]) void useLocalAudio(files[0]);
+    });
+
+    document.addEventListener("keydown", function (e) {
+      var typing = e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+      var mod = e.ctrlKey || e.metaKey;
+      var modalOpen = !$("mdlg").hidden || !$("sdlg").hidden || !$("tdlg").hidden || !$("exp").hidden;
+
+      // 输入框里不抢 Ctrl+Z（那是改字，不是改片子）；弹窗开着也不动工程
+      if (mod && (e.key === "z" || e.key === "Z") && !typing && !modalOpen) {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+        return;
+      }
+      if (mod && (e.key === "y" || e.key === "Y") && !typing && !modalOpen) {
+        e.preventDefault(); redo(); return;
+      }
+      if (typing) return;
+
+      if (!$("mdlg").hidden || !$("exp").hidden || !$("sdlg").hidden || !$("tdlg").hidden) {
+        if (e.key === "Escape") {
+          closeMusic();
+          $("sdlg").hidden = true;
+          $("tdlg").hidden = true;
+          $("exp").hidden = true;
+        }
+        return;
+      }
+      if (e.key === " ") {
+        e.preventDefault();
+        if (S.playing) pause(); else play();
+        return;
+      }
+      if (e.key === "Home") { e.preventDefault(); pause(); S.t = 0; draw(); return; }
+      if (e.key === "End") {
+        e.preventDefault(); pause();
+        S.t = Math.max(0, totalDur() - 0.001); draw(); return;
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && S.sel) {
+        e.preventDefault(); removeClip(S.sel); return;
+      }
+      var step = e.shiftKey ? 1 : 0.1; // Shift = 按秒走，不然 0.1s 微调
+      if (e.key === "ArrowLeft" && S.clips.length) { pause(); S.t = Math.max(0, S.t - step); draw(); }
+      if (e.key === "ArrowRight" && S.clips.length) { pause(); S.t = Math.min(totalDur(), S.t + step); draw(); }
+    });
+
+    window.addEventListener("resize", function () { draw(); });
+  }
+
+  function filesOf(input) {
+    var out = [];
+    var fl = input.files || [];
+    for (var i = 0; i < fl.length; i++) out.push(fl[i]);
+    return out;
+  }
+
+  function pickImages() { $("fileImg").click(); }
+
+  /* ================================================================
+   * 六、导入图片
+   * ----------------------------------------------------------------
+   *   进来就缩到长边 2560 存成 canvas：之后画帧是 drawImage(canvas)，
+   *   既快又不占原图那几十兆。缩略图顺手做一张，列表用它。
+   * ================================================================ */
+
+  function isImage(file) {
+    if (/^image\//.test(file.type || "")) return true;
+    return /\.(jpe?g|png|webp|gif|bmp|avif)$/i.test(file.name || "");
+  }
+
+  function loadViaImg(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var im = new Image();
+      im.onload = function () { URL.revokeObjectURL(url); resolve(im); };
+      im.onerror = function () { URL.revokeObjectURL(url); reject(new Error("解不开这张图")); };
+      im.src = url;
+    });
+  }
+
+  function decodeImage(file) {
+    if (window.createImageBitmap) {
+      return createImageBitmap(file, { imageOrientation: "from-image" })
+        .catch(function () { return loadViaImg(file); });
+    }
+    return loadViaImg(file);
+  }
+
+  function shrink(src) {
+    var sw = src.width || src.naturalWidth;
+    var sh = src.height || src.naturalHeight;
+    if (!sw || !sh) throw new Error("图是空的");
+    var sc = Math.min(1, MAX_EDGE / Math.max(sw, sh));
+    var w = Math.max(2, Math.round(sw * sc));
+    var h = Math.max(2, Math.round(sh * sc));
+    var c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    var cg = c.getContext("2d");
+    cg.imageSmoothingQuality = "high";
+    cg.drawImage(src, 0, 0, w, h);
+    return { cv: c, cw: w, ch: h };
+  }
+
+  function thumbOf(src) {
+    var sc = Math.min(1, 160 / Math.max(src.width, src.height));
+    var t = document.createElement("canvas");
+    t.width = Math.max(2, Math.round(src.width * sc));
+    t.height = Math.max(2, Math.round(src.height * sc));
+    t.getContext("2d").drawImage(src, 0, 0, t.width, t.height);
+    try { return t.toDataURL("image/jpeg", 0.72); } catch (e) { return ""; }
+  }
+
+  function makeClip(file) {
+    return decodeImage(file).then(function (src) {
+      var small;
+      try { small = shrink(src); }
+      catch (e) { return null; }
+      finally { if (src.close) { try { src.close(); } catch (err) {} } }
+      return {
+        id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        // name 是脚本取图的键：文件夹导入时用相对路径（同名文件不打架），
+        // 列表里显示 label（纯文件名），长路径不占地方
+        name: file.webkitRelativePath || file.name || "图片",
+        label: file.name || "图片",
+        cv: small.cv, cw: small.cw, ch: small.ch,
+        thumb: thumbOf(small.cv),
+        dir: 1 // 落位时才定：按当时已排到的张数交替，保证进片后方向仍是交错的
+      };
+    }).catch(function () { return null; });
+  }
+
+  function appendClip(clip) {
+    if (clip.type !== "text") clip.dir = S.clips.length % 2 ? -1 : 1;
+    S.clips.push(clip);
+  }
+
+  /* ---------------- 素材池：脚本按名字 / 通配符取图 ----------------
+     只活在内存里（关掉工具就没了）。文件夹导入时 rel 是相对路径，
+     所以不同子目录里的同名文件也能分开引用。 */
+
+  function updatePoolHint() {
+    var el = $("spool");
+    if (el) el.textContent = "素材池：" + S.pool.length + " 个文件";
+  }
+
+  function poolAdd(files) {
+    var added = 0;
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      if (!isImage(f)) continue;
+      var rel = String(f.webkitRelativePath || f.name || "");
+      if (!rel) continue;
+      var dup = false;
+      for (var k = 0; k < S.pool.length; k++) if (S.pool[k].rel === rel) { dup = true; break; }
+      if (!dup) { S.pool.push({ rel: rel, name: f.name || rel, file: f }); added++; }
+    }
+    updatePoolHint();
+    return added;
+  }
+
+  function poolFind(spec) {
+    var q = String(spec || "").replace(/\\/g, "/");
+    var base = q.split("/").pop();
+    var i;
+    for (i = 0; i < S.pool.length; i++) if (S.pool[i].rel === q) return S.pool[i];
+    for (i = 0; i < S.pool.length; i++) if (S.pool[i].name === q) return S.pool[i];
+    for (i = 0; i < S.pool.length; i++) {
+      if (S.pool[i].rel.split("/").pop() === base) return S.pool[i];
+    }
+    return null;
+  }
+
+  function globRe(pattern) {
+    var s = String(pattern).replace(/\\/g, "/").replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    s = s.replace(/\*/g, ".*").replace(/\?/g, ".");
+    return new RegExp("^" + s + "$", "i");
+  }
+
+  function poolGlob(pattern) {
+    var re = globRe(pattern), out = [];
+    for (var i = 0; i < S.pool.length; i++) {
+      var rel = S.pool[i].rel;
+      if (re.test(rel) || re.test(rel.split("/").pop())) out.push(S.pool[i]);
+    }
+    out.sort(function (a, b) { return a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0; });
+    return out;
+  }
+
+  /* 文字卡：没有图片，只有一句话。dur=0 跟随全局，trans="" 跟随全局 */
+  function makeTextClip(text, dur, trans) {
+    return {
+      id: "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      type: "text",
+      text: String(text == null ? "" : text),
+      name: "文字卡", label: "文字卡",
+      dur: Number(dur) > 0 ? Number(dur) : 0,
+      trans: trans || "",
+      dir: 1
+    };
+  }
+
+  function addFiles(files) {
+    var list = Array.prototype.slice.call(files || []).filter(isImage);
+    if (!list.length) { toast("没认出图片文件"); return Promise.resolve(); }
+    poolAdd(list);
+    if (S.clips.length >= MAX_IMAGES) { toast("最多 " + MAX_IMAGES + " 张"); return Promise.resolve(); }
+    list = list.slice(0, MAX_IMAGES - S.clips.length);
+
+    /* 3 路并发解码：大图 decode + 缩到 2560 一张就是几十毫秒到几百毫秒，
+       30 张串行等得心慌。结果先按序号放进槽位，谁好了都只按序落位 ——
+       顺序永远和文件列表一致，且列表随着落位一张张长出来。 */
+    var POOL = 3;
+    var slots = new Array(list.length);
+    var nextStart = 0, nextTake = 0, added = 0, failed = 0;
+    var box = $("clips");
+
+    function flush() {
+      var grew = false;
+      while (nextTake < list.length && slots[nextTake] !== undefined) {
+        var slot = slots[nextTake]; // { ok, c }：c 为 null 表示这张没解开
+        if (slot && slot.c) { appendClip(slot.c); added++; } else failed++;
+        nextTake++;
+        grew = true;
+      }
+      if (grew) {
+        renderClips();
+        box.scrollTop = box.scrollHeight; // 新图从底部进来，让它看得见
+      }
+    }
+
+    function pump() {
+      if (nextStart >= list.length) return Promise.resolve();
+      var i = nextStart++;
+      return makeClip(list[i]).then(function (c) {
+        slots[i] = { ok: !!c, c: c };
+        flush();
+        return pump();
+      });
+    }
+    return Promise.all([pump(), pump(), pump()]).then(function () {
+      flush();
+      refreshTimeline(); draw();
+      if (added) toast("加入 " + added + " 张" + (failed ? "（" + failed + " 张解不开）" : ""));
+      else toast("这些图都没解开");
+      if (added) commit("add");
+      tplMaybeAuto();
+    });
+  }
+
+  function addUrls(urls) {
+    var i = 0, ok = 0;
+    function step() {
+      if (i >= urls.length) {
+        if (ok) { renderClips(); refreshTimeline(); draw(); toast("加入 " + ok + " 张"); commit("add"); }
+        tplMaybeAuto();
+        return Promise.resolve();
+      }
+      var u = urls[i++];
+      return fetch(String(u), { credentials: "omit" }).then(function (r) {
+        if (!r.ok) return null;
+        return r.blob().then(function (blob) {
+          var f = new File([blob], "remote-" + i + ".jpg", { type: blob.type || "image/jpeg" });
+          return makeClip(f);
+        });
+      }).catch(function () { return null; }).then(function (clip) {
+        if (clip) { appendClip(clip); ok++; renderClips(); }
+        return step();
+      });
+    }
+    return step();
+  }
+
+  /* ================================================================
+   * 七、队列 + 拖动排序
+   * ----------------------------------------------------------------
+   *   用指针事件而不是 HTML5 拖放：宿主窗口关掉 dragDropEnabled 之后页内
+   *   拖放确实还能用，但指针方案对触屏 / 触控板都稳，也不用管
+   *   dataTransfer 那一套。排序只改 DOM 顺序，松手时按 DOM 重排数组。
+   * ================================================================ */
+
+  function renderClips() {
+    var box = $("clips");
+    var over = box.classList.contains("over");
+    if (!S.clips.length) {
+      box.className = "clips empty" + (over ? " over" : "");
+      box.innerHTML = '<div class="dropnote" id="dropnote"><b>把图片拖到这里</b>也可以点下面「添加图片」<br>jpg / png / webp / gif</div>';
+      return;
+    }
+    var html = "";
+    for (var i = 0; i < S.clips.length; i++) {
+      var c = S.clips[i];
+      html += '<div class="clip' + (c.id === S.sel ? " sel" : "") + '" data-id="' + c.id + '">' +
+        '<span class="idx">' + (i + 1) + "</span>" +
+        (c.type === "text"
+          ? '<div class="tcard">文</div>'
+          : '<img src="' + c.thumb + '" alt="" draggable="false">') +
+        '<span class="nm" title="' + esc(c.name) + '">' + esc(c.label || c.name) + "</span>" +
+        '<button class="x" type="button" title="移出">×</button>' +
+        "</div>";
+    }
+    box.className = "clips" + (over ? " over" : "");
+    box.innerHTML = html;
+  }
+
+  function renumber() {
+    var rows = $("clips").querySelectorAll(".clip");
+    for (var i = 0; i < rows.length; i++) {
+      var idx = rows[i].querySelector(".idx");
+      if (idx) idx.textContent = String(i + 1);
+    }
+  }
+
+  function removeClip(id) {
+    var at = -1;
+    for (var i = 0; i < S.clips.length; i++) if (S.clips[i].id === id) at = i;
+    if (at < 0) return;
+    pause();
+    S.clips.splice(at, 1);
+    if (S.sel === id) S.sel = "";
+    S._autoFired = false;
+    if (!S.clips.length) S.t = 0;
+    renderClips();
+    renumber();
+    refreshTimeline();
+    syncSel();
+    draw();
+    commit("del");
+  }
+
+  function commitOrder() {
+    var rows = $("clips").querySelectorAll(".clip");
+    var map = {};
+    for (var i = 0; i < S.clips.length; i++) map[S.clips[i].id] = S.clips[i];
+    var next = [];
+    for (var k = 0; k < rows.length; k++) {
+      var c = map[rows[k].dataset.id];
+      if (c) next.push(c);
+    }
+    if (next.length === S.clips.length) S.clips = next;
+    renumber();
+    refreshTimeline();
+    syncSel(); // 选中行可能换了位置，编辑行里的「第 N 段」要跟着刷
+    draw();
+    commit("order");
+  }
+
+  function bindClipList() {
+    var box = $("clips");
+
+    box.addEventListener("click", function (e) {
+      var row = e.target.closest(".clip");
+      if (!row) return;
+      // 刚拖完的那次 click 不当「跳过去看看」处理
+      if (row._dragged) { row._dragged = false; return; }
+      var at = -1;
+      for (var i = 0; i < S.clips.length; i++) if (S.clips[i].id === row.dataset.id) at = i;
+      if (at < 0) return;
+      var x = e.target.closest(".x");
+      if (x) { removeClip(row.dataset.id); return; }
+      // 点行 = 选中这张 + 预览跳到它开头（转场已结束的位置）
+      selectClip(row.dataset.id, true);
+    });
+
+    box.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      var row = e.target.closest(".clip");
+      if (!row) return;
+      if (e.target.closest("button")) return;
+
+      var startY = e.clientY;
+      var moved = false;
+      try { row.setPointerCapture(e.pointerId); } catch (err) {}
+
+      function onMove(ev) {
+        if (!moved) {
+          if (Math.abs(ev.clientY - startY) < 4) return;
+          moved = true;
+          row.classList.add("dragging");
+        }
+        var others = Array.prototype.filter.call(box.children, function (el) {
+          return el !== row && el.classList.contains("clip");
+        });
+        var y = ev.clientY;
+        var before = null;
+        for (var i = 0; i < others.length; i++) {
+          var r = others[i].getBoundingClientRect();
+          if (y < r.top + r.height / 2) { before = others[i]; break; }
+        }
+        if (before) {
+          if (before.previousElementSibling !== row) box.insertBefore(row, before);
+        } else {
+          box.appendChild(row);
+        }
+        renumber();
+        var br = box.getBoundingClientRect();
+        if (y < br.top + 26) box.scrollTop -= 8;
+        else if (y > br.bottom - 26) box.scrollTop += 8;
+      }
+
+      function onUp() {
+        row.removeEventListener("pointermove", onMove);
+        row.removeEventListener("pointerup", onUp);
+        row.removeEventListener("pointercancel", onUp);
+        try { row.releasePointerCapture(e.pointerId); } catch (err) {}
+        if (!moved) return;
+        row.classList.remove("dragging");
+        row._dragged = true; // pointerup 后浏览器还会补一次 click，用它挡掉
+        commitOrder();
+      }
+
+      row.addEventListener("pointermove", onMove);
+      row.addEventListener("pointerup", onUp);
+      row.addEventListener("pointercancel", onUp);
+    });
+
+    /* 从系统里拖文件进来 */
+    var depth = 0;
+    box.addEventListener("dragenter", function (e) {
+      e.preventDefault();
+      depth++;
+      box.classList.add("over");
+    });
+    box.addEventListener("dragover", function (e) {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    });
+    box.addEventListener("dragleave", function (e) {
+      e.preventDefault();
+      depth--;
+      if (depth <= 0) { depth = 0; box.classList.remove("over"); }
+    });
+    box.addEventListener("drop", function (e) {
+      e.preventDefault();
+      depth = 0;
+      box.classList.remove("over");
+      var files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files.length) void addFiles(files);
+    });
+  }
+
+  /* ================================================================
+   * 七·五、时间轨道 + 选中 + 单张时长
+   * ----------------------------------------------------------------
+   *   轨道每段宽度按这张的实际时长分（含单独调过的），段右端发蓝的
+   *   一截是转场区。整个轨道当进度条用：点/拖定位。点某一段（没拖动）
+   *   = 选中这张 → 左栏对应行高亮，下面浮出时长编辑行。
+   * ================================================================ */
+
+  function renderTimeline() {
+    var tl = $("tl");
+    var tt = totalDur();
+    if (!S.clips.length) {
+      tl.innerHTML = '<div class="tlempty">加了图片，这里就是时间轨道</div>';
+      return;
+    }
+    var bs = clipBounds();
+    var html = "";
+    for (var i = 0; i < bs.length; i++) {
+      var b = bs[i], c = S.clips[i];
+      // 转场占这段尾部多少（画的时候是 min(td, dur*0.75)，这里保持一致）；
+      // 最后一张后面没有下一张，不画转场区
+      var tz = (effTrans(c) === "cut" || i === bs.length - 1)
+        ? 0
+        : Math.min(S.td, b.dur * 0.75) / b.dur * 100;
+      var wpc = b.dur / Math.max(0.01, tt) * 100;
+      var sn = wpc >= 9 ? (i + 1) + " · " + b.dur.toFixed(1) + "s"
+             : wpc >= 3.5 ? String(i + 1) : "";
+      html += '<div class="tlseg' + (c.id === S.sel ? " sel" : "") + '" data-id="' + c.id +
+        '" style="flex-grow:' + Math.round(b.dur * 1000) + '">' +
+        (sn ? '<span class="sn">' + sn + "</span>" : "") +
+        (tz > 1 ? '<span class="tz" style="width:' + tz.toFixed(1) + '%"></span>' : "") +
+        "</div>";
+    }
+    var pp = tt ? clamp(S.t / tt, 0, 1) * 100 : 0;
+    tl.innerHTML = html + '<div class="tlph" id="tlph" style="left:' + pp.toFixed(2) + '%"></div>';
+  }
+
+  function syncSel() {
+    var segs = $("tl").querySelectorAll(".tlseg");
+    for (var i = 0; i < segs.length; i++) {
+      segs[i].classList.toggle("sel", segs[i].dataset.id === S.sel);
+    }
+    var rows = $("clips").querySelectorAll(".clip");
+    for (var k = 0; k < rows.length; k++) {
+      rows[k].classList.toggle("sel", rows[k].dataset.id === S.sel);
+    }
+    syncEditor();
+  }
+
+  function syncEditor() {
+    var c = clipById(S.sel);
+    var ed = $("tledit");
+    var dt = $("tedetail");
+    if (!c) { ed.hidden = true; dt.hidden = true; return; }
+    ed.hidden = false;
+    dt.hidden = false;
+    var at = S.clips.indexOf(c);
+    $("teLabel").textContent = "第 " + (at + 1) + " 段 · " + (c.label || c.name);
+    $("teDur").value = String(effDur(c));
+    $("teVal").textContent = c.dur ? c.dur.toFixed(1) + "s" : "跟随 " + S.dur.toFixed(1) + "s";
+    $("teReset").disabled = !c.dur;
+    $("teTrans").value = c.trans || "";
+    var isText = c.type === "text";
+    // 文字卡没有「构图」可言；图片没有文字输入 —— 同一行里按类型换着显示
+    $("teFit").hidden = isText;
+    $("teFitK").hidden = isText;
+    $("teFit").value = c.fit || "";
+    $("teText").hidden = !isText;
+    if (isText) {
+      $("teText").value = c.text;
+      $("teVal").textContent = (c.dur ? c.dur.toFixed(1) : S.dur.toFixed(1)) + "s";
+    }
+  }
+
+  function selectClip(id, andSeek) {
+    S.sel = S.sel === id ? "" : id; // 再点一下取消选中
+    syncSel();
+    if (andSeek && S.sel) {
+      var bs = clipBounds();
+      var c = clipById(S.sel);
+      var at = S.clips.indexOf(c);
+      if (bs[at]) {
+        pause();
+        S.t = Math.min(bs[at].start + Math.min(0.15, bs[at].dur / 4), Math.max(0, totalDur() - 0.01));
+        draw();
+      }
+    }
+  }
+
+  function bindTimeline() {
+    var tl = $("tl");
+    var tlBusy = false; // 拖动进行中，悬停光标检测让路
+
+    // 悬停到段边界附近 → 光标变成可拉伸（纯视觉提示，不抢事件）
+    tl.addEventListener("pointermove", function (e) {
+      if (tlBusy || !S.clips.length) return;
+      var r = tl.getBoundingClientRect();
+      var tt = totalDur();
+      tl.style.cursor = tt > 0 && edgeAt(e.clientX, r, tt) >= 0 ? "col-resize" : "";
+    });
+    tl.addEventListener("pointerleave", function () { tl.style.cursor = ""; });
+
+    // clientX 落在哪条段边界（第 i 段的右边缘）±5px 内；返回段号，没贴到回 -1。
+    // 拖第 i 条边界 = 改第 i 张的时长（最后一段的右边缘也认，拖它改最后一张）。
+    function edgeAt(clientX, r, tt) {
+      if (tt <= 0 || r.width < 8) return -1;
+      var bs = clipBounds();
+      for (var i = 0; i < bs.length; i++) {
+        var ex = r.left + bs[i].end / tt * r.width;
+        if (Math.abs(clientX - ex) <= 5) return i;
+      }
+      return -1;
+    }
+
+    tl.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0 || !S.clips.length) return;
+      var r = tl.getBoundingClientRect();
+      var tt = totalDur();
+      if (tt <= 0) return;
+      var startX = e.clientX, moved = false;
+      pause();
+
+      /* ---- 模式一：贴着段边界按下 → 拖动改这一张的时长 ---- */
+      var edge = edgeAt(e.clientX, r, tt);
+      if (edge >= 0) {
+        var c = S.clips[edge], b0 = clipBounds()[edge];
+        // 「跟随全局」的先落成实际秒数，再从这往两边拖
+        if (!c.dur) c.dur = Math.round(b0.dur * 10) / 10;
+        tlBusy = true;
+        try { tl.setPointerCapture(e.pointerId); } catch (err) {}
+        function setDur(ev) {
+          /* 边界精确跟指针：解 (start+d)/(start+d+rest) = f 得 d。
+             后面各段秒数不动（只被视觉压窄），这样往右拖到底能顶到 10s，
+             往左拖到头也能落到 0.5s —— 按「指针x/总长」算的话，
+             右边还压着几秒就永远拖不到上限。 */
+          var f = clamp((ev.clientX - r.left) / r.width, 0, 1);
+          var rest = tt - b0.end; // 这段后面的总秒数
+          var d = (f * (b0.start + rest) - b0.start) / Math.max(0.08, 1 - f);
+          c.dur = clamp(Math.round(d * 10) / 10, 0.5, 10);
+          afterDurChange();
+        }
+        function endResize(ev) {
+          tl.removeEventListener("pointermove", onDrag);
+          tl.removeEventListener("pointerup", endResize);
+          tl.removeEventListener("pointercancel", endResize);
+          try { tl.releasePointerCapture(e.pointerId); } catch (err) {}
+          tlBusy = false;
+          tl.style.cursor = "";
+          if (ev) setDur(ev);
+          toast("第 " + (edge + 1) + " 张 → " + c.dur.toFixed(1) + "s");
+        }
+        function onDrag(ev) { setDur(ev); }
+        tl.addEventListener("pointermove", onDrag);
+        tl.addEventListener("pointerup", endResize);
+        tl.addEventListener("pointercancel", endResize);
+        setDur(e);
+        return;
+      }
+
+      /* ---- 模式二：普通按下 = 拖进度 / 点按选中 ---- */
+      try { tl.setPointerCapture(e.pointerId); } catch (err) {}
+
+      function set(ev) {
+        var x = clamp(ev.clientX - r.left, 0, r.width);
+        S.t = clamp(x / r.width, 0, 1) * Math.max(0.01, tt - 0.01);
+        draw();
+      }
+      function onMove(ev) {
+        if (!moved && Math.abs(ev.clientX - startX) < 3) return;
+        moved = true;
+        set(ev);
+      }
+      function onUp(ev) {
+        tl.removeEventListener("pointermove", onMove);
+        tl.removeEventListener("pointerup", onUp);
+        tl.removeEventListener("pointercancel", onUp);
+        try { tl.releasePointerCapture(e.pointerId); } catch (err) {}
+        if (moved) return;
+        set(e); // 确保落点准确（快速点按时 move 可能没触发）
+        var bs = clipBounds();
+        var hit = null;
+        for (var i = 0; i < bs.length; i++) if (S.t < bs[i].end) { hit = S.clips[i]; break; }
+        if (!hit) hit = S.clips[S.clips.length - 1];
+        selectClip(hit.id, false);
+      }
+
+      set(e);
+      tl.addEventListener("pointermove", onMove);
+      tl.addEventListener("pointerup", onUp);
+      tl.addEventListener("pointercancel", onUp);
+    });
+
+    $("teDur").addEventListener("input", function () {
+      var c = clipById(S.sel);
+      if (!c) return;
+      c.dur = Number(this.value);
+      afterDurChange();
+    });
+    $("teText").addEventListener("input", function () {
+      var c = clipById(S.sel);
+      if (!c || c.type !== "text") return;
+      c.text = this.value;
+      draw();
+      saveCfg();
+    });
+    $("teFit").addEventListener("change", function () {
+      var c = clipById(S.sel);
+      if (!c) return;
+      c.fit = this.value;   // "" = 铺满，contain = 完整（模糊补边）
+      draw();
+      saveCfg();
+    });
+    $("teTrans").addEventListener("change", function () {
+      var c = clipById(S.sel);
+      if (!c) return;
+      c.trans = this.value;
+      refreshTimeline();
+      draw();
+      saveCfg();
+    });
+    $("teReset").addEventListener("click", function () {
+      var c = clipById(S.sel);
+      if (!c || !c.dur) return;
+      c.dur = 0;
+      afterDurChange();
+    });
+    $("teClose").addEventListener("click", function () { S.sel = ""; syncSel(); });
+  }
+
+  function afterDurChange() {
+    syncEditor();
+    refreshTimeline(); // 里面会 renderTimeline（段宽跟着变）
+    draw();
+  }
+
+  /* ================================================================
+   * 八、画一帧
+   * ----------------------------------------------------------------
+   *   预览和导出共用这一个函数，只换 W/H —— 预览里看到的构图就是导出片里
+   *   的构图，不会出现"预览好好的、导出来错位"。
+   *
+   *   时间轴：第 i 张占 [i*dur, (i+1)*dur)。转场发生在每张的最后 td 秒里，
+   *   和下一张叠着。下一张在转场期间画它自己的第 0 帧（lt=0），这样它
+   *   变成主画面时不会"跳一下" —— 这是把 ltB 也按真实时间算时最容易
+   *   犯的错：算出来刚开始渐变、接上主画面又退回 0，画面会抖一格。
+   * ================================================================ */
+
+  var FONT = "-apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif";
+
+  /* 「完整」构图：整张塞进画面，两边（上下）用同一张图模糊放大补满 + 压暗。
+     竖屏放横图、横屏放竖图时不裁人脸，是手机成片最常用的一档。 */
+  function drawClipContain(g, clip, W, H, alpha, dx, dy) {
+    var a = clamp(alpha, 0, 1);
+    var x0 = dx || 0, y0 = dy || 0;
+    g.save();
+    g.beginPath();
+    g.rect(0, 0, W, H);
+    g.clip(); // 模糊层不能溢到画面外（横移转场时尤其明显）
+    var cov = Math.max(W / clip.cw, H / clip.ch);
+    g.globalAlpha = a * 0.9;
+    try { g.filter = "blur(" + Math.max(8, Math.round(Math.min(W, H) * 0.035)) + "px)"; } catch (e) {}
+    g.drawImage(clip.cv,
+      x0 + (W - clip.cw * cov) / 2, y0 + (H - clip.ch * cov) / 2,
+      clip.cw * cov, clip.ch * cov);
+    try { g.filter = "none"; } catch (e) {}
+    g.fillStyle = "rgba(0,0,0,.34)";
+    g.fillRect(x0, y0, W, H);
+    var s = Math.min(W / clip.cw, H / clip.ch);
+    g.globalAlpha = a;
+    g.drawImage(clip.cv,
+      x0 + (W - clip.cw * s) / 2, y0 + (H - clip.ch * s) / 2,
+      clip.cw * s, clip.ch * s);
+    g.restore();
+  }
+
+  function drawClip(g, clip, W, H, lt, dur, alpha, dx, dy) {
+    if (clip && clip.type === "text") { drawTextCard(g, clip, W, H, lt, dur, alpha, dx, dy); return; }
+    if (clip && clip.fit === "contain") { drawClipContain(g, clip, W, H, alpha, dx, dy); return; }
+    var p = clamp(lt / Math.max(0.2, dur), 0, 1);
+    var dir = clip.dir || 1;
+    var q = dir > 0 ? p : 1 - p;
+    var sc = S.kb ? 1 + 0.09 * q : 1;
+    var cov = Math.max(W / clip.cw, H / clip.ch) * sc;
+    var dw = clip.cw * cov, dh = clip.ch * cov;
+    var ox = (W - dw) / 2 + (S.kb ? (q - 0.5) * W * 0.014 * dir : 0) + (dx || 0);
+    var oy = (H - dh) / 2 + (dy || 0);
+    g.globalAlpha = clamp(alpha, 0, 1);
+    g.drawImage(clip.cv, ox, oy, dw, dh);
+    g.globalAlpha = 1;
+  }
+
+  /* 文字卡：深底 + 居中白字。换行优先按 \n 分段，段落再按宽度切；
+     字太多就逐级缩字号（最多缩到 2.8% 宽），缩完还放不下就截断。 */
+  var tcardCache = { key: "", lines: [], fs: 0 };
+
+  function textLayout(g, text, W) {
+    var key = W + "|" + text;
+    if (tcardCache.key === key) return tcardCache;
+    var fs = Math.round(W * 0.055);
+    var lines = [], guard;
+    for (guard = 0; guard < 6; guard++) {
+      g.font = "600 " + fs + "px " + FONT;
+      lines = [];
+      var paras = String(text).split("\n");
+      for (var p = 0; p < paras.length; p++) {
+        var seg = paras[p];
+        if (!seg) { lines.push(""); continue; }
+        var line = "";
+        for (var k = 0; k < seg.length; k++) {
+          var ch = seg.charAt(k);
+          if (line && g.measureText(line + ch).width > W * 0.82) { lines.push(line); line = ch; }
+          else line += ch;
+        }
+        if (line) lines.push(line);
+      }
+      if (lines.length <= 6 || fs <= W * 0.028) break;
+      fs = Math.round(fs * 0.86);
+    }
+    tcardCache = { key: key, lines: lines, fs: fs };
+    return tcardCache;
+  }
+
+  function drawTextCard(g, clip, W, H, lt, dur, alpha, dx, dy) {
+    var a = clamp(alpha, 0, 1);
+    var x0 = dx || 0;
+    var grd = g.createLinearGradient(0, 0, 0, H);
+    grd.addColorStop(0, "#24211d");
+    grd.addColorStop(1, "#0c0c0b");
+    g.globalAlpha = a;
+    g.fillStyle = grd;
+    g.fillRect(x0, dy || 0, W, H);
+
+    var txt = String(clip.text || "").replace(/\\n/g, "\n").trim();
+    if (!txt) { g.globalAlpha = 1; return; }
+    var lay = textLayout(g, txt, W);
+    var fs = lay.fs, lh = fs * 1.45;
+    var lines = lay.lines;
+    var maxLines = Math.max(1, Math.floor(H * 0.66 / lh));
+    if (lines.length > maxLines) lines = lines.slice(0, maxLines);
+
+    g.font = "600 " + fs + "px " + FONT;
+    g.fillStyle = "#f4f1ea";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    var cy = H / 2 - (lines.length - 1) * lh / 2;
+    for (var i = 0; i < lines.length; i++) g.fillText(lines[i], x0 + W / 2, cy + i * lh);
+    g.textAlign = "left";
+    g.globalAlpha = 1;
+  }
+
+  function wrapTitle(g, text, maxW) {
+    if (g.measureText(text).width <= maxW) return [text];
+    var lines = [], line = "";
+    function push(chunk) {
+      if (!line) { line = chunk; return; }
+      if (g.measureText(line + " " + chunk).width <= maxW) line += " " + chunk;
+      else { lines.push(line); line = chunk; }
+    }
+    // 中文没有空格，按词切会切不开，退化成按字切
+    if (/\s/.test(text)) text.split(/\s+/).forEach(push);
+    else text.split("").forEach(push);
+    if (line) lines.push(line);
+    return lines.slice(0, 3);
+  }
+
+  /* 换行测量贵在 measureText：预览 60fps + 导出 30fps，标题亮着的那几秒
+     每帧都量一遍纯属浪费。字号/画布宽/文案有一个变才重算。 */
+  var titleCache = { key: "", lines: null };
+
+  function drawTitle(g, W, H, t) {
+    var s = String(S.title || "").trim();
+    if (!s) return;
+    var end = Math.min(totalDur(), 5.2);
+    var a = 1;
+    if (t < 0.7) a = t / 0.7;
+    if (t > end - 0.8) a = Math.max(0, (end - t) / 0.8);
+    a = clamp(a, 0, 1);
+    if (a <= 0.01) return;
+
+    // 底部压一层暗，白字压在任何照片上都读得出来
+    var grd = g.createLinearGradient(0, H * 0.58, 0, H);
+    grd.addColorStop(0, "rgba(0,0,0,0)");
+    grd.addColorStop(1, "rgba(0,0,0,.62)");
+    g.globalAlpha = a * 0.9;
+    g.fillStyle = grd;
+    g.fillRect(0, H * 0.58, W, H * 0.42);
+
+    var fs = Math.max(12, Math.round(W * 0.042));
+    g.font = "600 " + fs + "px -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif";
+    var key = fs + "@" + W + "|" + s;
+    if (titleCache.key !== key) {
+      titleCache.key = key;
+      titleCache.lines = wrapTitle(g, s, W * 0.86);
+    }
+    var lines = titleCache.lines;
+    g.fillStyle = "#fff";
+    g.textAlign = "left";
+    g.textBaseline = "alphabetic";
+    g.globalAlpha = a;
+    var lh = fs * 1.32;
+    var baseY = H * 0.87 - (lines.length - 1) * lh;
+    for (var i = 0; i < lines.length; i++) g.fillText(lines[i], W * 0.07, baseY + i * lh);
+    g.globalAlpha = 1;
+  }
+
+  function drawEmptyHint(g, W, H) {
+    g.fillStyle = "#000";
+    g.fillRect(0, 0, W, H);
+    g.fillStyle = "rgba(255,255,255,.34)";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.font = "500 " + Math.round(W * 0.026) + "px -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif";
+    g.fillText("把图片拖到左边，这里就有画面了", W / 2, H / 2);
+    g.textAlign = "left";
+  }
+
+  function drawFrame(g, W, H, t) {
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalAlpha = 1;
+    g.fillStyle = "#000";
+    g.fillRect(0, 0, W, H);
+
+    var n = S.clips.length;
+    if (!n) { drawEmptyHint(g, W, H); return; }
+
+    /* 每张时长可以不一样：先算好 [start,end) 表，再找 t 落在哪张里。
+       转场发生在那张的最后 td 秒里，和下一张叠着。下一张在转场期间画它
+       自己的第 0 帧（lt=0），这样它变成主画面时不会"跳一下" —— 这是把
+       ltB 也按真实时间算时最容易犯的错：算出来刚开始渐变、接上主画面
+       又退回 0，画面会抖一格。 */
+    var bs = clipBounds();
+    var i = n - 1;
+    for (var k = 0; k < n; k++) { if (t < bs[k].end) { i = k; break; } }
+    var b = bs[i];
+    var lt = Math.max(0, t - b.start);
+    var dur = b.dur;
+    var tr = effTrans(S.clips[i]);
+    var td = tr === "cut" ? 0 : Math.min(S.td, dur * 0.75);
+    var inTrans = td > 0 && i < n - 1 && lt > dur - td;
+
+    g.save();
+    g.beginPath();
+    g.rect(0, 0, W, H);
+    g.clip();
+
+    if (!inTrans) {
+      drawClip(g, S.clips[i], W, H, lt, dur, 1, 0, 0);
+    } else {
+      var A = S.clips[i], B = S.clips[i + 1];
+      var e = easeInOut((lt - (dur - td)) / td);
+
+      if (tr === "fade") {
+        drawClip(g, A, W, H, lt, dur, 1, 0, 0);
+        drawClip(g, B, W, H, 0, b2dur(bs, i + 1), e, 0, 0);
+      } else if (tr === "slide") {
+        g.save();
+        g.translate(-W * e, 0);
+        drawClip(g, A, W, H, lt, dur, 1, 0, 0);
+        g.restore();
+        drawClip(g, B, W, H, 0, b2dur(bs, i + 1), 1, W * (1 - e), 0);
+      } else if (tr === "zoom") {
+        g.save();
+        g.translate(W / 2, H / 2);
+        g.scale(1 + 0.16 * e, 1 + 0.16 * e);
+        g.translate(-W / 2, -H / 2);
+        drawClip(g, A, W, H, lt, dur, 1 - e, 0, 0);
+        g.restore();
+        g.save();
+        var k2 = 0.9 + 0.1 * e;
+        g.translate(W / 2, H / 2);
+        g.scale(k2, k2);
+        g.translate(-W / 2, -H / 2);
+        drawClip(g, B, W, H, 0, b2dur(bs, i + 1), e, 0, 0);
+        g.restore();
+      } else {
+        // wipe（以及任何没认出来的类型）
+        drawClip(g, A, W, H, lt, dur, 1, 0, 0);
+        g.save();
+        g.beginPath();
+        g.rect(0, 0, W * e, H);
+        g.clip();
+        drawClip(g, B, W, H, 0, b2dur(bs, i + 1), 1, 0, 0);
+        g.restore();
+      }
+    }
+    g.restore();
+
+    drawTitle(g, W, H, t);
+  }
+
+  function b2dur(bs, i) { return bs[i] ? bs[i].dur : 1; }
+
+  function draw() {
+    if (!g) return;
+    var tt = totalDur();
+    if (S.t > tt) S.t = tt;
+    drawFrame(g, cv.width, cv.height, tt ? clamp(S.t, 0, tt - 0.001) : 0);
+    var ph = document.getElementById("tlph");
+    if (ph) ph.style.left = (tt ? clamp(S.t / tt, 0, 1) * 100 : 0) + "%";
+    $("time").textContent = fmtNow(S.t) + " / " + fmtTime(tt);
+  }
+
+  /* ================================================================
+   * 九、预览播放
+   * ================================================================ */
+
+  function ensureCtx() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!actx) actx = new AC();
+    if (actx.state === "suspended") actx.resume().catch(function () {});
+    return actx;
+  }
+
+  function startAudio(offset) {
+    stopAudio();
+    if (!S.music || !S.music.buffer) return;
+    var ac = ensureCtx();
+    if (!ac) return;
+    try {
+      var src = ac.createBufferSource();
+      src.buffer = S.music.buffer;
+      src.loop = true;
+      var gain = ac.createGain();
+      gain.gain.value = S.vol;
+      src.connect(gain);
+      gain.connect(ac.destination);
+      var bd = S.music.buffer.duration || 1;
+      src.start(0, offset % bd);
+      src._gain = gain;
+      S.audioSrc = src;
+    } catch (e) {}
+  }
+
+  function stopAudio() {
+    if (!S.audioSrc) return;
+    try { S.audioSrc.stop(); } catch (e) {}
+    try { S.audioSrc.disconnect(); } catch (e) {}
+    S.audioSrc = null;
+  }
+
+  function play() {
+    if (!S.clips.length || S.exporting) return;
+    var tt = totalDur();
+    if (S.t >= tt - 0.02) S.t = 0;
+    S.playing = true;
+    $("play").textContent = "❚❚";
+    startAudio(S.t);
+    var last = performance.now();
+    function step(now) {
+      if (!S.playing) return;
+      S.t += (now - last) / 1000;
+      last = now;
+      if (S.t >= tt) {
+        S.t = tt;
+        draw();
+        pause();
+        return;
+      }
+      draw();
+      requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  function pause() {
+    if (!S.playing) return;
+    S.playing = false;
+    $("play").textContent = "▶";
+    stopAudio();
+  }
+
+  /* ================================================================
+   * 九·五、模板：先定参数，之后只传图片
+   * ----------------------------------------------------------------
+   *   和「脚本」是两条路：脚本给要精细控制的人，模板给只想出片的人。
+   *   模板把「风格 + 总时长 + 预计张数 + 配乐 + 比例」先定下来，
+   *   图片一进来就能一键套用并导出；勾了自动，凑够张数直接开录。
+   *
+   *   每张秒数 = (总时长 - 片头卡) / 实际图片数，钳在 0.5–10s。
+   *   实际张数和预计不符时按实际算（不删用户的图），并在面板上说明。
+   * ================================================================ */
+
+  var TPL_STYLES = {
+    soft: { name: "温柔回忆" },
+    beat: { name: "快节奏卡点" },
+    cine: { name: "电影感横移" },
+    cut:  { name: "干净硬切" }
+  };
+
+  function tplEnsure() {
+    if (!S.tpl || typeof S.tpl !== "object") {
+      S.tpl = {
+        style: "soft", total: 30, count: 8,
+        ratio: S.ratio, size: S.size,
+        auto: false, intro: false, introText: ""
+      };
+    }
+    var t = S.tpl;
+    if (!TPL_STYLES[t.style]) t.style = "soft";
+    t.total = clamp(Math.round(Number(t.total) || 30), 1, 600);
+    t.count = Math.round(clamp(Number(t.count) || 8, 1, 120));
+    if (!RATIO[t.ratio]) t.ratio = S.ratio;
+    if (!SIZE_SET[String(t.size)]) t.size = S.size;
+    if (typeof t.auto !== "boolean") t.auto = false;
+    if (typeof t.intro !== "boolean") t.intro = false;
+    if (typeof t.introText !== "string") t.introText = "";
+    return t;
+  }
+
+  function tplIntroDur(t) {
+    return t.intro ? clamp(Math.round(t.total * 0.06 * 10) / 10, 1, 2.5) : 0;
+  }
+
+  function tplImageCount() {
+    var n = 0;
+    for (var i = 0; i < S.clips.length; i++) if (S.clips[i].type !== "text") n++;
+    return n;
+  }
+
+  function tplPlan() {
+    var t = tplEnsure();
+    var images = tplImageCount() || t.count;
+    var introDur = tplIntroDur(t);
+    var per = clamp(Math.round((t.total - introDur) / Math.max(1, images) * 10) / 10, 0.5, 10);
+    return { per: per, images: images, introDur: introDur, total: per * images + introDur };
+  }
+
+  function tplStat(msg, kind) {
+    var el = $("tplStat");
+    if (!el) return;
+    el.className = "sstat" + (kind === "bad" ? " bad" : "");
+    el.textContent = msg;
+  }
+
+  function updateTplMusic() {
+    var el = $("tplMusic");
+    if (!el) return;
+    if (S.music) {
+      el.innerHTML = "<b>" + esc(S.music.title || "配乐") + "</b>" +
+        (S.music.dur ? " · " + fmtTime(S.music.dur) : "");
+      el.title = (S.music.title || "") + (S.music.license ? " · " + S.music.license : "");
+    } else {
+      el.textContent = "没有配乐（点「选音乐」）";
+      el.title = "";
+    }
+  }
+
+  function tplSync() {
+    var t = tplEnsure();
+    if (!$("tdlg")) return;
+    $("tplTotal").value = String(t.total);
+    $("tplCount").value = String(t.count);
+    $("tplRatio").value = t.ratio;
+    $("tplSize").value = t.size;
+    $("tplIntro").checked = t.intro;
+    $("tplIntroText").value = t.introText;
+    $("tplAuto").checked = t.auto;
+    $("tplIntroText").disabled = !t.intro;
+    var chips = $("tplStyle").querySelectorAll(".chip");
+    for (var i = 0; i < chips.length; i++) {
+      chips[i].classList.toggle("on", chips[i].dataset.style === t.style);
+    }
+    updateTplMusic();
+    $("tplPool").textContent = "素材池：" + S.pool.length + " 个文件";
+
+    var plan = tplPlan();
+    var actual = tplImageCount();
+    $("tplCalc").textContent = "每张 " + plan.per.toFixed(1) + "s" +
+      (t.intro ? " + 片头 " + plan.introDur.toFixed(1) + "s" : "") +
+      " · 约 " + fmtTime(plan.total);
+
+    /* 三种提示可能同时成立（节奏太慢 + 张数不符 + 撑不到总长），
+       合成一条按「；」连起来，别互相覆盖。 */
+    var notes = [], bad = false;
+    var capHit = (t.total - plan.introDur) / Math.max(1, actual || t.count) > 10;
+    if (capHit) {
+      notes.push("每张最多 10s：这个张数撑不到 " + t.total + "s，实际约 " + fmtTime(plan.total));
+      bad = true;
+    } else {
+      // 风格自带节奏：卡点≈1.2s、硬切≈1.6s。算出 7s/张时得提醒一句，
+      // 否则「快节奏卡点」出来是慢动作，用户以为是渲染错了。
+      var want = (PRESETS[t.style] || PRESETS.soft).dur;
+      if (plan.per > want * 1.6) {
+        notes.push("每张 " + plan.per.toFixed(1) + "s 比「" + TPL_STYLES[t.style].name + "」的节奏慢（约 " +
+          want.toFixed(1) + "s/张）：可以加图到约 " + Math.ceil((t.total - plan.introDur) / want) +
+          " 张，或把总时长缩到 " + fmtTime(want * (actual || t.count) + plan.introDur));
+        bad = true;
+      }
+    }
+    if (actual && actual !== t.count) {
+      notes.push("计划 " + t.count + " 张、实际 " + actual + " 张，按实际的算");
+    } else if (!actual) {
+      notes.push("按 " + t.count + " 张算，图片传进来就能出片");
+    } else if (!notes.length) {
+      notes.push(actual + " 张 × " + plan.per.toFixed(1) + "s" +
+        (t.intro ? " + 片头 " + plan.introDur.toFixed(1) + "s" : "") +
+        " = " + fmtTime(plan.total) + "，点「一键成片」直接导出");
+    }
+    tplStat(notes.join("；") + "。", bad ? "bad" : "");
+  }
+
+  /* 把模板套到当前工程上（不导出）。导出前想先看一眼时也能单独用。 */
+  function applyTemplate() {
+    var t = tplEnsure();
+    var p = PRESETS[t.style] || PRESETS.soft;
+    var images = tplImageCount();
+    var introDur = tplIntroDur(t);
+    var per = clamp(Math.round((t.total - introDur) / Math.max(1, images || t.count) * 10) / 10, 0.5, 10);
+
+    S.dur = per;
+    S.trans = p.trans;
+    S.td = p.td;
+    S.kb = p.kb;
+    S.ratio = t.ratio;
+    S.size = t.size;
+    S.preset = t.style;
+
+    // 清掉每段自己的覆盖：模板要的是统一节奏
+    for (var i = 0; i < S.clips.length; i++) {
+      var c = S.clips[i];
+      if (c.intro) continue;
+      c.dur = 0;
+      c.trans = "";
+    }
+
+    // 片头卡：开就更新/插入，关就移除（只动带 intro 标记的，不碰用户自己的文字卡）
+    var has = null;
+    for (var k = 0; k < S.clips.length; k++) if (S.clips[k].intro) { has = S.clips[k]; break; }
+    if (t.intro) {
+      var txt = String(t.introText || S.title || "片头").trim() || "片头";
+      if (has) { has.text = txt; has.dur = introDur; }
+      else {
+        var tc = makeTextClip(txt, introDur);
+        tc.intro = true;
+        S.clips.unshift(tc);
+      }
+    } else if (has) {
+      S.clips = S.clips.filter(function (x) { return !x.intro; });
+    }
+
+    // 缓推方向重新交替（增删段后不能留旧的）
+    var seq = 0;
+    for (var j = 0; j < S.clips.length; j++) {
+      if (S.clips[j].type !== "text") S.clips[j].dir = (seq++ % 2) ? -1 : 1;
+    }
+
+    syncControls();
+    renderClips();
+    refreshTimeline();
+    syncSel();
+    draw();
+    saveCfg();
+    commit("tpl");
+    return { per: S.dur, images: tplImageCount(), introDur: introDur, total: totalDur() };
+  }
+
+  function tplOneClick() {
+    var t = tplEnsure();
+    if (S.exporting || batchRunning) { tplStat("正在导出，等这条录完", "bad"); return; }
+    if (!S.clips.length) { tplStat("还没有图片：拖到左边，或点「加入文件夹素材」", "bad"); return; }
+    var r = applyTemplate();
+    $("tdlg").hidden = true;
+    toast("模板：" + TPL_STYLES[t.style].name + " · " + r.images + " 张 · 每张 " + r.per.toFixed(1) + "s");
+    void exportVideo();
+  }
+
+  /* 图片一够数就自动开录（勾了「自动导出」才走这里） */
+  function tplMaybeAuto() {
+    var t = tplEnsure();
+    if (!t.auto || S._autoFired || S.exporting || batchRunning) return;
+    if (tplImageCount() < t.count) return;
+    S._autoFired = true;
+    var r = applyTemplate();
+    toast("模板：凑够 " + t.count + " 张，自动导出（每张 " + r.per.toFixed(1) + "s）");
+    void exportVideo();
+  }
+
+  function bindTemplate() {
+    var dlg = $("tdlg");
+    function close() { dlg.hidden = true; }
+
+    $("tplBtn").addEventListener("click", function () {
+      dlg.hidden = false;
+      tplSync();
+    });
+    $("tplClose").addEventListener("click", close);
+    $("tplClose2").addEventListener("click", close);
+    dlg.addEventListener("click", function (e) { if (e.target === dlg) close(); });
+
+    $("tplStyle").addEventListener("click", function (e) {
+      var b = e.target.closest(".chip");
+      if (!b) return;
+      tplEnsure().style = b.dataset.style;
+      tplSync(); saveCfg();
+    });
+    $("tplTotal").addEventListener("input", function () {
+      tplEnsure().total = Number(this.value) || 30;
+      tplSync(); saveCfg();
+    });
+    $("tplCount").addEventListener("input", function () {
+      tplEnsure().count = Math.round(Number(this.value) || 8);
+      S._autoFired = false;
+      tplSync(); saveCfg();
+    });
+    $("tplRatio").addEventListener("change", function () {
+      tplEnsure().ratio = this.value; tplSync(); saveCfg();
+    });
+    $("tplSize").addEventListener("change", function () {
+      tplEnsure().size = this.value; tplSync(); saveCfg();
+    });
+    $("tplIntro").addEventListener("change", function () {
+      tplEnsure().intro = this.checked; tplSync(); saveCfg();
+    });
+    $("tplIntroText").addEventListener("input", function () {
+      tplEnsure().introText = this.value.slice(0, 40); saveCfg();
+    });
+    $("tplAuto").addEventListener("change", function () {
+      tplEnsure().auto = this.checked;
+      S._autoFired = false;
+      tplSync(); saveCfg();
+    });
+    $("tplPick").addEventListener("click", function () { openMusic(); });
+    $("tplNoMusic").addEventListener("click", function () {
+      S.music = null;
+      stopAudio();
+      refreshMusic();
+      updateTplMusic();
+      saveCfg();
+    });
+    $("tplGo").addEventListener("click", tplOneClick);
+  }
+
+  /* ================================================================
+   * 九·六、撤销 / 重做
+   * ----------------------------------------------------------------
+   *   快照只存「段的小对象 + 参数」，图片本身是 canvas 引用（不复制像素），
+   *   所以一步几 KB，存 60 步也不占内存。
+   *   拖滑杆会连发 input：同一个 key 900ms 内合并成一步，否则一次拖动
+   *   能塞满整个历史，撤销一次只退 0.1s。
+   * ================================================================ */
+
+  var HIST = { stack: [], idx: -1, limit: 60, key: "", at: 0 };
+
+  function histSnap() {
+    return {
+      clips: S.clips.map(function (c) { return Object.assign({}, c); }),
+      dur: S.dur, trans: S.trans, td: S.td, kb: S.kb,
+      ratio: S.ratio, size: S.size, fps: S.fps, quality: S.quality,
+      title: S.title, preset: S.preset, vol: S.vol, sel: S.sel, t: S.t,
+      tpl: S.tpl ? Object.assign({}, S.tpl) : null
+    };
+  }
+
+  function histUI() {
+    var u = $("undoBtn"), r = $("redoBtn");
+    if (u) u.disabled = HIST.idx <= 0;
+    if (r) r.disabled = HIST.idx >= HIST.stack.length - 1;
+  }
+
+  function histReset() {
+    HIST.stack = [histSnap()];
+    HIST.idx = 0;
+    HIST.key = "";
+    histUI();
+  }
+
+  /* 记录「操作完之后」的状态；key 相同的连续输入合并成一步 */
+  function commit(key) {
+    if (!HIST.stack.length) { histReset(); return; }
+    var now = Date.now();
+    if (key && key === HIST.key && now - HIST.at < 900) {
+      HIST.stack[HIST.idx] = histSnap();
+      HIST.at = now;
+      histUI();
+      return;
+    }
+    HIST.key = key || "";
+    HIST.at = now;
+    HIST.stack = HIST.stack.slice(0, HIST.idx + 1); // 新操作砍掉 redo 分支
+    HIST.stack.push(histSnap());
+    if (HIST.stack.length > HIST.limit) HIST.stack.shift();
+    HIST.idx = HIST.stack.length - 1;
+    histUI();
+  }
+
+  function histRestore(s) {
+    if (!s) return;
+    S.clips = s.clips.map(function (c) { return Object.assign({}, c); });
+    S.dur = s.dur; S.trans = s.trans; S.td = s.td; S.kb = s.kb;
+    S.ratio = s.ratio; S.size = s.size; S.fps = s.fps; S.quality = s.quality;
+    S.title = s.title; S.preset = s.preset; S.vol = s.vol;
+    S.tpl = s.tpl ? Object.assign({}, s.tpl) : S.tpl;
+    S.sel = clipById(s.sel) ? s.sel : "";
+    S.t = s.t || 0;
+    S._autoFired = false;
+    syncControls();
+    renderClips();
+    refreshTimeline();
+    syncSel();
+    updateTplMusic();
+    draw();
+    saveCfg();
+  }
+
+  function undo() {
+    if (S.exporting || HIST.idx <= 0) return false; // 录到一半改工程会录出拼接怪片
+    HIST.idx--;
+    HIST.key = "";
+    histRestore(HIST.stack[HIST.idx]);
+    toast("已撤销");
+    return true;
+  }
+
+  function redo() {
+    if (S.exporting || HIST.idx >= HIST.stack.length - 1) return false;
+    HIST.idx++;
+    HIST.key = "";
+    histRestore(HIST.stack[HIST.idx]);
+    toast("已重做");
+    return true;
+  }
+
+  /* input/change 走冒泡阶段的统一监听：元素自己的 handler 先改状态，
+     我们后记录 —— 这样每个控件不用各自埋 commit。 */
+  function bindHistory() {
+    $("undoBtn").addEventListener("click", function () { undo(); });
+    $("redoBtn").addEventListener("click", function () { redo(); });
+    document.addEventListener("input", function (e) {
+      var id = e.target && e.target.id;
+      if (!id) return;
+      if (/^(dur|td|vol|title|teDur|teText)$/.test(id)) commit(id);
+    });
+    document.addEventListener("change", function (e) {
+      var id = e.target && e.target.id;
+      if (!id) return;
+      if (id.indexOf("tpl") === 0) return; // 模板面板要等「应用到工程」才算一步
+      if (/^(trans|ratio|size|fps|quality|kb|preset|teTrans|teFit)$/.test(id)) commit(id);
+    });
+  }
+
+  /* ================================================================
+   * 十、配乐：在线搜公开版权
+   * ----------------------------------------------------------------
+   *   数据源挑维基共享资源（Wikimedia Commons），三个理由：
+   *     1. 全站只有自由许可（CC / 公有领域），不存在误用；
+   *     2. api.php 支持 origin=* ，浏览器里能直接 fetch；
+   *     3. upload.wikimedia.org 对音频文件回 access-control-allow-origin: *
+   *        —— 这条最关键，没有它，解码出来的 AudioBuffer 接进
+   *        MediaStreamDestination 会被静音（浏览器防跨源泄漏）。
+   *   结果带许可名与作者，需要署名时直接抄。
+   * ================================================================ */
+
+  var COMMONS_API = "https://commons.wikimedia.org/w/api.php";
+
+  function mstat(msg, kind) {
+    var el = $("mstat");
+    el.textContent = msg || "";
+    el.className = "mstat" + (kind === "bad" ? " bad" : "");
+  }
+
+  function mdVal(md, key) {
+    return md[key] && md[key].value ? stripTags(md[key].value) : "";
+  }
+
+  function stripPreview() {
+    if (S.previewAudio) {
+      try { S.previewAudio.pause(); } catch (e) {}
+      S.previewAudio = null;
+    }
+    var btns = $("mlist").querySelectorAll(".prev");
+    for (var i = 0; i < btns.length; i++) btns[i].textContent = "试听";
+  }
+
+  function openMusic() {
+    $("mdlg").hidden = false;
+    if (!$("mq").value) $("mq").value = S.lastQuery || "";
+  }
+
+  function closeMusic() {
+    $("mdlg").hidden = true;
+    stripPreview();
+  }
+
+  function searchMusic(q) {
+    q = String(q || "").trim();
+    if (!q) { mstat("先输个关键词", "bad"); return Promise.resolve(); }
+    S.lastQuery = q;
+    saveCfg();
+    mstat("正在搜索…");
+    $("mlist").innerHTML = "";
+    S.results = [];
+
+    var url = COMMONS_API + "?action=query&format=json&origin=*" +
+      "&generator=search" +
+      "&gsrsearch=" + encodeURIComponent(q + " filetype:audio") +
+      "&gsrnamespace=6&gsrlimit=30" +
+      "&prop=imageinfo&iiprop=" + encodeURIComponent("url|size|mime|extmetadata");
+
+    return fetch(url, { credentials: "omit" }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }).then(function (data) {
+      var pages = (data && data.query && data.query.pages) ? data.query.pages : {};
+      var items = [];
+      Object.keys(pages).forEach(function (k) {
+        var p = pages[k];
+        var ii = (p.imageinfo || [])[0];
+        if (!ii) return;
+        var mime = String(ii.mime || "");
+        // ogg 文件在 Commons 里报的是 application/ogg，不是 audio/ogg
+        if (!/^(audio\/|application\/ogg)/.test(mime)) return;
+        var md = ii.extmetadata || {};
+        items.push({
+          title: String(p.title || "").replace(/^File:/, "").replace(/\.(ogg|oga|mp3|wav|flac|opus|m4a)$/i, ""),
+          url: String(ii.url || "").split("?")[0],
+          size: Number(ii.size || 0),
+          dur: Number(ii.duration || 0),
+          lic: mdVal(md, "LicenseShortName") || "自由许可",
+          artist: mdVal(md, "Artist") || "未署名",
+          page: "https://commons.wikimedia.org/wiki/" + encodeURIComponent(String(p.title || "").replace(/ /g, "_"))
+        });
+      });
+
+      // 超长 / 超大的排后面，先给能直接用的
+      items.sort(function (a, b) {
+        return ((a.dur > 600 || a.size > 18e6) ? 1 : 0) - ((b.dur > 600 || b.size > 18e6) ? 1 : 0);
+      });
+
+      S.results = items;
+      renderResults();
+      if (!items.length) mstat("这个关键词没搜到音频，换个词试试（英文结果更多）。", "bad");
+      else mstat("找到 " + items.length + " 首。点「试听」听一遍，点「用这首」取回来。");
+    }).catch(function (e) {
+      mstat("连不上维基共享资源（" + ((e && e.message) || e) + "）。检查网络，或者改用本地音频文件。", "bad");
+    });
+  }
+
+  function renderResults() {
+    var html = "";
+    for (var i = 0; i < S.results.length; i++) {
+      var it = S.results[i];
+      var meta = [];
+      if (it.dur) meta.push(fmtTime(it.dur));
+      if (it.size) meta.push(fmtSize(it.size));
+      meta.push(it.lic);
+      if (it.artist) meta.push(it.artist);
+      html += '<div class="mres" data-i="' + i + '">' +
+        '<div class="mi2">' +
+        '<div class="mt2" title="' + esc(it.title) + '">' + esc(it.title) + "</div>" +
+        '<div class="mm2">' + esc(meta.join(" · ")) + "</div>" +
+        "</div>" +
+        '<button class="prev" type="button">试听</button>' +
+        '<button class="use primary" type="button">用这首</button>' +
+        "</div>";
+    }
+    $("mlist").innerHTML = html;
+  }
+
+  function togglePreview(i, btn) {
+    var it = S.results[i];
+    if (!it) return;
+    if (S.previewAudio && S.previewAudio._i === i && !S.previewAudio.paused) {
+      stripPreview();
+      return;
+    }
+    stripPreview();
+    var a = new Audio();
+    a.src = it.url;
+    a._i = i;
+    a.volume = 0.9;
+    a.onended = function () { if (S.previewAudio === a) stripPreview(); };
+    a.play().then(function () {
+      S.previewAudio = a;
+      btn.textContent = "停止";
+    }).catch(function () {
+      mstat("这首放不出来（浏览器拦了或格式不支持），可以直接点「用这首」试试。", "bad");
+    });
+  }
+
+  function decodeBlob(ab) {
+    var ac = ensureCtx();
+    if (!ac) return Promise.reject(new Error("这个环境没有 AudioContext"));
+    /* 千万别 await resume()：它是个"等用户手势"的钩子，拿不到手势时永远不
+       resolve —— 表现就是「用这首」一直转圈、看着像网络卡死。解码本身不需要
+       running，直接解；播放前那次 resume 在 play() 里自然会被手势兑现。
+       另外给解码加 15 秒上限：万一解码器卡住，也得把按钮还回去，不能留个
+       永远转圈的圈。 */
+    if (ac.state === "suspended") ac.resume().catch(function () {});
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        reject(new Error("解码超过 15 秒，换一首或换本地文件试试"));
+      }, 15000);
+      function ok(b) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(b);
+      }
+      function bad(e) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        reject(e || new Error("解码失败"));
+      }
+      var p = ac.decodeAudioData(ab, ok, bad);
+      if (p && p.then) p.then(ok).catch(bad);
+    });
+  }
+
+  function decodeUrl(u) {
+    // 下载也设上限：连着 2.7 MB 的曲子下不动时，用户得能拿回按钮
+    var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function () { ctl.abort(); }, 60000) : 0;
+    return fetch(String(u), { credentials: "omit", signal: ctl ? ctl.signal : undefined })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.arrayBuffer();
+      })
+      .then(function (ab) {
+        clearTimeout(timer);
+        return decodeBlob(ab);
+      })
+      .catch(function (e) {
+        clearTimeout(timer);
+        throw (e && e.name === "AbortError" ? new Error("下载超过 60 秒") : e);
+      });
+  }
+
+  function useResult(i, btn) {
+    var it = S.results[i];
+    if (!it) return Promise.resolve();
+    var old = btn.textContent;
+    btn.textContent = "取回…";
+    btn.disabled = true;
+    mstat("正在取音频（" + fmtSize(it.size) + "），稍等…");
+    return decodeUrl(it.url).then(function (buf) {
+      stopAudio();
+      S.music = {
+        kind: "commons", title: it.title, license: it.lic, artist: it.artist,
+        url: it.url, page: it.page, buffer: buf, dur: buf.duration
+      };
+      refreshMusic();
+      closeMusic();
+      toast("配乐已就绪：" + it.title);
+    }).catch(function (e) {
+      mstat("这首取不到音频数据（" + ((e && e.message) || e) + "）。换一首，或者用本地文件。", "bad");
+      btn.textContent = old;
+      btn.disabled = false;
+    });
+  }
+
+  function useLocalAudio(file) {
+    mstat("正在读 " + file.name + " …");
+    return file.arrayBuffer().then(decodeBlob).then(function (buf) {
+      stopAudio();
+      S.music = {
+        kind: "local", title: String(file.name || "").replace(/\.[a-z0-9]+$/i, ""),
+        license: "本地文件", artist: "", url: "", page: "",
+        buffer: buf, dur: buf.duration
+      };
+      refreshMusic();
+      closeMusic();
+      toast("配乐已就绪：" + S.music.title);
+    }).catch(function (e) {
+      $("mdlg").hidden = false;
+      mstat("这个音频解不开（" + ((e && e.message) || e) + "）。换 mp3 / m4a / wav 试试。", "bad");
+    });
+  }
+
+  function refreshMusic() {
+    var el = $("musicTxt");
+    if (!S.music) {
+      el.textContent = "没有配乐";
+      $("musicPick").textContent = "选择配乐";
+      return;
+    }
+    var m = S.music;
+    var bits = [fmtTime(m.dur)];
+    if (m.license) bits.push(m.license);
+    if (m.artist) bits.push(m.artist);
+    el.innerHTML = "<b>" + esc(m.title) + "</b> · " + esc(bits.join(" · "));
+    // 一行装不下时会给省略号，全文挂 title 上，鼠标停一下能看全
+    el.title = m.title + " · " + bits.join(" · ") + (m.page ? " · " + m.page : "");
+    $("musicPick").textContent = "换一首";
+      updateTplMusic();
+  }
+
+  function bindMusic() {
+    $("musicPick").addEventListener("click", function () {
+      if ($("mdlg").hidden) openMusic(); else closeMusic();
+    });
+    $("mClose").addEventListener("click", closeMusic);
+    $("mOk").addEventListener("click", closeMusic);
+    $("mdlg").addEventListener("click", function (e) {
+      if (e.target === $("mdlg")) closeMusic();
+    });
+    $("mgo").addEventListener("click", function () { void searchMusic($("mq").value); });
+    $("mq").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); void searchMusic(this.value); }
+    });
+    $("mchips").addEventListener("click", function (e) {
+      var b = e.target.closest(".chip");
+      if (!b) return;
+      $("mq").value = b.dataset.q;
+      void searchMusic(b.dataset.q);
+    });
+    $("mlist").addEventListener("click", function (e) {
+      var row = e.target.closest(".mres");
+      if (!row) return;
+      var i = Number(row.dataset.i);
+      var prev = e.target.closest(".prev");
+      var use = e.target.closest(".use");
+      if (prev) togglePreview(i, prev);
+      else if (use) void useResult(i, use);
+    });
+    $("mLocal").addEventListener("click", function () { $("fileAudio").click(); });
+    $("mNone").addEventListener("click", function () {
+      stopAudio();
+      S.music = null;
+      refreshMusic();
+      closeMusic();
+      toast("已去掉配乐");
+    });
+  }
+
+  /* ================================================================
+   * 十·五、脚本：工程就是一段 JSON
+   * ----------------------------------------------------------------
+   *   这个工具没有任何隐藏状态：当前片子 = { ratio,size,title,defaults,
+   *   clips[] }。所以「导出工程」「改完再应用」「一次排一批」都能用同
+   *   一套 schema 表达，批量只是外面套一层 { jobs:[{name,script}] }。
+   *
+   *   素材用文件名引用（文件夹导入时是相对路径），靠内存里的素材池解析；
+   *   文字卡直接内联在脚本里，不依赖任何文件。
+   * ================================================================ */
+
+  var TR_SET = { fade: 1, slide: 1, zoom: 1, wipe: 1, cut: 1 };
+  var SIZE_SET = { "1080": 1, "720": 1, "540": 1 };
+
+  function scriptOf() {
+    var out = {
+      version: 1,
+      ratio: S.ratio,
+      size: S.size,
+      fps: S.fps,
+      quality: S.quality,
+      title: S.title || "",
+      music: S.music ? (S.music.title || "") : "",
+      defaults: {
+        dur: round1(S.dur), trans: S.trans, td: round1(S.td),
+        kb: !!S.kb, vol: round2(S.vol)
+      },
+      clips: []
+    };
+    for (var i = 0; i < S.clips.length; i++) {
+      var c = S.clips[i];
+      if (c.type === "text") {
+        var t = { text: c.text };
+        if (c.dur) t.dur = round1(c.dur);
+        if (c.trans) t.trans = c.trans;
+        out.clips.push(t);
+      } else {
+        var im = { file: c.name };
+        if (c.dur) im.dur = round1(c.dur);
+        if (c.trans) im.trans = c.trans;
+        if (c.fit) im.fit = c.fit;
+        out.clips.push(im);
+      }
+    }
+    return out;
+  }
+
+  /* 校验一个片段脚本，返回规范化后的副本；错误进 errs（带位置前缀） */
+  function checkScript(obj, label, errs, warns) {
+    if (!obj || typeof obj !== "object" || Object.prototype.toString.call(obj) === "[object Array]") {
+      errs.push(label + "：必须是一个对象");
+      return null;
+    }
+    var sc = { clips: [] };
+    if (obj.ratio != null) {
+      if (!RATIO[obj.ratio]) errs.push(label + "：ratio 只能是 16:9 / 9:16 / 1:1");
+      else sc.ratio = obj.ratio;
+    }
+    if (obj.size != null) {
+      if (!SIZE_SET[String(obj.size)]) errs.push(label + "：size 只能是 1080 / 720 / 540");
+      else sc.size = String(obj.size);
+    }
+    if (obj.title != null) {
+      if (typeof obj.title !== "string") errs.push(label + "：title 要是字符串");
+      else sc.title = obj.title;
+    }
+    if (obj.fps != null) {
+      var fv = Number(obj.fps);
+      if ([24, 25, 30].indexOf(fv) < 0) errs.push(label + "：fps 只能是 24 / 25 / 30");
+      else sc.fps = fv;
+    }
+    if (obj.quality != null) {
+      if (["high", "std", "small"].indexOf(obj.quality) < 0) errs.push(label + "：quality 只能是 high / std / small");
+      else sc.quality = obj.quality;
+    }
+    if (obj.music != null) {
+      // 音乐不进脚本（几十 MB 的音频塞 JSON 不现实）：只记曲名，跑之前先在界面里选好
+      if (typeof obj.music !== "string") errs.push(label + "：music 写曲名就行（字符串）");
+      else {
+        sc.music = obj.music;
+        if (obj.music && (!S.music || S.music.title !== obj.music)) {
+          warns.push(label + "：脚本里写的配乐是「" + obj.music + "」，当前加载的不是它（批量会用当前配乐）");
+        }
+      }
+    }
+    var d = obj.defaults;
+    if (d != null) {
+      if (typeof d !== "object") errs.push(label + "：defaults 要是对象");
+      else {
+        sc.defaults = {};
+        if (d.dur != null) {
+          var dv = Number(d.dur);
+          if (!isFinite(dv) || dv < 0.5 || dv > 10) errs.push(label + "：defaults.dur 要在 0.5–10 秒之间");
+          else sc.defaults.dur = dv;
+        }
+        if (d.trans != null) {
+          if (!TR_SET[d.trans]) errs.push(label + "：defaults.trans 只能是 " + Object.keys(TR_SET).join(" / "));
+          else sc.defaults.trans = d.trans;
+        }
+        if (d.td != null) {
+          var tv = Number(d.td);
+          if (!isFinite(tv) || tv < 0.2 || tv > 1.6) errs.push(label + "：defaults.td 要在 0.2–1.6 秒之间");
+          else sc.defaults.td = tv;
+        }
+        if (d.kb != null) sc.defaults.kb = !!d.kb;
+        if (d.vol != null) {
+          var vv = Number(d.vol);
+          if (!isFinite(vv) || vv < 0 || vv > 1) errs.push(label + "：defaults.vol 是 0–1 的小数");
+          else sc.defaults.vol = vv;
+        }
+      }
+    }
+
+    if (!Array.isArray(obj.clips) || !obj.clips.length) {
+      errs.push(label + "：clips 必须是非空数组");
+      return sc;
+    }
+    for (var i = 0; i < obj.clips.length; i++) {
+      var cs = obj.clips[i], tag = label + " clips[" + i + "]";
+      if (!cs || typeof cs !== "object") { errs.push(tag + "：必须是对象"); continue; }
+      var kinds = 0;
+      if (typeof cs.text === "string") kinds++;
+      if (typeof cs.file === "string") kinds++;
+      if (typeof cs.glob === "string") kinds++;
+      if (kinds !== 1) { errs.push(tag + "：text / file / glob 三选一"); continue; }
+      var one = {};
+      if (typeof cs.text === "string") {
+        if (!cs.text.trim()) { errs.push(tag + "：text 不能是空的"); continue; }
+        one.text = cs.text;
+      }
+      if (typeof cs.file === "string") one.file = cs.file;
+      if (typeof cs.glob === "string") {
+        try { globRe(cs.glob); } catch (e) { errs.push(tag + "：glob 写法不对"); continue; }
+        one.glob = cs.glob;
+        var n = poolGlob(cs.glob).length;
+        if (!n) warns.push(tag + "：通配符现在没匹配到素材（跑之前先导入文件夹）");
+        else if (n > 40) warns.push(tag + "：通配符会展开成 " + n + " 张");
+      }
+      if (cs.dur != null) {
+        var cd = Number(cs.dur);
+        if (!isFinite(cd) || cd < 0.5 || cd > 10) { errs.push(tag + "：dur 要在 0.5–10 秒之间"); continue; }
+        one.dur = cd;
+      }
+      if (cs.trans != null) {
+        if (!TR_SET[cs.trans]) { errs.push(tag + "：trans 只能是 " + Object.keys(TR_SET).join(" / ")); continue; }
+        one.trans = cs.trans;
+      }
+      if (cs.fit != null) {
+        if (cs.fit !== "" && cs.fit !== "fill" && cs.fit !== "contain") {
+          errs.push(tag + "：fit 只能是 fill / contain"); continue;
+        }
+        one.fit = cs.fit;
+      }
+      sc.clips.push(one);
+    }
+    return sc;
+  }
+
+  function parseScript(text) {
+    var errs = [], warns = [];
+    var obj;
+    try { obj = JSON.parse(String(text == null ? "" : text)); }
+    catch (e) {
+      return { ok: false, errors: ["JSON 语法错：" + (e && e.message || e)], warnings: [], script: null, jobs: null };
+    }
+    if (obj && Array.isArray(obj.jobs)) {
+      var jobs = [];
+      for (var i = 0; i < obj.jobs.length; i++) {
+        var j = obj.jobs[i] || {};
+        var name = String(j.name || ("第 " + (i + 1) + " 条"));
+        var body = j.script != null ? j.script : j;
+        var one = checkScript(body, "「" + name + "」", errs, warns);
+        if (one) jobs.push({ name: name, script: one });
+      }
+      if (!obj.jobs.length) errs.push("jobs 是空的");
+      return { ok: !errs.length && jobs.length > 0, errors: errs, warnings: warns, script: null, jobs: jobs };
+    }
+    var sc = checkScript(obj, "脚本", errs, warns);
+    return { ok: !errs.length, errors: errs, warnings: warns, script: sc, jobs: null };
+  }
+
+  /* 把（已校验的）脚本套到当前工程上。图片从素材池取；解不开的记进 errors。 */
+  function applyScript(sc) {
+    if (!sc) return Promise.resolve({ ok: false, errors: ["没有可用的脚本"] });
+    S.ratio = sc.ratio || S.ratio;
+    S.size = sc.size || S.size;
+    if (sc.fps) S.fps = sc.fps;
+    if (sc.quality) S.quality = sc.quality;
+    if (typeof sc.title === "string") S.title = sc.title;
+    var d = sc.defaults || {};
+    if (d.dur != null) S.dur = d.dur;
+    if (d.trans) S.trans = d.trans;
+    if (d.td != null) S.td = d.td;
+    if (typeof d.kb === "boolean") S.kb = d.kb;
+    if (d.vol != null) S.vol = d.vol;
+    S.preset = "custom";
+
+    var errors = [];
+    var plan = [];
+    for (var i = 0; i < sc.clips.length; i++) {
+      var cs = sc.clips[i];
+      if (cs.text != null) { plan.push({ kind: "text", s: cs }); continue; }
+      if (cs.file != null) {
+        var hit = poolFind(cs.file);
+        if (!hit) { errors.push("找不到素材：" + cs.file + "（先把文件或文件夹加进来）"); continue; }
+        plan.push({ kind: "img", s: cs, entry: hit });
+        continue;
+      }
+      var hits = poolGlob(cs.glob);
+      if (!hits.length) { errors.push("通配符没匹配到文件：" + cs.glob); continue; }
+      for (var k = 0; k < hits.length; k++) plan.push({ kind: "img", s: cs, entry: hits[k] });
+    }
+    if (errors.length) return Promise.resolve({ ok: false, errors: errors });
+
+    // 先清空再逐条落位：任何一条失败都能从 errors 里看到，不留半截工程
+    S.clips = [];
+    S.sel = "";
+    var seq = Promise.resolve();
+    plan.forEach(function (sp) {
+      seq = seq.then(function () {
+        if (sp.kind === "text") {
+          S.clips.push(makeTextClip(String(sp.s.text).replace(/\\n/g, "\n"), sp.s.dur, sp.s.trans));
+          return null;
+        }
+        return makeClip(sp.entry.file).then(function (c) {
+          if (!c) { errors.push("这张解不开：" + sp.entry.rel); return null; }
+          c.name = sp.entry.rel;
+          c.label = sp.entry.name;
+          c.dur = sp.s.dur != null ? sp.s.dur : 0;
+          c.trans = sp.s.trans || "";
+          c.fit = sp.s.fit === "contain" ? "contain" : "";
+          S.clips.push(c);
+          return null;
+        });
+      });
+    });
+    return seq.then(function () {
+      for (var i2 = 0; i2 < S.clips.length; i2++) {
+        if (S.clips[i2].type !== "text") S.clips[i2].dir = i2 % 2 ? -1 : 1;
+      }
+      S.t = 0;
+      renderClips(); refreshTimeline(); syncSel(); draw();
+      saveCfg();
+      commit("script");
+      return { ok: !errors.length, errors: errors };
+    });
+  }
+
+  function jobSeconds(sc) {
+    var base = (sc.defaults && sc.defaults.dur) || S.dur;
+    var tt = 0;
+    for (var i = 0; i < sc.clips.length; i++) {
+      var cs = sc.clips[i];
+      var n = cs.glob != null ? Math.max(1, poolGlob(cs.glob).length) : 1;
+      tt += (cs.dur != null ? cs.dur : base) * n;
+    }
+    return tt;
+  }
+
+  function safeName(s) {
+    return String(s || "片子").replace(/[\\/:*?"<>|\s]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "片子";
+  }
+
+  function sampleScript() {
+    var names = [];
+    for (var i = 0; i < S.pool.length && names.length < 3; i++) names.push(S.pool[i].rel);
+    var a = names[0] || "a.jpg", b = names[1] || "b.jpg";
+    return {
+      jobs: [
+        {
+          name: "第一段-开场",
+          script: {
+            ratio: "16:9", size: "1080",
+            title: "夏天的最后一天",
+            defaults: { dur: 2.4, trans: "fade", td: 0.8, kb: true, vol: 0.85 },
+            clips: [{ text: "夏天的\n最后一天" }, { file: a }, { file: b }]
+          }
+        },
+        {
+          name: "第二段-照片流",
+          script: {
+            ratio: "16:9", size: "1080", title: "",
+            defaults: { dur: 1.8, trans: "slide", td: 0.5, kb: true },
+            clips: [{ file: a }, { glob: "*.jpg" }]
+          }
+        }
+      ]
+    };
+  }
+
+  /* ---------------- 批量跑 ---------------- */
+
+  var batchRunning = false;
+  var batchStop = false;
+
+  function jobRow(i) {
+    return $("sjobs").querySelector('.sjob[data-i="' + i + '"]');
+  }
+
+  function setJobRow(i, cls, status) {
+    var row = jobRow(i);
+    if (!row) return;
+    row.className = "sjob " + (cls || "");
+    var st = row.querySelector(".st");
+    if (st) st.textContent = status;
+  }
+
+  var STATE_KEYS = ["clips", "dur", "trans", "td", "kb", "ratio", "size", "title", "preset", "sel", "t", "vol"];
+
+  function snapshotProject() {
+    var o = {};
+    for (var i = 0; i < STATE_KEYS.length; i++) o[STATE_KEYS[i]] = S[STATE_KEYS[i]];
+    o.clips = S.clips.slice();
+    return o;
+  }
+
+  function restoreProject(o) {
+    if (!o) return;
+    for (var i = 0; i < STATE_KEYS.length; i++) S[STATE_KEYS[i]] = o[STATE_KEYS[i]];
+    S.clips = o.clips;
+    renderClips(); syncControls(); refreshTimeline(); syncSel(); draw();
+  }
+
+  async function runBatch(jobs) {
+    if (batchRunning) return;
+    batchRunning = true;
+    batchStop = false;
+    S.cancelExport = false;
+    var before = snapshotProject();
+    var box = $("sjobs");
+    var html = "";
+    for (var i = 0; i < jobs.length; i++) {
+      html += '<div class="sjob" data-i="' + i + '"><span class="n">' + (i + 1) + ". " + esc(jobs[i].name) +
+        '</span><span class="st">等待</span></div>';
+    }
+    box.innerHTML = html;
+    $("sRun").disabled = true;
+
+    var ok = 0, fail = 0;
+    for (var j = 0; j < jobs.length; j++) {
+      if (batchStop) break;
+      S.cancelExport = false;
+      setJobRow(j, "doing", "准备素材…");
+      var res = await applyScript(jobs[j].script);
+      if (!res.ok) {
+        fail++;
+        setJobRow(j, "fail", (res.errors[0] || "素材缺失").slice(0, 46));
+        continue;
+      }
+      try {
+        var r = await recordVideo({
+          onProgress: (function (idx) {
+            return function (p) { setJobRow(idx, "doing", Math.round(p.pct * 100) + "% · " + fmtTime(p.t)); };
+          })(j)
+        });
+        var name = safeName(jobs[j].name) + "-" + stamp() + (r.type === "video/mp4" ? ".mp4" : ".webm");
+        saveBlob(r.blob, name);
+        ok++;
+        setJobRow(j, "done", fmtSize(r.blob.size));
+      } catch (e) {
+        if (e && e.cancelled) { setJobRow(j, "fail", "已取消"); break; }
+        fail++;
+        setJobRow(j, "fail", String((e && e.message) || e).slice(0, 46));
+      }
+    }
+
+    restoreProject(before);
+    batchRunning = false;
+    $("sRun").disabled = false;
+    S.cancelExport = false;
+    var msg = batchStop ? "已停止" : "批量完成";
+    if (!batchStop) msg += "：成功 " + ok + (fail ? "，失败 " + fail : "");
+    toast(msg);
+    sstat(msg + (batchStop ? "" : "；原始工程已还原"), fail ? "bad" : "");
+  }
+
+  function sstat(msg, kind) {
+    var el = $("sstat");
+    if (!el) return;
+    el.className = "sstat" + (kind === "bad" ? " bad" : "");
+    el.innerHTML = msg;
+  }
+
+
+  function showParse(p) {
+    var out = [];
+    if (p.errors.length) {
+      out.push("<b>没通过：</b>");
+      out.push(p.errors.slice(0, 6).map(esc).join("<br>"));
+      if (p.errors.length > 6) out.push("…还有 " + (p.errors.length - 6) + " 条");
+    } else {
+      var n = p.jobs ? p.jobs.length : 1;
+      var sec = 0;
+      if (p.jobs) p.jobs.forEach(function (j) { sec += jobSeconds(j.script); });
+      else sec = jobSeconds(p.script);
+      out.push("<b>通过</b>：" + (p.jobs ? n + " 条任务" : p.script.clips.length + " 个片段") +
+        "，约 " + fmtTime(Math.ceil(sec)));
+    }
+    if (p.warnings.length) {
+      out.push('<span class="warn">' + p.warnings.slice(0, 4).map(esc).join("<br>") + "</span>");
+    }
+    sstat(out.join("<br>"), p.errors.length ? "bad" : "");
+  }
+
+  function bindScript() {
+    var dlg = $("sdlg");
+    var armedUntil = 0, armTimer = 0;
+
+    function close() {
+      dlg.hidden = true;
+      if (batchRunning) { batchStop = true; S.cancelExport = true; }
+      armedUntil = 0;
+      $("sRun").textContent = "批量运行";
+      $("sRun").classList.remove("armed");
+    }
+
+    $("scriptBtn").addEventListener("click", function () {
+      dlg.hidden = false;
+      if (!$("scode").value.trim()) {
+        $("scode").value = JSON.stringify(scriptOf(), null, 2);
+        sstat("这是当前这条片子的脚本。改 clips 里的 file / dur / trans，再点「应用到工程」。");
+      }
+      updatePoolHint();
+    });
+    $("sClose").addEventListener("click", close);
+    $("sOpenDlgDone").addEventListener("click", close);
+    dlg.addEventListener("click", function (e) { if (e.target === dlg) close(); });
+
+    $("sGen").addEventListener("click", function () {
+      $("scode").value = JSON.stringify(scriptOf(), null, 2);
+      sstat("已按当前工程生成（" + S.clips.length + " 个片段）。");
+      updatePoolHint();
+    });
+
+    $("sCheck").addEventListener("click", function () {
+      showParse(parseScript($("scode").value));
+    });
+
+    $("sApply").addEventListener("click", function () {
+      var p = parseScript($("scode").value);
+      if (!p.ok) { showParse(p); return; }
+      var sc = p.script || (p.jobs && p.jobs[0] && p.jobs[0].script);
+      if (!sc) { sstat("这份脚本没有可应用的片段", "bad"); return; }
+      var prefix = p.jobs ? "（批量脚本，先应用第 1 条「" + esc(p.jobs[0].name) + "」）<br>" : "";
+      applyScript(sc).then(function (r) {
+        if (r.ok) sstat(prefix + "已应用：" + S.clips.length + " 个片段，总长 " + fmtTime(totalDur()) + "。");
+        else sstat(prefix + r.errors.slice(0, 5).map(esc).join("<br>"), "bad");
+      });
+    });
+
+    $("sRun").addEventListener("click", function () {
+      if (batchRunning) {
+        batchStop = true;
+        S.cancelExport = true;
+        sstat("正在停…（当前这条录完就收）");
+        return;
+      }
+      var p = parseScript($("scode").value);
+      if (!p.ok) { showParse(p); return; }
+      var jobs = p.jobs || [{ name: "单条", script: p.script }];
+      var sec = 0;
+      jobs.forEach(function (j) { sec += jobSeconds(j.script); });
+      if (Date.now() < armedUntil) {
+        clearTimeout(armTimer);
+        armedUntil = 0;
+        $("sRun").textContent = "批量运行";
+        $("sRun").classList.remove("armed");
+        void runBatch(jobs);
+        return;
+      }
+      armedUntil = Date.now() + 8000;
+      $("sRun").textContent = "确认：" + jobs.length + " 条 · 约 " + fmtTime(Math.ceil(sec));
+      $("sRun").classList.add("armed");
+      sstat("批量是实时录的：一共约 " + fmtTime(Math.ceil(sec)) + "，每条各自下载一个文件；8 秒内再点一次开始。");
+      armTimer = setTimeout(function () {
+        armedUntil = 0;
+        $("sRun").textContent = "批量运行";
+        $("sRun").classList.remove("armed");
+      }, 8000);
+    });
+
+    $("sSample").addEventListener("click", function () {
+      $("scode").value = JSON.stringify(sampleScript(), null, 2);
+      sstat(S.pool.length
+        ? "示例按素材池里的真实文件名生成，直接点「批量运行」就能试。"
+        : "示例里的 a.jpg / b.jpg 是占位：先「加入文件夹素材」，再点一次「插入示例」。");
+      updatePoolHint();
+    });
+
+    $("sSave").addEventListener("click", function () {
+      var text = $("scode").value;
+      var p = parseScript(text);
+      if (!p.ok) { showParse(p); return; }
+      var blob = new Blob([JSON.stringify(JSON.parse(text), null, 2)], { type: "application/json" });
+      saveBlob(blob, "模板视频-脚本-" + stamp() + ".json");
+      sstat("已下载脚本文件。");
+    });
+
+    $("sOpen").addEventListener("click", function () { $("fileJson").click(); });
+    $("fileJson").addEventListener("change", function () {
+      var fs = filesOf(this);
+      if (!fs.length) return;
+      fs[0].text().then(function (t) {
+        $("scode").value = t;
+        showParse(parseScript(t));
+      }).catch(function (e) { sstat("读不了这个文件：" + esc(String((e && e.message) || e)), "bad"); });
+    });
+
+    $("sDir").addEventListener("click", function () { $("fileDir").click(); });
+    $("fileDir").addEventListener("change", function () {
+      var fs = filesOf(this);
+      if (!fs.length) return;
+      var n = poolAdd(fs);
+      if (!S.clips.length) {
+        addFiles(fs).then(function () {
+          sstat("已加入 " + n + " 个素材，并铺到时间轴（原本是空的）。");
+        });
+      } else {
+        sstat("素材池 +" + n + " 个（时间轴没动）。脚本里用 file 或 glob 引它们。");
+        toast("素材池 +" + n);
+      }
+    });
+  }
+
+  /* ================================================================
+   * 十一、导出
+   * ----------------------------------------------------------------
+   *   canvas.captureStream(30) 出视频轨，AudioContext 的
+   *   MediaStreamDestination 出音频轨，两条一起喂 MediaRecorder。
+   *   mp4（h264+aac）优先 —— 微信能直接发、剪辑软件也认；不支持才退
+   *   webm。录制实时，进度条按墙上的钟走。
+   * ================================================================ */
+
+  function pickMime() {
+    var cands = [
+      "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+      "video/mp4",
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm"
+    ];
+    for (var i = 0; i < cands.length; i++) {
+      try {
+        if (window.MediaRecorder && MediaRecorder.isTypeSupported(cands[i])) return cands[i];
+      } catch (e) {}
+    }
+    return "";
+  }
+
+  function stamp() {
+    var d = new Date();
+    return "" + d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + "-" + pad2(d.getHours()) + pad2(d.getMinutes());
+  }
+
+  function saveBlob(blob, name) {
+    var a = document.createElement("a");
+    var url = URL.createObjectURL(blob);
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  }
+
+  function expUI(mode, payload) {
+    var box = $("exp");
+    if (mode === "hide") {
+      box.hidden = true;
+      box.dataset.phase = "";
+      return;
+    }
+    box.hidden = false;
+
+    if (mode === "progress") {
+      if (box.dataset.phase !== "progress") {
+        box.dataset.phase = "progress";
+        $("expTitle").textContent = "正在录制…";
+        $("expSub").textContent = "画面是实时录的，片子多长就要等多久；别关这个窗口。";
+        $("expRow").innerHTML = '<button id="expCancel" type="button">取消</button>';
+        $("expCancel").addEventListener("click", function () {
+          S.cancelExport = true;
+          $("expStat").textContent = "正在收尾…";
+        });
+      }
+      $("expBar").style.width = (payload.pct * 100).toFixed(1) + "%";
+      $("expStat").textContent = Math.round(payload.pct * 100) + "% · " +
+        fmtTime(payload.t) + " / " + fmtTime(payload.total);
+      return;
+    }
+
+    if (mode === "done") {
+      box.dataset.phase = "done";
+      $("expTitle").textContent = "导出好了";
+      $("expSub").textContent = payload.name + " · " + fmtSize(payload.size) + " · " + fmtTime(payload.dur) +
+        (payload.note ? "。" + payload.note : "");
+      $("expBar").style.width = "100%";
+      $("expStat").textContent = payload.type;
+      $("expRow").innerHTML = '<button id="expAgain" type="button">再存一次</button>' +
+        '<button id="expDone" class="primary" type="button">好</button>';
+      $("expAgain").addEventListener("click", function () {
+        if (payload.blob) saveBlob(payload.blob, payload.name);
+      });
+      $("expDone").addEventListener("click", function () { expUI("hide"); });
+      return;
+    }
+
+    // fail
+    box.dataset.phase = "fail";
+    $("expTitle").textContent = "没录成";
+    $("expSub").textContent = String(payload);
+    $("expBar").style.width = "0%";
+    $("expRow").innerHTML = '<button id="expDone" class="primary" type="button">好</button>';
+    $("expDone").addEventListener("click", function () { expUI("hide"); });
+  }
+
+  /* 录一条片子，把 blob 交出来 —— 单条导出和批量跑共用这一段，
+     只有外面的进度 UI 不一样（一个是模态卡片，一个是任务列表）。 */
+  async function recordVideo(opts) {
+    opts = opts || {};
+    var onProgress = opts.onProgress || function () {};
+    var mime = pickMime();
+    if (!mime) throw new Error("这个环境不支持录制视频");
+
+    pause();
+    var sz = outSize();
+    var W = sz.w, H = sz.h;
+    var total = totalDur();
+    if (!total) throw new Error("时间轴是空的");
+
+    // 不在文档流里的 canvas，Chrome 不保证出帧 → 挂上去、缩到 1px
+    var c = document.createElement("canvas");
+    c.width = W;
+    c.height = H;
+    c.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1;";
+    document.body.appendChild(c);
+    var cg = c.getContext("2d", { alpha: false });
+
+    var fps = S.fps === 24 || S.fps === 25 ? S.fps : 30;
+    var stream = c.captureStream(fps);
+    var audioSrc = null, audioGain = null, recorder = null;
+
+    function cleanup() {
+      if (audioSrc) {
+        try { audioSrc.stop(); } catch (e) {}
+        try { audioSrc.disconnect(); } catch (e) {}
+      }
+      if (audioGain) { try { audioGain.disconnect(); } catch (e) {} }
+      var tracks = stream.getTracks();
+      for (var i = 0; i < tracks.length; i++) { try { tracks[i].stop(); } catch (e) {} }
+      c.remove();
+    }
+
+    try {
+      if (S.music && S.music.buffer) {
+        var ac = ensureCtx();
+        if (ac) {
+          if (ac.state === "suspended") {
+            // 唤醒最多等 600ms：resume 拿不到手势时可能永不兑现，不能让它把
+            // 整个导出卡住；真起不来就明说，别悄悄导出一条没声音的片子。
+            await Promise.race([
+              ac.resume(),
+              new Promise(function (r) { setTimeout(r, 600); })
+            ]);
+          }
+          if (ac.state !== "running") toast("音频没启动起来，这条片子可能没有声音");
+          var dest = ac.createMediaStreamDestination();
+          audioSrc = ac.createBufferSource();
+          audioSrc.buffer = S.music.buffer;
+          audioSrc.loop = true;
+          audioGain = ac.createGain();
+          audioGain.gain.value = S.vol;
+          audioSrc.connect(audioGain);
+          audioGain.connect(dest);
+          audioGain.connect(ac.destination); // 录的时候也听得见，出问题能及早发现
+          var now = ac.currentTime;
+          audioGain.gain.setValueAtTime(S.vol, now);
+          audioGain.gain.setValueAtTime(S.vol, now + Math.max(0, total - 1.2));
+          audioGain.gain.linearRampToValueAtTime(0.0001, now + total);
+          audioSrc.start();
+          var at = dest.stream.getAudioTracks()[0];
+          if (at) stream.addTrack(at);
+        }
+      }
+
+      /* 画质档位换算成码率：都是「像素数 × 系数」，再各自钳区间。
+         同样 1080p，高画质 ≈ 14Mbps、标准 ≈ 8.7Mbps、小体积 ≈ 4.5Mbps。 */
+      var qf = S.quality === "high" ? 7 : S.quality === "small" ? 2.2 : 4.2;
+      var bitrate = clamp(Math.round(W * H * qf),
+        S.quality === "small" ? 900000 : 2000000,
+        S.quality === "high" ? 22000000 : 14000000);
+      recorder = new MediaRecorder(stream, {
+        mimeType: mime,
+        videoBitsPerSecond: bitrate,
+        audioBitsPerSecond: 128000
+      });
+      var chunks = [];
+      recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+      var stopped = new Promise(function (resolve) { recorder.onstop = resolve; });
+
+      recorder.start(1000);
+      onProgress({ pct: 0, t: 0, total: total });
+
+      var t0 = performance.now();
+      /* captureStream(30) 只按 30fps 采样，画到 144Hz 一帧都多录不进去，
+         只会跟编码器抢 CPU（掉帧、码率上不去）。渲染也锁 30fps；
+         进度文案 4Hz 刷一次足够人眼读。 */
+      var lastDraw = -1e9, lastUI = -1e9;
+      await new Promise(function (resolve) {
+        function tick() {
+          var now = performance.now();
+          var t = (now - t0) / 1000;
+          if (S.cancelExport || t >= total) {
+            drawFrame(cg, W, H, Math.max(0, Math.min(total - 0.001, t)));
+            resolve();
+            return;
+          }
+          /* 每个 rAF 都画。captureStream(fps) 是「按目标帧率从画布取最新帧」，
+             画面越新越好；按 1000/fps 节流反而会跟 16.7ms 的 rAF 打架 ——
+             实测 24fps 节流成 38.7ms，最后只录到 20.4fps。 */
+          lastDraw = now;
+          drawFrame(cg, W, H, t);
+          if (now - lastUI >= 250) {
+            lastUI = now;
+            onProgress({ pct: t / total, t: t, total: total });
+          }
+          requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+      });
+
+      if (audioSrc) { try { audioSrc.stop(); } catch (e) {} }
+      try { recorder.stop(); } catch (e) {}
+      await stopped;
+
+      if (S.cancelExport) {
+        var cancelErr = new Error("已取消");
+        cancelErr.cancelled = true;
+        throw cancelErr;
+      }
+
+      var type = mime.split(";")[0];
+      var blob = new Blob(chunks, { type: type });
+      if (!blob.size) throw new Error("录出来是空的（分辨率太大、编码器跟不上？）");
+      return { blob: blob, type: type, total: total, mime: mime };
+    } finally {
+      cleanup();
+    }
+  }
+
+  async function exportVideo() {
+    if (S.exporting || batchRunning || !S.clips.length) return;
+    pause();
+    S.exporting = true;
+    S.cancelExport = false;
+    refreshTimeline();
+    expUI("progress", { pct: 0, t: 0, total: totalDur() });
+
+    try {
+      var r = await recordVideo({ onProgress: function (p) { expUI("progress", p); } });
+      var name = "模板视频-" + stamp() + (r.type === "video/mp4" ? ".mp4" : ".webm");
+      saveBlob(r.blob, name);
+      expUI("done", {
+        blob: r.blob, name: name, size: r.blob.size, dur: r.total, type: r.type,
+        note: r.type === "video/mp4"
+          ? "已开始下载"
+          : "这个环境不支持 mp4，存的是 webm（剪辑软件都认，微信可能发不了）"
+      });
+    } catch (e) {
+      if (e && e.cancelled) { toast("已取消"); expUI("hide"); }
+      else expUI("fail", String((e && e.message) || e));
+    } finally {
+      S.exporting = false;
+      S.cancelExport = false;
+      refreshTimeline();
+      draw();
+    }
+  }
+
+  /* ================================================================
+   * 十二、启动
+   * ================================================================ */
+
+  function boot() {
+    cv = $("cv");
+    g = cv.getContext("2d", { alpha: false });
+
+    renderClips();
+    bindControls();
+    bindHistory();
+    bindClipList();
+    bindTimeline();
+    bindMusic();
+    bindTemplate();
+    tplEnsure();
+    updateTplMusic();
+    bindScript();
+    updatePoolHint();
+    refreshMusic();
+    refreshTimeline();
+    syncSel();
+    draw();
+    histReset();
+    loadCfg();
+    draw();
+    settle.then(function () {
+      if (bound()) loadCfg();
+    });
+  }
+
+  // 给自动化测试留的把手（正常使用不看它）
+  window.__tv = {
+    state: S,
+    addFiles: addFiles,
+    addUrls: addUrls,
+    draw: draw,
+    drawAt: function (t) { S.t = t; draw(); },
+    total: totalDur,
+    bounds: clipBounds,
+    effDur: effDur,
+    sel: selectClip,
+    renderTimeline: renderTimeline,
+    search: searchMusic,
+    exportVideo: exportVideo,
+    recordVideo: recordVideo,
+    scriptOf: scriptOf,
+    parseScript: parseScript,
+    applyScript: applyScript,
+    runBatch: runBatch,
+    outSize: outSize,
+    makeText: makeTextClip,
+    poolAdd: poolAdd,
+    globRe: globRe,
+    sample: sampleScript,
+    applyTemplate: applyTemplate,
+    undo: undo,
+    redo: redo,
+    syncControls: syncControls,
+    syncSel: syncSel,
+    histReset: histReset,
+    tplPlan: tplPlan,
+    tplSync: tplSync,
+    tplOneClick: tplOneClick,
+    tplEnsure: tplEnsure
+  };
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
+})();
+</script>
+</body>
+</html>

@@ -68,11 +68,11 @@ check("标题正确", (await page.title()) === "待办工作台", await page.tit
 check("侧边栏已挂载", (await page.locator("aside").count()) > 0);
 check("初始无控制台错误", errors.length === 0, errors.slice(0, 3).join(" | "));
 
-// 第 5b 节验的是"工具导出的图默认留一份在图床"，而图床 v18 起是选装模块、
-// 默认不带 —— 不在这里先打开，那一节会红在"图床里一条都没多"上。
+// 第 5b 节验的是"工具导出的图默认留一份在多媒体文件"，而多媒体文件 v18 起是选装模块、
+// 默认不带 —— 不在这里先打开，那一节会红在"多媒体文件里一条都没多"上。
 await enableModule(page, "imagebed");
 check(
-  "启用后侧边栏出现「图床」入口",
+  "启用后侧边栏出现「多媒体文件」入口",
   (await page.locator('aside [data-nav="imagebed"]').count()) === 1,
 );
 
@@ -185,9 +185,9 @@ await page.waitForTimeout(500);
 const afterRedo = (await frameState()).rows;
 check("iframe 内重做生效", afterRedo === before + 1, `${afterUndo} → ${afterRedo}`);
 
-console.log("\n5b. 图床：导出的图默认留一份");
+console.log("\n5b. 多媒体文件：导出的图默认留一份");
 
-/** 直接读宿主数据层，比在图床视图里数卡片稳（不依赖当前视图） */
+/** 直接读宿主数据层，比在多媒体文件视图里数卡片稳（不依赖当前视图） */
 const imagebedRows = () =>
   page.evaluate(async () => {
     const g = await import("/src/lib/imagebed.ts");
@@ -223,9 +223,9 @@ const waitArchived = () =>
     .catch(() => {});
 
 let fl = await frameFlags();
-info("工具内图床入口", fl);
-check("宿主点亮了「存进图床」", !!fl && fl.imagebedBtn);
-check("「导出自动存图床」出现且默认开",
+info("工具内多媒体文件入口", fl);
+check("宿主点亮了「存进多媒体文件」", !!fl && fl.imagebedBtn);
+check("「导出自动存多媒体文件」出现且默认开",
   !!fl && fl.autoLine && fl.autoChecked && fl.autoImagebed === "true", JSON.stringify(fl));
 
 const g0 = await imagebedRows();
@@ -233,8 +233,8 @@ await frame.locator('button[title^="下载 PNG"]').click();
 await waitArchived();
 const g1 = await imagebedRows();
 const added = g1.filter((i) => !g0.some((b) => b.id === i.id));
-info("导出后图床", { before: g0.length, after: g1.length });
-check("只点了下载，图床就多了一条", added.length === 1, `${g0.length} → ${g1.length}`);
+info("导出后多媒体文件", { before: g0.length, after: g1.length });
+check("只点了下载，多媒体文件就多了一条", added.length === 1, `${g0.length} → ${g1.length}`);
 check("来源是宿主盖的 size-chart（工具自报不算）",
   added.length === 1 && added[0].origin === "size-chart", JSON.stringify(added));
 check("标题用的是尺码表文件名",

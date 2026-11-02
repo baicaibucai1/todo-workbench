@@ -5,7 +5,7 @@
  * ============================ 默认从哪份模板派生 ============================
  *
  * 默认用 `scripts/tool-skeleton.html` 那份**最小骨架**（合规但空白）。
- * 想要一个功能完整的起点就 `--from abnormal-ticket`（自建表 + 图床 + WPS + shell）
+ * 想要一个功能完整的起点就 `--from abnormal-ticket`（自建表 + 多媒体文件 + WPS + shell）
  * 或 `--from image-crop`（单文件重度交互 + 可选附属目录）。
  *
  * 2026-10-26 之前默认拷的是 `tools/scratchpad` 那个专门的样板工具 —— 它随

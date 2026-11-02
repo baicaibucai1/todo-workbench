@@ -43,7 +43,7 @@ import type {
   WorkStage,
 } from "../types";
 /**
- * 图床的**备份模型**（含 deleted / updatedAt）。
+ * 多媒体文件的**备份模型**（含 deleted / updatedAt）。
  *
  * 不用界面模型 ImagebedItem：那个模型里根本没有 deleted / updatedAt ——
  * 界面上永远只看得到活着的那批，而这两样恰好是合并必须的。
@@ -60,7 +60,7 @@ export const SHARD_FORMAT = 1;
 export const SHARD_LABELS: Record<SyncShardId, string> = {
   tasks: "待办",
   orders: "流程任务",
-  gallery: "图床",
+  gallery: "多媒体文件",
   attachments: "流程任务附件",
 };
 

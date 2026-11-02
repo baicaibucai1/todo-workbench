@@ -111,20 +111,20 @@ setTimeout(function () {
 
 **不要**靠 JS 逐个 `.hidden = true`：作者样式里的 `.btn{display:inline-flex}`
 会盖掉浏览器默认的 `[hidden]{display:none}`，按钮会照常露在界面上
-（`image-crop` 的四个图床按钮、`size-chart` 的「存进图床」都踩过这个坑）。
+（`image-crop` 的四个多媒体文件按钮、`size-chart` 的「存进多媒体文件」都踩过这个坑）。
 
 改成标属性 + 两条全局规则：
 
 ```html
-<button data-host-only id="btnSaveToImagebed">存进图床</button>
-<!-- 图床那类：既要有宿主、又要图床模块开着 -->
-<button data-host-only data-host-gallery id="btnChartToImagebed">存进图床</button>
+<button data-host-only id="btnSaveToImagebed">存进多媒体文件</button>
+<!-- 多媒体文件那类：既要有宿主、又要多媒体文件模块开着 -->
+<button data-host-only data-host-gallery id="btnChartToImagebed">存进多媒体文件</button>
 ```
 
 ```css
 /* 没连上宿主 → 宿主专属的一律不出现。!important 专门用来压住 .btn{display:inline-flex} */
 body:not([data-bind-state="bound"]) [data-host-only],
-/* 连上了、但图床通道没开 → 依赖图床的那些也不出现（模块是选装的） */
+/* 连上了、但多媒体文件通道没开 → 依赖多媒体文件的那些也不出现（模块是选装的） */
 body:not([data-gallery="on"]) [data-host-gallery] { display: none !important; }
 ```
 
@@ -133,7 +133,7 @@ body:not([data-gallery="on"]) [data-host-gallery] { display: none !important; }
 **别再逐个 `el.hidden = true`** —— 那正是被 `.btn{display:inline-flex}` 盖掉的那个坑。
 
 **独立运行时是"藏起来"，不是"禁用 + 解释"** —— 独立态没有工作台可升级，
-"先升级工作台"这种话在那儿是句错话（`ai-gen` 的「从图床选」原来就是这么写的）。
+"先升级工作台"这种话在那儿是句错话（`ai-gen` 的「从多媒体文件选」原来就是这么写的）。
 
 #### 3. 数据层要留一个"本地兜底"
 
@@ -158,7 +158,7 @@ var Db = {
 
 > `gallery` 是例外：独立打开时**不给本地兜底** —— 它不是"存数据"，是"存图给别人用"，
 > 本地存了也没人取得到。整块入口藏掉就行。
-> `notes` 那条"图床没开就把图内联进自己表里"的降级路径正好可以复用到独立态。
+> `notes` 那条"多媒体文件没开就把图内联进自己表里"的降级路径正好可以复用到独立态。
 
 #### 4. 顺手的两件小事
 
@@ -352,7 +352,7 @@ parent.postMessage(
   schemaVersion: 18,
   theme: "light",                // 或 "dark"
   runtime: "desktop",            // 或 "browser"
-  gallery: true,                 // 宿主此刻是否为**这个工具**开放图床
+  gallery: true,                 // 宿主此刻是否为**这个工具**开放多媒体文件
   data: true,                    // 是否有 row.* 通道
   link: true,                    // 是否有 tools.* 通道
   inject: { kind: "detailSection", taskId: "t-abc" }   // 整页工具没有这个字段
@@ -523,16 +523,21 @@ await call("row.delete", { table: "notes", id: "n-abc" });
 3. **多出来的列会被拒绝**（不是忽略）：`表「notes」里没有「xxx」这一列`。
    单列值 ≤ 512 KB。
 
-### 图床（`gallery.*`）
+### 多媒体文件（`gallery.*`）
 
 | op | 参数 | 返回 |
 | --- | --- | --- |
-| `gallery.list` | `{ kind: "image"\|"video"\|"all", search, limit }` | `{ items: [{ id, title, kind, origin, width, height, size, createdAt, prompt, thumb, dup }], limit, count }` |
-| `gallery.get` | `{ id }` | `{ id, title, kind, dataUrl, mime, width, height }` |
-| `gallery.put` | `{ dataUrl \| url, title, note, prompt, dedupe }` | 新条目 |
+| `gallery.list` | `{ kind: "image"\|"video"\|"audio"\|"all", search, limit }` | `{ items: [{ id, title, kind, origin, mime, width, height, size, durationMs, createdAt, prompt, thumb, dup }], limit, count }` |
+| `gallery.get` | `{ id }` | `{ id, title, kind, dataUrl, mime, width, height, durationMs, size }` |
+| `gallery.put` | `{ dataUrl \| url, title, note, prompt, dedupe }` | 新条目（类型按真实字节判定，不看你起的文件名） |
 
-- `limit`：最大 200，默认 60。`thumb` 是 320px 缩略图 dataURL，列表可以直接显示。
-- `gallery.get` 读原图有 **10 MB** 字节上限。
+- 三种类型：`image` / `video` / `audio`。`kind` 由宿主按落盘后的真实 MIME 定，
+  工具自报不了 —— 音频走 `audio/*`，别指望把 mp3 当 image 存进来。
+- `limit`：最大 200，默认 60。`thumb` 是 320px 缩略图 dataURL，**只有图片有**；
+  音视频用 `mime` / `durationMs` 自己画格子（比如显示 3:07）。
+- `gallery.get` 读原图有 **10 MB** 字节上限；**音频放宽到 30 MB**（一段会议录音放得下），
+  视频不放开 —— 200 MB 走 postMessage 会把宿主卡死，视频该用缩略图 + 自己处理。
+- 单文件上限：图 20 MB / 视频 200 MB / 音频 60 MB（`MEDIA_SIZE_LIMIT`）。
 - `gallery.put` 可以只给 `url`，由宿主去下载 —— 生图接口回报的常常是临时链接且不给 CORS 头，
   工具自己 fetch 会被浏览器拦掉，而宿主这边有现成的下载链路。
 - **来源由宿主按 tool_id 盖章**，工具自报的 `origin` 一律忽略。
@@ -596,14 +601,14 @@ Chromium 拦下协议导航时会把**整个 iframe** 换成「已阻止此内�
 | `not-granted` | manifest 里没写这个能力 | `这个扩展没有申请 gallery 能力` |
 | `unavailable` | 写了，但提供它的模块没启用 | `gallery 能力当前不可用（提供它的模块没有启用）` |
 
-**图床是选装模块，默认是关的** —— 所以 `ctx.gallery` 现在是会变的（以前恒为 true）。
+**多媒体文件是选装模块，默认是关的** —— 所以 `ctx.gallery` 现在是会变的（以前恒为 true）。
 
 正确的写法是**据此降级**，而不是弹一个"失败"了事：
 
 ```js
 var info = await call("info", {});
 if (!info.gallery) {
-  // 把"存进图床"按钮换成"下载到本地"，并在界面上说明原因
+  // 把"存进多媒体文件"按钮换成"下载到本地"，并在界面上说明原因
 }
 ```
 
@@ -955,7 +960,7 @@ install_tool（先验票，无票直接回绝）
 | 宿主的原话 | 真正的原因 | 怎么改 |
 | --- | --- | --- |
 | `这个扩展没有申请 gallery 能力` | manifest 的 `capabilities` 里没写 | 加上 `gallery`，重装 |
-| `gallery 能力当前不可用（提供它的模块没有启用）` | 图床是选装模块，没开 | 设置 → 行为 → 选装模块 → 开图床；或让工具降级 |
+| `gallery 能力当前不可用（提供它的模块没有启用）` | 多媒体文件是选装模块，没开 | 设置 → 行为 → 选装模块 → 开多媒体文件；或让工具降级 |
 | `这个组件没有挂在任何一条待办上…` | 整页工具调了 `task.get` | 注入组件才能用；整页模式下这是预期行为 |
 | `工具提醒不可用：…` | 调了 `task.remind` 但 `task` 能力没申请或不可用 | manifest 的 `capabilities` 里加 `task`，重装 |
 | `缺少 title（提醒落在待办上要显示的那句话）` | `task.remind` book 没给 title | title 必填，≤ 200 字 |

@@ -34,10 +34,10 @@ export const SETTINGS = {
   /** 自定义壁纸的文件名清单（JSON 数组），用于在设置页里列出"我传过的图" */
   customWallpapers: "appearance.customWallpapers",
   /**
-   * 是否启用「图床」模块。
+   * 是否启用「多媒体文件」模块。
    *
-   * 默认**开**：图床是便签 / AI 生成 / 图片裁剪的共同落点，关着的话这些工具
-   * 的附图能力直接不可用（工具侧会显示「图床模块未开启」）。用户仍可在
+   * 默认**开**：多媒体文件是便签 / AI 生成 / 图片裁剪的共同落点，关着的话这些工具
+   * 的附图能力直接不可用（工具侧会显示「多媒体文件模块未开启」）。用户仍可在
    * 设置 → 选装模块里关掉；关过之后不会再被默认值翻回来。
    */
   imagebedEnabled: "ext.imagebed.enabled",
@@ -64,7 +64,7 @@ export const SETTINGS = {
   detailSectionOrder: "behavior.detailSectionOrder",
   /**
    * 左侧栏那批「类目」的顺序（JSON 数组），键形如 `nav:myday` / `tool:ai-gen`
-   * / `list:<id>`。（图床那一类「位置」入口不在这里，固定在侧栏最底部。）
+   * / `list:<id>`。（多媒体文件那一类「位置」入口不在这里，固定在侧栏最底部。）
    *
    * 存的是**用户表过态的部分**而不是完整快照：工具与清单的 id 是运行时才有的，
    * 存死一份完整顺序，第二天新建的清单就会"不在配置里"。空数组 = 从没排过，
@@ -187,7 +187,7 @@ export const SETTINGS = {
    * 要同步的分片，逗号分隔。
    *
    * 默认 **只有 tasks** —— 「默认只同步待办」是刻意的：待办是每天在用的核心，
-   * 流程任务/图床/附件的数据量与隐私权重都不一样，让用户自己决定要不要一起走。
+   * 流程任务/多媒体文件/附件的数据量与隐私权重都不一样，让用户自己决定要不要一起走。
    */
   syncShards: "sync.shards",
   /** 本机标识。首次使用时生成一个 uuid 并落库，此后不变 */
@@ -656,7 +656,7 @@ export const STARTUP_VIEWS: Array<{ value: SmartView; label: string }> = [
   { value: "important", label: "重要" },
   { value: "all", label: "全部" },
   { value: "orders", label: "流程任务" },
-  { value: "imagebed", label: "图床" },
+  { value: "imagebed", label: "多媒体文件" },
   // AI 助手也能作为启动视图：习惯一进来就让它排今天的人有这个需求，
   // 而且它和别的视图没有互斥关系（都能随时切走）
   { value: "agent", label: "AI 助手" },

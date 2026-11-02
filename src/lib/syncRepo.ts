@@ -449,7 +449,7 @@ async function applyAttachmentsPayload(p: AttachmentsPayload): Promise<void> {
 }
 
 /** 按分片写回。**只碰这个分片自己的表** —— 所以只勾「待办」时，
- *  流程任务、图床、附件在本地一行都不会被动到。 */
+ *  流程任务、多媒体文件、附件在本地一行都不会被动到。 */
 export async function applyShardPayload(
   shard: SyncShardId,
   payload: ShardPayload,

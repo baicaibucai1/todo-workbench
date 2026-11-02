@@ -5,7 +5,7 @@
  *   1. 一路 0 报错（pageerror / console.error）
  *   2. document.body.dataset.bindState 落到 standalone
  *   3. 界面上明说了"独立运行"，并且说清了数据存在哪
- *   4. 宿主专属的控件（图床 / 交给别的工具 / 表结构）全部**看不见** ——
+ *   4. 宿主专属的控件（多媒体文件 / 交给别的工具 / 表结构）全部**看不见** ——
  *      不是"禁用"，禁用在这儿解释不通（没有可升级的工作台）
  *   5. 核心动作真的能落地：写一条能存住、刷新后还在
  *
@@ -203,7 +203,7 @@ console.log("\n=== 1. 模板 scratchpad ===");
  * ================================================================== */
 console.log("\n=== 2. 便签 notes ===");
 {
-  // 便签唯一的宿主专属控件在编辑器里（「从图床挑」），静态 DOM 上没有，
+  // 便签唯一的宿主专属控件在编辑器里（「从多媒体文件挑」），静态 DOM 上没有，
   // 所以这里放宽到 0，改在下面开一次编辑器单独验。
   await expectCommon("notes", "便签", "file", 0);
   await wipeLocal("notes");
@@ -224,7 +224,7 @@ console.log("\n=== 2. 便签 notes ===");
   }));
   check("便签：点「新建」能建出一张卡", afterNew.cards === 1, `cards=${afterNew.cards}`);
   check("便签：空态让位", afterNew.emptyHidden === true, String(afterNew.emptyHidden));
-  check("便签：编辑器里的「从图床挑」不可见", afterNew.gallery === "hidden", afterNew.gallery);
+  check("便签：编辑器里的「从多媒体文件挑」不可见", afterNew.gallery === "hidden", afterNew.gallery);
 
   await openStandalone("notes", "file");
   const afterReload = await page.evaluate(() => document.querySelectorAll("#grid .card").length);
@@ -288,7 +288,7 @@ console.log("\n=== 5. AI 生成 ai-gen ===");
   check("AI 生成：横幅明说了独立打开（配置只在内存）",
     s.hints.some((h) => /未连接宿主/.test(h) && /独立/.test(h)),
     JSON.stringify(s.hints));
-  check("AI 生成：图床那一列的按钮不可见",
+  check("AI 生成：多媒体文件那一列的按钮不可见",
     (await page.evaluate(() => {
       const b = document.getElementById("btnRefFromImagebed");
       if (!b) return "missing";

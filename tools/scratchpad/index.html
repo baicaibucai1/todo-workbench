@@ -11,15 +11,15 @@
   数据在宿主替它建的 tool_scratchpad_notes（manifest 里的 notes 表）：
     id / title / body / x / y / w / h / color / z / gallery_id / thumb / remind_at / remind_task / created_at
   · x/y 白板坐标，w/h 便签尺寸，z 叠放次序（都是像素/整数）
-  · gallery_id 指向**工作台图床**里的一条记录，thumb 是 320px 缩略图（dataURL）
-    —— 图片字节不进这张表，图床才是唯一真值源；便签只存引用，删便签不动图床
+  · gallery_id 指向**工作台多媒体文件**里的一条记录，thumb 是 320px 缩略图（dataURL）
+    —— 图片字节不进这张表，多媒体文件才是唯一真值源；便签只存引用，删便签不动多媒体文件
   · remind_at 是设的提醒时刻，remind_task 是宿主里那条待办的 id
 
   三条「写工具就该这么写」的经验：
     1. **探列降级**：老宿主没声明新列时 row.update 会报「列不在声明里」，
        探一次就退回「位置/尺寸/图片/提醒只在本页有效」，别让升级把工具卡死。
     2. **图片自己压 320**：上传前手里就有字节，顺手 canvas 压一张缩略图存进
-       thumb 列，白板打开时不用去图床逐张取（那是几十次 IPC）。
+       thumb 列，白板打开时不用去多媒体文件逐张取（那是几十次 IPC）。
     3. **提醒落待办用 task.remind**：宿主负责建/删待办并盖来源章；
        工具只记 taskId，取消时拿它去删。别自己去写 core_tasks。
 -->
@@ -727,7 +727,7 @@
       fr.readAsDataURL(file);
     });
   }
-  /** 320px 缩略图（白板上只显示它，原图去图床取） */
+  /** 320px 缩略图（白板上只显示它，原图去多媒体文件取） */
   function makeThumb(dataUrl, max) {
     return new Promise(function (resolve) {
       var img = new Image();
@@ -1281,7 +1281,7 @@
     imgDel.type = "button";
     imgDel.className = "imgdel";
     imgDel.textContent = "\u00d7";
-    imgDel.title = "移除图片（不会删图床里的原图）";
+    imgDel.title = "移除图片（不会删多媒体文件里的原图）";
     imgDel.addEventListener("click", function (e) { e.stopPropagation(); void detachImage(n, root); });
     wrap.appendChild(img);
     wrap.appendChild(imgDel);
@@ -1300,7 +1300,7 @@
 
   /**
    * 图片便签别拿 320 的缩略图铺满 —— 在 HiDPI 屏上放大就是糊的。
-   * 做法：缩略图只当占位，随后把图床里的原图换上来（同一张图只取一次，缓存在内存里）。
+   * 做法：缩略图只当占位，随后把多媒体文件里的原图换上来（同一张图只取一次，缓存在内存里）。
    */
   function loadFullImage(n, root) {
     var img = root && root.querySelector("img.cover");
@@ -2725,11 +2725,11 @@
     toast("提醒取消了");
   }
 
-  /* ---------------- 图片（图床） ---------------- */
+  /* ---------------- 图片（多媒体文件） ---------------- */
 
   async function attachImage(n, root, file) {
     if (!file || !/^image\//.test(file.type || "")) { toast("只支持图片文件"); return; }
-    toast("正在存进图床…", null, null, 1400);
+    toast("正在存进多媒体文件…", null, null, 1400);
     try {
       var dataUrl = await readAsDataURL(file);
       var thumb = await makeThumb(dataUrl, 320);
@@ -2742,7 +2742,7 @@
       n.thumb = thumb || item.thumb || "";
       saveNew(n, { gallery_id: n.gallery_id, thumb: n.thumb });
       renderImage(root, n);
-      toast("图片已存进图床");
+      toast("图片已存进多媒体文件");
     } catch (err) {
       toast("图片没存进去：" + friendly(err));
     }
@@ -2753,7 +2753,7 @@
     n.thumb = "";
     saveNew(n, { gallery_id: "", thumb: "" });
     renderImage(root, n);
-    toast("已从便签移除（图床里的原图还在）");
+    toast("已从便签移除（多媒体文件里的原图还在）");
   }
 
   /** 读图片原始尺寸；读不到（或无头环境没有解码）就退回默认尺寸 */
@@ -2845,7 +2845,7 @@
     if (hit) { lb.src = hit; box.hidden = false; return; }
     try {
       var it = await call("gallery.get", { id: n.gallery_id });
-      if (!it || !it.dataUrl) throw new Error("图床里没有这张图");
+      if (!it || !it.dataUrl) throw new Error("多媒体文件里没有这张图");
       state.imgCache[n.gallery_id] = it.dataUrl;
       lb.src = it.dataUrl;
       box.hidden = false;

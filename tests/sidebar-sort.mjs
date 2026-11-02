@@ -11,7 +11,7 @@
  *   清单看着像工具组的一截）。所以这里守住「段边界」。
  *
  * 两条**不能改坏**的既有约束也在这儿守着：
- *   · 「图床」紧挨在「设置」正上方（browser.mjs 也有一条，这里再看一遍，
+ *   · 「多媒体文件」紧挨在「设置」正上方（browser.mjs 也有一条，这里再看一遍，
  *     因为把位置区挪进排序流是最容易犯的改法）；
  *   · 侧栏里每一行只出现一次（排序是重排，不是复制）。
  *
@@ -97,7 +97,7 @@ check("清单在最后一段", k0.some((k) => k.startsWith("list:")), k0.join(",
 const t0 = k0.findIndex((k) => k.startsWith("tool:"));
 const l0 = k0.findIndex((k) => k.startsWith("list:"));
 check("顺序是 视图 → 工具 → 清单", t0 > 0 && l0 > t0, `tool@${t0} list@${l0}`);
-// 「位置」类（图床 / 工作区）不参与排序：它固定在侧栏最底部
+// 「位置」类（多媒体文件 / 工作区）不参与排序：它固定在侧栏最底部
 check("默认顺序里没有 place:", !k0.some((k) => k.startsWith("place:")));
 
 console.log("\n3. 设置页按三段分开列，且与左侧栏逐行对得上");
@@ -218,8 +218,8 @@ const navs = await page
   .evaluateAll((els) => els.map((e) => e.getAttribute("data-nav")));
 const gi = navs.indexOf("imagebed");
 const si = navs.indexOf("settings");
-check("图床与设置都在侧边栏", gi !== -1 && si !== -1, navs.join(","));
-check("图床紧挨在设置上面", gi !== -1 && si === gi + 1, `图床@${gi} 设置@${si}`);
+check("多媒体文件与设置都在侧边栏", gi !== -1 && si !== -1, navs.join(","));
+check("多媒体文件紧挨在设置上面", gi !== -1 && si === gi + 1, `多媒体文件@${gi} 设置@${si}`);
 
 const txt = await page.locator("aside[data-sidebar-width]").innerText();
 const dup = (n) => txt.split("\n").filter((l) => l.trim() === n).length;

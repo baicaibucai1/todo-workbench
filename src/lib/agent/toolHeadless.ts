@@ -61,7 +61,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  *
  * `getSettings` 由调用方（宿主）给：能力门要按**此刻的设置**判断，
  * 而这一层读不到设置（它不该去读库）。给不了就按空设置处理 ——
- * 于是需要图床能力的命令会拿到宿主的拒绝原话，而不是静默失败。
+ * 于是需要多媒体文件能力的命令会拿到宿主的拒绝原话，而不是静默失败。
  */
 export async function runHeadless(
   tool: ToolManifest,

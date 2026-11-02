@@ -78,7 +78,7 @@ function pickFiles(doc, win, inputId, files) {
 const store = [];          // 台账行
 const pushLog = [];        // 推送记录（工具只会 insert / select 它）
 const imgStore = [];       // 订单附图关联（工具只会 insert / select / delete）
-const gallery = [];        // 假图床：gallery.put 往里放，gallery.get 从里取
+const gallery = [];        // 假多媒体文件：gallery.put 往里放，gallery.get 从里取
 
 /* 一条 v1.11.0 之前存下的附图：宿主那时生成缩略图是坏的（把跨源的图直接画到
    canvas 上 → 画布被污染 → toDataURL 抛 SecurityError → 上层 catch 掉回空串），
@@ -182,7 +182,7 @@ function host(win, e) {
       reply(win, m.id, true, { ok: true });
       return;
     }
-    /* ---- 图床（工具只碰 gallery.put / get） ---- */
+    /* ---- 多媒体文件（工具只碰 gallery.put / get） ---- */
     case "gallery.put": {
       const id = "g" + (gallery.length + 1);
       const item = {
@@ -201,7 +201,7 @@ function host(win, e) {
     }
     case "gallery.get": {
       const it = gallery.find((g) => g.id === p.id) || null;
-      if (!it) { reply(win, m.id, false, null, "这条记录不在图床里（可能已被删除）"); return; }
+      if (!it) { reply(win, m.id, false, null, "这条记录不在多媒体文件里（可能已被删除）"); return; }
       reply(win, m.id, true, {
         id: it.id, title: it.title, kind: "image",
         dataUrl: it.dataUrl || it.thumb, mime: "image/jpeg", width: 800, height: 600,
@@ -1538,7 +1538,7 @@ console.log("\n9. 旧版工作台（表里没 indemnity 列）→ 赔款数降�
   d3.window.close();
 }
 
-console.log("\n11. 订单附图：字节进图床，工具只记关联");
+console.log("\n11. 订单附图：字节进多媒体文件，工具只记关联");
 {
   const before = store.length;
   const gBefore = gallery.length;
@@ -1557,7 +1557,7 @@ console.log("\n11. 订单附图：字节进图床，工具只记关联");
   check("登记页选两张 → 出现两个待传格",
     doc.querySelectorAll("#fImgDrop .imgcell").length === 2,
     String(doc.querySelectorAll("#fImgDrop .imgcell").length));
-  check("待传格点开看的是手里那份原图（还没进图床）",
+  check("待传格点开看的是手里那份原图（还没进多媒体文件）",
     !!doc.querySelector("#fImgDrop .imgcell[data-pv]"));
 
   doc.getElementById("btnAdd").click();
@@ -1565,8 +1565,8 @@ console.log("\n11. 订单附图：字节进图床，工具只记关联");
   check("登记成功、两张图都挂上",
     store.length === before + 1 && liveImgs().length === 2,
     store.length + " 单 / " + liveImgs().length + " 图");
-  check("两张图都进了图床", gallery.length === gBefore + 2, String(gallery.length - gBefore));
-  check("图床里的标题带单号（翻图床时认得出来）",
+  check("两张图都进了多媒体文件", gallery.length === gBefore + 2, String(gallery.length - gBefore));
+  check("多媒体文件里的标题带单号（翻多媒体文件时认得出来）",
     /异常单 261022-777777777777 附图/.test(gallery[gBefore]?.title || ""),
     gallery[gBefore]?.title);
   check("工具表里只有关联 + 缩略图，没有原图字节",
@@ -1589,12 +1589,12 @@ console.log("\n11. 订单附图：字节进图床，工具只记关联");
     doc.getElementById("sectBase").classList.contains("locked") &&
     !!doc.getElementById("btnImgPick"));
 
-  /* 点缩略图 → 整屏看原图（原图回图床取） */
+  /* 点缩略图 → 整屏看原图（原图回多媒体文件取） */
   doc.querySelector("#dImgDrop .imgcell").click();
   await waitFor(() => doc.getElementById("vw").hidden === false);
   await sleep(60);
   check("点缩略图打开整屏看图", doc.getElementById("vw").hidden === false);
-  check("大图是从图床取的",
+  check("大图是从多媒体文件取的",
     /^data:image\//.test(doc.getElementById("vwImg").getAttribute("src") || ""),
     doc.getElementById("vwImg").getAttribute("src"));
   doc.getElementById("vw").click();
@@ -1607,17 +1607,17 @@ console.log("\n11. 订单附图：字节进图床，工具只记关联");
   await sleep(40);
   check("ESC 也能关掉看图", doc.getElementById("vw").hidden === true);
 
-  /* × 去掉一张：要问一句，且只解除关联（图床那条不动） */
+  /* × 去掉一张：要问一句，且只解除关联（多媒体文件那条不动） */
   doc.querySelector("#dImgDrop .imgcell .del").click();
   await sleep(80);
   check("去掉一张也要先确认", !!doc.querySelector(".dlgm"), doc.querySelector(".dlgm") ? "有框" : "没框");
   check("确认框说明「只解除关联，原图还在」",
-    /图床里那张原图还在/.test(doc.querySelector(".dlgm")?.textContent || ""));
+    /多媒体文件里那张原图还在/.test(doc.querySelector(".dlgm")?.textContent || ""));
   const gNow = gallery.length;
   doc.getElementById("dlgYes").click();
   await waitFor(() => liveImgs().length === 1);
   check("去掉后只剩 1 条关联", liveImgs().length === 1, String(liveImgs().length));
-  check("图床里那张图没被删", gallery.length === gNow, gallery.length + " vs " + gNow);
+  check("多媒体文件里那张图没被删", gallery.length === gNow, gallery.length + " vs " + gNow);
 
   /* 删整条单子 → 它的图片关联一起清掉（别留孤儿行） */
   doc.getElementById("btnDel").click();
@@ -1680,7 +1680,7 @@ console.log("\n11b. 剪贴板里的图：Ctrl+V 直接进图片区");
 
   doc.getElementById("btnAdd").click();
   await waitFor(() => store.length === beforeN + 1 && liveImgs().length === 2, 6000);
-  check("粘来的图跟选的一样：登记时进图床",
+  check("粘来的图跟选的一样：登记时进多媒体文件",
     store.length === beforeN + 1 && gallery.length === gBefore + 2,
     (store.length - beforeN) + " 单 / " + (gallery.length - gBefore) + " 图");
   const pastedRow = store.find((r) => r.order_sn === "261022-999999999999");
@@ -1775,7 +1775,7 @@ console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）
   check("记一步的表单里有阶段下拉", !!sel);
   sel.value = "已联系快递";     // 跟第 7 节同一套阶段名（选项来自默认流程）
 
-  /* 先在「记一步」的表单里选两张图 —— 这一步提交前不该进图床 */
+  /* 先在「记一步」的表单里选两张图 —— 这一步提交前不该进多媒体文件 */
   const g1 = new win.File([new Uint8Array([137, 80, 78, 71])], "补发单.png", { type: "image/png" });
   const g2 = new win.File([new Uint8Array([137, 80, 78, 71])], "聊天记录.png", { type: "image/png" });
   pickFiles(doc, win, "dFlowFile", [g1, g2]);
@@ -1796,8 +1796,8 @@ console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）
   check("两张图都挂在这一步上（step_uid = 那一步的 u）",
     mine.length === 2 && mine.every((r) => r.step_uid === sid),
     JSON.stringify(mine.map((r) => r.step_uid)) + " vs " + sid);
-  check("图床里也存下了这两张", gallery.length === gBefore + 2, String(gallery.length - gBefore));
-  check("图床标题带上单号和阶段名（翻图床时认得出）",
+  check("多媒体文件里也存下了这两张", gallery.length === gBefore + 2, String(gallery.length - gBefore));
+  check("多媒体文件标题带上单号和阶段名（翻多媒体文件时认得出）",
     /异常单 261022-888888888888 附图 · /.test(gallery[gBefore]?.title || ""),
     gallery[gBefore]?.title);
 
@@ -1831,7 +1831,7 @@ console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）
     imgStore.filter((r) => r.ticket_id === row.id).every((r) => r.step_uid === sid),
     JSON.stringify(imgStore.filter((r) => r.ticket_id === row.id).map((r) => r.step_uid)));
 
-  /* 删掉这一步：名下图的关联一起清（原图留在图床） */
+  /* 删掉这一步：名下图的关联一起清（原图留在多媒体文件） */
   doc.querySelector('#flowTl [data-delflow="0"]').click();
   await sleep(100);
   check("删步骤的确认框说明它的图只解除关联",
@@ -1843,7 +1843,7 @@ console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）
   check("删掉这一步 → 它名下的图关联也清了",
     imgStore.filter((r) => r.ticket_id === row.id).length === 0,
     String(imgStore.filter((r) => r.ticket_id === row.id).length));
-  check("图床里的原图一张没删", gallery.length === gKeep, gallery.length + " vs " + gKeep);
+  check("多媒体文件里的原图一张没删", gallery.length === gKeep, gallery.length + " vs " + gKeep);
 
   /* 详情页右上「添加」走的是另一个文件框（dImgFile）—— 和登记页 / 记一步是各自独立的
      一段 onchange，都得单独验一遍「选完真的会动」（同一个坑曾四处都在：清 value 把
@@ -1852,7 +1852,7 @@ console.log("\n12. 状态进度也能附图（v1.10.0：图挂在某一步上）
   const wholeBefore = imgStore.length;
   pickFiles(doc, win, "dImgFile", [g4]);
   await waitFor(() => imgStore.length === wholeBefore + 1, 6000);
-  check("详情页「添加」选一张 → 真的存进图床并挂上了", imgStore.length === wholeBefore + 1,
+  check("详情页「添加」选一张 → 真的存进多媒体文件并挂上了", imgStore.length === wholeBefore + 1,
     imgStore.length + " vs " + wholeBefore);
   check("这张是**整单图**（没有 step_uid）",
     !imgStore[imgStore.length - 1]?.step_uid,
@@ -2238,7 +2238,7 @@ console.log("\n13e. 选项自己的颜色，在登记页 / 筛选 / 查看页都
 
 console.log("\n14. 缩略图这条链路（宿主回空串时工具自己出图）");
 {
-  /* 图床里那张是工具自己压的：宿主 gallery.put 现在回的就是空 thumb */
+  /* 多媒体文件里那张是工具自己压的：宿主 gallery.put 现在回的就是空 thumb */
   const mine = imgStore.filter((r) => r.ticket_id === "legacy-ticket-1");
   check("预置的老行已被补上缩略图", mine.length === 1 && /^data:image\//.test(mine[0].thumb || ""),
     JSON.stringify(mine.map((r) => (r.thumb || "").slice(0, 24))));
@@ -2313,8 +2313,8 @@ console.log("\n15. 备份与恢复：导出一个文件，再导回来（v1.19.0
   let bak2 = null;
   try { bak2 = JSON.parse(await lastBlob.text()); } catch (e) { bak2 = null; }
   const withOrig = bak2 ? bak2.images.filter((r) => r.original).length : 0;
-  check("勾了原图，图床里的图真的进了文件", withOrig > 0, String(withOrig));
-  check("原图是 data URL（导回来能直接往图床塞）",
+  check("勾了原图，多媒体文件里的图真的进了文件", withOrig > 0, String(withOrig));
+  check("原图是 data URL（导回来能直接往多媒体文件塞）",
     !!bak2 && bak2.images.every((r) => !r.original || /^data:image\//.test(r.original)));
   doc.getElementById("bakOriginals").checked = false;
 

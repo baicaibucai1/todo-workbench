@@ -27,14 +27,14 @@
  * ------------------------------------------------------------------
  * gallery.* —— 一次**有意识的边界放宽**，理由写在这里备查
  * ------------------------------------------------------------------
- * 图床是全局资源，不是某个工具的私有数据，所以 gallery.* 打破了
- * "工具只能碰自己的东西"那条线：任何工具都能列出图床、读一条图、往里写。
+ * 多媒体文件是全局资源，不是某个工具的私有数据，所以 gallery.* 打破了
+ * "工具只能碰自己的东西"那条线：任何工具都能列出多媒体文件、读一条图、往里写。
  *
  * 为什么接受这个放宽：
- *   1. 需求本身如此。「图片裁剪/尺码表的产物默认进图床、AI 生成的参考图
- *      直接从图床挑」—— 这三件事缺了跨工具访问就都做不成。
+ *   1. 需求本身如此。「图片裁剪/尺码表的产物默认进多媒体文件、AI 生成的参考图
+ *      直接从多媒体文件挑」—— 这三件事缺了跨工具访问就都做不成。
  *   2. 工具是**用户自己装进来的** HTML，本来就能跑任意脚本。
- *      把图床挡在外面并不会让恶意工具变安全，只会让正常工具写不出东西。
+ *      把多媒体文件挡在外面并不会让恶意工具变安全，只会让正常工具写不出东西。
  *   3. 放宽的部分仍然是**受限**的：只能碰媒体，只能通过 id 索引
  *      （拿不到仓库路径，也就无从遍历文件系统），写入的大小有上限，
  *      而且**写入方身份由宿主盖戳**（见下）。
@@ -287,7 +287,7 @@ const KV_KEY_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
 const KV_VALUE_MAX = 512 * 1024;
 
 /**
- * 经桥读一条图床原图时的大小上限。
+ * 经桥读一条多媒体文件原图时的大小上限。
  *
  * 比仓库本身的图片上限（20 MB）更严，因为这条路上多了一道
  * **postMessage 序列化**：20 MB 的 PNG 转成 base64 是约 27 MB 的字符串，
@@ -296,6 +296,8 @@ const KV_VALUE_MAX = 512 * 1024;
  * 超了就明确报错让用户换一张小的，而不是把应用拖垮。
  */
 const GALLERY_READ_MAX = 10 * 1024 * 1024;
+/** 音频的读取上限。base64 之后约 40 MB，postMessage 还扛得住 */
+const GALLERY_AUDIO_READ_MAX = 30 * 1024 * 1024;
 
 /** gallery.list 一次最多返回多少条 */
 const GALLERY_LIST_MAX = 200;
@@ -479,11 +481,11 @@ interface ToolRequest {
     prompt?: string;
     note?: string;
     /**
-     * gallery.put：内容已在图床里时复用已有记录，不再插一条。
+     * gallery.put：内容已在多媒体文件里时复用已有记录，不再插一条。
      *
      * 专为「工具的产出默认留一份」这条规则准备 —— 自动存档是替用户保管的，
-     * 一次导出可能产生十几张图，不去重的话图床会被同一张图刷屏。
-     * 用户**亲手点**存图床时不要传：他要的就是"再留一份"。
+     * 一次导出可能产生十几张图，不去重的话多媒体文件会被同一张图刷屏。
+     * 用户**亲手点**存多媒体文件时不要传：他要的就是"再留一份"。
      */
     dedupe?: boolean;
     /* task.remind —— 工具代订提醒的参数 */
@@ -559,14 +561,14 @@ export interface ToolContext {
   theme: "light" | "dark";
   runtime: "desktop" | "browser";
   /**
-   * 宿主此刻是否为**这个工具**开放图床通道（gallery.*）。
+   * 宿主此刻是否为**这个工具**开放多媒体文件通道（gallery.*）。
    *
-   * 现在是会变的（以前恒为 true）：图床已经改成选装模块，
+   * 现在是会变的（以前恒为 true）：多媒体文件已经改成选装模块，
    * 它关着的时候这儿就是 false。判据有两层 —— 工具在 manifest 里申请过，
    * 并且提供这个能力的模块开着。
    *
-   * 它存在的理由仍然成立：**工具与宿主分开**。用户完全可能在宿主没有图床
-   * （或图床关着）的情况下装了一个会调 gallery.* 的工具，没有这个标记的话
+   * 它存在的理由仍然成立：**工具与宿主分开**。用户完全可能在宿主没有多媒体文件
+   * （或多媒体文件关着）的情况下装了一个会调 gallery.* 的工具，没有这个标记的话
    * 那种情况只会表现为"点了没反应"或一句含糊的"不支持的操作"。
    * 工具据此把入口置灰、把产物改成下载到本地。
    */
@@ -747,7 +749,7 @@ export function buildContext(
     schemaVersion: info.schemaVersion,
     theme: currentTheme(),
     runtime: isTauri() ? "desktop" : "browser",
-    // 图床是**申请来的**：manifest 里写过、且那个模块开着，才是 true
+    // 多媒体文件是**申请来的**：manifest 里写过、且那个模块开着，才是 true
     gallery: capabilityState(settings, toolId, "gallery") === "on",
     data: true,
     link: true,
@@ -767,12 +769,12 @@ function readKey(raw: unknown): string {
 }
 
 /**
- * 内置工具 → 图床来源标记。
+ * 内置工具 → 多媒体文件来源标记。
  *
  * **origin 一律由宿主按 tool_id 推断，绝不接受工具传来的值** ——
  * 这是 provenance（产物出处）能不能信的关键。若允许工具自报，
  * 任何一个工具都能把产物伪装成"AI 生成"（那样会带着提示词一起显示），
- * 而"这条图是谁放进来的"正是排查图床问题时唯一可靠的线索。
+ * 而"这条图是谁放进来的"正是排查多媒体文件问题时唯一可靠的线索。
  *
  * 不认识的自定义工具落到 manual —— 说"用户手动导入的"是诚实的，
  * 因为我们确实不认识它。
@@ -781,7 +783,7 @@ const TOOL_ORIGIN: Record<string, ImagebedOrigin> = {
   "ai-gen": "ai-gen",
   "image-crop": "image-crop",
   "size-chart": "size-chart",
-  // 订单附图单独一档：图床里能只筛出这批「证据图」，
+  // 订单附图单独一档：多媒体文件里能只筛出这批「证据图」，
   // 而不是跟着几十张手动素材混在一起
   "abnormal-ticket": "abnormal-ticket",
   // 便签贴的图（2026-11-02 补）：以前没这一档，便签上传的图全落进「手动导入」，
@@ -801,7 +803,7 @@ function originForTool(toolId: string): ImagebedOrigin {
  * 也就不需要失效逻辑。
  *
  * 仍然设上限并按插入顺序淘汰：一张 320px 的 JPEG 约 20 KB，
- * 300 张约 6 MB，是能接受的上限；不设的话，用户翻一个大图床
+ * 300 张约 6 MB，是能接受的上限；不设的话，用户翻一个大多媒体文件
  * 就能让宿主内存一直涨。
  */
 const thumbCache = new Map<string, string>();
@@ -814,7 +816,7 @@ function cachedThumb(relPath: string): string | undefined {
 function rememberThumb(relPath: string, thumb: string): void {
   if (thumbCache.size >= THUMB_CACHE_MAX) {
     // Map 的迭代顺序就是插入顺序，删最早那个即可（FIFO 足够，
-    // 这里不需要真正的 LRU —— 图床浏览是顺序翻的，不是随机访问）
+    // 这里不需要真正的 LRU —— 多媒体文件浏览是顺序翻的，不是随机访问）
     const oldest = thumbCache.keys().next().value;
     if (oldest !== undefined) thumbCache.delete(oldest);
   }
@@ -822,7 +824,7 @@ function rememberThumb(relPath: string, thumb: string): void {
 }
 
 
-/** 把图床条目转成给工具看的形状。**不含仓库路径** —— 工具拿不到路径就无从越界。 */
+/** 把多媒体文件条目转成给工具看的形状。**不含仓库路径** —— 工具拿不到路径就无从越界。 */
 interface ToolImagebedItem {
   id: string;
   title: string;
@@ -831,14 +833,21 @@ interface ToolImagebedItem {
   width: number | null;
   height: number | null;
   size: number | null;
+  /**
+   * 真实 MIME。工具要靠它选播放器 / 判断能不能放进 <img>：
+   * 只给 kind 的话，"audio/mpeg 还是 audio/wav" 这种差别工具无从知道。
+   */
+  mime: string;
+  /** 音视频时长（毫秒），图片是 null。工具拿它显示 3:07，省得自己解容器 */
+  durationMs: number | null;
   createdAt: string;
   prompt: string;
   thumb: string;
   /**
-   * 这一份内容图床里本来就有（`dedupe` 命中），本次没有新建记录。
+   * 这一份内容多媒体文件里本来就有（`dedupe` 命中），本次没有新建记录。
    *
-   * 工具据此把提示语从"已存进图床"换成"图床里已有这一份" ——
-   * 自动存档是静默发生的，用户没点过保存却看到图床条数没变，
+   * 工具据此把提示语从"已存进多媒体文件"换成"多媒体文件里已有这一份" ——
+   * 自动存档是静默发生的，用户没点过保存却看到多媒体文件条数没变，
    * 不给这句话就会以为存档坏了。
    */
   dup: boolean;
@@ -869,6 +878,8 @@ async function toToolItem(item: ImagebedItem): Promise<ToolImagebedItem> {
     width: item.width,
     height: item.height,
     size: item.size,
+    mime: item.mime,
+    durationMs: item.durationMs,
     createdAt: item.createdAt,
     prompt: item.prompt,
     thumb,
@@ -896,7 +907,7 @@ export function createToolBridge(
     peers?: () => ToolLinkMeta[];
     /**
      * 当前设置（能力门要用）。同样是惰性的：每次判断现取，
-     * 否则用户在设置里打开图床之后，已经挂着的工具要重启才会看到。
+     * 否则用户在设置里打开多媒体文件之后，已经挂着的工具要重启才会看到。
      */
     getSettings?: () => Record<string, string>;
     /**
@@ -917,7 +928,7 @@ export function createToolBridge(
    * （`http://asset.localhost/C%3A%5C…%5Cindex.html`），而宿主页面在
    * `http://tauri.localhost` —— 两者不同源。postMessage 的 targetOrigin 不匹配时
    * 浏览器把整条消息**静默丢弃**：不报错、不告警，宿主以为发了、工具以为没人理。
-   * 表现是所有桥操作全部超时（工具 KV 写不进、图床存不进），而同样的代码在
+   * 表现是所有桥操作全部超时（工具 KV 写不进、多媒体文件存不进），而同样的代码在
    * dev 下（工具与宿主同源）全绿 —— 所以只能靠这里写对，测不出来。
    *
    * 取值顺序：收到工具消息后按 `e.origin` 收紧（最准）> 首帧用 `"*"`。
@@ -1440,28 +1451,28 @@ export function createToolBridge(
         return reply(id, true, { tool: target, delivered: true });
       }
 
-      /* ---------------- 图床 ----------------
+      /* ---------------- 多媒体文件 ----------------
        * 安全性说明见文件头「gallery.* —— 一次有意识的边界放宽」。
        * 三处共同点：工具只能传 id / 内容，**永远传不了路径**。 */
 
-      // 能力门：图床是**申请来的**服务，不是工具装上了就自动有的。
+      // 能力门：多媒体文件是**申请来的**服务，不是工具装上了就自动有的。
       // 回绝不抛异常而是给一句有方向的错 —— 工具要能据此降级
       // （把产物改成下载到本地），而不是弹一个"失败"了事。
       // 三态而不是布尔，是因为工具作者需要知道该去改自己还是去开模块。
       if (op === "gallery.list" || op === "gallery.get" || op === "gallery.put") {
         const state = capabilityState(currentSettings(), toolId, "gallery");
         if (state !== "on") {
-          return reply(id, false, `图床通道不可用：${capabilityError(state, "gallery")}`);
+          return reply(id, false, `多媒体文件通道不可用：${capabilityError(state, "gallery")}`);
         }
       }
 
       if (op === "gallery.list") {
         const rawKind = payload?.kind;
         const kind: ImagebedKind | "all" =
-          rawKind === "image" || rawKind === "video" ? rawKind : "all";
+          rawKind === "image" || rawKind === "video" || rawKind === "audio" ? rawKind : "all";
 
         // 夹在 1..GALLERY_LIST_MAX 之间：不限的话，工具传个 999999
-        // 就意味着宿主要把一整个图床（连缩略图）全生成出来再塞进一条消息
+        // 就意味着宿主要把一整个多媒体文件（连缩略图）全生成出来再塞进一条消息
         const wanted = Math.floor(Number(payload?.limit) || GALLERY_LIST_DEFAULT);
         const limit = Math.min(GALLERY_LIST_MAX, Math.max(1, wanted));
 
@@ -1472,8 +1483,8 @@ export function createToolBridge(
         });
         const shaped: ToolImagebedItem[] = [];
         // 串行而不是 Promise.all：一次并行几十张图的解码会把主线程压满，
-        // 界面上表现为"点了图床之后整个工作台卡一下"。串行多花的时间
-        // 被缓存摊掉了（同一个图床第二次打开直接命中）
+        // 界面上表现为"点了多媒体文件之后整个工作台卡一下"。串行多花的时间
+        // 被缓存摊掉了（同一个多媒体文件第二次打开直接命中）
         for (const it of items) shaped.push(await toToolItem(it));
 
         return reply(id, true, { items: shaped, limit, count: shaped.length });
@@ -1484,9 +1495,13 @@ export function createToolBridge(
         if (typeof gid !== "string" || !gid) return reply(id, false, "缺少 id 参数");
 
         const item = await getImagebedItem(gid);
-        if (!item) return reply(id, false, "这条记录不在图床里（可能已被删除）");
+        if (!item) return reply(id, false, "这条记录不在多媒体文件里（可能已被删除）");
 
-        const { dataUrl, mime } = await readImagebedDataUrl(item, GALLERY_READ_MAX);
+        // 音频普遍比图大：10 MB 只够一首 128kbps 的 10 分钟歌，
+        // 一段会议录音就会被挡回去。给音频单独放宽到 30 MB，
+        // 视频仍然不放开（200 MB 走 postMessage 会直接把宿主卡死）
+        const readMax = item.kind === "audio" ? GALLERY_AUDIO_READ_MAX : GALLERY_READ_MAX;
+        const { dataUrl, mime } = await readImagebedDataUrl(item, readMax);
         return reply(id, true, {
           id: item.id,
           title: item.title,
@@ -1529,7 +1544,7 @@ export function createToolBridge(
           dedupe: payload?.dedupe === true,
         });
 
-        // 图床界面若正开着，让它自己刷新（见 lib/imagebed.ts 的 IMAGEBED_CHANGED）
+        // 多媒体文件界面若正开着，让它自己刷新（见 lib/imagebed.ts 的 IMAGEBED_CHANGED）
         notifyImagebedChanged();
         return reply(id, true, await toToolItem(item));
       }

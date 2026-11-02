@@ -1697,9 +1697,9 @@ section("23. 特殊单号：时效、相关信息与专属视图");
     backup.workOrders.some((o) => o.id === spCourierId && o.courier === "yt"));
 }
 
-/* ---------- 24. 图床（数据层 + 跨表引用计数） ---------- */
+/* ---------- 24. 多媒体文件（数据层 + 跨表引用计数） ---------- */
 
-section("24. 图床");
+section("24. 多媒体文件");
 
 {
   const g = await import("../src/lib/imagebed.ts");
@@ -1728,7 +1728,7 @@ section("24. 图床");
     return (h >>> 0).toString(16).padStart(8, "0");
   };
   // 真实仓库按**内容**判类型（magic bytes），替身只能按后缀装一下。
-  // 这一步不能省：图床的 kind 是拿落盘后的 mime **再判一次**的，
+  // 这一步不能省：多媒体文件的 kind 是拿落盘后的 mime **再判一次**的，
   // 替身永远报 image/png 的话，视频类目就永远测不到。
   const mimeFor = (name = "") =>
     /\.mp4$/i.test(name) ? "video/mp4" : (/\.webm$/i.test(name) ? "video/webm" : "image/png");
@@ -1769,7 +1769,7 @@ section("24. 图床");
 
   /* --- 写入：先落文件、再写元数据 --- */
   const inImagebed = await repo.fetchTasks({ view: "imagebed" });
-  check("图床视图不会把待办捞进来（switch 的默认分支会返回全部）",
+  check("多媒体文件视图不会把待办捞进来（switch 的默认分支会返回全部）",
     Array.isArray(inImagebed) && inImagebed.length === 0, String(inImagebed.length));
 
   const imagebedCount = async () => (await repo.fetchCounts()).imagebed;
@@ -1786,7 +1786,7 @@ section("24. 图床");
   check("条目拿到了仓库相对路径", String(gImg.relPath).startsWith("2026-09/"), gImg.relPath);
   check("体积/指纹来自仓库而不是调用方", gImg.size > 0 && !!gImg.hash, `${gImg.size} / ${gImg.hash}`);
   check("空标题时用文件名兜底", gImg.title === "产品主图.png", gImg.title);
-  check("图床计数加一", (await imagebedCount()) === beforeWrite + 1);
+  check("多媒体文件计数加一", (await imagebedCount()) === beforeWrite + 1);
 
   const gVid = await g.addToImagebed({
     url: "https://a.com/clip.mp4", title: "商品视频", origin: "manual", prompt: "秋冬外套",
@@ -1846,15 +1846,15 @@ section("24. 图床");
     (await imagebedCount()) === beforeWrite + 3, String(await imagebedCount()));
   check("重复删除返回 null（记录已不在了）", (await g.deleteImagebedItem(gChart.id)) === null);
 
-  // 最关键的一条：同一份字节同时被流程任务附件和图床引用时，删图床**不能删文件**
+  // 最关键的一条：同一份字节同时被流程任务附件和多媒体文件引用时，删多媒体文件**不能删文件**
   //
   // 注意路径的构成是 `<hash 前 8 位>-<名字>`，所以"同名 + 同内容"才指向同一个
   // 文件（这正是「同一张图被加进两张流程任务，磁盘上只有一份」成立的条件）。
   // 而**引用计数是按 hash 算的、且跨两张表** —— 下面刻意用相同的名字，
   // 好让路径也真的相同，把"按路径删就会误删"这条风险摆到台面上。
   const dupStore = await att.attachmentStore().putDataUrl("data:image/png;base64,SHARED", { name: "shared.png", maxBytes: 1e7 });
-  const dupFlow = await repo.createFlow("图床引用计数测试流程");
-  const dupOrder = await repo.createWorkOrder({ title: "和图床共用同一份文件", flowId: dupFlow.id });
+  const dupFlow = await repo.createFlow("多媒体文件引用计数测试流程");
+  const dupOrder = await repo.createWorkOrder({ title: "和多媒体文件共用同一份文件", flowId: dupFlow.id });
   await repo.createAttachment({
     woId: dupOrder.id, kind: "image", title: "共用图",
     relPath: dupStore.relPath, mime: dupStore.mime, size: dupStore.size, hash: dupStore.hash,
@@ -1871,17 +1871,17 @@ section("24. 图床");
 
   /* --- 备份 --- */
   const gBackup = await repo.exportBackup();
-  check("备份带上图床条目", Array.isArray(gBackup.imagebed) && gBackup.imagebed.length >= 3,
+  check("备份带上多媒体文件条目", Array.isArray(gBackup.imagebed) && gBackup.imagebed.length >= 3,
     String(gBackup.imagebed?.length));
 
-  /* --- 备份往返：图床不能"看起来备了、其实没备" ---
+  /* --- 备份往返：多媒体文件不能"看起来备了、其实没备" ---
      这是最后一段，所以可以放心清库重来（上面的断言都不再依赖旧数据）。 */
   const liveBefore = await imagebedCount();
   await repo.clearAllData();
-  check("清空后图床为空", (await imagebedCount()) === 0, String(await imagebedCount()));
+  check("清空后多媒体文件为空", (await imagebedCount()) === 0, String(await imagebedCount()));
   const restored = await repo.importBackup(gBackup);
-  check("导入返回条数（不含图床，保持既有契约）", typeof restored.lists === "number");
-  check("导入后图床条目数还原", (await imagebedCount()) === liveBefore,
+  check("导入返回条数（不含多媒体文件，保持既有契约）", typeof restored.lists === "number");
+  check("导入后多媒体文件条目数还原", (await imagebedCount()) === liveBefore,
     `${await imagebedCount()} vs ${liveBefore}`);
   const restoredAi = (await g.fetchImagebed({ origin: "ai-gen" }))[0];
   check("导入后关键字段没丢（来源 / 标题 / 仓库路径）",

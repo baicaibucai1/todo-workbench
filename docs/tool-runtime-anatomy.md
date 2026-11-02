@@ -193,14 +193,14 @@ const bridge = createToolBridge(tool.id, () => frameRef.current, {
 | 私有表 | `schema.info` / `row.count` / `row.select` / `row.insert` / `row.update` / `row.delete` | 结构化 CRUD，**不是 SQL** |
 | 任务 | `task.get` | 读当前待办（需 `task` 能力 + 注入上下文） |
 | 联动 | `tools.list` / `tools.open` / `tools.send` | 工具互通（详见第五节） |
-| 图床 | `gallery.list` / `gallery.get` / `gallery.put` | 共享媒体（需 `gallery` 能力） |
+| 多媒体文件 | `gallery.list` / `gallery.get` / `gallery.put` | 共享媒体（需 `gallery` 能力） |
 | 配置 | `config.image` | — |
 
 设计要点（toolBridge.ts 文件头）：
 
 - **值按列类型强校验**（integer 列传字符串直接拒）—— 不为防攻击，
   是为了让 SQLite（有类型亲和性会默默转）与浏览器内存库行为一致
-- `gallery.*` 是**一次有意识的边界放宽**：图床是全局资源，不是某工具私有数据。
+- `gallery.*` 是**一次有意识的边界放宽**：多媒体文件是全局资源，不是某工具私有数据。
   理由见 toolBridge.ts:36-52。仍守住三条：工具传 id 不传路径、
   `origin` 不接受工具传值（由 tool_id 映射，provenance 可信）、单条读取有字节上限
 
@@ -220,7 +220,7 @@ const bridge = createToolBridge(tool.id, () => frameRef.current, {
 - **没有 `link`** → `tools.*` **完全没有能力门**，任何工具都能调，`ctx.link` 恒为 `true`（toolBridge.ts:438）
 - `gallery.*` 有门（952-957），三态：`not-granted` / `unavailable` / `on`
 - `task.get` 有门（660-665）
-- **每次判断都现取设置**（ToolHost.tsx:159）—— 用户在设置里打开图床后，已挂着的工具应立刻能用
+- **每次判断都现取设置**（ToolHost.tsx:159）—— 用户在设置里打开多媒体文件后，已挂着的工具应立刻能用
 
 开关键 `ext.<id>.enabled`；`isEnabled` 缺键/空串按 `enabledByDefault`（registry.ts:252-258）。
 
@@ -287,7 +287,7 @@ CREATE TABLE IF NOT EXISTS core_tool_schema (
 
 `dbInspect.ts:190-191` 用它列出"已卸载但仍占着表"的工具。
 
-### 4.4 `core_imagebed_items` —— 图床（v9，migrations.ts:385-414）
+### 4.4 `core_imagebed_items` —— 多媒体文件（v9，migrations.ts:385-414）
 
 `gallery` 能力的物理落点，**跨工具共享**，是数据互通目前唯一跑通的公共介质。
 字段里有 `origin`（toolBridge.ts:509，记录写入方工具 id）。
@@ -341,7 +341,7 @@ CREATE TABLE IF NOT EXISTS core_tool_schema (
 - **跨工具实际用例：一个都没有。** 测试自己承认（tests/tool-database.mjs:291-292）
 - kitchen-sink 是唯一全链路样本（收+发都有），但**不进安装包、不出现在设置页**
 
-### 5.3 图床中转：能用，但是"拉模型"
+### 5.3 多媒体文件中转：能用，但是"拉模型"
 
 - A：`gallery.put` → 拿到 `id`
 - B：`gallery.list`（带 320px thumb）→ `gallery.get(id)` 拿 dataUrl
@@ -392,7 +392,7 @@ toolBridge.ts:289 / 1059-1060 定义，**全仓无调用点**；且拼的消息*
 - `tools.list` 只给 name/description，A 无从知道 B 接受什么格式
 
 **⑩ 宿主主动带数据拉起工具这条路不存在**（低）
-store.ts:132 注释说 `from = null` 表示宿主自己（比如"图床里用某工具打开"），
+store.ts:132 注释说 `from = null` 表示宿主自己（比如"多媒体文件里用某工具打开"），
 但全局 `openToolWithIntent` 只在 ToolHost.tsx:154 被调用，`ImagebedView.tsx` 里没有任何相关代码。
 助手侧 `open_tool`（agent/actions.ts:1210-1224）也**只能开、不能带数据**。
 
@@ -402,9 +402,9 @@ store.ts:132 注释说 `from = null` 表示宿主自己（比如"图床里用某
 
 | 工具 | bindState | 独立运行提示 | 宿主控件 | 独立态可用性 |
 |---|---|---|---|---|
-| `ai-gen` | ✅ `standalone` | ✅ 横幅 | ⚠️「从图床选」灰着 + 提示"先升级工作台"（**独立打开时没有工作台可升级，句错话**） | ✅ 直连服务商，配置在内存里（已明说） |
-| `image-crop` | ❌ 没写 | ✅ 状态条 | ❌ 四个图床按钮 `hidden` **失效**、照常露着 | ✅ 纯前端编辑器 |
-| `size-chart` | ❌ 没写 | ❌ 完全没有 | ❌「存进图床」`hidden` 失效、露着 | ✅ 纯前端生成器 |
+| `ai-gen` | ✅ `standalone` | ✅ 横幅 | ⚠️「从多媒体文件选」灰着 + 提示"先升级工作台"（**独立打开时没有工作台可升级，句错话**） | ✅ 直连服务商，配置在内存里（已明说） |
+| `image-crop` | ❌ 没写 | ✅ 状态条 | ❌ 四个多媒体文件按钮 `hidden` **失效**、照常露着 | ✅ 纯前端编辑器 |
+| `size-chart` | ❌ 没写 | ❌ 完全没有 | ❌「存进多媒体文件」`hidden` 失效、露着 | ✅ 纯前端生成器 |
 | `notes` | ❌ 没写 | ❌ 无 | — | ❌ 20 秒后报「读不到数据：宿主没有回应（row.select）」，**写不进去** |
 | `scratchpad` | ❌ 没写 | ⚠️ 永远停在「正在连接宿主…」 | — | ❌ **完全不能用**（数据层直接顶到 `row.*`） |
 

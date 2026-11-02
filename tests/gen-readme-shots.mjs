@@ -88,7 +88,7 @@ const nav = async (key) => {
   await page.waitForTimeout(600);
 };
 
-/** 图床默认关闭，而 README 里要截它的界面，所以先按真实界面打开它 */
+/** 多媒体文件默认关闭，而 README 里要截它的界面，所以先按真实界面打开它 */
 await enableModule(page, "imagebed");
 
 console.log("开始截图：");

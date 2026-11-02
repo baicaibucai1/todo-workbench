@@ -1,5 +1,5 @@
 /**
- * 图床 —— 工作台里所有图片/视频的共同落点。
+ * 多媒体文件 —— 工作台里所有图片/视频的共同落点。
  *
  * 设计取向（与工作台其余部分一致）：
  * - 取数只走 lib/imagebed.ts，组件不直接碰 db
@@ -16,14 +16,14 @@
  * 不会同时出现在两处（否则用户会怀疑自己删错了）。
  *
  * 与 AI 生成工具的联动是双向的，两边都落在这里：
- *   工具 → 图床：AI 出图后一键「存进图床」，产物落在本视图里
- *   图床 → 工具：AI 的参考图可直接从图床挑
- * 后者不需要本组件参与（工具在自己的界面里列图床），
+ *   工具 → 多媒体文件：AI 出图后一键「存进多媒体文件」，产物落在本视图里
+ *   多媒体文件 → 工具：AI 的参考图可直接从多媒体文件挑
+ * 后者不需要本组件参与（工具在自己的界面里列多媒体文件），
  * 但**前者需要一个刷新信号** —— 工具是 iframe，写库发生在宿主进程里，
  * 本组件不知道。所以宿主写入后广播 `workbench:gallery-changed`，这里监听它。
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Images,
   Plus,
@@ -47,6 +47,8 @@ import {
   FolderPlus,
   FolderInput,
   Tag,
+  Music,
+  AudioLines,
 } from "lucide-react";
 import { useStore } from "../store";
 import {
@@ -65,6 +67,7 @@ import {
   renameImagebedFolder,
   setImagebedFolder,
   setImagebedTags,
+  formatDuration,
   summarize,
   toolFolderKey,
   updateImagebedItem,
@@ -120,8 +123,8 @@ export default function ImagebedView() {
   /** 卡片上的「移到文件夹」浮层：固定定位，坐标按触发按钮算 */
   const [picker, setPicker] = useState<{ itemId: string; top: number; left: number } | null>(null);
 
-  // 侧边栏那个搜索框对图床同样管用 —— 用户在"全部"里搜东西，
-  // 切到图床却发现搜索词被无视，会以为搜索坏了
+  // 侧边栏那个搜索框对多媒体文件同样管用 —— 用户在"全部"里搜东西，
+  // 切到多媒体文件却发现搜索词被无视，会以为搜索坏了
   const keyword = (localSearch || globalSearch).trim();
 
   const load = useCallback(async () => {
@@ -143,7 +146,7 @@ export default function ImagebedView() {
     void load();
   }, [load]);
 
-  // 工具（iframe）往图床里写东西时刷新本视图，见文件头
+  // 工具（iframe）往多媒体文件里写东西时刷新本视图，见文件头
   useEffect(() => {
     const onChange = () => void load();
     window.addEventListener(IMAGEBED_CHANGED, onChange);
@@ -171,17 +174,19 @@ export default function ImagebedView() {
     const byTag = new Map<string, number>();
     let image = 0;
     let video = 0;
+    let audio = 0;
     for (const i of items) {
       const k = folderKeyOf(i);
       byFolder.set(k, (byFolder.get(k) ?? 0) + 1);
       for (const t of i.tags) byTag.set(t, (byTag.get(t) ?? 0) + 1);
       if (i.kind === "video") video++;
+      else if (i.kind === "audio") audio++;
       else image++;
     }
     const tags = Array.from(byTag.entries())
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh"));
-    return { byFolder, tags, image, video };
+    return { byFolder, tags, image, video, audio };
   }, [items]);
 
   /**
@@ -212,12 +217,49 @@ export default function ImagebedView() {
 
   const filtered = Boolean(keyword) || kind !== "all" || scope !== "all" || Boolean(tag);
 
+  /**
+   * 音/视频补时长：只对"还没有时长"的条目做一次。
+   *
+   * 串行而不是 Promise.all：一次并行解码十几段音频会把主线程压满；
+   * 而且这条链路只是"把卡片上的字变好看"，慢一点没人在意。
+   */
+  const probed = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const todo = items.filter(
+      (i) =>
+        (i.kind === "audio" || i.kind === "video") &&
+        i.durationMs == null &&
+        i.relPath &&
+        !probed.current.has(i.id),
+    );
+    if (!todo.length) return;
+    let alive = true;
+    void (async () => {
+      for (const it of todo) {
+        probed.current.add(it.id);
+        try {
+          const url = await attachmentStore().url(it.relPath as string);
+          const ms = await probeDuration(url, it.kind);
+          if (!alive || !ms) continue;
+          await updateImagebedItem(it.id, { durationMs: ms });
+          setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, durationMs: ms } : x)));
+        } catch {
+          // 读不到就算了（文件缺失 / 编码不支持），不打扰用户
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [items]);
+
   /* ---------------- 操作 ---------------- */
 
   const importLocal = async () => {
     setBusy(true);
     try {
-      const picked = await pickLocalMedia();
+      // 多媒体文件：图片 / 视频 / 音频都能收（壁纸那种场景仍然只给图）
+      const picked = await pickLocalMedia({ audio: true });
       if (!picked.length) return; // 用户取消，什么都不说才是对的
       // 正站在自建文件夹里导入 = 用户就是想把它们放进这个文件夹
       const target = scope.startsWith("folder:") ? scope.slice("folder:".length) : "";
@@ -250,12 +292,12 @@ export default function ImagebedView() {
     try {
       const rel = await deleteImagebedItem(item.id);
       // rel 非空表示"没有别人再引用这个内容了"，物理文件可以回收。
-      // 为 null 是正常情况（同一份字节被流程任务附件或另一条图床记录用着），
+      // 为 null 是正常情况（同一份字节被流程任务附件或另一条多媒体文件记录用着），
       // 这时只删记录、留文件 —— 绝不能想当然地把文件删掉。
       if (rel) await attachmentStore().remove(rel);
       if (previewId === item.id) setPreviewId(null);
       await load();
-      setNotice({ kind: "ok", text: rel ? "已从图床移除" : "已从图床移除（文件仍被其它记录引用，保留）" });
+      setNotice({ kind: "ok", text: rel ? "已从多媒体文件移除" : "已从多媒体文件移除（文件仍被其它记录引用，保留）" });
     } catch (e) {
       setNotice({ kind: "err", text: errorText(e) });
     } finally {
@@ -378,7 +420,7 @@ export default function ImagebedView() {
       <div className="shrink-0 border-b border-line px-5 pt-3 pb-2.5">
         <div className="flex items-center gap-2">
           <Images size={16} className="text-fg-dim" />
-          <span className="text-[15px] font-semibold text-fg">图床</span>
+          <span className="text-[15px] font-semibold text-fg">多媒体文件</span>
           <span
             className="rounded-full bg-chip px-1.5 py-px text-[11px] text-fg-3"
             data-gallery-count={visible.length}
@@ -393,7 +435,7 @@ export default function ImagebedView() {
             className="flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-50"
           >
             <Plus size={13} />
-            导入图片 / 视频
+            导入文件
           </button>
         </div>
 
@@ -406,6 +448,9 @@ export default function ImagebedView() {
           </Chip>
           <Chip active={kind === "video"} onClick={() => setKind("video")} navKey="video">
             视频 {counts.video}
+          </Chip>
+          <Chip active={kind === "audio"} onClick={() => setKind("audio")} navKey="audio">
+            音频 {counts.audio}
           </Chip>
 
           {tag && (
@@ -470,10 +515,10 @@ export default function ImagebedView() {
 
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-4">
           {loading ? (
-            <p className="text-[13px] text-fg-dim">正在读取图床…</p>
+            <p className="text-[13px] text-fg-dim">正在读取多媒体文件…</p>
           ) : loadError ? (
             <div className="rounded-lg border border-line bg-card p-4 text-[13px] text-danger">
-              读图床失败：{loadError}
+              读多媒体文件失败：{loadError}
             </div>
           ) : visible.length === 0 ? (
             <EmptyState
@@ -588,7 +633,7 @@ function Sidebar({
         <SideRow
           active={scope === "all"}
           icon={Layers}
-          label="全部图片"
+          label="全部素材"
           count={total}
           onClick={() => onScope("all")}
           navKey="all"
@@ -983,25 +1028,54 @@ function EmptyState({
       <div className="max-w-[380px]">
         <Images size={28} className="mx-auto mb-3 text-fg-dim" />
         <p className="text-[13px] text-fg-2">
-          {filtered ? "这个分类里没有图片" : "图床还是空的"}
+          {filtered ? "这个分类里没有内容" : "多媒体文件还是空的"}
         </p>
         <p className="mt-1.5 text-[12px] leading-relaxed text-fg-dim">
           {filtered
             ? "换个文件夹、标签或清空搜索词试试。"
-            : "AI 生成的结果、图片编辑的导出都会落到这里；也可以直接把本机图片拖进来。"}
+            : "AI 生成的结果、图片编辑的导出都会落到这里；本机的图片、视频、音频也可以直接拖进来。"}
         </p>
         {!filtered && (
           <button
             onClick={onImport}
             className="mt-3 rounded-md border border-line bg-card px-3 py-1.5 text-[12px] text-fg-2 hover:bg-hover"
           >
-            导入图片 / 视频
+            导入文件
           </button>
         )}
         {repoRoot && <p className="mt-3 break-all text-[11px] text-fg-dim">{repoRoot}</p>}
       </div>
     </div>
   );
+}
+
+/**
+ * 读一段音/视频的时长（毫秒）。
+ *
+ * 为什么要在宿主侧读：上传时工具只给字节，容器里的时长得解码才知道；
+ * 而卡片上"3:07"比"音频"有用得多。读不到就返回 null（不阻塞、不报错）——
+ * 文件被手动清掉、编码奇怪都是真实会发生的，界面不该因此红一片。
+ */
+function probeDuration(url: string, kind: ImagebedKind): Promise<number | null> {
+  return new Promise((resolve) => {
+    const el = document.createElement(kind === "audio" ? "audio" : "video");
+    el.preload = "metadata";
+    let done = false;
+    const finish = (v: number | null) => {
+      if (done) return;
+      done = true;
+      el.removeAttribute("src");
+      resolve(v);
+    };
+    el.onloadedmetadata = () => {
+      const d = (el as HTMLMediaElement).duration;
+      finish(Number.isFinite(d) && d > 0 ? Math.round(d * 1000) : null);
+    };
+    el.onerror = () => finish(null);
+    // 兜底：某些容器在 WebView2 里永远不触发 loadedmetadata，别让队列卡死
+    window.setTimeout(() => finish(null), 4000);
+    el.src = url;
+  });
 }
 
 /**
@@ -1069,7 +1143,14 @@ function Card({
         className="block aspect-square w-full overflow-hidden bg-panel"
         title={item.title}
       >
-        {url ? (
+        {item.kind === "audio" ? (
+          // 音频没有画面：画一块"声波"占位，附时长。不渲染 <audio> ——
+          // 一页几十个 <audio preload=metadata> 会同时去读文件，白白拖慢滚动
+          <span className="flex size-full flex-col items-center justify-center gap-1.5 bg-panel text-fg-dim">
+            <Music size={22} />
+            <span className="text-[11px]">{formatDuration(item.durationMs) || "音频"}</span>
+          </span>
+        ) : url ? (
           item.kind === "video" ? (
             <video src={url} preload="metadata" muted className="size-full object-cover" />
           ) : (
@@ -1112,7 +1193,7 @@ function Card({
           <Pencil size={11} />
         </button>
         <button
-          title="从图床移除"
+          title="从多媒体文件移除"
           onClick={onRemove}
           data-gallery-remove={item.id}
           className="grid size-6 place-items-center rounded bg-black/55 text-white hover:bg-danger"
@@ -1235,7 +1316,23 @@ function Lightbox({
     >
       {/* 大图区 */}
       <div className="relative flex min-w-0 flex-1 items-center justify-center p-4">
-        {url ? (
+        {item.kind === "audio" ? (
+          <div
+            className="flex w-[340px] max-w-full flex-col items-center gap-3 rounded-xl border border-white/15 bg-white/10 px-6 py-7"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <AudioLines size={40} className="text-white/80" />
+            <p className="max-w-full truncate text-[13px] text-white/85" title={item.title}>
+              {item.title}
+            </p>
+            {url ? (
+              <audio src={url} controls autoPlay className="w-full" />
+            ) : (
+              <p className="text-[12px] text-white/70">文件不在仓库里（可能被手动清理过）</p>
+            )}
+            <p className="text-[11px] text-white/55">{summarize(item)}</p>
+          </div>
+        ) : url ? (
           item.kind === "video" ? (
             <video
               src={url}
@@ -1455,7 +1552,7 @@ function Lightbox({
               className="flex w-full items-center justify-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-[12px] text-fg-2 hover:bg-danger-soft hover:text-danger"
             >
               <Trash2 size={12} />
-              从图床移除
+              从多媒体文件移除
             </button>
           </div>
         </div>

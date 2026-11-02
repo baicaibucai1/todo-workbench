@@ -102,7 +102,7 @@ export default function Sidebar() {
     all: number;
     /** 未完结流程任务数，给「流程任务」入口当角标 */
     orders: number;
-    /** 图床条目总数（不是"未完结"，图床没有完成态） */
+    /** 多媒体文件条目总数（不是"未完结"，多媒体文件没有完成态） */
     imagebed: number;
     byList: Record<string, number>;
   }>({ myday: 0, all: 0, orders: 0, imagebed: 0, byList: {} });
@@ -136,7 +136,7 @@ export default function Sidebar() {
     if (key === "myday") return counts.myday;
     if (key === "all") return counts.all;
     if (key === "orders") return counts.orders;
-    // 图床是个例外：它没有"未完结"的概念，标的是总数 ——
+    // 多媒体文件是个例外：它没有"未完结"的概念，标的是总数 ——
     // 用户想知道的是"里面有多少素材"，而不是"还剩几件没处理"
     if (key === "imagebed") return counts.imagebed;
     return undefined;
@@ -159,7 +159,7 @@ export default function Sidebar() {
    * resolveSidebarOrder 算出来的结果与"各来源各排"逐行相同，也就是这个功能
    * 上线前的样子。排过之后才按他给的来。
    *
-   * ⚠️ **「位置」类入口（图床 / 工作区）不在这条线里**：它们固定在侧栏最底部、
+   * ⚠️ **「位置」类入口（多媒体文件 / 工作区）不在这条线里**：它们固定在侧栏最底部、
    * 挨着「设置」（见文件末尾那一块，以及 lib/sidebarOrder.ts 顶上的说明）。
    *
    * 补位规则、键前缀、脏数据怎么兜，全在 lib/sidebarOrder.ts。
@@ -501,13 +501,13 @@ export default function Sidebar() {
       <UrgentPanel />
 
       {/*
-        底部：图床这一类"可以去的地方"。
+        底部：多媒体文件这一类"可以去的地方"。
         它和上面的视图组不是一回事 —— 上半栏回答"看哪些任务"，
         这里回答"这个程序里还有什么地方可去"。
 
         ⚠️ **这一块不参与侧栏排序**（lib/sidebarOrder.ts）：它属于"位置"，
         贴在最底部与「设置」挨着是 2026-09-22 定下的取舍，
-        tests/browser.mjs 有一条断言盯着「图床紧挨在设置上面」。
+        tests/browser.mjs 有一条断言盯着「多媒体文件紧挨在设置上面」。
 
         AI 助手**不在这张单子里**：它是一扇浮层窗口，入口只有右下角那颗
         能拖动的球（见 AgentBall.tsx）。2026-09-23 用户要求把侧栏这一项去掉 ——

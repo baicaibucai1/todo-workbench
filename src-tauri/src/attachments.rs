@@ -171,6 +171,17 @@ fn ext_for_mime(mime: &str) -> &'static str {
         "video/quicktime" => "mov",
         "video/x-matroska" => "mkv",
         "video/x-msvideo" => "avi",
+        // 音频：多媒体文件（2026-11-02 起）允许配音 / 录音这类素材。
+        // 没有这几行时 audio/* 会落成 `.bin`，asset 协议按扩展名回 Content-Type，
+        // 于是 <audio> 拿到的是一串二进制 —— 表现为"文件在，但放不出声"。
+        "audio/mpeg" => "mp3",
+        "audio/mp3" => "mp3",
+        "audio/mp4" | "audio/x-m4a" => "m4a",
+        "audio/aac" => "aac",
+        "audio/wav" | "audio/x-wav" | "audio/wave" => "wav",
+        "audio/ogg" | "audio/opus" => "ogg",
+        "audio/webm" => "weba",
+        "audio/flac" | "audio/x-flac" => "flac",
         "application/pdf" => "pdf",
         _ => "bin",
     }
@@ -191,6 +202,16 @@ fn mime_for_ext(ext: &str) -> &'static str {
         "mov" => "video/quicktime",
         "mkv" => "video/x-matroska",
         "avi" => "video/x-msvideo",
+        // 与 ext_for_mime 一一对应（这两张表必须同进同退：一个是落盘命名，
+        // 一个是读取时的 Content-Type，缺一边就会出现"存得进、放不出"）
+        "mp3" => "audio/mpeg",
+        "m4a" => "audio/mp4",
+        "aac" => "audio/aac",
+        "wav" => "audio/wav",
+        "ogg" | "oga" => "audio/ogg",
+        "opus" => "audio/ogg",
+        "weba" => "audio/webm",
+        "flac" => "audio/flac",
         "pdf" => "application/pdf",
         "txt" | "md" | "log" => "text/plain",
         "csv" => "text/csv",

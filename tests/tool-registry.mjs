@@ -38,6 +38,7 @@ export const ALL_TOOL_IDS = [
   "abnormal-ticket",
   "image-crop",
   "scratchpad",
+  "template-video",
 ];
 
 /**
@@ -52,6 +53,7 @@ export const ENABLED_TOOL_IDS = [
   "abnormal-ticket",
   "image-crop",
   "scratchpad",
+  "template-video",
 ];
 
 /**
@@ -63,6 +65,7 @@ export const THEME_TOOLS = [
   ["image-crop", "图片编辑"],
   ["abnormal-ticket", "异常单号"],
   ["scratchpad", "便签"],
+  ["template-video", "模板视频"],
 ];
 
 /** 给断言用的期望值：侧栏工具数 / 设置页工具行数 */

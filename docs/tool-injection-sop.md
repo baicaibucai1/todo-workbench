@@ -189,7 +189,7 @@ zip 从网址来同样先看到包里有什么再确认。
 默认停用）。它已经从仓库里删了 —— 目的就是把工具区收成"只有真在用的两个"。
 
 - 要新写工具 → `npm run tool:new <id> --from abnormal-ticket`；或者 `--blank` 用最小骨架
-- 结构参考：`tools/abnormal-ticket`（自建表 + 图床 + WPS + `shell.open`、
+- 结构参考：`tools/abnormal-ticket`（自建表 + 多媒体文件 + WPS + `shell.open`、
   独立运行兜底都在里面）与 `tools/image-crop`（单文件重度交互 + 可选附属目录 `ai/`）
 - **别的 AI / 会话来读这个项目时，也以这两个为参考** —— 宿主状态机、主题跟随、
   数据层门面、独立运行兜底那四段的写法都在它们里面，不要另起一套

@@ -19,7 +19,7 @@
 | 域 | 上云? | 理由 |
 |---|---|---|
 | 工单（work_orders / wo_fields / wo_logs / wo_attachments） | ✅ | 分发的载体，多端协作的主战场 |
-| 图床（gallery_items） | ✅（P3） | 内容寻址，hash 天然是同步键，同步成本最低 |
+| 多媒体文件（gallery_items） | ✅（P3） | 内容寻址，hash 天然是同步键，同步成本最低 |
 | 待办（tasks / lists / steps / links） | ❌ 暂不 | 纯私人、量最大、`sort_order` 冲突最集中，收益最低 |
 | 配置（core_settings） | ❌ | 混了面板宽度这类设备级偏好，要先做归属分类 |
 
@@ -49,7 +49,7 @@
 
 - **`reqwest` 已经在依赖里**（Cargo.toml:31，`attachments.rs` 正在用它下载附件）→ 传输层不用装插件、不用改 CSP。
 - **ID 全客户端生成**（`crypto.randomUUID()` / gallery 的时间有序 ID）→ 跨端合并不会撞主键，**这个设计天然适合同步，别动它**。
-- **附件与图床共用同一个内容寻址仓库**，`hash` 是内容指纹 → 二进制同步直接拿 hash 当键，同内容自动跳过。
+- **附件与多媒体文件共用同一个内容寻址仓库**，`hash` 是内容指纹 → 二进制同步直接拿 hash 当键，同内容自动跳过。
 
 ---
 
@@ -99,7 +99,7 @@ Cargo.toml:25-35 有注释说明：reqwest / rustls / ring 的 feature 是**刻�
 
 **备注（可选加固）**：`deleted_at` 仍建议加，但它解决的是另一个问题 ——
 「删除必须顺手 bump `updated_at`」这条约定现在成立，却没有任何东西保证它一直成立
-（今天图床的 `deleteImagebedItem` 就已经坏了这条约定）。加了它，"删除"就是一件独立可查的事实。
+（今天多媒体文件的 `deleteImagebedItem` 就已经坏了这条约定）。加了它，"删除"就是一件独立可查的事实。
 建议放在 P3 顺手加，不单独占一个版本。
 
 ---
@@ -290,7 +290,7 @@ GET  /v1/blobs/:hash                                    -> 二进制
 | **P0 传输与身份** | 新增 `cloud.rs` / `cloud.ts`；改 `lib.rs`、`Settings.tsx`(NAV)、新增 `CloudSection.tsx`、`settings.ts`、`store.ts` | 桌面版能登录、`/v1/me` 返回用户、token 落 `$APPDATA/cloud.json`、**导出备份里搜不到 token**、demo 下分区提示"桌面版可用" |
 | **P1 分发工单** | `migrations.ts`(v10 只加 owner/assignee 两列)、`repo.ts`(读+兜底)、`types.ts`、`rows.ts`、`OrderDetail.tsx`、`OrderCreateDialog.tsx` | 能派单、目标端 pull 后出现在「派给我的」、**不改 `stage_id` 的现有路径**、特殊单号的时效仍由 `moveOrderToStage` 重算 |
 | **P2 工单域同步** | `migrations.ts`(补 updated_at + sync_state)、`repo.ts`+`imagebed.ts`(补留痕)、`sync.ts`、门禁脚本 | 两端工单/字段/日志一致；A 删 B 也能删；断网可用、联网追平 |
-| **P3 图床与附件** | blob 通道、按 hash 同步 | 图在另一台机器能打开；同内容不重复上传 |
+| **P3 多媒体文件与附件** | blob 通道、按 hash 同步 | 图在另一台机器能打开；同内容不重复上传 |
 | **P4 待办（另议）** | 需要给 `core_steps` 加 `deleted` 列（现在是硬删除） | 排序冲突方案先定 |
 
 **P0 与 P1 完全不碰同步**，可以独立交付、独立回滚。建议先做这两步。
@@ -299,11 +299,11 @@ GET  /v1/blobs/:hash                                    -> 二进制
 
 ## 9. 请你拍板的 6 件事
 
-1. **同步域**：接受"只同步工单 + 图床，待办不上云"吗？（§1.1）
+1. **同步域**：接受"只同步工单 + 多媒体文件，待办不上云"吗？（§1.1）
 2. **服务端栈**：PostgreSQL（推荐，多端并发写）还是先 SQLite 单进程起步？
 3. **登录方式**：邮箱+密码起步（推荐，桌面端做 OAuth 很别扭），还是直接上设备码？
 4. **冲突规则**：接受 LWW（时间戳大者胜）吗？工单有没有"绝不能被覆盖"的字段？（§6.2）
-5. **文件上云**：图床与附件的图片/视频要不要真的传到服务器？（带宽与存储成本，也是合规敏感项）
+5. **文件上云**：多媒体文件与附件的图片/视频要不要真的传到服务器？（带宽与存储成本，也是合规敏感项）
 6. **隐私**：原设计是「数据仅本机」。确认改成**默认关闭、用户主动开启**吗？
 
 ---

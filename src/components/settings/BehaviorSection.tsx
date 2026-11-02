@@ -112,7 +112,7 @@ export function BehaviorSection({
   const sidebarLists = useStore((s) => s.lists);
   const sidebarTools = useStore((s) => s.enabledTools);
   const navTasks = navItems(settings, "tasks");
-  // ⚠️ 「位置」类（图床 / 工作区）不在这里：它们固定在侧栏最底部，不参与排序
+  // ⚠️ 「位置」类（多媒体文件 / 工作区）不在这里：它们固定在侧栏最底部，不参与排序
   const sidebarLive: string[] = [
     ...navTasks.map((i) => `nav:${i.id}`),
     ...sidebarTools.map((t) => `tool:${t.id}`),

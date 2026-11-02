@@ -48,7 +48,7 @@ const FILTER = argv.find((a) => !a.startsWith("--")) ?? "";
 /**
  * 要抓的每一屏。
  *   kind=view    智能视图/清单：核对 h1 标题
- *   kind=gallery 图床：它没有 h1（头部是一行小标题 + 计数），单独核 data-gallery
+ *   kind=gallery 多媒体文件：它没有 h1（头部是一行小标题 + 计数），单独核 data-gallery
  *   kind=tool    工具：核对 iframe 真的挂了且载入了内容
  *   kind=modal   弹层：核对面板出现且标题正确
  */
@@ -57,7 +57,7 @@ const SCREENS = [
   { nav: "important", file: "02-important.png", kind: "view", title: "重要" },
   { nav: "all", file: "04-all.png", kind: "view", title: "全部" },
   { nav: "orders", file: "05-orders.png", kind: "view", title: "流程任务" },
-  { nav: "imagebed", file: "07-imagebed.png", kind: "imagebed", title: "图床" },
+  { nav: "imagebed", file: "07-imagebed.png", kind: "imagebed", title: "多媒体文件" },
   { nav: "tool:image-crop", file: "11-tool-image-crop.png", kind: "tool", id: "image-crop", name: "图片编辑" },
   { nav: "settings", file: "20-settings.png", kind: "modal", title: "设置" },
   // 设置里的第二个分屏：工具管理。`tab` 指定打开哪一个分区，
@@ -116,7 +116,7 @@ await page.goto(BASE, { waitUntil: "networkidle" });
 // （示例数据 + 默认流程 + 特殊单号），就得先把它清掉再重载。
 //
 // ⚠️ v20 起示例数据是**选装、默认关**：光清库会得到一个什么都没有的空壳，
-// 于是 40-mixed-list 那屏会"看不到流程任务行"、图床/特殊单号也无所指。
+// 于是 40-mixed-list 那屏会"看不到流程任务行"、多媒体文件/特殊单号也无所指。
 // 所以这里要用 _seed-sample-data.mjs —— 它清库之外还**把开关打开**，
 // 让应用自己把示例种回来（也正是新装用户打开开关后该看到的样子）。
 if (FRESH) {
@@ -132,7 +132,7 @@ if (FRESH) {
 await page.locator("aside").first().waitFor({ timeout: 15000 });
 await page.waitForTimeout(900);
 
-// 图床是**选装模块**（默认关），侧边栏里默认没有它的入口。
+// 多媒体文件是**选装模块**（默认关），侧边栏里默认没有它的入口。
 // 要截它那一屏就得先打开 —— 否则那一屏会安静地截成一片空白，
 // 而文件名还写着 imagebed，是那种看不出错的错。
 const wanted = new Set(
@@ -159,13 +159,13 @@ async function verify(s) {
     return null;
   }
 
-  // 图床屏：它的头部不是 h1（一行图标 + 「图床」+ 计数），
+  // 多媒体文件屏：它的头部不是 h1（一行图标 + 「多媒体文件」+ 计数），
   // 所以按 data-gallery 这个自有标记来判断，而不是硬凑一个标题选择器
   if (s.kind === "imagebed") {
     const root = page.locator("[data-gallery]").first();
-    if ((await root.count()) === 0) return "主区域没有 [data-gallery]（没切到图床）";
+    if ((await root.count()) === 0) return "主区域没有 [data-gallery]（没切到多媒体文件）";
     const txt = (await root.innerText()).trim();
-    if (!txt.includes("图床")) return `图床视图里没读到标题，实际开头：「${txt.slice(0, 40)}」`;
+    if (!txt.includes("多媒体文件")) return `多媒体文件视图里没读到标题，实际开头：「${txt.slice(0, 40)}」`;
     return null;
   }
 
@@ -190,7 +190,7 @@ async function verify(s) {
 }
 
 /*
- * 图床是"别人往里放东西"的地方，自己没有种子数据。
+ * 多媒体文件是"别人往里放东西"的地方，自己没有种子数据。
  * 不先放几张，抓出来的就是一个空面板 —— 看不出格子排布对不对、也看不出
  * 四种来源的徽标长什么样。这种截图等于没截。
  */
@@ -522,9 +522,9 @@ if (!wantKinds || wantKinds.includes("bg")) {
   await page.waitForTimeout(400);
 }
 
-/* ---------------- AI 生成 · 阿里云档位单价 与 图床联动 ---------------- */
+/* ---------------- AI 生成 · 阿里云档位单价 与 多媒体文件联动 ---------------- */
 /*
- * 这一段抓的是「价格有没有真的算出来」和「图床选择器长什么样」。
+ * 这一段抓的是「价格有没有真的算出来」和「多媒体文件选择器长什么样」。
  * 光看代码不算数：价格是**按模型算**的（同一家下 0.04 到 0.54 差十几倍），
  * 一个 show/hide 的先后顺序错了就会把它冲掉 —— 所以必须看渲染出来的文字。
  */
@@ -571,8 +571,8 @@ if (!wantKinds || wantKinds.includes("tool")) {
     console.log(`        换成 0.04 元档后：${cheap}`);
     if (cheap === aliyun.cost) problems.push("14-ai-gen-aliyun.png — 换档位后预估花费没变（价格没跟着模型走）");
 
-    // 图床选择器：先换到支持参考图的档（纯文生图档没有「从图床选」）
-    // 图床的内容在开场时已经种好了，这里直接打开就是有东西的状态
+    // 多媒体文件选择器：先换到支持参考图的档（纯文生图档没有「从多媒体文件选」）
+    // 多媒体文件的内容在开场时已经种好了，这里直接打开就是有东西的状态
     await f.fill("#imgModel", "wan2.6-image");
     await f.dispatchEvent("#imgModel", "input");
     await page.waitForTimeout(600);
@@ -581,7 +581,7 @@ if (!wantKinds || wantKinds.includes("tool")) {
       title: document.getElementById("btnRefFromImagebed").title,
     }));
     if (gate.disabled) {
-      problems.push(`15-ai-gen-gallery-pick.png — 「从图床选」被禁用了：${gate.title}`);
+      problems.push(`15-ai-gen-gallery-pick.png — 「从多媒体文件选」被禁用了：${gate.title}`);
     } else {
       await f.click("#btnRefFromImagebed");
       await page.waitForTimeout(1600);
@@ -592,7 +592,7 @@ if (!wantKinds || wantKinds.includes("tool")) {
       }));
       console.log(`        选择器：${picked.count}，${picked.tiles} 格`);
       if (!picked.on) problems.push("15-ai-gen-gallery-pick.png — 选择器没打开");
-      await shot("15-ai-gen-gallery-pick.png", `AI 生成 · 从图床选参考图（${picked.count}，${picked.tiles} 格）`);
+      await shot("15-ai-gen-gallery-pick.png", `AI 生成 · 从多媒体文件选参考图（${picked.count}，${picked.tiles} 格）`);
       await f.evaluate(() => window.closeImagebedPicker && window.closeImagebedPicker());
     }
     // 还原成默认服务商，免得后续别的脚本打开 ai-gen 时看到的是阿里云

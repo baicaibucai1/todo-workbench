@@ -1,12 +1,12 @@
 /**
- * 图床 —— 工作台里所有图片/视频的**共同落点**。
+ * 多媒体文件 —— 工作台里所有图片/视频的**共同落点**。
  *
  * ============================ 设计要点 ============================
  *
  * 1) 只有一张表，不是一个工具。
- *    「图床」的用法就是"一个地方存所有素材，谁都能往里放、谁都能从里面取"：
+ *    「多媒体文件」的用法就是"一个地方存所有素材，谁都能往里放、谁都能从里面取"：
  *    图片裁剪的产物、尺码表的成品、AI 生成的结果、用户自己导入的图，
- *    全都落到同一处；而 AI 生成的参考图必须能直接从图床里挑。
+ *    全都落到同一处；而 AI 生成的参考图必须能直接从多媒体文件里挑。
  *    做成 tools/gallery 就做不到 —— 工具在物理上拿不到别的工具的数据
  *    （见 toolBridge.ts 的安全边界），双向联动无从谈起。
  *
@@ -29,9 +29,9 @@ import {
   attachmentStore,
   fileNameFromUrl,
   formatBytes,
-  guessKindFromUrl,
-  kindFromMime,
-  SIZE_LIMIT,
+  MEDIA_SIZE_LIMIT,
+  mediaKindFromMime,
+  mediaKindFromUrl,
 } from "./attachments";
 import { refCountByHash } from "./repo";
 import type { ImagebedFolder, ImagebedItem, ImagebedKind, ImagebedOrigin } from "../types";
@@ -70,8 +70,8 @@ function toItem(r: RawImagebed): ImagebedItem {
     id: r.id,
     title: r.title,
     // 数据库里是裸字符串（SQLite 没有枚举）。认不出的一律当图片：
-    // 图床的界面按类型分栏，落到"图片"是最不容易让人找不到东西的兜底。
-    kind: r.kind === "video" ? "video" : "image",
+    // 多媒体文件的界面按类型分栏，落到"图片"是最不容易让人找不到东西的兜底。
+    kind: r.kind === "video" ? "video" : r.kind === "audio" ? "audio" : "image",
     relPath: r.rel_path,
     sourceUrl: r.source_url,
     mime: r.mime,
@@ -109,7 +109,7 @@ export interface ImagebedQuery {
 /**
  * 关键词匹配。大小写不敏感 —— 与 SQLite 的 LIKE 默认行为保持一致。
  *
- * 导出是因为图床界面现在把**全部条目取回来后在内存里筛**（要按文件夹、
+ * 导出是因为多媒体文件界面现在把**全部条目取回来后在内存里筛**（要按文件夹、
  * 标签、类型一起组合过滤，而内存库不支持 JOIN/OFFSET）。如果界面自己再写一份
  * 匹配规则，两处迟早不一致：搜索框说"有"，工具 `gallery.list` 说"没有"。
  */
@@ -127,11 +127,11 @@ export function matchesImagebed(q: ImagebedItem, needle: string): boolean {
 }
 
 /**
- * 列出图床条目，最新的在前。
+ * 列出多媒体文件条目，最新的在前。
  *
  * 搜索走 JS 过滤而不是 SQL LIKE，原因见文件头第 3 条。
  * 注意随之而来的一条约束：**有搜索词时不能在 SQL 里加 LIMIT** ——
- * 否则只是"在最近 N 条里搜"，用户会看到"明明在图床里却搜不到"。
+ * 否则只是"在最近 N 条里搜"，用户会看到"明明在多媒体文件里却搜不到"。
  */
 export async function fetchImagebed(query: ImagebedQuery = {}): Promise<ImagebedItem[]> {
   const where: string[] = ["deleted = 0"];
@@ -161,17 +161,17 @@ export async function fetchImagebed(query: ImagebedQuery = {}): Promise<Imagebed
 }
 
 /**
- * 按内容指纹找一条还在图床里的记录。
+ * 按内容指纹找一条还在多媒体文件里的记录。
  *
- * 存在的理由只有一个：**工具的产出默认留一份进图床之后，重复是常态** ——
+ * 存在的理由只有一个：**工具的产出默认留一份进多媒体文件之后，重复是常态** ——
  * 同一张图反复导出、同一个提示词再生成一次、批量处理里同一份源图被处理两遍。
  * 内容寻址让这些重复在**仓库里只占一份字节**，但数据库里仍是 N 条记录，
- * 用户看到的就是"同一张图在图床里排了一整排"，而且越用越脏。
+ * 用户看到的就是"同一张图在多媒体文件里排了一整排"，而且越用越脏。
  *
  * 所以自动存档那条路要先问一句"这一份是不是已经有了"。
  *
- * 只按 hash 判，**不看 origin**：图床关心的是字节，不是谁放的。
- * 一张 AI 生成的图被裁剪工具原样导出一次，图床里已经有这份内容了，
+ * 只按 hash 判，**不看 origin**：多媒体文件关心的是字节，不是谁放的。
+ * 一张 AI 生成的图被裁剪工具原样导出一次，多媒体文件里已经有这份内容了，
  * 再记一条只是噪音。
  */
 export async function findImagebedByHash(hash: string | null): Promise<ImagebedItem | null> {
@@ -184,7 +184,7 @@ export async function findImagebedByHash(hash: string | null): Promise<ImagebedI
   return rows.length ? toItem(rows[0]) : null;
 }
 
-/** 图床条目总数（未删除），给侧边栏角标用 */
+/** 多媒体文件条目总数（未删除），给侧边栏角标用 */
 export async function countImagebed(): Promise<number> {
   const rows = await db().select<{ c: number }>(
     `SELECT COUNT(*) AS c FROM core_imagebed_items WHERE deleted = 0`,
@@ -368,7 +368,7 @@ export async function setImagebedTags(id: string, tags: string[]): Promise<void>
 const nowIso = () => new Date().toISOString();
 
 /**
- * 图床条目的 id：**必须时间有序**，不能用纯随机。
+ * 多媒体文件条目的 id：**必须时间有序**，不能用纯随机。
  *
  * 原因是真实会发生的事：从裁剪工具一次导入两三张、或 AI 一次出四张，
  * 这些记录落在同一毫秒里，`created_at` 完全相同。此时 `ORDER BY created_at DESC`
@@ -396,13 +396,13 @@ const uid = (): string => {
   );
 };
 
-/** 按类型取大小上限。图床只收媒体，不会走到 link 那档。 */
+/** 按类型取大小上限。多媒体文件只收图/视频/音频，不会走到 link 那档。 */
 function limitFor(kind: ImagebedKind): number {
-  return SIZE_LIMIT[kind === "video" ? "video" : "image"];
+  return MEDIA_SIZE_LIMIT[kind];
 }
 
 /**
- * 放进图床的三种输入，**三选一**。
+ * 放进多媒体文件的三种输入，**三选一**。
  *
  * 它们对应三条不同的落盘路径，不是"随便传哪个都行"：
  *   dataUrl → 内存里当场产生的内容（canvas 导出、AI 回报的 base64）
@@ -422,17 +422,17 @@ export interface AddMediaInput {
   height?: number | null;
   durationMs?: number | null;
   /**
-   * 内容已在图床里时，返回已有那条（标 `dup: true`）而不是再插一条。
+   * 内容已在多媒体文件里时，返回已有那条（标 `dup: true`）而不是再插一条。
    *
    * 只有**自动存档**这类"替用户保管"的场景该开：那一次保存不是用户主动点的，
-   * 重复了也无从解释。用户亲自点「存进图床」时不该开 —— 他明确要留一份，
+   * 重复了也无从解释。用户亲自点「存进多媒体文件」时不该开 —— 他明确要留一份，
    * 哪怕内容一样（比如同一个提示词重新生成了一次，本来就该是两条）。
    */
   dedupe?: boolean;
 }
 
 /**
- * 把一份媒体放进图床：**先落文件、再写元数据**。
+ * 把一份媒体放进多媒体文件：**先落文件、再写元数据**。
  *
  * 顺序不能反。反过来的话，文件写失败时库里会留下一条指向空气的记录，
  * 界面上表现为一张永远加载不出来的破图，而用户无法判断是网络问题
@@ -449,17 +449,16 @@ export async function addToImagebed(input: AddMediaInput): Promise<ImagebedItem>
 
   // 先用"名字 / 网址"猜类型，只为把大小上限和标题定下来；
   // 真正的类型以落盘后仓库回报的 mime 为准（桌面端会按 magic bytes 重判）。
-  // 注意 kindFromMime / guessKindFromUrl 返回的是附件的三分法（含 "link"），
-  // 而图床只有 image / video 两档 —— 所以这里要收敛一次：
-  // 认不出的一律按图片处理（用图片的上限，宁可错在更严的那一侧）。
+  // 这里用的是多媒体三分法（image / video / audio）—— **不是**附件的三分法，
+  // 后者把音频当成 link（附件不给存音频），拿它来判会把音频当图片存。
   const guessName = input.url ? fileNameFromUrl(input.url) : (input.title || "image");
-  const guessRaw =
+  const guessRaw: ImagebedKind =
     input.local instanceof File
-      ? kindFromMime(input.local.type)
+      ? mediaKindFromMime(input.local.type)
       : input.url
-        ? guessKindFromUrl(input.url)
+        ? mediaKindFromUrl(input.url)
         : "image";
-  const kind: ImagebedKind = guessRaw === "video" ? "video" : "image";
+  const kind: ImagebedKind = guessRaw;
   const maxBytes = limitFor(kind);
 
   const stored = input.dataUrl
@@ -474,7 +473,7 @@ export async function addToImagebed(input: AddMediaInput): Promise<ImagebedItem>
 
   // 落盘后的真实 mime 才作数：data URL 里谎报、网址后缀骗人都是常事，
   // 而桌面端的 store_bytes 已经用 magic bytes 判过一次了
-  const realKind: ImagebedKind = kindFromMime(stored.mime) === "video" ? "video" : "image";
+  const realKind: ImagebedKind = mediaKindFromMime(stored.mime);
   const title = (input.title || "").trim() || stored.relPath.split("/").pop() || "未命名";
 
   // 同一个时刻写进 created_at 与 updated_at：新建不是"改过"，
@@ -559,7 +558,7 @@ export async function updateImagebedItem(
   }
   if (!sets.length) return;
   // 改标题 / 备注 / 尺寸都算"改过"。同步靠它判断两端谁更新 ——
-  // 不记的话，改标题在图床里完全看不见（v14 之前就是这个状态）。
+  // 不记的话，改标题在多媒体文件里完全看不见（v14 之前就是这个状态）。
   sets.push("updated_at = ?");
   params.push(nowIso());
   params.push(id);
@@ -567,10 +566,10 @@ export async function updateImagebedItem(
 }
 
 /**
- * 从图床删除一条，返回"可以顺手删掉的仓库文件"（没有则 null）。
+ * 从多媒体文件删除一条，返回"可以顺手删掉的仓库文件"（没有则 null）。
  *
  * **文件是内容寻址的，不能想删就删**：同一份字节可能同时被
- * 某张流程任务的附件和另一条图床记录引用。所以这里只做引用计数判断，
+ * 某张流程任务的附件和另一条多媒体文件记录引用。所以这里只做引用计数判断，
  * 真正的删除交给调用方（它才有文件仓库的句柄）。
  * 引用计数**跨两张表**，见 repo.refCountByHash 的注释。
  *
@@ -622,16 +621,30 @@ export const ORIGIN_COLOR: Record<ImagebedOrigin, string> = {
   "ai-gen": "#7c5cff",
   "image-crop": "#378add",
   "size-chart": "#1d9e75",
-  // 与工具里「异常」的警示橙同色，一眼能从图床里认出来
+  // 与工具里「异常」的警示橙同色，一眼能从多媒体文件里认出来
   "abnormal-ticket": "#c9820b",
   // 便签用纸色（偏暖的褐），和异常单的橙拉开一点距离
   scratchpad: "#a06a4a",
 };
 
+/** 时长（毫秒）→ 3:07 / 1:02:03。音频和视频都靠它说话，图片没有 */
+export function formatDuration(ms: number | null | undefined): string {
+  if (!ms || ms < 0) return "";
+  const total = Math.round(ms / 1000);
+  const s = total % 60;
+  const m = Math.floor(total / 60) % 60;
+  const h = Math.floor(total / 3600);
+  const mm = h ? String(m).padStart(2, "0") : String(m);
+  return (h ? `${h}:` : "") + `${mm}:${String(s).padStart(2, "0")}`;
+}
+
 /** 一键摘要，给卡片底部那行小字用 */
 export function summarize(item: ImagebedItem): string {
   const bits: string[] = [];
   if (item.width && item.height) bits.push(`${item.width}×${item.height}`);
+  // 音视频先说时长：那是用户挑素材时最想知道的一件事，比体积要紧
+  const dur = formatDuration(item.durationMs);
+  if (dur) bits.push(dur);
   if (item.size) bits.push(formatBytes(item.size));
   if (!bits.length) bits.push(item.mime || "未知类型");
   return bits.join(" · ");
@@ -642,11 +655,11 @@ export function summarize(item: ImagebedItem): string {
 /* ------------------------------------------------------------------ */
 
 /**
- * "图床变了"的事件名。
+ * "多媒体文件变了"的事件名。
  *
- * 为什么需要它：往图床里写东西的有三个不同的地方 ——
- * 图床界面自己（导入/删除）、工具 iframe（经桥进来的 gallery.put）、
- * 以及将来可能的批量导入。而后两者发生的时候，**图床界面一无所知**：
+ * 为什么需要它：往多媒体文件里写东西的有三个不同的地方 ——
+ * 多媒体文件界面自己（导入/删除）、工具 iframe（经桥进来的 gallery.put）、
+ * 以及将来可能的批量导入。而后两者发生的时候，**多媒体文件界面一无所知**：
  * 工具是 iframe，写库是在宿主进程里做的；界面上又没有一个"刷新"按钮
  * 能覆盖这种情况。
  *
@@ -655,7 +668,7 @@ export function summarize(item: ImagebedItem): string {
  */
 export const IMAGEBED_CHANGED = "workbench:gallery-changed";
 
-/** 广播"图床变了"。写入方调它，界面自己监听 */
+/** 广播"多媒体文件变了"。写入方调它，界面自己监听 */
 export function notifyImagebedChanged(): void {
   // 非浏览器环境（单元测试里直接调数据层）没有 window，静默跳过
   globalThis.dispatchEvent?.(new CustomEvent(IMAGEBED_CHANGED));
@@ -679,7 +692,7 @@ export const THUMB_MAX = 320;
  * 所以这里**不赌链路**：缩略图以 data URL 的形式跟着消息走，
  * 消息能到，图就能显示，与源、协议、CSP 全都无关。
  *
- * 代价是多一次解码 + 重编码。但图床在工具里就是一片选择用的格子，
+ * 代价是多一次解码 + 重编码。但多媒体文件在工具里就是一片选择用的格子，
  * 320px 足够，一次也就几十毫秒。
  *
  * 视频返回空串 —— 抽首帧要在 <video> 上 seek，还得等时机，
@@ -690,7 +703,7 @@ export async function makeThumb(relPath: string, max: number = THUMB_MAX): Promi
   // ★ 不能把 asset:// 的图**直接**塞给 canvas：桌面端宿主的页面在 tauri.localhost，
   //   图在 asset.localhost —— 没带 crossOrigin 加载的跨源图会把画布**污染**，
   //   `toDataURL()` 抛 SecurityError。这里原来就是直连，异常被上层 catch 掉，
-  //   结果是"缩略图永远是空串"：图床自己看不出问题（它只 <img src>，不导像素），
+  //   结果是"缩略图永远是空串"：多媒体文件自己看不出问题（它只 <img src>，不导像素），
   //   工具里的格子却写着「无预览」。
   //   所以先取字节转成 blob: URL（同源）再画 —— 画布干净，与 CORS 头无关。
   //   asset 协议带 Access-Control-Allow-Origin，这条 fetch 走得通。
@@ -721,9 +734,9 @@ export async function makeThumb(relPath: string, max: number = THUMB_MAX): Promi
 }
 
 /**
- * 读一条图床文件的**完整**内容，返回 data URL。
+ * 读一条多媒体文件文件的**完整**内容，返回 data URL。
  *
- * 这是给"把图床里的图喂给生成接口"用的：生图接口普遍接受公开 URL 或
+ * 这是给"把多媒体文件里的图喂给生成接口"用的：生图接口普遍接受公开 URL 或
  * data URI，而仓库里的文件是本地的，所以只能转成 data URI 送过去。
  */
 export async function readImagebedDataUrl(

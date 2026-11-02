@@ -52,7 +52,7 @@ function blendPixel(canvas, x, y, [r, g, b, a]) {
 }
 
 // 超采样抗锯齿：在每个像素内取 N×N 个子样本，交给 shape 判断是否在图形内。
-// 这样圆角、圆环、勾线的边缘都不会有锯齿，且不依赖任何绘图床。
+// 这样圆角、圆环、勾线的边缘都不会有锯齿，且不依赖任何绘多媒体文件。
 const SS = 4;
 
 function fillShape(canvas, bbox, color, insideTest) {

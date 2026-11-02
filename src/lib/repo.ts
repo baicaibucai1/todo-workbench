@@ -151,7 +151,7 @@ const toList = (r: RawList): TaskList => ({
  * 它在 lib 层直接写 core_tasks），store 没有自己的 action 可以感知。
  * lib 层又不能反过来 import store（会成 store → repo → store 的环），
  * 所以走 window 事件：桥在写完后发，store 的 init 里接住并刷新。
- * 与图床的 IMAGEBED_CHANGED（lib/imagebed.ts）是同一个模式。
+ * 与多媒体文件的 IMAGEBED_CHANGED（lib/imagebed.ts）是同一个模式。
  */
 export const TASKS_CHANGED = "workbench:tasks-changed";
 
@@ -271,13 +271,13 @@ export async function fetchTasks(q: TaskQuery): Promise<Task[]> {
       // 于是把全部待办捞回来 —— 表现就是「流程任务」页里混进一堆待办。
       return [];
     case "imagebed":
-      // 图床是独立模块，取数走 lib/imagebed.ts。
+      // 多媒体文件是独立模块，取数走 lib/imagebed.ts。
       // 它出现在这个函数的调用点上只有一个原因：store.refresh() 不分视图地
-      // 调了一次 fetchTasks。这里必须显式返回空，否则图床视图会打印出
+      // 调了一次 fetchTasks。这里必须显式返回空，否则多媒体文件视图会打印出
       // 一整屏待办（同样是"落空 = 不加条件"）。
       return [];
     case "agent":
-      // AI 助手视图：同图床 —— 助手界面上一条待办都不该出现。
+      // AI 助手视图：同多媒体文件 —— 助手界面上一条待办都不该出现。
       // 落空同样等于"不加条件"，会把整库待办捞到 store.tasks 里，
       // 于是助手旁边那条详情面板就有东西可选了（它已经被显式挡住，
       // 但取数这一层也不能漏：界面迟早会有别的地方读 tasks）。
@@ -533,7 +533,7 @@ export async function fetchCounts(): Promise<{
   byList: Record<string, number>;
   /** 未完结流程任务总数 */
   orders: number;
-  /** 图床条目总数 */
+  /** 多媒体文件条目总数 */
   imagebed: number;
 }> {
   const my = mydayClause();
@@ -558,7 +558,7 @@ export async function fetchCounts(): Promise<{
     db().select<{ id: string; is_terminal: number }>(
       `SELECT id, is_terminal FROM core_wo_stages`,
     ),
-    // 图床角标标的是**总数**（它没有完成态）。这里直接查而不调
+    // 多媒体文件角标标的是**总数**（它没有完成态）。这里直接查而不调
     // lib/imagebed.ts 的 countImagebed：那个文件依赖本文件的 refCountByHash，
     // 反向再 import 回来会形成循环，虽然运行时没事，但依赖关系会变得难读。
     db().select<{ c: number }>(`SELECT COUNT(*) AS c FROM core_imagebed_items WHERE deleted = 0`),
@@ -1276,7 +1276,7 @@ export async function fetchWorkOrders(q: OrderQuery): Promise<WorkOrder[]> {
       // 现在只有一种流程任务，不需要再加条件。
       break;
     case "imagebed":
-      // 图床与流程任务毫无关系，但 store.refresh() 会不分视图地调到这里。
+      // 多媒体文件与流程任务毫无关系，但 store.refresh() 会不分视图地调到这里。
       // 同 myday：必须显式挡掉，落空 = 不加条件 = 把全部流程任务捞回来。
       return [];
     case "agent":
@@ -2167,9 +2167,9 @@ export async function updateAttachment(
  * 还有几张活着的记录引用这个内容。文件能不能删，看它。
  *
  * ⚠️ 必须**跨两张表**数，不能只看附件表。
- * 图床（v9）与流程任务附件共用同一个内容寻址仓库，同一份字节可以同时被
- * 「某张流程任务的附件」和「图床里的一张图」引用。只数附件表的话，
- * 删掉图床那条时会以为"没人用了"，把流程任务附件正指着的文件删掉 ——
+ * 多媒体文件（v9）与流程任务附件共用同一个内容寻址仓库，同一份字节可以同时被
+ * 「某张流程任务的附件」和「多媒体文件里的一张图」引用。只数附件表的话，
+ * 删掉多媒体文件那条时会以为"没人用了"，把流程任务附件正指着的文件删掉 ——
  * 表现是另一处突然变成"文件缺失"，而且找不到是谁干的。
  *
  * 两次独立单表查询再相加，不写 UNION/JOIN：内存库的 mini-SQL 不支持它们，
@@ -2257,7 +2257,7 @@ export async function fetchAllAttachments(): Promise<WoAttachment[]> {
 }
 
 /**
- * 图床条目的**备份形状**。
+ * 多媒体文件条目的**备份形状**。
  *
  * 为什么不直接复用 lib/imagebed.ts 的 ImagebedItem：那个文件要从本文件取
  * refCountByHash（删文件前跨表数引用），反向再 import 回来就成环了 ——
@@ -2285,7 +2285,7 @@ export interface ImagebedBackupItem {
   updatedAt: string;
 }
 
-/** 全部图床条目（备份用）。和附件一样**含已软删除的**，把 deleted 一起带出去。 */
+/** 全部多媒体文件条目（备份用）。和附件一样**含已软删除的**，把 deleted 一起带出去。 */
 export async function fetchAllImagebed(): Promise<ImagebedBackupItem[]> {
   const rows = await db().select<{
     id: string;
@@ -2389,10 +2389,10 @@ export interface BackupPayload {
   /** v8 起新增：流程任务绑定的相关信息（特殊单号的另一个快递单号、用户名…） */
   woFields?: WoField[];
   /**
-   * v9 起新增：图床条目的**元数据**。
+   * v9 起新增：多媒体文件条目的**元数据**。
    *
    * 和附件同一条原则：不塞文件本体。仓库目录是
-   * %APPDATA%\待办工作台\attachments，图床和附件**共用同一个仓库**
+   * %APPDATA%\待办工作台\attachments，多媒体文件和附件**共用同一个仓库**
    * （内容寻址，同一份字节只存一份），所以想连文件一起搬，
    * 手动拷那一个目录就够了。
    */
@@ -2495,7 +2495,7 @@ export async function importBackup(payload: BackupPayload): Promise<{
     // 由调用方拿着 rel_path 去仓库删（见 clearAllData 的说明）。
     { sql: `DELETE FROM core_wo_attachments` },
     { sql: `DELETE FROM core_wo_fields` },
-    // v9 的图床。同样只删记录：文件本体由调用方按 rel_path 去仓库处理
+    // v9 的多媒体文件。同样只删记录：文件本体由调用方按 rel_path 去仓库处理
     { sql: `DELETE FROM core_imagebed_items` },
   ];
 
@@ -2733,8 +2733,8 @@ export async function importBackup(payload: BackupPayload): Promise<{
     });
   }
 
-  // v9 的图床条目。它不指向别的表，所以放最后插就行。
-  // created_at 原样带回来：图床没有 sort_order，排序完全靠它，
+  // v9 的多媒体文件条目。它不指向别的表，所以放最后插就行。
+  // created_at 原样带回来：多媒体文件没有 sort_order，排序完全靠它，
   // 重排（像附件那样按下标）反而会打乱用户看到的时间线。
   for (const it of payload.imagebed ?? []) {
     if (!it?.id || !it.relPath) continue;
@@ -2791,7 +2791,7 @@ export async function clearAllData(): Promise<void> {
     // 顺序不能反 —— 库先清掉就没地方查 rel_path 了，文件会永远留在磁盘上。
     { sql: `DELETE FROM core_wo_attachments` },
     { sql: `DELETE FROM core_wo_fields` },
-    // 图床同理：**只清记录，不删文件**。图床和附件共用同一个内容寻址仓库，
+    // 多媒体文件同理：**只清记录，不删文件**。多媒体文件和附件共用同一个内容寻址仓库，
     // 所以"哪些文件真的没人用了"只能在清库**之前**算出来，
     // 由 store.ts 的 clearAll 统一处理（它才拿得到文件仓库的句柄）。
     { sql: `DELETE FROM core_imagebed_items` },

@@ -112,18 +112,18 @@ const BUILTIN: ExtensionManifest[] = [
   // 数据由迁移 v22 清理；它独用的两个偏好（自定义列、行高密度）一并删掉，
   // 而查件渠道与复制格式因为流程任务还在用，搬到了 SETTINGS.order*。
   {
-    // 选装（v18）：图床是所有工具产物的**共同落点**（在以前它是写进 App.tsx
+    // 选装（v18）：多媒体文件是所有工具产物的**共同落点**（在以前它是写进 App.tsx
     // 的一个分支）。它同时提供 `gallery` 能力 —— 工具在 manifest 里申请，
     // 宿主按这个模块有没有启用决定放不放行。
     //
     // 注意 group：它不属于"看哪些任务"，属于"这个程序里还有什么地方可去"，
     // 所以和「设置」挨在一起（2026-09-22 的取舍）。
     id: "imagebed",
-    name: "图床",
-    description: "所有图片 / 视频的共同落点：工具的产物存进来，工具要用的素材从这里取",
+    name: "多媒体文件",
+    description: "所有图片 / 视频 / 音频的共同落点：工具的产物存进来，工具要用的素材从这里取",
     version: "1.0.0",
     // 默认开：便签、AI 生成、图片裁剪都以它为落点，缺了它附图上不来
-    // （工具侧会显示「图床模块未开启」）。用户仍可在设置里关掉。
+    // （工具侧会显示「多媒体文件模块未开启」）。用户仍可在设置里关掉。
     enabledByDefault: true,
     injects: [
       { kind: "nav", id: "imagebed", group: "places", icon: "images" },
@@ -448,7 +448,7 @@ export function capabilityState(
  * 回绝时说给扩展听的话。
  *
  * 刻意**不抛异常**：调用方拿不到堆栈，界面上就只剩一句"出错了"，而它真正
- * 需要知道的是"图床没开，你自己想办法"。降级由调用方决定 ——
+ * 需要知道的是"多媒体文件没开，你自己想办法"。降级由调用方决定 ——
  * 宿主不替它做决定，这是整套能力的第三条边界。
  */
 export function capabilityError(state: CapabilityState, cap: Capability): string | null {

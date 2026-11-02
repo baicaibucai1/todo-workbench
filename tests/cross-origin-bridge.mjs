@@ -6,7 +6,7 @@
  * 宿主在 `http://tauri.localhost` —— 不同源。而 postMessage 的 targetOrigin
  * 一旦不匹配，浏览器把消息**静默丢弃**：不抛错、不告警。曾经两边都填
  * `window.location.origin`（各自的），于是桌面端整条桥双向断开：
- * 工具 KV 写不进、图床存不进、开关读不到，而 dev 下 15 个套件全绿。
+ * 工具 KV 写不进、多媒体文件存不进、开关读不到，而 dev 下 15 个套件全绿。
  *
  * 这里用「localhost:1420 的宿主 + 127.0.0.1:1421 的工具」造出真实的跨源，
  * 两种造法各测一遍，因为它们坏在不同的地方：
@@ -182,7 +182,7 @@ await page.goto(HOST, { waitUntil: "load" });
 await page.waitForSelector("aside", { timeout: 20000 });
 check("postMessage 探针能记录到消息（否则后面的断言全是假绿）", await probeWorks());
 
-// 第 2 节要把产出存进图床，而图床是**选装模块**（v18 起默认不带）——
+// 第 2 节要把产出存进多媒体文件，而多媒体文件是**选装模块**（v18 起默认不带）——
 // 不开它，gallery.put 会被能力门回绝，那条断言会红在"存不进去"上，
 // 而真凶其实只是模块没开。
 await enableModule(page, "imagebed");
