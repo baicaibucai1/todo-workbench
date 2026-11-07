@@ -179,9 +179,18 @@
   .c12 { grid-column: span 12; } .c16 { grid-column: span 16; } .c24 { grid-column: span 24; }
   /* 单号类的格用等宽 —— 数字位数一眼数清，也跟登记页的大横条一致 */
   input.mono { font-family: var(--mono); letter-spacing: .2px; }
-  @media (max-width: 900px) {
-    .c4, .c6, .c8 { grid-column: span 12; }
-    .c12 { grid-column: span 24; }
+  /* ★ 列跨度按**容器宽度**算，别按视口。
+     以前写的是 @media (max-width: 900px)，可工具区只有 ~840（1120 窗口 - 280 侧栏），
+     这个断点从来没跨过 —— 于是 c12 永远被摊成整行：详情页看着像一张长表单，
+     登记页三个 c8 变成「2 + 1」右边空一半。两列/三列布局等于从来没生效。
+     容器查询才对得上：登记页卡片 800+ 宽 → c8 三列并排；详情页中栏 390 → c12 两列。 */
+  .grid24 { container-type: inline-size; }
+  @container (max-width: 300px) {
+    .c4, .c6, .c8, .c12 { grid-column: span 24; }
+  }
+  @media (max-width: 520px) {
+    /* 兜底：容器查询万一算不出（老内核），窗口真窄时也别硬排两列 */
+    .c4, .c6, .c8, .c12 { grid-column: span 24; }
   }
 
   /* ---------- 图标：一律描边，颜色跟着文字走（深色模式自动反色） ---------- */
@@ -447,6 +456,25 @@
   .sect.base input:disabled::placeholder, .sect.base textarea:disabled::placeholder {
     color: var(--dim); -webkit-text-fill-color: var(--dim); opacity: 1;
   }
+  /* 锁态：**只读数，不是"填字"**。原来保留虚线框，一屏六七个框看下来
+     像一张待填的表，分不清哪是看、哪是改。锁着就把框去掉、缩进归零，
+     标签（11.5px 灰）当字段名，值直接是正文。点「编辑」才长出输入框。 */
+  .sect.base.locked input:disabled, .sect.base.locked textarea:disabled {
+    border-color: transparent; background: transparent;
+    padding-left: 0; padding-right: 0; resize: none;
+  }
+  .sect.base.locked .f > span { padding-left: 0; }
+  .sect.base.locked .f { gap: 2px; }
+  /* 编辑态一律单列：集装箱式的半格里，7 个「平台自动退款」这种长选项
+     会被压成一条竖线（5 行），还把右边的「情况」顶得对不齐。
+     改的时候本来就该看清每个值，宽敞点不亏；锁态才用两列快速扫。 */
+  .sect.base:not(.locked) .grid24 > .f { grid-column: span 24; }
+  /* 删除那条：单独一行，压在最后 —— 见 renderDetail 里的注释 */
+  .sect.delline { display: flex; align-items: center; gap: 8px; }
+  .sect.delline .note { margin: 0; }
+  /* 详情标题行右侧的按钮组：窄窗口（840 工具区）放不下时**整体**换到第二行靠右，
+     不要留「复制单号」孤零零挂在左边。margin-left:auto 顶掉原来的 .spacer。 */
+  .hdrbtns { display: flex; gap: 6px; flex: 0 0 auto; margin-left: auto; }
   .sect.base.locked .lbl { color: var(--dim); }
   /* 锁态胶囊只剩"当前值"一个，显示成中性的标签而不是按钮 —— 蓝色高亮带着"可点"的暗示 */
   .pill.ro { cursor: default; background: var(--chip); color: var(--fg2); border-color: var(--line); }
@@ -3314,10 +3342,9 @@
     var html = ""
       + '<div class="r"><b class="snbig">' + esc(sn) + "</b>"
       + '<span class="badge t"' + (tcHdr ? ' style="--tc:' + tcHdr + '"' : "") + ">" + esc(st) + "</span>"
-      + '<span class="spacer"></span>'
+      + '<span class="hdrbtns">'
       + '<button class="mini" id="btnCall">呼起客户端</button>'
-      + '<button class="mini" id="btnCopy">复制单号</button>'
-      + '<button class="mini danger" id="btnDel">删除</button></div>'
+      + '<button class="mini" id="btnCopy">复制单号</button></span></div>'
       + '<div class="note" style="margin-top:4px">'
       + (store && store.mallcsid ? "店铺客服 ID " + esc(store.mallcsid) + " · " : "")
       + "登记于 " + esc(minText(r.created_at) || "—")
@@ -3348,14 +3375,17 @@
       /* 订单号独占一行：它是这条单的身份，别的都围着它排 */
       + '<label class="f c24"><span class="lbl" data-ico="doc">订单号</span>'
       + '<input id="dOrder" autocomplete="off" spellcheck="false" class="mono" /></label>'
-      + '<label class="f c12"><span class="lbl" data-ico="box">快递单号</span>'
+      + '<label class="f c24"><span class="lbl" data-ico="box">快递单号</span>'
       + '<input id="dTrack" autocomplete="off" spellcheck="false" class="mono" /></label>'
+      /* 快递公司 / 情况：选项都少（3 个 / 7 个），半格放得下，并排省一行 */
       + '<div class="f c12"><span class="lbl" data-ico="truck">快递公司</span>'
       + '<div class="pills" id="dCourier"></div></div>'
-      + '<div class="f c12"><span class="lbl" data-ico="shop">店铺</span>'
-      + '<div class="pills" id="dStore"></div></div>'
       + '<div class="f c12"><span class="lbl" data-ico="alert">情况</span>'
       + '<div class="pills" id="dCategory"></div></div>'
+      /* 店铺锁态只显示当前那一个，半格就够；编辑态有下面那条「一律单列」的规则兜着，
+         不必为它单独占整行（否则锁态右边空半行，反而更空）。 */
+      + '<div class="f c12"><span class="lbl" data-ico="shop">店铺</span>'
+      + '<div class="pills" id="dStore"></div></div>'
       + '<label class="f c12"><span class="lbl" data-ico="cal">登记时间</span>'
       + '<input id="dDate" autocomplete="off" spellcheck="false" /></label>'
       /* 赔款数：非必填，纯记账用（不进推送的 14 列，只在本地 / 表格页显示） */
@@ -3517,6 +3547,13 @@
           : "记一步流程会自动顺延，记到「完结」自动撤掉。") + "</div>";
     }
     html += "</div></div>";
+
+    /* 删除：**放到最底下**，不跟「呼起客户端 / 复制单号」挤在标题行。
+       理由是两件事 —— ① 它是高频误点、低频使用的动作，摆在第一屏最显眼处
+       （还和另外两个按钮挤成两行）看着就烦；② 要滚到底才够得着，天然防手滑。
+       确认框照旧（自绘，不靠 window.confirm）。 */
+    html += '<div class="sect delline"><span class="note">这条不用跟了就删掉</span>'
+      + '<span class="spacer"></span><button class="mini danger" id="btnDel">删除这条</button></div>';
 
     /* 「处理」区（处理方式/结果/结账）已移除 —— 处理是流程的一部分，状态由流程派生。
        台账里那三列还在（14 列契约不动），老数据照常显示，只是不再从这里改。 */

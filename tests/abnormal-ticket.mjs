@@ -2535,6 +2535,48 @@ console.log("\n16. 批量登记：一片单号一次录（v1.22.0）");
   check("批量登记这一路没有新报错", errors.length === 0, errors.join(" | "));
 }
 
+console.log("\n17. 版面：详情两列、删除收到底、锁态不像表单（v1.23.0）");
+{
+  doc.getElementById("tab-browse").click();
+  await sleep(80);
+  const first = doc.querySelector("#list .ticket");
+  check("列表里有单子", !!first);
+  first.click();
+  await sleep(100);
+
+  /* ① 删除不该挤在标题行（那里已经有「呼起客户端 / 复制单号」，390px 宽下会换行，
+        红字孤零零掉到第二行，看着像主操作）。 */
+  const hdr = doc.querySelector("#detail > .r");
+  check("标题行里没有删除按钮", !!hdr && !hdr.querySelector("#btnDel"),
+    hdr ? hdr.textContent.slice(0, 40) : "没有标题行");
+  const delLine = doc.querySelector("#detail .delline #btnDel");
+  check("删除收在详情最底下", !!delLine);
+  const sects = [...doc.querySelectorAll("#detail .sect")];
+  check("删除那一行是最后一段", sects.length > 0 && sects[sects.length - 1].classList.contains("delline"),
+    sects.map((s) => s.className).join(" | "));
+
+  /* ② 两列：c12 的格子必须两两并排 —— 这是「一屏能不能看完基本信息」的关键。
+       以前 @media (max-width: 900px) 把 c12 一律摊成整行，而工具区只有 ~840，
+       那个断点从来没跨过，两列等于不存在。 */
+  const half = [...doc.querySelectorAll("#detail .grid24 > .c12")];
+  check("基本信息里有半宽字段", half.length >= 4, String(half.length));
+  check("列跨度改用容器查询（不再用 900px 视口断点）",
+    !/@media\s*\(max-width:\s*900px\)\s*\{/.test(HTML));
+  check("容器查询在场", /@container\s*\(max-width:/.test(HTML));
+
+  /* ③ 锁态是「读数」不是「填空」：去掉虚线框和左缩进 */
+  const dOrder = doc.getElementById("dOrder");
+  const cs = win.getComputedStyle(dOrder);
+  check("锁态订单号没有边框", /transparent|rgba\(0, 0, 0, 0\)/.test(cs.borderTopColor || ""),
+    cs.borderTopColor);
+  check("锁态订单号左缩进归零", cs.paddingLeft === "0px", cs.paddingLeft);
+  check("页面上不再有整行宽的勾选框（沿用 15b 的判据）",
+    [...doc.querySelectorAll('input[type="checkbox"], input[type="radio"]')]
+      .every((el) => win.getComputedStyle(el).width !== "100%"));
+
+  check("版面这一路没有新报错", errors.length === 0, errors.join(" | "));
+}
+
 console.log("\n====================================================");
 console.log(`    通过 ${pass} / 失败 ${fail}`);
 if (failures.length) {
