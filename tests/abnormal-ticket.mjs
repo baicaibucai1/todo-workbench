@@ -2433,6 +2433,108 @@ console.log("\n15b. 排版：勾选框不吃全局 width:100%（v1.20.1）");
   check("没有新报错", errors.length === 0, errors.join(" | "));
 }
 
+console.log("\n16. 批量登记：一片单号一次录（v1.22.0）");
+{
+  doc.getElementById("tab-create").click();
+  await sleep(60);
+  doc.getElementById("fOrder").value = "";
+  doc.getElementById("fTrack").value = "";
+  doc.getElementById("fTitle").value = "";
+
+  /* 页面上先选一个店铺 —— 批量沿用这个选择（链接里自带客服 ID 的那行按链接走） */
+  const storeBox = doc.getElementById("fStore");
+  const anyStore = [...storeBox.querySelectorAll(".pill")].find((p) => p.getAttribute("data-v"));
+  if (anyStore) { anyStore.click(); await sleep(20); }
+  const pageStore = storeBox.getAttribute("data-value") || "";
+
+  const before = store.length;
+  const existing = store[0]?.order_sn || "";
+
+  doc.getElementById("btnBatch").click();
+  await sleep(50);
+  let mask = doc.querySelector(".dlgm");
+  check("点「批量粘贴」弹出面板", !!mask);
+  check("面板里有一大片贴单号的地方", !!mask && !!mask.querySelector("#batchText"));
+
+  const lines = [
+    "261026-1111111",
+    "261026-1111111",                                   // 这一批里自己重复
+    existing,                                            // 库里已经有了
+    "https://mobile.pdd.com/?mallcsid=cs_9&ordersn=261026-2222222",
+    "这是一整段粘贴错的说明文字已经完全不像订单号了真的很长很长很长",  // 读不出单号
+    "",
+    "261026-3333333",
+  ];
+  const ta = mask.querySelector("#batchText");
+  ta.value = lines.join("\n");
+  ta.dispatchEvent(new win.Event("input", { bubbles: true }));
+  await sleep(30);
+
+  const rowsShown = mask.querySelectorAll("#batchList .brow").length;
+  check("空行不算，其它每行都摆出来了", rowsShown === 6, String(rowsShown));
+  const sumTxt = mask.querySelector("#batchSum").textContent || "";
+  check("汇总说清了几行能录、几行跳过", /识别 6 行/.test(sumTxt) && /可登记 3/.test(sumTxt) && /跳过 3/.test(sumTxt), sumTxt);
+  check("批内重复标成划掉的", /这一批里重复/.test(mask.textContent || ""));
+  check("库里已有的标成划掉的", /库里已经有了/.test(mask.textContent || ""));
+  check("读不出单号的标红", /读不出单号/.test(mask.textContent || ""));
+  const yesBtn = mask.querySelector("#dlgYes");
+  check("按钮上直接写着要录几条", /登记 3 条/.test(yesBtn.textContent || ""), yesBtn.textContent);
+
+  mask.querySelector("#batchMemo").value = "同一批快递丢件";
+  yesBtn.click();
+  await waitFor(() => store.length >= before + 3, 4000);
+  await sleep(60);
+  check("三条新的都进库了（重复的 / 已有的 / 读不出的都跳过）", store.length === before + 3, store.length + " vs " + (before + 3));
+  check("面板关掉了", !doc.querySelector(".dlgm"));
+
+  const fresh = store.filter((r) => /^261026-(1111111|2222222|3333333)$/.test(r.order_sn || ""));
+  check("三个单号一个不少、也没多出重复行", fresh.length === 3, fresh.map((r) => r.order_sn).join(","));
+  check("统一描述写进了每一行的描述", fresh.every((r) => r.title === "同一批快递丢件"),
+    fresh.map((r) => r.title).join(" | "));
+  check("店铺沿用页面上选的那家", fresh.every((r) => r.store === pageStore), fresh.map((r) => r.store).join(","));
+  const summary = doc.getElementById("addMsg").textContent || "";
+  check("完事给一句汇总（进了几条 / 跳过几条）", /批量登记完成/.test(summary) && /进 3 条/.test(summary) && /跳过 3 条/.test(summary), summary);
+
+  /* 空面板：一条都识别不出来时不许点「登记」（避免点了一下什么也没发生） */
+  doc.getElementById("btnBatch").click();
+  await sleep(40);
+  mask = doc.querySelector(".dlgm");
+  check("空面板的确认键是灰的", !!mask && mask.querySelector("#dlgYes").disabled === true);
+  mask.querySelector("#dlgNo").click();
+  await sleep(30);
+
+  /* 在订单号框里粘多行 → 直接弹批量面板（不必先点按钮） */
+  const fOrder2 = doc.getElementById("fOrder");
+  fOrder2.value = "";
+  const pasteEv = new win.Event("paste", { bubbles: true, cancelable: true });
+  pasteEv.clipboardData = { getData: () => "261026-4444444\n261026-5555555" };
+  fOrder2.dispatchEvent(pasteEv);
+  await sleep(50);
+  mask = doc.querySelector(".dlgm");
+  check("订单号框里粘多行会自动开批量面板", !!mask);
+  check("而且粘进来的内容已经填好了", !!mask && /261026-4444444/.test(mask.querySelector("#batchText").value));
+  mask.querySelector("#dlgNo").click();
+  await sleep(30);
+  check("单行粘贴不会误开面板（还是就地洗净）", !doc.querySelector(".dlgm"));
+
+  /* 回车即登记：连着录时手不用离开键盘 */
+  const beforeEnter = store.length;
+  doc.getElementById("fOrder").value = "261026-6666666";
+  doc.getElementById("fOrder").dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await waitFor(() => store.length === beforeEnter + 1, 3000);
+  check("订单号框里回车就登记", store.length === beforeEnter + 1, String(store.length));
+  check("登记完订单号框清空、焦点回到这里", doc.getElementById("fOrder").value === "");
+
+  /* 输入法选词时的回车不能当提交 */
+  const beforeIme = store.length;
+  doc.getElementById("fOrder").value = "261026-7777777";
+  doc.getElementById("fOrder").dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true }));
+  await sleep(120);
+  check("输入法选词的回车不算提交", store.length === beforeIme, String(store.length));
+
+  check("批量登记这一路没有新报错", errors.length === 0, errors.join(" | "));
+}
+
 console.log("\n====================================================");
 console.log(`    通过 ${pass} / 失败 ${fail}`);
 if (failures.length) {

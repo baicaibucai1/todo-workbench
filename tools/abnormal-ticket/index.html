@@ -678,12 +678,18 @@
      风格跟工具其它地方一致：白底、2px 中灰外框、圆角、不用阴影。 */
   .dlgm {
     position: fixed; inset: 0; z-index: 90;
-    display: flex; align-items: center; justify-content: center;
+    /* ★ 用 flex-start + .dlg 的 margin:auto 居中：内容比视口高时，
+       align-items:center 会把上半截顶到视口外、滚动也够不到。 */
+    display: flex; align-items: flex-start; justify-content: center;
     background: rgba(24, 24, 22, .32); padding: 24px;
+    /* 批量面板比别的对话框高（多了一块列表）—— 小窗口 / 大缩放下
+       整张卡片可能顶出视口，留条路能滚，别让人够不到「取消」 */
+    overflow: auto;
   }
   .dlg {
     width: min(400px, 100%); background: var(--bg);
     border: 2px solid var(--line); border-radius: 10px; padding: 16px 18px 14px;
+    margin: auto;   /* 有空间就居中，没空间就贴顶 —— 上面那截不会跑丢 */
   }
   /* 差异明细要摊开「哪个字段 表上什么 → 本机什么」，400px 读不下 */
   .dlg.wide { width: min(560px, 100%); }
@@ -695,6 +701,30 @@
   .dlg-r button { min-width: 72px; }
   .dlg-r button.danger { border-color: var(--danger); color: var(--danger); }
   .dlg-r button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
+
+  /* ---------- 批量登记面板 ----------
+     .dlg-b 是 pre-line（给纯文本 body 用的），这里必须掰回 normal，
+     否则我 HTML 里的缩进空白会变成一行行空行。 */
+  .batchbox { white-space: normal; }
+  .batchbox textarea { width: 100%; margin-top: 2px; font-family: var(--mono); font-size: 12.5px; }
+  .batchmeta { color: var(--dim); font-size: 12px; margin-bottom: 6px; line-height: 1.5; }
+  .batchmeta b { color: var(--fg); font-weight: 600; }
+  .batchmeta #batchSum { display: inline-block; margin-top: 3px; }
+  /* 行数少时贴合内容（max-height 不会撑高），多了就滚 —— 别把弹窗顶到屏幕外。
+     截断处会有滚动条，真机上「还有更多」是看得出来的。 */
+  .blist { margin-top: 8px; max-height: 160px; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; }
+  .blist:empty { display: none; }
+  .brow { display: flex; align-items: baseline; gap: 8px; padding: 4px 9px; font-size: 12.5px; line-height: 18px; border-top: 1px solid var(--line); }
+  .brow:first-child { border-top: none; }
+  .brow .no { flex: 0 0 auto; width: 20px; text-align: right; color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .brow .sn { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); color: var(--fg); }
+  .brow .tag { flex: 0 0 auto; font-size: 11px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--dim); }
+  .brow .tag.ok { color: var(--ok); border-color: var(--ok); }
+  .brow .tag.warn { color: var(--warn); border-color: var(--warn); }
+  .brow .tag.bad { color: var(--danger); border-color: var(--danger); }
+  .brow.off .sn { color: var(--dim); text-decoration: line-through; }
+  .batchfld { display: block; margin-top: 10px; }
+  .batchfld span { display: block; color: var(--dim); font-size: 12px; margin-bottom: 3px; }
 
   /* ---------- 差异明细（推送确认 / 拉取确认 / 启动对账共用） ----------
      一条单一段，字段一行一个「表上 → 本机」。值用等宽字，
@@ -971,9 +1001,13 @@
       <!-- 按钮独占一行，说明放它下面 —— 挤在按钮右边时，宽屏下会被拉成一条长缝 -->
       <div class="r" style="margin-top:10px">
         <button class="primary" id="btnAdd" data-ico="pen">登记</button>
+        <!-- 一批单子（一次来五个异常）不必点五次：粘一片进来一起录。
+             订单号框里粘多行也会自己弹这个面板。 -->
+        <button id="btnBatch" data-ico="doc">批量粘贴</button>
       </div>
       <div class="note" id="addNote" style="margin-top:6px">
         订单号和快递单号至少填一个。登记后店铺 / 快递公司 / 登记时间会留着，方便连着录下一条。
+        一批单子点「批量粘贴」，一行一条；或者在订单号框里直接粘多行。
       </div>
     </div>
   </section>
@@ -1384,6 +1418,9 @@
       if (focusEl && focusEl.setSelectionRange) {
         try { focusEl.setSelectionRange(focusEl.value.length, focusEl.value.length); } catch (e2) { /* 非文本控件 */ }
       }
+      // onOpen：渲染完、焦点落好之后把 mask 交出去 —— 批量面板要靠它挂
+      // textarea 的 input 监听、实时改「登记 N 条」的文案（ask 本身只管一个静态 body）。
+      if (o.onOpen) { try { o.onOpen(mask); } catch (e3) { /* 面板自己的事，别带崩对话框 */ } }
     });
   }
   /**
@@ -2734,7 +2771,8 @@
     if (!$("fRemindAt").value && !fRemindCleared) prefillRemindAt();
     var noteEl = $("addNote");
     if (noteEl) {
-      noteEl.textContent = "订单号和快递单号至少填一个。登记时间就是当下；提醒时间默认 "
+      noteEl.textContent = "订单号和快递单号至少填一个。一批单子点「批量粘贴」，或者直接在订单号框里粘多行 —— "
+        + "一行一条，一起来的一次录完。登记时间就是当下；提醒时间默认 "
         + remindHours() + " 小时后，点一下可以改或清掉（清掉就按流程派发：每记一步流程自动顺延）。"
         + "登记后店铺 / 快递公司会留着，方便连着录下一条。";
     }
@@ -2939,6 +2977,187 @@
     pillSet($("fCategory"), "");
     $("fTitle").value = "";
     prefillRemindAt();          // 提醒时间按此刻重新预填，下一条还是"现在 + N 小时"
+    await load();
+    $("fOrder").focus();
+  }
+
+  /* ==================================================================
+   * 6b. 批量登记：一次来的几个异常不必点几次
+   * ==================================================================
+   * 一行一条（整条 ERP 链接也行）。**先摆出来给人看**再录：
+   *   - 库里已经有的、这一批里自己重复的 → 默认跳过（划掉，不录）
+   *   - 形状存疑的 → 照样录（用户台账里 16/19 位纯数字一大把）只标黄
+   *   - 读不出单号的（一行长文字）→ 标红不录
+   * 共用页面上已经选好的店铺 / 快递公司 / 情况 —— 同一批通常就是同一家店、
+   * 同一类问题；要分开录就关掉面板先改。
+   */
+  var BATCH_MAX = 100;
+
+  /** 一片文本 → 待登记清单。纯函数（只读 rows / cfg），测试好钉。 */
+  function parseBatch(text) {
+    var lines = txt(text).split(/\r?\n/);
+    var out = [], seen = {};
+    for (var i = 0; i < lines.length; i++) {
+      var raw = txt(lines[i]).trim();
+      if (!raw) continue;
+      if (out.length >= BATCH_MAX) break;
+      var erp = erpHit(raw);
+      var order = washOrder((erp && erp.order) || raw);
+      var item = { order: order, store: "", state: "ok", why: "" };
+      if (erp && erp.mallcsid) {
+        // 链接里的客服 ID 能反查店铺 —— 那一行就按链接里的店走，不跟页面选的那家
+        for (var s = 0; s < cfg.stores.length; s++) {
+          if (cfg.stores[s].mallcsid === erp.mallcsid) { item.store = cfg.stores[s].name; break; }
+        }
+      }
+      // 单号里不会有汉字；粘错一整段说明文字时别把它当单号录进去。
+      // 长度上限兜住那种没有汉字的一长串（真单号最长也就 19 位上下）。
+      if (!order || /[\u4e00-\u9fa5]/.test(order) || order.length > 40) { item.state = "bad"; item.why = "读不出单号"; }
+      else if (seen[order]) { item.state = "dup"; item.why = "这一批里重复"; }
+      else if (findDup(order)) { item.state = "exists"; item.why = "库里已经有了"; }
+      else if (!orderLooksRight(order)) { item.state = "odd"; item.why = "格式存疑"; }
+      seen[order] = 1;
+      out.push(item);
+    }
+    return out;
+  }
+
+  var batchPick = null;      // 面板确认时把清单与描述捞出来（close 会摘掉 DOM）
+
+  async function openBatch(prefill) {
+    var store = pillVal($("fStore"));
+    var courier = pillVal($("fCourier"));
+    var category = pillVal($("fCategory"));
+    var picked = [];
+    if (store) picked.push("<b>" + esc(store) + "</b>");
+    if (courier) picked.push("<b>" + esc(courier) + "</b>");
+    if (category) picked.push("<b>" + esc(category) + "</b>");
+    var meta = picked.length
+      ? "本批沿用：" + picked.join(" · ")
+      : "没选店铺 / 情况 —— 先关掉面板在页面上选，或者就这样录（这两项不是必填）";
+    if (pendingImgs.length && hasImages) meta += "<br>批量登记不带图；这 " + pendingImgs.length + " 张图留着给单条登记用";
+
+    batchPick = null;
+    var yes = await ask({
+      title: "批量登记",
+      wide: true,
+      okTone: "primary",
+      ok: "登记",
+      html: '<div class="batchbox">'
+        + '<div class="batchmeta"><span id="batchTop">' + meta + '</span><br><span id="batchSum"></span></div>'
+        + '<textarea id="batchText" rows="5" spellcheck="false" '
+        + 'placeholder="一行一个订单号 —— 整条 ERP 链接也可以&#10;261026-1234567&#10;261026-7654321"></textarea>'
+        + '<div class="blist" id="batchList"></div>'
+        + '<label class="batchfld"><span>统一描述（可选，只写给这一批新录的单子）</span>'
+        + '<input id="batchMemo" placeholder="比如：同一批快递丢件" autocomplete="off" /></label>'
+        + "</div>",
+      focus: "#batchText",
+      onOpen: function (mask) {
+        var ta = mask.querySelector("#batchText");
+        var list = mask.querySelector("#batchList");
+        var sum = mask.querySelector("#batchSum");
+        var yesBtn = mask.querySelector("#dlgYes");
+        if (prefill) ta.value = prefill;
+
+        function paint() {
+          var items = parseBatch(ta.value);
+          var todo = 0, skip = 0, bad = 0;
+          var html = "";
+          for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            var off = it.state === "exists" || it.state === "dup" || it.state === "bad";
+            if (off) skip++; else todo++;
+            if (it.state === "bad") bad++;
+            html += '<div class="brow' + (off ? " off" : "") + '">'
+              + '<span class="no">' + (i + 1) + "</span>"
+              + '<span class="sn">' + esc(it.order || "（空）") + "</span>"
+              + (it.store ? '<span class="tag">' + esc(it.store) + "</span>" : "")
+              + (off
+                ? '<span class="tag ' + (it.state === "bad" ? "bad" : "") + '">' + esc(it.why) + "</span>"
+                : (it.state === "odd" ? '<span class="tag warn">' + esc(it.why) + "</span>" : '<span class="tag ok">可登记</span>'))
+              + "</div>";
+          }
+          list.innerHTML = html;
+          list.setAttribute("data-count", String(items.length));
+          if (items.length) {
+            sum.textContent = "识别 " + items.length + " 行"
+              + (items.length >= BATCH_MAX ? "（只认前 " + BATCH_MAX + " 行）" : "")
+              + " · 可登记 " + todo
+              + (skip ? " · 跳过 " + skip : "")
+              + (bad ? "（其中 " + bad + " 行读不出单号）" : "");
+          } else {
+            sum.textContent = "还没有内容 —— 一行一条粘进来";
+          }
+          yesBtn.textContent = todo ? "登记 " + todo + " 条" : "没有可登记的";
+          yesBtn.disabled = !todo;
+        }
+        ta.oninput = paint;
+        paint();
+      },
+      collect: function (mask) {
+        var items = parseBatch(mask.querySelector("#batchText").value);
+        batchPick = {
+          items: items.filter(function (x) { return x.state !== "exists" && x.state !== "dup" && x.state !== "bad"; }),
+          skipped: items.length,
+          memo: txt(mask.querySelector("#batchMemo").value).trim(),
+        };
+      },
+    });
+    if (!yes || !batchPick) return;
+    var todo = batchPick.items;
+    var total = batchPick.skipped;
+    if (!todo.length) {
+      var m0 = $("addMsg");
+      m0.className = "hint bad";
+      m0.textContent = total ? "这 " + total + " 行里没有可登记的新单号" : "没有识别到单号";
+      return;
+    }
+    await addBatch(todo, batchPick.memo, total);
+  }
+
+  /** 逐条落库。一条失败不打断后面的（和附图一个道理：别因为第 3 条炸了，
+      第 4/5 条就白粘了）。进度写在登记页的提示条上。 */
+  async function addBatch(items, memo, totalLines) {
+    var store = pillVal($("fStore"));
+    var courier = pillVal($("fCourier"));
+    var category = pillVal($("fCategory"));
+    var base = Date.now();          // 一批共用一个时间基准，提醒不会差出几秒
+    var msg = $("addMsg");
+    var ok = 0, fail = 0;
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      msg.className = "hint";
+      msg.textContent = "登记中… " + (i + 1) + " / " + items.length;
+      try {
+        var row = {
+          id: newId(),
+          order_sn: it.order,
+          tracking_no: "",
+          courier: courier,
+          shipped_at: nowMinStr(),
+          store: it.store || store,       // 链接里认出的店优先
+          category: category,
+          title: memo,
+          handling: "", result: "", settled: "", note: "", flow: "",
+          remind_at: "", remind_task: "",
+          created_at: nowMinStr(),
+          updated_at: nowMinStr(),
+        };
+        if (hasIndemnity) row.indemnity = "";
+        var saved = await insert(row);
+        await bookRemindAt(saved, new Date(base + remindHours() * 3600000),
+          "登记后 " + remindHours() + " 小时还没跟进");
+        ok++;
+      } catch (e) {
+        fail++;
+      }
+    }
+    var skipped = totalLines - items.length;
+    msg.className = fail ? "hint bad" : "hint";
+    msg.textContent = "批量登记完成：进 " + ok + " 条"
+      + (skipped > 0 ? " · 跳过 " + skipped + " 条（已有的 / 这批发重复的 / 读不出单号）" : "")
+      + (fail ? " · " + fail + " 条没成功" : "")
+      + (memo ? " · 都带上了同一句描述" : "");
     await load();
     $("fOrder").focus();
   }
@@ -5095,6 +5314,7 @@
     }, true);
   }
   $("btnAdd").onclick = function () { void add(); };
+  $("btnBatch").onclick = function () { void openBatch(""); };
 
   /* ---- 登记页附图：选 / 拖 / 去掉，提交前都还在内存里 ---- */
   function renderPendingImgs() {
@@ -5236,8 +5456,31 @@
 
   // 订单号框：一动输入就重置重复确认位；粘链接 / 失焦时就地收拾（把链接换成单号、认店铺）
   $("fOrder").oninput = function () { dupAck = ""; showOrderHint(); };
-  $("fOrder").onpaste = function () { setTimeout(cleanOrderField, 0); };  // 粘贴要先等浏览器把值写进去
+  /* 粘进来的东西可能是**一整批**单号（一次来五个异常，谁也不想点五次）。
+     多行 → 拦下默认粘贴，直接把这片文本交给批量面板；单行 → 还是原来的就地收拾。 */
+  $("fOrder").onpaste = function (e) {
+    var raw = e.clipboardData ? e.clipboardData.getData("text") : "";
+    var n = 0;
+    var lines = txt(raw).split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) if (txt(lines[i]).trim()) n++;
+    if (n >= 2) {
+      e.preventDefault();
+      void openBatch(raw);
+      return;
+    }
+    setTimeout(cleanOrderField, 0);   // 粘贴要先等浏览器把值写进去
+  };
   $("fOrder").onblur = cleanOrderField;
+  /* 回车即登记 —— 连着录的时候手不用离开键盘。
+     ★ 输入法在选汉字时按回车是「确认候选词」，不能当提交（isComposing / 229）。 */
+  function enterToAdd(e) {
+    if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
+    if (!txt($("fOrder").value).trim() && !txt($("fTrack").value).trim()) return;
+    e.preventDefault();
+    void add();
+  }
+  $("fOrder").onkeydown = enterToAdd;
+  $("fTrack").onkeydown = enterToAdd;
   $("fTrack").onblur = function () { var v = washOrder(this.value); if (v !== this.value) this.value = v; };
   $("search").oninput = renderList;
   // 筛选：8 个下拉（查看页 4 + 表格页 4）走同一套逻辑 —— 改一个另一边跟着变
