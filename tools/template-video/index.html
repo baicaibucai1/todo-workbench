@@ -95,190 +95,196 @@
   .dot.ok { color: var(--ok); }
   .dot.warn { color: var(--danger); }
 
-  /* ---------------- 主体两栏 ---------------- */
-  .wrap { flex: 1 1 auto; display: flex; min-height: 0; }
-
-  .side {
-    flex: 0 0 292px; min-width: 0; display: flex; flex-direction: column;
-    border-right: 1px solid var(--line); background: var(--bg);
-  }
-  .sidehead {
-    flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
-    padding: 8px 10px 6px; border-bottom: 1px solid var(--line);
-  }
-  .sidehead strong { font-size: 12.5px; font-weight: 600; flex: 0 0 auto; }
-  .sidehead .hint {
-    flex: 1 1 auto; min-width: 0; font-size: 11.5px; color: var(--dim);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-
-  .clips {
-    flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px;
-    display: flex; flex-direction: column; gap: 6px;
-  }
-  .clips.empty { align-items: center; justify-content: center; }
-  .clips.over { outline: 2px solid var(--accent); outline-offset: -4px; border-radius: 8px; }
-  .dropnote {
-    margin: 10px; padding: 22px 14px; text-align: center; color: var(--dim);
-    font-size: 12.5px; line-height: 1.75; border: 1px dashed var(--line);
-    border-radius: 8px;
-  }
-  .dropnote b { display: block; color: var(--fg2); font-weight: 600; margin-bottom: 4px; }
-
-  .clip {
-    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
-    padding: 5px 6px; border: 1px solid var(--line); border-radius: 8px;
-    background: var(--bg); cursor: grab; touch-action: none;
-    user-select: none; -webkit-user-select: none;
-  }
-  .clip:hover { background: var(--chip); }
-  .clip.dragging { opacity: .55; border-style: dashed; cursor: grabbing; background: var(--chip); }
-  .clip.sel { border-color: var(--accent); }
-  .clip .idx {
-    flex: 0 0 auto; width: 17px; text-align: center; font-size: 11px;
-    color: var(--dim); font-variant-numeric: tabular-nums;
-  }
-  .clip img {
-    flex: 0 0 auto; width: 54px; height: 36px; object-fit: cover;
-    border-radius: 4px; background: var(--chip); pointer-events: none;
-  }
-  .clip .nm {
-    flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--fg2);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .clip .x {
-    flex: 0 0 auto; width: 22px; height: 22px; padding: 0; line-height: 1;
-    border: none; background: none; color: var(--dim); font-size: 15px; border-radius: 5px;
-  }
-  .clip .x:hover { background: var(--chip); color: var(--danger); }
-  .sidefoot {
-    flex: 0 0 auto; display: flex; gap: 6px; padding: 8px 10px;
-    border-top: 1px solid var(--line);
-  }
-  .sidefoot button { flex: 1 1 0; min-width: 0; }
-  .sidefoot button.armed { color: var(--danger); border-color: var(--danger); }
+  /* ---------------- 顶栏 ---------------- */
   .bar button.icon {
     width: 30px; min-width: 30px; padding: 0; font-size: 14px; line-height: 1;
   }
+  .bar .logo {
+    flex: 0 0 auto; width: 24px; height: 24px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--accent); color: #fff; font-size: 12px; font-weight: 600;
+  }
 
-  .main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; overflow: auto; }
+  /* ================================================================
+   * 剪映式三区：上（预览 + 检查器）、下（工具条 + 标尺 + 轨道）
+   * 预览区永远是深色画布，检查器跟随宿主主题 —— 剪辑软件就该这样：
+   * 眼睛盯着画面，参数退到右边，时间轴占底部整条。
+   * ================================================================ */
+  .editor { flex: 1 1 auto; display: flex; min-height: 0; }
 
-  /* ---------------- 预览 ---------------- */
-  /* 预览吃掉剩下的高度：定死高度的话，窗口一矮，下面那排参数和配乐行
-     就被挤到需要滚动 —— 而「配乐」正是这个工具的主入口，不能藏在折叠线下面。
-     所以这里 flex:1 + min-height 兜底，永远不滚动。 */
+  .viewer {
+    flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;
+    background: var(--stage);
+  }
   .stage {
-    flex: 1 1 auto; min-height: 150px; display: flex;
-    align-items: center; justify-content: center;
-    padding: 10px; background: var(--stage);
+    flex: 1 1 auto; min-height: 118px; display: flex;
+    align-items: center; justify-content: center; padding: 10px 12px 4px;
   }
-  .stage canvas { display: block; max-width: 100%; max-height: 100%; border-radius: 3px; }
+  .stage.over { box-shadow: inset 0 0 0 2px var(--accent); }
+  .stage canvas { display: block; max-width: 100%; max-height: 100%; border-radius: 4px; }
 
-  .ctrl {
-    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
-    padding: 7px 12px; border-bottom: 1px solid var(--line);
-  }
+  .transport { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 4px 12px 10px; }
+  .transport .sp { flex: 1 1 auto; }
   #play {
     flex: 0 0 auto; width: 30px; height: 30px; padding: 0; border-radius: 50%;
-    background: var(--fg); border-color: var(--fg); color: var(--bg);
-    font-size: 11px; line-height: 1;
+    background: #fff; border-color: #fff; color: #16150f; font-size: 11px; line-height: 1;
   }
-  #play:hover:not(:disabled) { background: var(--fg); filter: brightness(1.2); }
-  #time {
-    flex: 0 0 auto; font-size: 11.5px; color: var(--dim);
+  #play:hover:not(:disabled) { background: #fff; filter: brightness(.9); }
+  .clock {
+    flex: 0 0 auto; font-size: 12px; color: rgba(255,255,255,.88);
     font-variant-numeric: tabular-nums; white-space: nowrap;
   }
-
-  /* ---------------- 时间轨道 ---------------- */
-  /* 每段宽度 = 这张的实际时长占比（flex-grow 按秒数给，避免百分比舍入
-     加起来超过 100% 把最后一段挤没）。右端发蓝的一截是转场区。 */
-  .tl {
-    position: relative; flex: 1 1 auto; min-width: 60px; height: 34px;
-    display: flex; border: 1px solid var(--line); border-radius: 6px;
-    background: var(--chip); overflow: hidden; cursor: pointer;
-    touch-action: none; user-select: none; -webkit-user-select: none;
-  }
-  .tlempty {
-    flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
-    font-size: 11.5px; color: var(--dim); pointer-events: none;
-  }
-  .tlseg {
-    position: relative; flex: 1 1 0; min-width: 3px; height: 100%;
-    background: var(--bg); border-right: 1px solid var(--line); overflow: hidden;
-  }
-  .tlseg:last-child { border-right: none; }
-  .tlseg .sn {
-    position: absolute; inset: 0; display: flex; align-items: center;
-    justify-content: center; font-size: 10.5px; color: var(--dim);
-    font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none;
-  }
-  .tlseg .tz {
-    position: absolute; top: 0; right: 0; bottom: 0; pointer-events: none;
-    background: linear-gradient(to left, rgba(55, 138, 221, .16), rgba(55, 138, 221, 0));
-  }
-  .tlseg.sel { box-shadow: inset 0 0 0 2px var(--accent); z-index: 1; }
-  .tlph {
-    position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px;
-    background: var(--accent); pointer-events: none; z-index: 2;
+  .viewhint {
+    flex: 0 1 auto; min-width: 0; font-size: 11px; color: rgba(255,255,255,.45);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
 
-  /* 选中某张后的时长编辑行 */
-  .tledit {
-    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
-    padding: 6px 12px 2px; font-size: 12px; color: var(--fg2);
+  /* ---------------- 检查器 ---------------- */
+  .inspector {
+    flex: 0 0 238px; min-width: 0; display: flex; flex-direction: column;
+    border-left: 1px solid var(--line); background: var(--bg);
   }
-  .tledit .lbl {
-    flex: 0 1 auto; min-width: 0; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap;
+  .tabs { flex: 0 0 auto; display: flex; border-bottom: 1px solid var(--line); }
+  .tabs button {
+    flex: 1 1 0; padding: 8px 0; border: none; border-radius: 0; background: none;
+    color: var(--dim); font-size: 12px; border-bottom: 2px solid transparent;
   }
-  .tledit input[type="range"] { flex: 1 1 auto; min-width: 60px; }
-  .tledit input[type="text"] { flex: 1 1 auto; min-width: 0; }
-  .tledit select { flex: 0 0 auto; font-size: 11.5px; padding: 2px 4px; }
-  .tledit .k { flex: 0 0 auto; font-size: 11.5px; color: var(--dim); }
-  .tledit .v {
-    flex: 0 0 auto; min-width: 58px; text-align: right;
-    font-variant-numeric: tabular-nums; color: var(--fg2); font-size: 11.5px;
-  }
-  .tledit button { flex: 0 0 auto; font-size: 11.5px; padding: 3px 9px; }
+  .tabs button.on { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
+  .tabs button:hover:not(.on) { background: var(--chip); }
 
-  /* ---------------- 参数 ---------------- */
-  .opts {
-    flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 7px 14px;
-    padding: 10px 12px 12px;
+  .pane {
+    flex: 1 1 auto; min-height: 0; overflow: auto; padding: 9px 12px 10px;
+    display: flex; flex-direction: column; gap: 7px;
   }
-  .opt { display: flex; align-items: center; gap: 7px; min-width: 0; }
-  .opt > .k { flex: 0 0 auto; font-size: 12px; color: var(--fg2); white-space: nowrap; }
-  .opt input[type="range"] { flex: 1 1 auto; min-width: 50px; }
-  .opt .v {
-    flex: 0 0 auto; font-size: 11.5px; color: var(--dim); min-width: 34px;
-    text-align: right; font-variant-numeric: tabular-nums;
+  .field { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .field > .k { flex: 0 0 52px; font-size: 11.5px; color: var(--dim); white-space: nowrap; }
+  .field select, .field input[type="text"] { flex: 1 1 auto; min-width: 0; }
+  .field input[type="range"] { flex: 1 1 auto; min-width: 40px; }
+  .field .v {
+    flex: 0 0 auto; min-width: 36px; text-align: right; font-size: 11px;
+    color: var(--dim); font-variant-numeric: tabular-nums;
   }
-  .opt select { flex: 1 1 auto; min-width: 0; }
-  .opt.wide { grid-column: 1 / -1; }
-  .opt.wide input[type="text"] { flex: 1 1 auto; }
-  .opt.chk { grid-column: 1 / -1; margin-top: -2px; }
-  .opt.chk label {
+  .field .ell {
+    flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--fg2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .field .grow { flex: 1 1 auto; min-width: 0; }
+  .field.chk { align-items: flex-start; }
+  .field.chk label {
     display: flex; align-items: center; gap: 6px; font-size: 12px;
     color: var(--fg2); cursor: pointer; white-space: nowrap;
   }
-
-  /* ---------------- 配乐行 ---------------- */
-  .musicrow {
-    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
-    margin: 0 12px 12px; padding: 8px 10px; border: 1px solid var(--line);
-    border-radius: 8px; background: var(--chip);
-  }
-  .musicrow .mi {
-    flex: 0 0 auto; width: 22px; height: 22px; border-radius: 5px;
-    display: flex; align-items: center; justify-content: center;
-    background: var(--bg); border: 1px solid var(--line); font-size: 12px; color: var(--fg2);
-  }
-  .musicrow .mt {
-    flex: 1 1 auto; min-width: 0; font-size: 12.5px; color: var(--fg2);
+  .field button { flex: 0 0 auto; font-size: 11.5px; padding: 3px 9px; }
+  .field button.ghost { border-color: transparent; color: var(--dim); }
+  .field button.ghost:hover:not(:disabled) { color: var(--fg); background: var(--chip); }
+  .pane .empty { color: var(--dim); font-size: 12px; line-height: 1.75; }
+  .pane .sub { font-size: 11px; color: var(--dim); line-height: 1.6; }
+  .divider { height: 1px; background: var(--line); margin: 1px 0; }
+  .mtext {
+    flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--fg2);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .musicrow .mt b { color: var(--fg); font-weight: 600; }
-  .musicrow button { flex: 0 0 auto; background: var(--bg); }
+  .mtext b { color: var(--fg); font-weight: 600; }
+
+  /* ---------------- 时间轴 ---------------- */
+  .timeline {
+    flex: 0 0 auto; display: flex; flex-direction: column;
+    border-top: 1px solid var(--line); background: var(--bg);
+  }
+  .tools { display: flex; align-items: center; gap: 6px; padding: 7px 10px 2px; }
+  .tools .sp { flex: 1 1 auto; }
+  .tools .hint {
+    font-size: 11px; color: var(--dim); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; max-width: 250px;
+  }
+  .tools button { font-size: 12px; padding: 4px 10px; }
+  .tools button.ghost { border-color: transparent; color: var(--dim); }
+  .tools button.ghost:hover:not(:disabled) { color: var(--fg); background: var(--chip); }
+
+  .ruler {
+    position: relative; height: 17px; margin: 2px 10px 0;
+    cursor: ew-resize; overflow: hidden;
+  }
+  .ruler .tk { position: absolute; top: 9px; bottom: 0; width: 1px; background: var(--line); }
+  .ruler .tk.major { top: 6px; background: var(--dim); opacity: .5; }
+  .ruler .lb {
+    position: absolute; top: -1px; font-size: 9.5px; color: var(--dim);
+    transform: translateX(2px); font-variant-numeric: tabular-nums; pointer-events: none;
+  }
+  .ruler .rph {
+    position: absolute; top: 0; bottom: -2px; width: 1px; margin-left: -0.5px;
+    background: var(--accent); pointer-events: none;
+  }
+  .ruler .rph::before {
+    content: ""; position: absolute; top: 0; left: -3px;
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  }
+
+  /* 视频轨：每段宽度按时长分，缩略图铺底（剪映的胶片条） */
+  .track {
+    position: relative; height: 58px; margin: 0 10px; display: flex; gap: 1px;
+    background: var(--chip); border-radius: 6px; overflow: hidden;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  .track.empty { align-items: center; justify-content: center; }
+  .track .hint2 { font-size: 11.5px; color: var(--dim); pointer-events: none; }
+  .track.over { box-shadow: inset 0 0 0 2px var(--accent); }
+  .clip {
+    position: relative; flex: 1 1 0; min-width: 4px; height: 100%; overflow: hidden;
+    border-right: 1px solid var(--line); background: var(--bg); cursor: grab;
+  }
+  .clip:last-of-type { border-right: none; }
+  .clip img {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; opacity: .82; pointer-events: none;
+  }
+  .clip .tcard {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: #1b1a18; color: #cfcbc2; font-size: 10.5px; pointer-events: none;
+    white-space: nowrap; overflow: hidden;
+  }
+  .clip .sn, .clip .dur {
+    position: absolute; padding: 0 4px; border-radius: 3px;
+    background: rgba(0,0,0,.52); color: #fff; font-size: 9.5px; line-height: 14px;
+    pointer-events: none; font-variant-numeric: tabular-nums;
+  }
+  .clip .sn { left: 3px; top: 2px; }
+  .clip .dur { right: 3px; bottom: 2px; }
+  .clip .tz {
+    position: absolute; top: 0; right: 0; bottom: 0; pointer-events: none;
+    background: linear-gradient(to left, rgba(55,138,221,.5), rgba(55,138,221,0));
+  }
+  .clip .x {
+    position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; padding: 0;
+    line-height: 13px; font-size: 12px; border: none; border-radius: 3px;
+    background: rgba(0,0,0,.45); color: #fff; opacity: 0; transition: opacity .12s;
+  }
+  .clip:hover .x, .clip.sel .x { opacity: 1; }
+  .clip .x:hover { background: var(--danger); }
+  /* 用 outline 而不是 inset 阴影：阴影画在子元素（缩略图）下面，会被盖住 */
+  .clip.sel { outline: 2px solid var(--accent); outline-offset: -2px; z-index: 2; }
+  .clip.dragging { opacity: .45; }
+  .playhead {
+    position: absolute; top: 0; bottom: 0; width: 1px; margin-left: -0.5px;
+    background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.35);
+    pointer-events: none; z-index: 3;
+  }
+
+  /* 音频轨 */
+  .atrack {
+    display: flex; align-items: center; gap: 8px; height: 28px;
+    margin: 5px 10px 10px; padding: 0 10px; border-radius: 6px;
+    background: var(--chip); border: 1px dashed var(--line);
+    font-size: 11.5px; color: var(--dim); cursor: pointer; overflow: hidden;
+  }
+  .atrack.has { border-style: solid; }
+  .atrack .ai { flex: 0 0 auto; color: var(--fg2); }
+  .atrack .at {
+    flex: 1 1 auto; min-width: 0; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .atrack .at b { color: var(--fg); font-weight: 600; }
+  .atrack .ax { flex: 0 0 auto; font-size: 11px; color: var(--dim); }
 
   /* ---------------- 配乐对话框 ---------------- */
   #mdlg {
@@ -359,10 +365,12 @@
   /* 提示条放右上角，不放底部居中：底部压着「配乐」那一行，而它正是
      最需要看见确认结果的地方（"配乐已就绪"的提示反而把曲名盖住）。 */
   #toast {
-    position: fixed; right: 14px; top: 52px; z-index: 90; max-width: 62%;
+    position: fixed; left: 50%; top: 50px; transform: translateX(-50%);
+    z-index: 90; max-width: 70%;
     padding: 7px 14px; border-radius: 7px;
     background: rgba(30, 29, 26, .92); color: #fff; font-size: 12.5px;
     opacity: 0; pointer-events: none; transition: opacity .18s;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   #toast.on { opacity: 1; }
 
@@ -463,71 +471,36 @@
 <body data-bind-state="booting">
 
 <div class="bar">
+  <span class="logo">模</span>
   <h1>模板视频</h1>
-  <span class="count" id="count">0 张</span>
+  <span class="count" id="count">0 段 · 0:00</span>
   <span class="sp"></span>
+  <span class="dot" id="hostState">连接中…</span>
   <button id="undoBtn" class="icon" disabled title="撤销（Ctrl+Z）">↶</button>
   <button id="redoBtn" class="icon" disabled title="重做（Ctrl+Shift+Z）">↷</button>
-  <span class="dot" id="hostState">连接中…</span>
-  <button id="tplBtn" title="先定风格/片长/配乐，之后只传图片">模板</button>
-  <button id="scriptBtn" title="工程即脚本：导出 / 编辑 / 批量跑">脚本</button>
-  <button id="addBtn" class="primary">添加图片</button>
-  <button id="exportBtn" disabled>导出视频</button>
+  <button id="exportBtn" class="primary" disabled>导出视频</button>
 </div>
 
-<div class="wrap">
-  <div class="side">
-    <div class="sidehead">
-      <strong>图片顺序</strong>
-      <span class="hint" id="orderHint">按住拖动排序</span>
-    </div>
-    <div class="clips empty" id="clips">
-      <div class="dropnote" id="dropnote">
-        <b>把图片拖到这里</b>
-        也可以点下面「添加图片」<br>jpg / png / webp / gif
-      </div>
-    </div>
-    <div class="sidefoot">
-      <button id="addBtn2">添加图片</button>
-      <button id="textBtn" title="插一张纯文字卡（片头、章节、片尾）">文字卡</button>
-      <button id="clearBtn" disabled>清空</button>
+<div class="editor">
+  <div class="viewer">
+    <div class="stage" id="stage"><canvas id="cv" width="960" height="540"></canvas></div>
+    <div class="transport">
+      <button id="play" disabled title="预览（空格）">▶</button>
+      <span id="time" class="clock">0:00.0 / 0:00</span>
+      <span class="sp"></span>
+      <span class="viewhint" id="viewHint">横屏 16:9 · 1080p</span>
     </div>
   </div>
 
-  <div class="main">
-    <div class="stage"><canvas id="cv" width="960" height="540"></canvas></div>
-    <div class="ctrl">
-      <button id="play" disabled title="预览（空格）">▶</button>
-      <div class="tl" id="tl" title="点/拖定位；点某一段选中这张图"></div>
-      <span id="time">0:00 / 0:00</span>
+  <aside class="inspector">
+    <div class="tabs">
+      <button class="tab on" type="button" data-tab="look">画面</button>
+      <button class="tab" type="button" data-tab="clip">选段</button>
+      <button class="tab" type="button" data-tab="audio">音频</button>
     </div>
-    <div class="tledit" id="tledit" hidden>
-      <span class="lbl" id="teLabel"></span>
-      <input type="range" id="teDur" min="0.5" max="10" step="0.1" value="2.6">
-      <span class="v" id="teVal"></span>
-      <button id="teReset" type="button" title="这张回到跟随上面「每张」的秒数">用全局秒数</button>
-      <button id="teClose" type="button" title="取消选中">×</button>
-    </div>
-    <div class="tledit" id="tedetail" hidden>
-      <span class="k">转场</span>
-      <select id="teTrans" title="这一张切到下一张时用什么转场">
-        <option value="">跟随全局</option>
-        <option value="fade">淡化</option>
-        <option value="slide">横移</option>
-        <option value="zoom">推近</option>
-        <option value="wipe">擦除</option>
-        <option value="cut">硬切</option>
-      </select>
-      <span class="k" id="teFitK">构图</span>
-      <select id="teFit" title="铺满会裁掉边；完整会把整张塞进来，两边用模糊放大补满">
-        <option value="">铺满</option>
-        <option value="contain">完整（模糊补边）</option>
-      </select>
-      <input type="text" id="teText" maxlength="80" placeholder="这张卡上显示的文字（脚本里可用 \n 换行）" hidden>
-    </div>
-    <div class="opts">
-      <div class="opt">
-        <span class="k">模板</span>
+
+    <div class="pane" data-pane="look">
+      <div class="field"><span class="k">风格</span>
         <select id="preset">
           <option value="custom">自定义</option>
           <option value="soft">温柔回忆</option>
@@ -536,29 +509,40 @@
           <option value="cut">干净硬切</option>
         </select>
       </div>
-      <div class="opt">
-        <span class="k">画面</span>
+      <div class="field"><span class="k">画面</span>
         <select id="ratio">
           <option value="16:9">横屏 16:9</option>
           <option value="9:16">竖屏 9:16</option>
           <option value="1:1">方形 1:1</option>
         </select>
       </div>
-      <div class="opt">
-        <span class="k">清晰度</span>
+      <div class="field"><span class="k">清晰度</span>
         <select id="size">
           <option value="1080">1080p</option>
           <option value="720">720p</option>
           <option value="540">540p（快）</option>
         </select>
       </div>
-      <div class="opt">
-        <span class="k">每张</span>
+      <div class="field"><span class="k">帧率</span>
+        <select id="fps">
+          <option value="30">30 帧</option>
+          <option value="25">25 帧</option>
+          <option value="24">24 帧（电影）</option>
+        </select>
+      </div>
+      <div class="field"><span class="k">画质</span>
+        <select id="quality">
+          <option value="high">高</option>
+          <option value="std">标准</option>
+          <option value="small">体积小</option>
+        </select>
+      </div>
+      <div class="divider"></div>
+      <div class="field"><span class="k">每段</span>
         <input type="range" id="dur" min="0.8" max="8" step="0.2" value="2.6">
         <span class="v" id="durVal">2.6s</span>
       </div>
-      <div class="opt">
-        <span class="k">转场</span>
+      <div class="field"><span class="k">转场</span>
         <select id="trans">
           <option value="fade">交叉淡化</option>
           <option value="slide">横移</option>
@@ -567,39 +551,82 @@
           <option value="cut">硬切</option>
         </select>
       </div>
-      <div class="opt">
-        <span class="k">转场时长</span>
+      <div class="field"><span class="k">转场时长</span>
         <input type="range" id="td" min="0.2" max="1.6" step="0.1" value="0.7">
         <span class="v" id="tdVal">0.7s</span>
       </div>
-      <div class="opt wide">
-        <span class="k">输出</span>
-        <select id="fps" style="flex:0 0 104px" title="帧率：24 更有电影感，30 更顺">
-          <option value="30">30 帧</option>
-          <option value="25">25 帧</option>
-          <option value="24">24 帧（电影）</option>
-        </select>
-        <select id="quality" style="flex:0 0 104px" title="画质越高文件越大">
-          <option value="high">画质 高</option>
-          <option value="std">画质 标准</option>
-          <option value="small">体积 小</option>
-        </select>
-        <span class="hint" id="outHint" style="flex:1 1 auto;font-size:11.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+      <div class="field chk"><label><input type="checkbox" id="kb" checked> 镜头缓推（每张慢慢放大／缩小）</label></div>
+      <div class="divider"></div>
+      <div class="field"><span class="k">标题</span>
+        <input type="text" id="title" placeholder="开头几秒显示在左下" maxlength="60" value="">
       </div>
-      <div class="opt chk">
-        <label><input type="checkbox" id="kb" checked> 镜头缓推（每张慢慢放大／缩小）</label>
-      </div>
-      <div class="opt wide">
-        <span class="k">标题</span>
-        <input type="text" id="title" placeholder="可选，开头几秒显示在画面左下" maxlength="60" value="">
+      <div class="sub" id="outHint"></div>
+    </div>
+
+    <div class="pane" data-pane="clip" hidden>
+      <div class="empty" id="teEmpty">在时间轴上点一段，这里显示它的时长、转场和构图。</div>
+      <div id="teBox" hidden>
+        <div class="field"><span class="k">片段</span><span class="ell" id="teLabel"></span></div>
+        <div class="field"><span class="k">时长</span>
+          <input type="range" id="teDur" min="0.5" max="10" step="0.1" value="2.6">
+          <span class="v" id="teVal"></span>
+        </div>
+        <div class="field"><span class="k"></span>
+          <button id="teReset" type="button" title="回到跟随上面「每段」的秒数">用全局秒数</button>
+          <button id="teClose" class="ghost" type="button">取消选中</button>
+        </div>
+        <div class="divider"></div>
+        <div class="field"><span class="k">转场</span>
+          <select id="teTrans" title="这一段的结尾用什么转场切到下一段">
+            <option value="">跟随全局</option>
+            <option value="fade">淡化</option>
+            <option value="slide">横移</option>
+            <option value="zoom">推近</option>
+            <option value="wipe">擦除</option>
+            <option value="cut">硬切</option>
+          </select>
+        </div>
+        <div class="field" id="teFitRow"><span class="k" id="teFitK">构图</span>
+          <select id="teFit" title="铺满会裁掉边；完整会把整张塞进来，两侧用模糊放大补满">
+            <option value="">铺满</option>
+            <option value="contain">完整（模糊补边）</option>
+          </select>
+        </div>
+        <div class="field" id="teTextRow" hidden><span class="k">文字</span>
+          <input type="text" id="teText" maxlength="80" placeholder="卡片文字，脚本里可用 \n 换行">
+        </div>
       </div>
     </div>
-    <div class="musicrow">
-      <span class="mi">♪</span>
-      <span class="mt" id="musicTxt">没有配乐</span>
-      <input type="range" id="vol" min="0" max="100" step="5" value="85" title="配乐音量" style="flex:0 0 72px">
-      <button id="musicPick">选择配乐</button>
+
+    <div class="pane" data-pane="audio" hidden>
+      <div class="field"><span class="k">配乐</span><span class="mtext" id="musicTxt">没有配乐</span></div>
+      <div class="field"><span class="k">音量</span>
+        <input type="range" id="vol" min="0" max="100" step="5" value="85" title="配乐音量">
+        <span class="v" id="volVal">85%</span>
+      </div>
+      <div class="field"><span class="k"></span><button id="musicPick" class="primary" type="button">选择配乐</button></div>
+      <div class="sub">来自维基共享资源，全部自由许可、可商用；也可以用本地音频文件。</div>
     </div>
+  </aside>
+</div>
+
+<div class="timeline">
+  <div class="tools">
+    <button id="addBtn" class="primary" type="button">＋ 图片</button>
+    <button id="textBtn" type="button" title="插一张纯文字卡（片头、章节、片尾）">T 文字</button>
+    <button id="musicBtn" type="button">♪ 音乐</button>
+    <button id="tplBtn" type="button" title="先定风格/片长/配乐，之后只传图片">模板</button>
+    <button id="scriptBtn" type="button" title="工程即脚本：导出 / 编辑 / 批量跑">脚本</button>
+    <span class="sp"></span>
+    <span class="hint" id="orderHint">拖动片段排序 · 拖两端改时长</span>
+    <button id="clearBtn" class="ghost" type="button" disabled>清空</button>
+  </div>
+  <div class="ruler" id="ruler" title="点或拖这行定位"><div id="rulerTicks"></div><div class="rph" id="rulerPh"></div></div>
+  <div class="track" id="tl"></div>
+  <div class="atrack" id="atrack" title="点击选择配乐">
+    <span class="ai">♪</span>
+    <span class="at" id="atrackTxt">没有配乐 · 点击选择</span>
+    <span class="ax">选择</span>
   </div>
 </div>
 
@@ -1070,6 +1097,7 @@
     $("td").disabled = S.trans === "cut";
     $("td").parentNode.style.opacity = S.trans === "cut" ? ".45" : "";
     if (!$("vol").matches(":active")) $("vol").value = String(Math.round(S.vol * 100));
+    if ($("volVal")) $("volVal").textContent = Math.round(S.vol * 100) + "%";
 
     var rc = ratioCfg();
     if (cv.width !== rc.pw || cv.height !== rc.ph) {
@@ -1080,6 +1108,10 @@
     var os = outSize();
     $("outHint").textContent = os.w + "×" + os.h + " · " + S.fps + "fps · " +
       (S.quality === "high" ? "高画质" : S.quality === "small" ? "小体积" : "标准");
+    if ($("viewHint")) {
+      $("viewHint").textContent = ({ "16:9": "横屏 16:9", "9:16": "竖屏 9:16", "1:1": "方形 1:1" }[S.ratio] || S.ratio) +
+        " · " + S.size + "p · " + S.fps + "fps";
+    }
     refreshTimeline();
   }
 
@@ -1091,7 +1123,9 @@
     $("exportBtn").disabled = !S.clips.length || S.exporting || batchRunning;
     $("clearBtn").disabled = !S.clips.length;
     $("count").textContent = S.clips.length + " 段 · " + fmtTime(tt);
-    $("orderHint").textContent = S.clips.length > 1 ? "按住拖动排序" : "再拖几张进来";
+    $("orderHint").textContent = S.clips.length
+      ? "拖动片段排序 · 拖两端改时长 · Delete 删除"
+      : "还没有片段，先加几张图片";
     $("time").textContent = fmtNow(S.t) + " / " + fmtTime(tt);
   }
 
@@ -1160,10 +1194,11 @@
       var box = $("teText");
       if (box) { box.focus(); box.select(); }
     });
-    $("addBtn2").addEventListener("click", pickImages);
+    $("musicBtn").addEventListener("click", openMusic);
     /* 清空是这页里唯一"没了就真没了"的批量操作（图片不落盘），给一道
        3 秒内点第二次才生效的闸：按钮自己变红变字，不弹框打断手。 */
     var clearArmUntil = 0, clearArmTimer = 0;
+    $("atrack").addEventListener("click", function () { openMusic(); });
     $("clearBtn").addEventListener("click", function () {
       var btn = this;
       if (!S.clips.length) return;
@@ -1227,6 +1262,10 @@
           $("tdlg").hidden = true;
           $("exp").hidden = true;
         }
+        return;
+      }
+      if (e.key === "Escape") {
+        if (S.sel) { S.sel = ""; syncSel(); }
         return;
       }
       if (e.key === " ") {
@@ -1415,7 +1454,6 @@
     var POOL = 3;
     var slots = new Array(list.length);
     var nextStart = 0, nextTake = 0, added = 0, failed = 0;
-    var box = $("clips");
 
     function flush() {
       var grew = false;
@@ -1425,10 +1463,7 @@
         nextTake++;
         grew = true;
       }
-      if (grew) {
-        renderClips();
-        box.scrollTop = box.scrollHeight; // 新图从底部进来，让它看得见
-      }
+      if (grew) renderClips();
     }
 
     function pump() {
@@ -1474,42 +1509,21 @@
   }
 
   /* ================================================================
-   * 七、队列 + 拖动排序
+   * 七、时间轴（唯一的编辑面）
    * ----------------------------------------------------------------
-   *   用指针事件而不是 HTML5 拖放：宿主窗口关掉 dragDropEnabled 之后页内
-   *   拖放确实还能用，但指针方案对触屏 / 触控板都稳，也不用管
-   *   dataTransfer 那一套。排序只改 DOM 顺序，松手时按 DOM 重排数组。
+   *   剪映式：所有片段横向铺在一条轨上，缩略图当胶片条。
+   *   点 = 选中（检查器自动跳到「选段」）；拖片段 = 改顺序；
+   *   拖两端 = 改这一段的秒数；点空处/标尺 = 定位播放头。
+   *   用指针事件而不是 HTML5 拖放：触控板 / 触屏都稳。
    * ================================================================ */
 
-  function renderClips() {
-    var box = $("clips");
-    var over = box.classList.contains("over");
-    if (!S.clips.length) {
-      box.className = "clips empty" + (over ? " over" : "");
-      box.innerHTML = '<div class="dropnote" id="dropnote"><b>把图片拖到这里</b>也可以点下面「添加图片」<br>jpg / png / webp / gif</div>';
-      return;
-    }
-    var html = "";
-    for (var i = 0; i < S.clips.length; i++) {
-      var c = S.clips[i];
-      html += '<div class="clip' + (c.id === S.sel ? " sel" : "") + '" data-id="' + c.id + '">' +
-        '<span class="idx">' + (i + 1) + "</span>" +
-        (c.type === "text"
-          ? '<div class="tcard">文</div>'
-          : '<img src="' + c.thumb + '" alt="" draggable="false">') +
-        '<span class="nm" title="' + esc(c.name) + '">' + esc(c.label || c.name) + "</span>" +
-        '<button class="x" type="button" title="移出">×</button>' +
-        "</div>";
-    }
-    box.className = "clips" + (over ? " over" : "");
-    box.innerHTML = html;
-  }
+  function renderClips() { renderTimeline(); }   // 旧调用点仍按这个名字走
 
   function renumber() {
-    var rows = $("clips").querySelectorAll(".clip");
+    var rows = $("tl").querySelectorAll(".clip");
     for (var i = 0; i < rows.length; i++) {
-      var idx = rows[i].querySelector(".idx");
-      if (idx) idx.textContent = String(i + 1);
+      var sn = rows[i].querySelector(".sn");
+      if (sn) sn.textContent = String(i + 1);
     }
   }
 
@@ -1522,16 +1536,15 @@
     if (S.sel === id) S.sel = "";
     S._autoFired = false;
     if (!S.clips.length) S.t = 0;
-    renderClips();
-    renumber();
     refreshTimeline();
     syncSel();
     draw();
     commit("del");
   }
 
+  /* 兜底：按 DOM 顺序重排数组（拖动逻辑本身已经直接改 S.clips） */
   function commitOrder() {
-    var rows = $("clips").querySelectorAll(".clip");
+    var rows = $("tl").querySelectorAll(".clip");
     var map = {};
     for (var i = 0; i < S.clips.length; i++) map[S.clips[i].id] = S.clips[i];
     var next = [];
@@ -1540,163 +1553,125 @@
       if (c) next.push(c);
     }
     if (next.length === S.clips.length) S.clips = next;
-    renumber();
     refreshTimeline();
-    syncSel(); // 选中行可能换了位置，编辑行里的「第 N 段」要跟着刷
+    syncSel();
     draw();
     commit("order");
   }
 
+  /* 拖文件进画面或轨道 = 加图片 */
   function bindClipList() {
-    var box = $("clips");
-
-    box.addEventListener("click", function (e) {
-      var row = e.target.closest(".clip");
-      if (!row) return;
-      // 刚拖完的那次 click 不当「跳过去看看」处理
-      if (row._dragged) { row._dragged = false; return; }
-      var at = -1;
-      for (var i = 0; i < S.clips.length; i++) if (S.clips[i].id === row.dataset.id) at = i;
-      if (at < 0) return;
-      var x = e.target.closest(".x");
-      if (x) { removeClip(row.dataset.id); return; }
-      // 点行 = 选中这张 + 预览跳到它开头（转场已结束的位置）
-      selectClip(row.dataset.id, true);
-    });
-
-    box.addEventListener("pointerdown", function (e) {
-      if (e.button !== 0) return;
-      var row = e.target.closest(".clip");
-      if (!row) return;
-      if (e.target.closest("button")) return;
-
-      var startY = e.clientY;
-      var moved = false;
-      try { row.setPointerCapture(e.pointerId); } catch (err) {}
-
-      function onMove(ev) {
-        if (!moved) {
-          if (Math.abs(ev.clientY - startY) < 4) return;
-          moved = true;
-          row.classList.add("dragging");
-        }
-        var others = Array.prototype.filter.call(box.children, function (el) {
-          return el !== row && el.classList.contains("clip");
-        });
-        var y = ev.clientY;
-        var before = null;
-        for (var i = 0; i < others.length; i++) {
-          var r = others[i].getBoundingClientRect();
-          if (y < r.top + r.height / 2) { before = others[i]; break; }
-        }
-        if (before) {
-          if (before.previousElementSibling !== row) box.insertBefore(row, before);
-        } else {
-          box.appendChild(row);
-        }
-        renumber();
-        var br = box.getBoundingClientRect();
-        if (y < br.top + 26) box.scrollTop -= 8;
-        else if (y > br.bottom - 26) box.scrollTop += 8;
-      }
-
-      function onUp() {
-        row.removeEventListener("pointermove", onMove);
-        row.removeEventListener("pointerup", onUp);
-        row.removeEventListener("pointercancel", onUp);
-        try { row.releasePointerCapture(e.pointerId); } catch (err) {}
-        if (!moved) return;
-        row.classList.remove("dragging");
-        row._dragged = true; // pointerup 后浏览器还会补一次 click，用它挡掉
-        commitOrder();
-      }
-
-      row.addEventListener("pointermove", onMove);
-      row.addEventListener("pointerup", onUp);
-      row.addEventListener("pointercancel", onUp);
-    });
-
-    /* 从系统里拖文件进来 */
-    var depth = 0;
-    box.addEventListener("dragenter", function (e) {
-      e.preventDefault();
-      depth++;
-      box.classList.add("over");
-    });
-    box.addEventListener("dragover", function (e) {
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-    });
-    box.addEventListener("dragleave", function (e) {
-      e.preventDefault();
-      depth--;
-      if (depth <= 0) { depth = 0; box.classList.remove("over"); }
-    });
-    box.addEventListener("drop", function (e) {
-      e.preventDefault();
-      depth = 0;
-      box.classList.remove("over");
-      var files = e.dataTransfer && e.dataTransfer.files;
-      if (files && files.length) void addFiles(files);
+    var zones = [$("stage"), $("tl")];
+    zones.forEach(function (el) {
+      if (!el) return;
+      var depth = 0;
+      el.addEventListener("dragenter", function (e) {
+        e.preventDefault(); depth++; el.classList.add("over");
+      });
+      el.addEventListener("dragover", function (e) {
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      });
+      el.addEventListener("dragleave", function (e) {
+        e.preventDefault(); depth--;
+        if (depth <= 0) { depth = 0; el.classList.remove("over"); }
+      });
+      el.addEventListener("drop", function (e) {
+        e.preventDefault(); depth = 0; el.classList.remove("over");
+        var files = e.dataTransfer && e.dataTransfer.files;
+        if (files && files.length) void addFiles(files);
+      });
     });
   }
 
   /* ================================================================
-   * 七·五、时间轨道 + 选中 + 单张时长
-   * ----------------------------------------------------------------
-   *   轨道每段宽度按这张的实际时长分（含单独调过的），段右端发蓝的
-   *   一截是转场区。整个轨道当进度条用：点/拖定位。点某一段（没拖动）
-   *   = 选中这张 → 左栏对应行高亮，下面浮出时长编辑行。
+   * 七·五、轨道渲染 + 检查器
    * ================================================================ */
 
   function renderTimeline() {
     var tl = $("tl");
     var tt = totalDur();
     if (!S.clips.length) {
-      tl.innerHTML = '<div class="tlempty">加了图片，这里就是时间轨道</div>';
+      tl.className = "track empty";
+      tl.innerHTML = '<span class="hint2">把图片拖进来，或点上面「＋ 图片」</span>';
+      var rp0 = $("rulerPh");
+      if (rp0) rp0.style.left = "0%";
+      renderRuler(0);
       return;
     }
     var bs = clipBounds();
     var html = "";
     for (var i = 0; i < bs.length; i++) {
       var b = bs[i], c = S.clips[i];
-      // 转场占这段尾部多少（画的时候是 min(td, dur*0.75)，这里保持一致）；
-      // 最后一张后面没有下一张，不画转场区
+      var wpc = b.dur / Math.max(0.01, tt) * 100;
+      // 转场占这段尾部多少（画的时候是 min(td, dur*0.75)）
       var tz = (effTrans(c) === "cut" || i === bs.length - 1)
         ? 0
         : Math.min(S.td, b.dur * 0.75) / b.dur * 100;
-      var wpc = b.dur / Math.max(0.01, tt) * 100;
-      var sn = wpc >= 9 ? (i + 1) + " · " + b.dur.toFixed(1) + "s"
-             : wpc >= 3.5 ? String(i + 1) : "";
-      html += '<div class="tlseg' + (c.id === S.sel ? " sel" : "") + '" data-id="' + c.id +
+      html += '<div class="clip' + (c.id === S.sel ? " sel" : "") + '" data-id="' + c.id +
+        '" title="' + esc((c.label || c.name) + " · " + b.dur.toFixed(1) + "s") +
         '" style="flex-grow:' + Math.round(b.dur * 1000) + '">' +
-        (sn ? '<span class="sn">' + sn + "</span>" : "") +
+        (c.type === "text"
+          ? '<div class="tcard">文字卡</div>'
+          : '<img src="' + c.thumb + '" alt="" draggable="false">') +
+        '<span class="sn">' + (i + 1) + "</span>" +
+        (wpc >= 6 ? '<span class="dur">' + b.dur.toFixed(1) + "s</span>" : "") +
         (tz > 1 ? '<span class="tz" style="width:' + tz.toFixed(1) + '%"></span>' : "") +
+        '<button class="x" type="button" title="移出这一段">×</button>' +
         "</div>";
     }
+    tl.className = "track";
+    tl.innerHTML = html + '<div class="playhead" id="tlph"></div>';
     var pp = tt ? clamp(S.t / tt, 0, 1) * 100 : 0;
-    tl.innerHTML = html + '<div class="tlph" id="tlph" style="left:' + pp.toFixed(2) + '%"></div>';
+    var ph = $("tlph");
+    if (ph) ph.style.left = pp.toFixed(2) + "%";
+    var rph = $("rulerPh");
+    if (rph) rph.style.left = pp.toFixed(2) + "%";
+    renderRuler(tt);
+  }
+
+  function fmtTick(s) {
+    if (s < 60) return (Math.round(s * 10) / 10) + "s";
+    var m = Math.floor(s / 60), r = Math.round(s % 60);
+    return m + ":" + (r < 10 ? "0" + r : r);
+  }
+
+  /* 标尺：整秒小刻度，标签间隔按可用宽度自动选（48px 一个标签） */
+  function renderRuler(tt) {
+    var box = $("rulerTicks");
+    if (!box) return;
+    var w = ($("ruler") && $("ruler").clientWidth) || 0;
+    if (!tt || w < 20) { box.innerHTML = ""; return; }
+    var pps = w / tt;
+    var steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+    var step = steps[steps.length - 1];
+    for (var i = 0; i < steps.length; i++) if (steps[i] * pps >= 48) { step = steps[i]; break; }
+    var minor = pps >= 9 ? 1 : step;
+    var html = "";
+    for (var k = 0; k * minor <= tt + 1e-6; k++) {
+      var sec = k * minor, x = sec * pps;
+      var major = Math.abs(sec % step) < 1e-6 || Math.abs(sec % step - step) < 1e-6;
+      html += '<i class="tk' + (major ? " major" : "") + '" style="left:' + x.toFixed(1) + 'px"></i>';
+      if (major) html += '<span class="lb" style="left:' + x.toFixed(1) + 'px">' + fmtTick(sec) + "</span>";
+    }
+    box.innerHTML = html;
   }
 
   function syncSel() {
-    var segs = $("tl").querySelectorAll(".tlseg");
+    var segs = $("tl").querySelectorAll(".clip");
     for (var i = 0; i < segs.length; i++) {
       segs[i].classList.toggle("sel", segs[i].dataset.id === S.sel);
-    }
-    var rows = $("clips").querySelectorAll(".clip");
-    for (var k = 0; k < rows.length; k++) {
-      rows[k].classList.toggle("sel", rows[k].dataset.id === S.sel);
     }
     syncEditor();
   }
 
   function syncEditor() {
     var c = clipById(S.sel);
-    var ed = $("tledit");
-    var dt = $("tedetail");
-    if (!c) { ed.hidden = true; dt.hidden = true; return; }
-    ed.hidden = false;
-    dt.hidden = false;
+    var empty = $("teEmpty"), box = $("teBox");
+    if (!empty || !box) return;
+    if (!c) { empty.hidden = false; box.hidden = true; return; }
+    empty.hidden = true;
+    box.hidden = false;
     var at = S.clips.indexOf(c);
     $("teLabel").textContent = "第 " + (at + 1) + " 段 · " + (c.label || c.name);
     $("teDur").value = String(effDur(c));
@@ -1704,19 +1679,18 @@
     $("teReset").disabled = !c.dur;
     $("teTrans").value = c.trans || "";
     var isText = c.type === "text";
-    // 文字卡没有「构图」可言；图片没有文字输入 —— 同一行里按类型换着显示
-    $("teFit").hidden = isText;
-    $("teFitK").hidden = isText;
+    $("teFitRow").hidden = isText;
     $("teFit").value = c.fit || "";
-    $("teText").hidden = !isText;
+    $("teTextRow").hidden = !isText;
     if (isText) {
       $("teText").value = c.text;
       $("teVal").textContent = (c.dur ? c.dur.toFixed(1) : S.dur.toFixed(1)) + "s";
     }
   }
 
-  function selectClip(id, andSeek) {
-    S.sel = S.sel === id ? "" : id; // 再点一下取消选中
+  /* 选中某段；keep=true 时点同一段不取消（轨道上点已选中的段保持选中） */
+  function selectClip(id, andSeek, keep) {
+    S.sel = (S.sel === id && !keep) ? "" : id;
     syncSel();
     if (andSeek && S.sel) {
       var bs = clipBounds();
@@ -1730,109 +1704,195 @@
     }
   }
 
+  /* 检查器标签页 */
+  function showPane(name) {
+    var tabs = document.querySelectorAll(".tabs button");
+    for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle("on", tabs[i].dataset.tab === name);
+    var panes = document.querySelectorAll(".pane");
+    for (var k = 0; k < panes.length; k++) panes[k].hidden = panes[k].dataset.pane !== name;
+  }
+
+  function bindTabs() {
+    var tabs = document.querySelectorAll(".tabs button");
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].addEventListener("click", function () { showPane(this.dataset.tab); });
+    }
+  }
+
   function bindTimeline() {
     var tl = $("tl");
-    var tlBusy = false; // 拖动进行中，悬停光标检测让路
+    var ruler = $("ruler");
+    var dragging = false;
 
-    // 悬停到段边界附近 → 光标变成可拉伸（纯视觉提示，不抢事件）
-    tl.addEventListener("pointermove", function (e) {
-      if (tlBusy || !S.clips.length) return;
-      var r = tl.getBoundingClientRect();
-      var tt = totalDur();
-      tl.style.cursor = tt > 0 && edgeAt(e.clientX, r, tt) >= 0 ? "col-resize" : "";
-    });
-    tl.addEventListener("pointerleave", function () { tl.style.cursor = ""; });
-
-    // clientX 落在哪条段边界（第 i 段的右边缘）±5px 内；返回段号，没贴到回 -1。
-    // 拖第 i 条边界 = 改第 i 张的时长（最后一段的右边缘也认，拖它改最后一张）。
-    function edgeAt(clientX, r, tt) {
-      if (tt <= 0 || r.width < 8) return -1;
+    function rect() { return tl.getBoundingClientRect(); }
+    function geom() {
+      var r = rect();
+      return { r: r, w: r.width, tt: totalDur() };
+    }
+    function timeAt(clientX, r, w, tt) {
+      return clamp((clientX - r.left) / Math.max(1, w), 0, 1) * Math.max(0, tt - 0.001);
+    }
+    function idxAt(t) {
+      var bs = clipBounds();
+      for (var i = 0; i < bs.length; i++) if (t < bs[i].end) return i;
+      return bs.length - 1;
+    }
+    /* 贴着某段的右边缘（±5px）→ 返回段号，用来拉伸时长 */
+    function edgeAt(clientX, r, w, tt) {
+      if (tt <= 0 || w < 8) return -1;
       var bs = clipBounds();
       for (var i = 0; i < bs.length; i++) {
-        var ex = r.left + bs[i].end / tt * r.width;
+        var ex = r.left + bs[i].end / tt * w;
         if (Math.abs(clientX - ex) <= 5) return i;
       }
       return -1;
     }
+    function seekTo(clientX) {
+      var g = geom();
+      pause();
+      S.t = timeAt(clientX, g.r, g.w, g.tt);
+      draw();
+    }
+
+    /* 标尺：点/拖定位 */
+    ruler.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0 || !S.clips.length) return;
+      e.preventDefault();
+      try { ruler.setPointerCapture(e.pointerId); } catch (err) {}
+      seekTo(e.clientX);
+      function mv(ev) { seekTo(ev.clientX); }
+      function up() {
+        ruler.removeEventListener("pointermove", mv);
+        ruler.removeEventListener("pointerup", up);
+        ruler.removeEventListener("pointercancel", up);
+      }
+      ruler.addEventListener("pointermove", mv);
+      ruler.addEventListener("pointerup", up);
+      ruler.addEventListener("pointercancel", up);
+    });
+
+    /* 悬停：贴边显示可拉伸 */
+    tl.addEventListener("pointermove", function (e) {
+      if (dragging || !S.clips.length) return;
+      var g = geom();
+      tl.style.cursor = edgeAt(e.clientX, g.r, g.w, g.tt) >= 0 ? "ew-resize" : "";
+    });
+    tl.addEventListener("pointerleave", function () { if (!dragging) tl.style.cursor = ""; });
+    tl.addEventListener("click", function (e) {
+      var x = e.target.closest(".x");
+      if (x) {
+        var row = x.closest(".clip");
+        if (row) removeClip(row.dataset.id);
+      }
+    });
 
     tl.addEventListener("pointerdown", function (e) {
       if (e.button !== 0 || !S.clips.length) return;
-      var r = tl.getBoundingClientRect();
-      var tt = totalDur();
-      if (tt <= 0) return;
-      var startX = e.clientX, moved = false;
-      pause();
-
-      /* ---- 模式一：贴着段边界按下 → 拖动改这一张的时长 ---- */
-      var edge = edgeAt(e.clientX, r, tt);
-      if (edge >= 0) {
-        var c = S.clips[edge], b0 = clipBounds()[edge];
-        // 「跟随全局」的先落成实际秒数，再从这往两边拖
-        if (!c.dur) c.dur = Math.round(b0.dur * 10) / 10;
-        tlBusy = true;
-        try { tl.setPointerCapture(e.pointerId); } catch (err) {}
-        function setDur(ev) {
-          /* 边界精确跟指针：解 (start+d)/(start+d+rest) = f 得 d。
-             后面各段秒数不动（只被视觉压窄），这样往右拖到底能顶到 10s，
-             往左拖到头也能落到 0.5s —— 按「指针x/总长」算的话，
-             右边还压着几秒就永远拖不到上限。 */
-          var f = clamp((ev.clientX - r.left) / r.width, 0, 1);
-          var rest = tt - b0.end; // 这段后面的总秒数
-          var d = (f * (b0.start + rest) - b0.start) / Math.max(0.08, 1 - f);
-          c.dur = clamp(Math.round(d * 10) / 10, 0.5, 10);
-          afterDurChange();
-        }
-        function endResize(ev) {
-          tl.removeEventListener("pointermove", onDrag);
-          tl.removeEventListener("pointerup", endResize);
-          tl.removeEventListener("pointercancel", endResize);
-          try { tl.releasePointerCapture(e.pointerId); } catch (err) {}
-          tlBusy = false;
-          tl.style.cursor = "";
-          if (ev) setDur(ev);
-          toast("第 " + (edge + 1) + " 张 → " + c.dur.toFixed(1) + "s");
-        }
-        function onDrag(ev) { setDur(ev); }
-        tl.addEventListener("pointermove", onDrag);
-        tl.addEventListener("pointerup", endResize);
-        tl.addEventListener("pointercancel", endResize);
-        setDur(e);
-        return;
-      }
-
-      /* ---- 模式二：普通按下 = 拖进度 / 点按选中 ---- */
-      try { tl.setPointerCapture(e.pointerId); } catch (err) {}
-
-      function set(ev) {
-        var x = clamp(ev.clientX - r.left, 0, r.width);
-        S.t = clamp(x / r.width, 0, 1) * Math.max(0.01, tt - 0.01);
-        draw();
-      }
-      function onMove(ev) {
-        if (!moved && Math.abs(ev.clientX - startX) < 3) return;
-        moved = true;
-        set(ev);
-      }
-      function onUp(ev) {
-        tl.removeEventListener("pointermove", onMove);
-        tl.removeEventListener("pointerup", onUp);
-        tl.removeEventListener("pointercancel", onUp);
-        try { tl.releasePointerCapture(e.pointerId); } catch (err) {}
-        if (moved) return;
-        set(e); // 确保落点准确（快速点按时 move 可能没触发）
-        var bs = clipBounds();
-        var hit = null;
-        for (var i = 0; i < bs.length; i++) if (S.t < bs[i].end) { hit = S.clips[i]; break; }
-        if (!hit) hit = S.clips[S.clips.length - 1];
-        selectClip(hit.id, false);
-      }
-
-      set(e);
-      tl.addEventListener("pointermove", onMove);
-      tl.addEventListener("pointerup", onUp);
-      tl.addEventListener("pointercancel", onUp);
+      if (e.target.closest(".x")) return; // 交给 click 处理，别在这里删
+      var g = geom();
+      var edge = edgeAt(e.clientX, g.r, g.w, g.tt);
+      if (edge >= 0) { startResize(e, edge, g); return; }
+      var hit = S.clips[idxAt(timeAt(e.clientX, g.r, g.w, g.tt))];
+      if (!hit) { seekTo(e.clientX); return; }
+      startClip(e, hit);
     });
 
+    /* ---- 拖边界改时长 ---- */
+    function startResize(e, edge, g) {
+      var c = S.clips[edge], b0 = clipBounds()[edge], tt0 = g.tt, rect0 = g.r;
+      if (!c.dur) c.dur = Math.round(b0.dur * 10) / 10;
+      dragging = true;
+      try { tl.setPointerCapture(e.pointerId); } catch (err) {}
+      function setDur(ev) {
+        /* 边界精确跟指针：解 (start+d)/(start+d+rest)=f 得 d。
+           后面各段秒数不动、只被视觉压窄，往右拖到底才能顶到 10s。 */
+        var f = clamp((ev.clientX - rect0.left) / rect0.width, 0, 1);
+        var rest = tt0 - b0.end;
+        var d = (f * (b0.start + rest) - b0.start) / Math.max(0.08, 1 - f);
+        c.dur = clamp(Math.round(d * 10) / 10, 0.5, 10);
+        afterDurChange();
+      }
+      function end(ev) {
+        tl.removeEventListener("pointermove", onMove);
+        tl.removeEventListener("pointerup", end);
+        tl.removeEventListener("pointercancel", end);
+        try { tl.releasePointerCapture(e.pointerId); } catch (err) {}
+        dragging = false;
+        tl.style.cursor = "";
+        if (ev) setDur(ev);
+        toast("第 " + (edge + 1) + " 段 → " + c.dur.toFixed(1) + "s");
+      }
+      function onMove(ev) { setDur(ev); }
+      tl.addEventListener("pointermove", onMove);
+      tl.addEventListener("pointerup", end);
+      tl.addEventListener("pointercancel", end);
+      setDur(e);
+    }
+
+    /* ---- 拖片段改顺序 / 点选 ---- */
+    function startClip(e, clip) {
+      var startX = e.clientX, moved = false, id = clip.id;
+      dragging = true;
+      try { tl.setPointerCapture(e.pointerId); } catch (err) {}
+
+      function mark(on) {
+        var row = tl.querySelector('.clip[data-id="' + id + '"]');
+        if (row) row.classList.toggle("dragging", on);
+      }
+      function reorderTo(x) {
+        var r = rect();
+        var tt = Math.max(0.01, totalDur());
+        var bs = clipBounds();
+        var at = bs.length - 1;
+        for (var i = 0; i < bs.length; i++) {
+          var mid = r.left + (bs[i].start + bs[i].end) / 2 / tt * r.width;
+          if (x < mid) { at = i; break; }
+        }
+        var from = -1;
+        for (var k = 0; k < S.clips.length; k++) if (S.clips[k].id === id) from = k;
+        if (from < 0 || from === at) return;
+        var arr = S.clips.slice();
+        arr.splice(at, 0, arr.splice(from, 1)[0]);
+        S.clips = arr;
+        S.sel = id;
+        renderTimeline();
+        mark(true);
+      }
+      function mv(ev) {
+        if (!moved) {
+          if (Math.abs(ev.clientX - startX) < 5) return;
+          moved = true;
+          mark(true);
+        }
+        reorderTo(ev.clientX);
+      }
+      function up() {
+        tl.removeEventListener("pointermove", mv);
+        tl.removeEventListener("pointerup", up);
+        tl.removeEventListener("pointercancel", up);
+        try { tl.releasePointerCapture(e.pointerId); } catch (err) {}
+        dragging = false;
+        tl.style.cursor = "";
+        if (moved) {
+          refreshTimeline();
+          syncSel();
+          draw();
+          saveCfg();
+          commit("order");
+          toast("顺序已调整");
+          return;
+        }
+        // 剪映式：点哪就把播放头放到哪，同时选中这段
+        seekTo(startX);
+        selectClip(id, false, true);
+        showPane("clip");
+      }
+      tl.addEventListener("pointermove", mv);
+      tl.addEventListener("pointerup", up);
+      tl.addEventListener("pointercancel", up);
+    }
+
+    /* ---- 检查器里的字段 ---- */
     $("teDur").addEventListener("input", function () {
       var c = clipById(S.sel);
       if (!c) return;
@@ -1849,7 +1909,7 @@
     $("teFit").addEventListener("change", function () {
       var c = clipById(S.sel);
       if (!c) return;
-      c.fit = this.value;   // "" = 铺满，contain = 完整（模糊补边）
+      c.fit = this.value;
       draw();
       saveCfg();
     });
@@ -1872,7 +1932,7 @@
 
   function afterDurChange() {
     syncEditor();
-    refreshTimeline(); // 里面会 renderTimeline（段宽跟着变）
+    refreshTimeline();
     draw();
   }
 
@@ -2053,7 +2113,7 @@
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.font = "500 " + Math.round(W * 0.026) + "px -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif";
-    g.fillText("把图片拖到左边，这里就有画面了", W / 2, H / 2);
+    g.fillText("把图片拖进来，这里就有画面了", W / 2, H / 2);
     g.textAlign = "left";
   }
 
@@ -2138,8 +2198,11 @@
     var tt = totalDur();
     if (S.t > tt) S.t = tt;
     drawFrame(g, cv.width, cv.height, tt ? clamp(S.t, 0, tt - 0.001) : 0);
+    var pp = tt ? clamp(S.t / tt, 0, 1) * 100 : 0;
     var ph = document.getElementById("tlph");
-    if (ph) ph.style.left = (tt ? clamp(S.t / tt, 0, 1) * 100 : 0) + "%";
+    if (ph) ph.style.left = pp + "%";
+    var rph = document.getElementById("rulerPh");
+    if (rph) rph.style.left = pp + "%";
     $("time").textContent = fmtNow(S.t) + " / " + fmtTime(tt);
   }
 
@@ -2816,9 +2879,14 @@
 
   function refreshMusic() {
     var el = $("musicTxt");
+    var at = $("atrackTxt");
+    var track = $("atrack");
     if (!S.music) {
       el.textContent = "没有配乐";
       $("musicPick").textContent = "选择配乐";
+      if (at) at.textContent = "没有配乐 · 点击选择";
+      if (track) track.classList.remove("has");
+      updateTplMusic();
       return;
     }
     var m = S.music;
@@ -2828,8 +2896,13 @@
     el.innerHTML = "<b>" + esc(m.title) + "</b> · " + esc(bits.join(" · "));
     // 一行装不下时会给省略号，全文挂 title 上，鼠标停一下能看全
     el.title = m.title + " · " + bits.join(" · ") + (m.page ? " · " + m.page : "");
+    if (at) {
+      at.innerHTML = "<b>" + esc(m.title) + "</b> · " + esc(bits.join(" · "));
+      at.title = el.title;
+    }
+    if (track) track.classList.add("has");
     $("musicPick").textContent = "换一首";
-      updateTplMusic();
+    updateTplMusic();
   }
 
   function bindMusic() {
@@ -3660,6 +3733,7 @@
     renderClips();
     bindControls();
     bindHistory();
+    bindTabs();
     bindClipList();
     bindTimeline();
     bindMusic();
