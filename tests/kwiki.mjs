@@ -364,6 +364,63 @@ section("4. applyPull：写进数据库，再读回来");
   check("总数还是 2（更新不是新增）", again.length === 2, String(again.length));
 }
 
+/* ================= 4b. 多台账（工具 1.24.0） ================= */
+
+section("4b. 多台账：按库号落库、按库号读回来");
+{
+  // 承接上一节：默认库里有 A1 / A2 两条
+  const plan = K.planPull(
+    [
+      row({ order_sn: "DS2-1", store: "丙店" }),
+      row({ order_sn: "DS2-2", store: "丁店", category: "破损" }),
+    ],
+    [],
+  );
+  const r = await K.applyPull(plan, "ds-2");
+  check("下载进第二本：新增 2", r.added === 2 && r.updated === 0, JSON.stringify(r));
+
+  const def = await K.readLedger();
+  check("默认库还是 2 条（第二本的行没混进来）", def.length === 2, String(def.length));
+  check(
+    "默认库读不到第二本的单号",
+    !def.some((x) => String(x.order_sn).startsWith("DS2-")),
+    def.map((x) => x.order_sn).join(","),
+  );
+
+  const ds2 = await K.readLedger("ds-2");
+  check("按库号读得到 2 条", ds2.length === 2, String(ds2.length));
+  check(
+    "库号真落到了 dataset_id 上",
+    ds2.every((x) => x.dataset_id === "ds-2"),
+    JSON.stringify(ds2.map((x) => x.dataset_id)),
+  );
+  check(
+    "第二本的值原样（店铺 / 情况）",
+    ds2.some((x) => x.order_sn === "DS2-2" && x.store === "丁店" && x.category === "破损"),
+    JSON.stringify(ds2.find((x) => x.order_sn === "DS2-2")),
+  );
+
+  // 第二次拉取：只拿第二本的行去对账。拿整表去比会把默认库的同单号当成"本地已有"
+  const plan2 = K.planPull([row({ order_sn: "DS2-1", store: "丙店改" })], ds2);
+  check(
+    "对账只用第二本的行（不跟默认库串台）",
+    plan2.adds.length === 0 && plan2.updates.length === 1,
+    JSON.stringify({ adds: plan2.adds.length, updates: plan2.updates.length }),
+  );
+  const r2 = await K.applyPull(plan2, "ds-2");
+  check("改的是第二本那一条", r2.added === 0 && r2.updated === 1, JSON.stringify(r2));
+
+  const ds2b = await K.readLedger("ds-2");
+  check("第二本仍是 2 条（更新不是新增）", ds2b.length === 2, String(ds2b.length));
+  check(
+    "改完的值读得回来",
+    ds2b.some((x) => x.order_sn === "DS2-1" && x.store === "丙店改"),
+    JSON.stringify(ds2b.find((x) => x.order_sn === "DS2-1")),
+  );
+  const def2 = await K.readLedger();
+  check("默认库没被第二本的改动碰到", def2.length === 2, String(def2.length));
+}
+
 /* ================= 5. 门禁 ================= */
 
 section("5. 网页端明确报错（不静默失败）");

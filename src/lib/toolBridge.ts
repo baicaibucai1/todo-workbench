@@ -534,6 +534,12 @@ interface ToolRequest {
     dryRun?: boolean;
     /** wps.mcpPush：true = 强制同步，表上有本地没有的行会被清空（默认不动） */
     force?: boolean;
+    /**
+     * 多台账（工具 1.24.0）：这一推一拉属于哪本台账库，`""` 或不传 = 默认库。
+     * 宿主拿它筛 `readLedger` 的行、给 `applyPull` 落库，**工具碰不到库号本身** ——
+     * 与 pendingPull 成对保存，避免"从 A 库的表拉、写进 B 库"这种串台。
+     */
+    dataset?: string;
     /** wps.mcpCreate：新表里那张工作表叫什么（不传 = 台账） */
     sheetName?: string;
   };
