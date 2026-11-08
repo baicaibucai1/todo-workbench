@@ -755,6 +755,16 @@
   .batchfld span { display: block; color: var(--dim); font-size: 12px; margin-bottom: 3px; }
   /* 单选：文字和圆点一行，别被全局 input 规则推成两行 */
   .rad { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--fg2); cursor: pointer; }
+  /* ---------- 删库的风险说明（两段确认的第一段） ----------
+     两块并排：左边「会删掉」红、右边「不会动」绿。颜色只落在小标题上，
+     正文一律灰的 —— 整段都染色反而看不清。 */
+  .risknote { font-size: 12.5px; color: var(--fg2); line-height: 1.65; margin-top: 6px; }
+  .risknote b { color: var(--fg); font-weight: 600; }
+  .riskgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+  .riskbox { border: 1px solid var(--line); border-radius: 4px; padding: 7px 9px 8px; }
+  .riskbox .rk { font-size: 11.5px; font-weight: 600; color: var(--danger); margin-bottom: 4px; }
+  .riskbox.safe .rk { color: var(--ok); }
+  .riskbox ul { margin: 0; padding-left: 15px; font-size: 12px; color: var(--fg2); line-height: 1.8; }
 
   /* ---------- 差异明细（推送确认 / 拉取确认 / 启动对账共用） ----------
      一条单一段，字段一行一个「表上 → 本机」。值用等宽字，
@@ -5000,18 +5010,70 @@
   }
 
   /** 删库：只删**本机**这一本的单子，云上那张表一动不动。 */
+  /**
+   * 删库：**两段确认**，不是一次点击就删。
+   * 第一段交代「这是只给本工具用的一本库、会删什么、不会动什么、怎么找回来」；
+   * 第二段要勾一个「我确认」才放行 —— 风险操作多一道闸，比事后找不回强。
+   */
   async function delDs() {
     var cur = curDs();
     if (dsList.length <= 1) { toast("至少留一本台账"); return; }
+    if (dsBusy) return;
     var n = rows.length;
-    var ok = await ask({
-      title: "删除这本台账？",
-      mark: cur.name,
-      body: "本机的 " + n + " 条单子会一起删掉（连带它们的图片关联）。"
-        + "\n云上那张表格一动不动 —— 想要回来，再点「绑定新表并下载数据」把它下回来就行。",
-      ok: "删掉本机的",
+    var pics = 0;
+    if (hasImages) {
+      for (var q = 0; q < rows.length; q++) pics += imgsOf(rows[q].id).length;
+    }
+
+    /* 第一段：先说清性质与范围 */
+    var goOn = await ask({
+      title: "删除台账库「" + cur.name + "」",
+      wide: true,
+      ok: "我明白，继续",
+      cancel: "算了",
+      html: '<div class="batchbox">'
+        + '<div class="risknote">这本库<b>只给「异常单号登记」这一个工具用</b> —— '
+        + "工作台里其它工具、别的台账库都不受影响。</div>"
+        + '<div class="riskgrid">'
+        + '<div class="riskbox"><div class="rk">会删掉</div><ul>'
+        + "<li>本机这 " + n + " 条单子（连同流程、提醒）</li>"
+        + (pics ? "<li>它们的 " + pics + " 张图片关联（多媒体文件里的原图不删）</li>" : "")
+        + "</ul></div>"
+        + '<div class="riskbox safe"><div class="rk">不会动</div><ul>'
+        + "<li>云上那张表格 —— 一行都不改</li>"
+        + "<li>其它 " + (dsList.length - 1) + " 本台账库</li>"
+        + "<li>工作台里别处的数据</li>"
+        + "</ul></div></div>"
+        + '<div class="risknote">想找回来：重新点「绑定新表并下载数据」，把那张表再下回来就行。</div>'
+        + "</div>",
     });
-    if (!ok) return;
+    if (!goOn) return;
+
+    /* 第二段：勾了才放行 */
+    var sure = false;
+    var ok = await ask({
+      title: "最后确认一次",
+      ok: "永久删除",
+      okTone: "danger",
+      html: '<div class="batchbox">'
+        + '<div class="risknote">这一步<b>没有撤销</b>：本机这 ' + n + ' 条会立刻删掉，'
+        + "只能靠云上那张表重新下载回来。</div>"
+        + '<label class="rad" style="margin-top:8px">'
+        + '<input type="checkbox" id="dsSure" /> 我确认删掉「' + esc(cur.name) + "」在本机的 " + n + " 条</label>"
+        + "</div>",
+      onOpen: function (mask) {
+        var box = mask.querySelector("#dsSure");
+        var yes = mask.querySelector("#dlgYes");
+        yes.disabled = true;                       // 没勾之前点不动
+        box.onchange = function () { yes.disabled = !box.checked; };
+      },
+      collect: function (mask) {
+        var box = mask.querySelector("#dsSure");
+        sure = !!(box && box.checked);
+      },
+    });
+    if (!ok || !sure) { setDsMsg("已取消，一条都没删"); return; }
+
     dsBusy = true;
     renderSettings();
     setDsMsg("正在删除「" + cur.name + "」的 " + n + " 条…");

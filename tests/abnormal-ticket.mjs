@@ -2679,21 +2679,47 @@ console.log("\n18. 多台账：绑定新表并下载（v1.24.0）");
   check("默认库里看不到新库那条", !listTxt2.includes("261108-9090909"), listTxt2.slice(0, 80));
   check("默认库自己的行还在（没被切库清掉）", listTxt2.length > 20, String(listTxt2.length));
 
-  /* 删除新库：只删本机的，云表不动 */
+  /* 删除新库：**两段确认** —— 第一段讲范围，第二段勾了才放行 */
   doc.getElementById("tab-settings").click();
   await sleep(80);
   doc.getElementById("dsPick").value = pullDs;
   doc.getElementById("dsPick").onchange();
   await sleep(300);
   const beforeDel = store.length;
+
+  /* ① 第一段：先说清"这是工具专用的库"，点「算了」什么都不发生 */
   doc.getElementById("dsDel").click();
-  await sleep(80);
+  await sleep(100);
   mask = doc.querySelector(".dlgm");
-  check("删库要确认", !!mask);
-  check("确认框说清「云表不动」", /云上那张表格一动不动/.test(mask ? mask.textContent : ""),
-    mask ? mask.textContent.slice(0, 80) : "");
+  check("删库第一步先讲这是工具专用的库",
+    /只给「异常单号登记」这一个工具用/.test(mask ? mask.textContent : ""),
+    mask ? mask.textContent.slice(0, 50) : "没弹窗");
+  check("第一步把「会删掉」和「不会动」分开列",
+    !!mask && /会删掉/.test(mask.textContent) && /不会动/.test(mask.textContent));
+  check("第一步写明云表一行不改", /云上那张表格 —— 一行都不改/.test(mask ? mask.textContent : ""));
+  check("第一步的按钮是「我明白，继续」而不是「删除」",
+    /我明白，继续/.test(mask.querySelector("#dlgYes").textContent || ""),
+    mask.querySelector("#dlgYes").textContent);
+  mask.querySelector("#dlgNo").click();
+  await sleep(80);
+  check("第一段点「算了」：一条没删", store.length === beforeDel, String(store.length));
+
+  /* ② 第二段：勾了才放行 */
+  doc.getElementById("dsDel").click();
+  await sleep(100);
+  mask = doc.querySelector(".dlgm");
+  mask.querySelector("#dlgYes").click();          // 「我明白，继续」
+  await sleep(150);
+  mask = doc.querySelector(".dlgm");
+  check("第二段才出现勾选框", !!mask && !!mask.querySelector("#dsSure"));
+  check("没勾之前「永久删除」是灰的", !!mask && mask.querySelector("#dlgYes").disabled === true);
+  const sureBox = mask.querySelector("#dsSure");
+  sureBox.checked = true;
+  sureBox.onchange();
+  await sleep(20);
+  check("勾上之后才放行", mask.querySelector("#dlgYes").disabled === false);
   mask.querySelector("#dlgYes").click();
-  await waitFor(() => !kv["activeDs"].includes("ds_"), 5000);
+  await waitFor(() => !String(kv["activeDs"] || "").includes("ds_"), 5000);
   await sleep(200);
   check("新库的行被删干净了", store.length < beforeDel, beforeDel + " → " + store.length);
   check("只剩默认那一本", JSON.parse(kv["datasets"] || "[]").length === 1, kv["datasets"]);
