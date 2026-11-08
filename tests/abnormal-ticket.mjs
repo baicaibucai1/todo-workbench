@@ -103,6 +103,9 @@ const args = [];           // 每个 op 的参数（要看推送第一步是不�
 let shellFail = null;      // 模拟旧宿主（不认识 shell.open）或系统唤不起来
 let createUnsupported = false; // 模拟 0.3.3 及更早的宿主（没有 wps.mcpCreate）
 const created = [];        // 新建表格的请求流水（看名字有没有原样递上去）
+/* 拉取写库要不要真落地。默认关（别的节只关心"调没调 apply"）；
+   多台账那节要验证「下载进的是哪一本」，得让它真写一行。 */
+let applyWrites = false;
 
 // 预置店铺表：其中一个挂着客服 ID 987654 —— ERP 链接里就写这个，
 // 好验证「粘链接 → 店铺自动认出来」这条路。
@@ -271,6 +274,19 @@ function host(win, e) {
       });
       return;
     case "wps.mcpApply":
+      if (applyWrites) {
+        // 真宿主的 applyPull 会把 adds 落成行，并带上本次的 dataset_id
+        store.push({
+          id: "pulled-" + (store.length + 1),
+          order_sn: "261020-111111111111",
+          tracking_no: "",
+          store: "拼5",
+          status: "待处理",
+          dataset_id: p.dataset || "",
+          created_at: "2026-11-08 10:00",
+          updated_at: "2026-11-08 10:00",
+        });
+      }
       reply(win, m.id, true, { added: 1, updated: 0 });
       return;
     /* 新建台账表格（宿主 0.3.4）。回包形状与 toolBridge 的 wps.mcpCreate 一致：
@@ -2575,6 +2591,117 @@ console.log("\n17. 版面：详情两列、删除收到底、锁态不像表单�
       .every((el) => win.getComputedStyle(el).width !== "100%"));
 
   check("版面这一路没有新报错", errors.length === 0, errors.join(" | "));
+}
+
+console.log("\n18. 多台账：绑定新表并下载（v1.24.0）");
+{
+  applyWrites = true;
+  doc.getElementById("tab-settings").click();
+  await sleep(120);
+
+  const sel = doc.getElementById("dsPick");
+  check("设置页有「台账库」下拉", !!sel);
+  check("一开始只有默认那一本", sel && sel.querySelectorAll("option").length === 1,
+    sel ? String(sel.querySelectorAll("option").length) : "没有下拉");
+  check("只有一本时不给删（不然一本不剩）", doc.getElementById("dsDel").disabled === true);
+  check("新建按钮用的是用户那句话", doc.getElementById("dsNew").textContent.includes("绑定新表并下载数据"),
+    doc.getElementById("dsNew").textContent);
+
+  doc.getElementById("dsNew").click();
+  await sleep(80);
+  let mask = doc.querySelector(".dlgm");
+  check("点「绑定新表并下载数据」弹出面板", !!mask);
+  const nameIn = mask && mask.querySelector("#dsName");
+  check("默认库名带年月", !!nameIn && /^台账 \d{4}-\d{2}$/.test(nameIn.value), nameIn ? nameIn.value : "没有输入框");
+  check("默认是「新建一张表」", mask && mask.querySelector('input[value="new"]').checked === true);
+  check("链接框先藏着（选了「用已有的表」才露）", mask && mask.querySelector("#dsLinkBox").hidden === true);
+
+  /* 选「用已有的表」—— 这条路上回包是 {file:{…}} 而不是 {sheet:{…}} */
+  const linkRadio = mask.querySelector('input[name="dsMode"][value="link"]');
+  linkRadio.checked = true;
+  linkRadio.onchange();
+  await sleep(30);
+  check("选「用已有的表」后换成链接框", mask.querySelector("#dsLinkBox").hidden === false
+    && mask.querySelector("#dsNewBox").hidden === true);
+  check("链接框拿到焦点（粘上去就能按回车）",
+    doc.activeElement === mask.querySelector("#dsLink"), doc.activeElement ? doc.activeElement.id : "无");
+
+  mask.querySelector("#dsName").value = "九月台账";
+  mask.querySelector("#dsLink").value = "https://www.kdocs.cn/l/ca1BaaQrrGVT";
+  mask.querySelector("#dlgYes").click();
+  await waitFor(() => args.some((a) => a.op === "wps.mcpApply"), 6000);
+  await sleep(200);
+
+  const pulls = args.filter((a) => a.op === "wps.mcpPull");
+  const pull = (pulls[pulls.length - 1] || {}).payload || {};
+  const pullDs = pull.dataset;
+  check("下载时带上了新库的号（不然会跟默认库串台）", /^ds_/.test(String(pullDs || "")), String(pullDs));
+  const applies = args.filter((a) => a.op === "wps.mcpApply");
+  const applyDs = applies.length ? applies[applies.length - 1].payload.dataset : "";
+  check("写库那一步带的也是同一个库号", String(applyDs) === String(pullDs),
+    applies.length ? String(applyDs) : "没调 apply");
+
+  let ds = [];
+  try { ds = JSON.parse(kv["datasets"] || "[]"); } catch (e) { ds = []; }
+  check("库清单里现在有两本", ds.length === 2, kv["datasets"]);
+  check("新库的名字就是输入的那个", ds.some((d) => d.name === "九月台账"), ds.map((d) => d.name).join(","));
+  check("新库记着自己的绑定", ds.some((d) => d.id === pullDs && d.wps && d.wps.fileId), JSON.stringify(ds).slice(0, 120));
+  check("当前库切到新的那本", kv["activeDs"] === pullDs, String(kv["activeDs"]));
+
+  await sleep(150);
+  check("下拉里出现两本", doc.getElementById("dsPick").querySelectorAll("option").length === 2);
+  check("下拉停在新库上", doc.getElementById("dsPick").value === pullDs);
+  check("有第二本之后删除键可用了", doc.getElementById("dsDel").disabled === false);
+  check("下载结果写在了提示条上", /已建好「九月台账」/.test(doc.getElementById("dsMsg").textContent || ""),
+    doc.getElementById("dsMsg").textContent);
+
+  /* 新库登记一条：行上必须带库号，否则会跑进默认库 */
+  doc.getElementById("tab-create").click();
+  await sleep(80);
+  doc.getElementById("fOrder").value = "261108-9090909";
+  doc.getElementById("btnAdd").click();
+  await waitFor(() => store.some((r) => r.order_sn === "261108-9090909"), 3000);
+  await sleep(120);
+  const mine = store.filter((r) => r.order_sn === "261108-9090909");
+  check("新库登记的行带上了库号", mine.length === 1 && String(mine[0].dataset_id) === pullDs,
+    mine.length ? String(mine[0].dataset_id) : "没落库");
+
+  /* 切回默认库：看不到新库那条，默认库自己的行还在 */
+  doc.getElementById("tab-settings").click();
+  await sleep(80);
+  doc.getElementById("dsPick").value = "default";
+  doc.getElementById("dsPick").onchange();
+  await sleep(400);
+  check("切回默认库后下拉停在默认", doc.getElementById("dsPick").value === "default");
+  doc.getElementById("tab-browse").click();
+  await sleep(100);
+  const listTxt2 = doc.getElementById("list").textContent || "";
+  check("默认库里看不到新库那条", !listTxt2.includes("261108-9090909"), listTxt2.slice(0, 80));
+  check("默认库自己的行还在（没被切库清掉）", listTxt2.length > 20, String(listTxt2.length));
+
+  /* 删除新库：只删本机的，云表不动 */
+  doc.getElementById("tab-settings").click();
+  await sleep(80);
+  doc.getElementById("dsPick").value = pullDs;
+  doc.getElementById("dsPick").onchange();
+  await sleep(300);
+  const beforeDel = store.length;
+  doc.getElementById("dsDel").click();
+  await sleep(80);
+  mask = doc.querySelector(".dlgm");
+  check("删库要确认", !!mask);
+  check("确认框说清「云表不动」", /云上那张表格一动不动/.test(mask ? mask.textContent : ""),
+    mask ? mask.textContent.slice(0, 80) : "");
+  mask.querySelector("#dlgYes").click();
+  await waitFor(() => !kv["activeDs"].includes("ds_"), 5000);
+  await sleep(200);
+  check("新库的行被删干净了", store.length < beforeDel, beforeDel + " → " + store.length);
+  check("只剩默认那一本", JSON.parse(kv["datasets"] || "[]").length === 1, kv["datasets"]);
+  check("删完切回了默认库", kv["activeDs"] === "default", String(kv["activeDs"]));
+  check("下拉也回到一本", doc.getElementById("dsPick").querySelectorAll("option").length === 1);
+
+  applyWrites = false;
+  check("多台账这一路没有新报错", errors.length === 0, errors.join(" | "));
 }
 
 console.log("\n====================================================");

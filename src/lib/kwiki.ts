@@ -281,17 +281,23 @@ async function ensureLedgerTable(): Promise<string> {
  *   · `flow` 服务于本地的 `_status` 派生。
  * 推送给 Rust 时多带的键无所谓 —— build_xlsx 只按 COLUMNS 取键。
  */
-export async function readLedger(): Promise<LedgerRow[]> {
+export async function readLedger(datasetId = ""): Promise<LedgerRow[]> {
   const table = await ensureLedgerTable();
   const rows = await db().select<Record<string, unknown>>(
     `SELECT * FROM ${table} ORDER BY created_at DESC`,
   );
-  return rows.map((r) => {
-    const row: LedgerRow = {};
-    for (const [k, v] of Object.entries(r)) row[k] = txt(v);
-    row._status = statusOf(row);
-    return row;
-  });
+  return rows
+    /* 多台账（v1.24.0）：一张表装所有库的单子，用 dataset_id 区分，空 = 默认台账
+       （老数据没有这一列，txt(undefined) 就是空串，自动归默认库）。
+       ★ 过滤放 JS 里，不写进 SQL：内存库的 SQL 子集对 COALESCE / IS NULL 没有保证，
+         写错一句就是**静默返回空** —— 整本台账看起来凭空消失，比慢一点糟得多。 */
+    .filter((r) => txt(r.dataset_id) === datasetId)
+    .map((r) => {
+      const row: LedgerRow = {};
+      for (const [k, v] of Object.entries(r)) row[k] = txt(v);
+      row._status = statusOf(row);
+      return row;
+    });
 }
 
 /* ------------------------------------------------------------------ */
@@ -348,7 +354,10 @@ function newId(): string {
  * 写一半停下的后果是"台账多出半页"。事务必须整体成功或整体没有
  * （理由见 db.ts 里 transaction 的注释：IPC 分四次会落不同连接）。
  */
-export async function applyPull(plan: PullPlan): Promise<{ added: number; updated: number }> {
+export async function applyPull(
+  plan: PullPlan,
+  datasetId = "",
+): Promise<{ added: number; updated: number }> {
   const table = await ensureLedgerTable();
   const now = new Date().toISOString();
   const statements: Array<{ sql: string; params?: Array<string | number | null> }> = [];
@@ -357,6 +366,8 @@ export async function applyPull(plan: PullPlan): Promise<{ added: number; update
     const vals: Record<string, string> = {};
     for (const [col] of COLUMNS) if (col !== "_status") vals[col] = fixDateText(txt(row[col]).trim());
     vals.id = newId();
+    // 下载进哪个库就标哪个库；默认库不写（保持老数据那样的空值）
+    if (datasetId) vals.dataset_id = datasetId;
     // 对面的登记时间只是参考：没有就按现在算，updated_at 一律落到本次同步的时刻
     vals.created_at = vals.created_at || now;
     vals.updated_at = now;

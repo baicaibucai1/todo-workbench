@@ -753,6 +753,8 @@
   .brow.off .sn { color: var(--dim); text-decoration: line-through; }
   .batchfld { display: block; margin-top: 10px; }
   .batchfld span { display: block; color: var(--dim); font-size: 12px; margin-bottom: 3px; }
+  /* 单选：文字和圆点一行，别被全局 input 规则推成两行 */
+  .rad { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--fg2); cursor: pointer; }
 
   /* ---------- 差异明细（推送确认 / 拉取确认 / 启动对账共用） ----------
      一条单一段，字段一行一个「表上 → 本机」。值用等宽字，
@@ -1164,7 +1166,20 @@
          独立运行时露出来只会让人点了个必然失败的按钮。 -->
     <div class="card narrow" data-host-only>
       <h2>在线表格（WPS）</h2>
-      <p class="note" style="margin:0 0 8px">
+      <!-- 台账库：一本库 = 一批单子 + 一张绑定的表。
+           默认那本装的是老数据（dataset_id 为空），新建的库各自带自己的表。 -->
+      <div class="r" id="dsRow" style="margin:0 0 8px">
+        <span class="lbl" data-ico="grid">台账库</span>
+        <select id="dsPick" style="flex:1 1 120px"></select>
+        <button class="mini" id="dsRename" title="给这本台账改个名字">改名</button>
+        <button class="mini danger" id="dsDel" title="只删本机这个库的单子，云表不动">删除</button>
+      </div>
+      <div class="r" style="margin:0 0 10px">
+        <button class="primary" id="dsNew" data-ico="doc">绑定新表并下载数据</button>
+        <span class="hint" style="margin:0">新建一本台账，把它和一张表绑上，表里的单子一次下载进来</span>
+      </div>
+      <div class="hint" id="dsMsg"></div>
+      <p class="note" style="margin:8px 0 8px">
         没有现成的表就<b>在这儿新建一张</b> —— 建的时候把台账那 14 个表头一起写好，
         不用你先去 WPS 里手搓；已经有表就粘一条<b>分享链接</b>绑上来。
         绑好之后就在本工具里<b>推送 / 拉取</b>。<b>只写台账那 14 列</b>：
@@ -1336,6 +1351,10 @@
      一行 = 某条单子挂了多媒体文件里的哪一张（gallery_id），外加一张 320px 缩略图
      （thumb，data URL）—— 缩略图跟着行走，工具渲染时不用回宿主一张张取。 */
   var TABLE_IMG = "ticket_images";
+  /* 多台账（v1.24.0）：一本库 = 一批单子 + 一张绑定的表。行上 dataset_id 为空 = 默认台账。
+     ★ 放在这儿而不是贴着用到它的地方：loadCfg 在文件后半段才被调用，但常量提前定好
+       读起来没歧义（var 提升只提升声明，初值要等执行到那一行）。 */
+  var DS_DEFAULT = "default";
 
   /* ==================================================================
    * 0. 小工具
@@ -1840,6 +1859,9 @@
     } else {
       try { rows = JSON.parse(localStorage.getItem(LS_ROWS) || "[]"); } catch (e) { rows = []; }
     }
+    /* 多台账：一张表装所有库，这里只留当前这本。
+       ★ 过滤放 JS 里（宿主 row.select 的 where 只认等值，做不了「空值也算默认库」）。 */
+    rows = rows.filter(function (r) { return dsOf(r.dataset_id) === activeDsId; });
     rows = rows.map(norm);
     /* 附图：读不到（旧工作台的清单里没有这张表 / 宿主还没建）就整块收起来，
        不能让它把台账也带崩 —— select 失败只影响图片。 */
@@ -1937,9 +1959,14 @@
     o.flow = txt(r.flow);
     o.remind_at = txt(r.remind_at);
     o.remind_task = txt(r.remind_task);
+    // 多台账的库号：不在 COLS 里（不推表），但内存里得留着 —— 否则
+    // 任何"这条属于哪本"的判断（导出、切换后回填）都拿不到。
+    o.dataset_id = txt(r.dataset_id);
     return o;
   }
   async function insert(row) {
+    // 多台账：非默认库的行标上库号；默认库不写（跟老数据一样留空，旧宿主也认）
+    if (activeDsId !== DS_DEFAULT) row.dataset_id = activeDsId;
     if (bound()) {
       var res = await call("row.insert", { table: TABLE, row: row });
       return norm((res && res.row) || row);
@@ -2490,14 +2517,37 @@
       }
       cfg.colors = clean;
     } catch (e) { cfg.colors = {}; }
-    var w = await cfgGet("wps.sheet");
+    /* 台账库（多台账）：清单 + 当前是哪一本。
+       没有清单 = 只有默认库；老数据（dataset_id 为空）本来就归默认库，
+       所以从旧版升上来一个字都不用搬。 */
+    var rawDs = null;
+    try { rawDs = JSON.parse((await cfgGet("datasets")) || "null"); } catch (e) { rawDs = null; }
+    var list = [{ id: DS_DEFAULT, name: "默认台账", wps: null }];
     try {
-      var o = w ? JSON.parse(w) : null;
-      if (o && o.fileId) wps = {
-        link: txt(o.link), fileId: txt(o.fileId), name: txt(o.name),
-        sheet: txt(o.sheet), owner: txt(o.owner),
-      };
-    } catch (e) { /* 坏数据当没绑过 */ }
+      var arr = rawDs;
+      if (arr && typeof arr.length === "number" && arr.length) {
+        list = [];
+        for (var di = 0; di < arr.length; di++) {
+          var d = arr[di] || {};
+          list.push({ id: txt(d.id) || DS_DEFAULT, name: txt(d.name) || "台账", wps: d.wps || null });
+        }
+      }
+    } catch (e) { /* 坏数据就退回单库，别让人打不开设置页 */ }
+    dsList = list;
+    var act = txt(await cfgGet("activeDs"));
+    activeDsId = act;
+    var hitDs = null;
+    for (var dj = 0; dj < dsList.length; dj++) if (dsList[dj].id === activeDsId) hitDs = dsList[dj];
+    if (!hitDs) { activeDsId = dsList[0].id; hitDs = dsList[0]; }
+    /* 绑定来源：当前库自己那份。★ 默认库再往下兼容一层 —— 老版本只存过
+       kv 的 wps.sheet，没有 datasets 这回事。 */
+    if ((!hitDs.wps || !txt(hitDs.wps.fileId)) && hitDs.id === DS_DEFAULT) {
+      try {
+        var legacy = JSON.parse((await cfgGet("wps.sheet")) || "null");
+        if (legacy && legacy.fileId) hitDs.wps = legacy;
+      } catch (e) { /* 坏数据当没绑过 */ }
+    }
+    wps = wpsOf(hitDs.wps);
     renderSettings();
     renderCreateForm();
   }
@@ -4529,6 +4579,22 @@
     /* 跟进提醒：间隔（小时） */
     $("optRemindHours").value = String(remindHours());
 
+    /* 台账库：下拉列出所有库。★ 切换要 async（换库得重读数据），
+       所以 onchange 里只发起，不在渲染里做。 */
+    var dsSel = $("dsPick");
+    if (dsSel) {
+      var dh = "";
+      for (var dd = 0; dd < dsList.length; dd++) {
+        dh += '<option value="' + esc(dsList[dd].id) + '">' + esc(dsList[dd].name) + "</option>";
+      }
+      dsSel.innerHTML = dh;
+      dsSel.value = activeDsId;
+      dsSel.disabled = dsBusy;
+      $("dsRename").disabled = dsBusy;
+      $("dsDel").disabled = dsBusy || dsList.length <= 1;
+      $("dsNew").disabled = dsBusy;
+    }
+
     /* 在线表格：绑定了就把表名和创建人摆出来，推 / 拉跟着它走 */
     var on = !!wps.fileId;
     $("wpsName").textContent = on ? "已绑定" : "还没绑定";
@@ -4563,7 +4629,8 @@
     /* 备份卡：先让人看见"这一本有多大"，再决定要不要导 */
     var bstat = $("bakStat");
     if (bstat) {
-      bstat.textContent = "本机现有 " + rows.length + " 条单子 · " + imgs.length + " 张图";
+      bstat.textContent = "本机现有 " + rows.length + " 条单子 · " + imgs.length + " 张图"
+        + (dsList.length > 1 ? "（当前台账库：" + curDs().name + "）" : "");
     }
   }
 
@@ -4576,6 +4643,75 @@
    * ================================================================== */
   var wpsBusy = false;
   var wpsPlan = null;
+
+  /* ==================================================================
+   * 台账库（多台账，v1.24.0）
+   * ------------------------------------------------------------------
+   * 一本库 = 一批单子 + 一张绑定的在线表格。
+   * 宿主那张 tickets 表加了一列 dataset_id 来分库；**空值 = 默认台账**，
+   * 所以老数据一个字都不用搬，天然落在默认库里。
+   *
+   * 推送 / 拉取要让宿主知道当前是哪一本 —— 否则它读的是整张表，
+   * 会把别的库的单子一起推过去、或者把别人的行写进这个库。
+   * ================================================================== */
+  var dsList = [{ id: DS_DEFAULT, name: "默认台账", wps: null }];
+  var activeDsId = DS_DEFAULT;
+  var dsBusy = false;
+
+  function dsOf(v) { return txt(v) || DS_DEFAULT; }   // 行 → 属于哪本库
+  function dsById(id) {
+    for (var i = 0; i < dsList.length; i++) if (dsList[i].id === id) return dsList[i];
+    return null;
+  }
+  function curDs() { return dsById(activeDsId) || dsList[0]; }
+  /** 传给宿主的库号：默认库传空串（跟老数据、老宿主一个口径）。 */
+  function dsParam() { return activeDsId === DS_DEFAULT ? "" : activeDsId; }
+  /** 表单里的 wps 对象 → 干净的绑定。没有 fileId 就当没绑。 */
+  function wpsOf(o) {
+    return o && txt(o.fileId)
+      ? { link: txt(o.link), fileId: txt(o.fileId), name: txt(o.name), sheet: txt(o.sheet), owner: txt(o.owner) }
+      : { link: "", fileId: "", name: "", sheet: "", owner: "" };
+  }
+  /** 把当前绑定记到当前库上，然后整份库清单落盘（localStorage + 宿主 kv）。
+      ★ 两份都写：kv 是跨设备/重启后的真相，localStorage 是宿主还没 bound 时的镜像
+        （和 wps.sheet 一样的 settle 时序坑）。 */
+  async function saveDatasets() {
+    // 走 cfgSet：先写 localStorage 镜像、再补写宿主 kv（页面刚开就写宿主会排在 settle 后面）
+    await cfgSet("datasets", JSON.stringify(dsList));
+    await cfgSet("activeDs", activeDsId);
+  }
+  function setDsMsg(text, bad) {
+    var el = $("dsMsg");
+    if (!el) return;
+    el.textContent = text || "";
+    el.className = bad ? "hint bad" : "hint";
+  }
+
+  /** 切库：先把当前库的绑定存回去，再换一本，重读数据、重画。 */
+  async function switchDs(id) {
+    if (!id || id === activeDsId || dsBusy) return;
+    if (!dsById(id)) return;
+    dsBusy = true;
+    try {
+      var cur = curDs();
+      if (cur) cur.wps = wpsOf(wps);
+      activeDsId = id;
+      await saveDatasets();
+      var next = curDs();
+      wps = wpsOf(next.wps);
+      recon = null;
+      paintRecon();
+      selectedId = null;
+      hideWpsPreview();
+      await load();
+      renderSettings();
+      toast("已切到「" + next.name + "」");
+      if (wps.fileId) void readSheetDiff(true);   // 切过去顺手对一次账（只读、静默）
+    } finally {
+      dsBusy = false;
+      renderSettings();
+    }
+  }
 
   /* ---------- 对账（v1.14.0）：读一遍云表，把差异摆出来 ----------
    * 用户要的是「启动时自动读一遍表格，检查是否一致，如不一致显示不同的地方，
@@ -4625,7 +4761,7 @@
     renderSettings();
     setWpsMsg("正在写入本机…");
     try {
-      var r = await call("wps.mcpApply", {}, 60000) || {};
+      var r = await call("wps.mcpApply", { dataset: dsParam() }, 60000) || {};
       var msg = "已写入本机：新增 " + (r.added || 0) + " 条、更新 " + (r.updated || 0) + " 条";
       setWpsMsg(msg);
       toast(msg);
@@ -4649,7 +4785,7 @@
   async function readSheetDiff(silent) {
     if (!wps.fileId) return;
     try {
-      var r = await call("wps.mcpPull", { fileId: wps.fileId, sheet: wps.sheet }, 120000) || {};
+      var r = await call("wps.mcpPull", { fileId: wps.fileId, sheet: wps.sheet, dataset: dsParam() }, 120000) || {};
       recon = { adds: r.adds || [], updates: r.updates || [], at: new Date() };
       paintRecon();
       var n = reconCount();
@@ -4684,11 +4820,232 @@
     wpsPlan = null;
   }
   async function saveWps() {
-    var payload = JSON.stringify(wps);
-    try { localStorage.setItem(LS_CFG + "wps.sheet", payload); } catch (e) { /* ignore */ }
-    if (bound()) { try { await call("kv.set", { key: "wps.sheet", value: payload }); } catch (e) { /* ignore */ } }
+    // 绑定挂到**当前这本库**上，然后整份库清单落盘（切库时各认各的表）
+    var cur = curDs();
+    if (cur) cur.wps = wpsOf(wps);
+    await saveDatasets();
+    // 老 key 只在默认库上留一份：万一退回旧版工具，它还认得自己绑的是哪张表
+    if (activeDsId === DS_DEFAULT) {
+      var payload = JSON.stringify(wps);
+      try { localStorage.setItem(LS_CFG + "wps.sheet", payload); } catch (e) { /* ignore */ }
+      if (bound()) { try { await call("kv.set", { key: "wps.sheet", value: payload }); } catch (e) { /* ignore */ } }
+    }
     renderSettings();
   }
+
+  /* ---------- 台账库：新建 / 改名 / 删除 ---------- */
+
+  /** 宿主有没有 dataset_id 这列。旧版没有：探不到就别让人建库，
+      否则建完一登记就报「表里没有这一列」，比不建更难受。 */
+  var hasDataset = true;
+  async function probeDataset() {
+    if (!bound()) return true;
+    try {
+      await call("row.update", { table: TABLE, id: "__probe_dataset__", patch: { dataset_id: "" } });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * 新建一本台账库：绑一张表 → 切过去 → 把那张表里已有的单子下载进来。
+   * 一个动作走完三步，因为用户要的就是「绑定新表并下载对应数据」。
+   */
+  async function newDsFlow() {
+    if (dsBusy || wpsBusy) return;
+    var d = new Date();
+    var stamp = d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2);
+    var defName = "台账 " + stamp;
+    var defSheet = "异常单号台账 " + stamp;
+    var pick = null;
+
+    var ok = await ask({
+      title: "绑定新表并下载数据",
+      wide: true,
+      ok: "建好并下载",
+      okTone: "primary",
+      html: '<div class="batchbox">'
+        + '<div class="batchmeta">新建一本台账库，把它和一张表绑上，再把那张表里已有的单子下载进来。'
+        + "<br>本机现在的「" + esc(curDs().name) + "」一点都不动 —— 想切回来随时在上面下拉里选。</div>"
+        + '<label class="batchfld"><span>这本台账叫什么</span>'
+        + '<input id="dsName" value="' + esc(defName) + '" autocomplete="off" /></label>'
+        + '<div class="batchfld"><span>表格从哪来</span>'
+        + '<div class="r" style="gap:16px;margin-top:2px">'
+        + '<label class="rad"><input type="radio" name="dsMode" value="new" checked /> 新建一张表</label>'
+        + '<label class="rad"><input type="radio" name="dsMode" value="link" /> 用已有的表（粘链接）</label>'
+        + "</div></div>"
+        + '<div id="dsNewBox"><input id="dsSheetName" value="' + esc(defSheet)
+        + '" placeholder="新表的名字" autocomplete="off" /></div>'
+        + '<div id="dsLinkBox" hidden><input id="dsLink" '
+        + 'placeholder="https://www.kdocs.cn/l/xxxx —— 在 WPS 里点「分享」复制的链接" autocomplete="off" /></div>'
+        + "</div>",
+      focus: "#dsName",
+      onOpen: function (mask) {
+        var rs = mask.querySelectorAll('input[name="dsMode"]');
+        function sync() {
+          var v = "new";
+          for (var i = 0; i < rs.length; i++) if (rs[i].checked) v = rs[i].value;
+          mask.querySelector("#dsNewBox").hidden = v !== "new";
+          mask.querySelector("#dsLinkBox").hidden = v !== "link";
+          // 选了「用已有的表」，光标直接落到链接框 —— 接下来一定是粘链接
+          if (v === "link") mask.querySelector("#dsLink").focus();
+        }
+        for (var i = 0; i < rs.length; i++) rs[i].onchange = sync;
+        sync();
+      },
+      collect: function (mask) {
+        var mode = "new";
+        var rs = mask.querySelectorAll('input[name="dsMode"]');
+        for (var i = 0; i < rs.length; i++) if (rs[i].checked) mode = rs[i].value;
+        pick = {
+          name: txt(mask.querySelector("#dsName").value).trim(),
+          mode: mode,
+          sheetName: txt(mask.querySelector("#dsSheetName").value).trim(),
+          link: txt(mask.querySelector("#dsLink").value).trim(),
+        };
+      },
+    });
+    if (!ok || !pick) return;
+    if (!pick.name) { setDsMsg("先给这本台账起个名字", true); return; }
+    if (pick.mode === "link" && !pick.link) { setDsMsg("用已有的表就得粘一条分享链接", true); return; }
+
+    dsBusy = true;
+    renderSettings();
+    try {
+      hasDataset = await probeDataset();
+      if (!hasDataset) {
+        setDsMsg("这台客户端还不支持多台账（要新版本工作台）—— 先把当前这本导个备份，升级后再建", true);
+        return;
+      }
+      setDsMsg(pick.mode === "new" ? "正在建表…" : "正在认这张表…");
+      /* 两条路的回包形状不一样：新建回 { sheet: {fileId, sheet, link, …} }，
+         粘链接回 { file: {id, name, owner} }（没有工作表名，用默认那张）。 */
+      var box;
+      if (pick.mode === "new") {
+        var made = await call("wps.mcpCreate", { name: pick.sheetName || defSheet, sheet: "台账" }, 120000);
+        box = (made && made.sheet) || {};
+      } else {
+        var seen = await call("wps.mcpLink", { link: pick.link }, 120000);
+        var f = (seen && seen.file) || {};
+        box = { link: pick.link, fileId: f.id, name: f.name, sheet: "", owner: f.owner };
+      }
+      if (!txt(box.fileId)) throw new Error("没认出这张表 —— 分享链接是不是设成了「任何人可看」？");
+
+      // 建库：先把当前这本的绑定存好，再挂新的
+      var old = curDs();
+      if (old) old.wps = wpsOf(wps);
+      var id = "ds_" + Date.now().toString(36);
+      dsList.push({
+        id: id,
+        name: pick.name,
+        wps: { link: txt(box.link), fileId: txt(box.fileId), name: txt(box.name), sheet: txt(box.sheet), owner: txt(box.owner) },
+      });
+      activeDsId = id;
+      wps = wpsOf(curDs().wps);
+      await saveDatasets();
+      recon = null;
+      paintRecon();
+      selectedId = null;
+      hideWpsPreview();
+      await load();
+      renderSettings();
+
+      // 下载：表里有几条就落几条（新库是空的，全是新增）
+      setDsMsg("表绑好了，正在下载数据…");
+      var r = await call("wps.mcpPull",
+        { fileId: wps.fileId, sheet: wps.sheet, dataset: dsParam() }, 120000) || {};
+      var adds = (r.adds || []).length;
+      var upd = (r.updates || []).length;
+      if (adds || upd) {
+        var ap = await call("wps.mcpApply", { dataset: dsParam() }, 60000) || {};
+        await load();
+        setDsMsg("已建好「" + pick.name + "」：下载 " + (ap.added || adds) + " 条"
+          + (ap.updated ? "、更新 " + ap.updated + " 条" : ""));
+      } else {
+        setDsMsg("已建好「" + pick.name + "」：那张表是空的，一条也没下载"
+          + (r.header && r.header.length ? "" : "（表头也没认出来 —— 检查第一行是不是台账那 14 列）"));
+      }
+      toast("已切到「" + pick.name + "」");
+    } catch (err) {
+      var em = txt(err && err.message ? err.message : err);
+      if (/不支持|未知|unknown|not.?support/i.test(em)) {
+        em = "这台客户端还不支持多台账（要新版本工作台）—— 先把当前这本导个备份，升级后再建";
+      }
+      setDsMsg(em, true);
+      toast("没建成：" + em);
+    } finally {
+      dsBusy = false;
+      renderSettings();
+    }
+  }
+
+  /** 改名：只改本机的显示名，云表一个字都不动。 */
+  async function renameDs() {
+    var cur = curDs();
+    var next = "";
+    var ok = await ask({
+      title: "台账库改名",
+      ok: "改好",
+      okTone: "primary",
+      html: '<input id="dsRenameIn" value="' + esc(cur.name) + '" autocomplete="off" />',
+      focus: "#dsRenameIn",
+      collect: function (mask) { next = txt(mask.querySelector("#dsRenameIn").value).trim(); },
+    });
+    if (!ok || !next || next === cur.name) return;
+    cur.name = next;
+    await saveDatasets();
+    renderSettings();
+    toast("已改名为「" + next + "」");
+  }
+
+  /** 删库：只删**本机**这一本的单子，云上那张表一动不动。 */
+  async function delDs() {
+    var cur = curDs();
+    if (dsList.length <= 1) { toast("至少留一本台账"); return; }
+    var n = rows.length;
+    var ok = await ask({
+      title: "删除这本台账？",
+      mark: cur.name,
+      body: "本机的 " + n + " 条单子会一起删掉（连带它们的图片关联）。"
+        + "\n云上那张表格一动不动 —— 想要回来，再点「绑定新表并下载数据」把它下回来就行。",
+      ok: "删掉本机的",
+    });
+    if (!ok) return;
+    dsBusy = true;
+    renderSettings();
+    setDsMsg("正在删除「" + cur.name + "」的 " + n + " 条…");
+    try {
+      for (var i = 0; i < rows.length; i++) {
+        if (hasImages) await removeImgsOf(rows[i].id);
+        await remove(rows[i].id);
+      }
+      var keep = [];
+      for (var j = 0; j < dsList.length; j++) if (dsList[j].id !== cur.id) keep.push(dsList[j]);
+      dsList = keep;
+      activeDsId = dsList[0].id;
+      wps = wpsOf(curDs().wps);
+      recon = null;
+      paintRecon();
+      selectedId = null;
+      await saveDatasets();
+      await load();
+      setDsMsg("已删除「" + cur.name + "」");
+      toast("已删除「" + cur.name + "」");
+    } catch (err) {
+      var em = txt(err && err.message ? err.message : err);
+      setDsMsg("删除没走完：" + em, true);
+      toast("删除没走完：" + em);
+    } finally {
+      dsBusy = false;
+      renderSettings();
+    }
+  }
+
+  $("dsPick").onchange = function () { void switchDs(this.value); };
+  $("dsNew").onclick = function () { void newDsFlow(); };
+  $("dsRename").onclick = function () { void renameDs(); };
+  $("dsDel").onclick = function () { void delDs(); };
 
   /* 新建一张台账表格：不用户先跑去 WPS 手搓（手搓十个有九个漏列/写错表头）。
    * 名字可改，默认带上年月 —— 按月分表是最常见的用法，明年再建一张就是新的。 */
@@ -4805,7 +5162,7 @@
     var dry;
     try {
       dry = await call("wps.mcpPush",
-        { fileId: wps.fileId, sheet: wps.sheet, dryRun: true, force: force }, 120000) || {};
+        { fileId: wps.fileId, sheet: wps.sheet, dryRun: true, force: force, dataset: dsParam() }, 120000) || {};
     } catch (err) {
       wpsBusy = false;
       renderSettings();
@@ -4874,7 +5231,7 @@
     setWpsMsg(force ? "正在推送（含清空）…" : "正在推送…");
     try {
       var res = await call("wps.mcpPush",
-        { fileId: wps.fileId, sheet: wps.sheet, dryRun: false, force: force }, 120000) || {};
+        { fileId: wps.fileId, sheet: wps.sheet, dryRun: false, force: force, dataset: dsParam() }, 120000) || {};
       var done = [];
       if (res.added) done.push("新增 " + res.added + " 行");
       if (res.changed) done.push("改了 " + res.changed + " 个格");

@@ -329,6 +329,16 @@ function stringList(v: unknown): string[] {
  * 把计划传进 iframe 再传回来，只是给"工具伪造写库内容"多开一次机会。
  */
 let pendingPull: PullPlan | null = null;
+/** 上面那份计划要写进哪个台账库（`""` = 默认台账）。plan 和它必须成对， */
+/** 否则「从 9 月表拉取、写进默认库」这种串台会静默发生。 */
+let pendingPullDs = "";
+
+/** 多台账：payload.dataset 是当前台账库的 id，默认库传空串。 */
+function datasetOf(p: unknown): string {
+  if (!p || typeof p !== "object") return "";
+  const v = (p as { dataset?: unknown }).dataset;
+  return typeof v === "string" ? v.trim() : "";
+}
 
 /** 绑定对象里那个"工作表"字段。payload 的键是宽泛类型，统一这样取 */
 function sheetOf(v: unknown): string {
@@ -1855,7 +1865,8 @@ export function createToolBridge(
             const pFileId = String(pb.id || payload?.fileId || "").trim();
             const pSheet = sheetOf(payload?.binding) || sheetOf(payload);
             if (!pFileId) return reply(id, false, "还没绑定表格 —— 先在工具设置里粘一条分享链接");
-            const rows = await readLedger();
+            // 只推**当前这本台账**的行：一张表装所有库，不带这层过滤会把别的库一起推过去
+            const rows = await readLedger(datasetOf(payload));
             if (!rows.length) return reply(id, false, "本地一条异常单都没有 —— 先登记几例再推");
             // dryRun：先算一遍对账（会覆盖几行、会清空几行），一格都不写。
             // 工具拿到这两个数字，要删东西时先问一句再真推。
@@ -1891,11 +1902,13 @@ export function createToolBridge(
             const gSheet = sheetOf(payload?.binding) || sheetOf(payload);
             if (!gFileId) return reply(id, false, "还没绑定表格 —— 先在工具设置里粘一条分享链接");
             const res = await mcpSheetPull(gFileId, gSheet, mcpToken, mcpClientId);
-            const local = await readLedger();
+            const pullDs = datasetOf(payload);
+            const local = await readLedger(pullDs);
             const plan = planPull(res.rows as unknown as Parameters<typeof planPull>[0], local);
             // 计划留在宿主：工具拿不到令牌也碰不到数据库，传回去再传回来只是
             // 多一次"工具可以伪造写库内容"的机会
             pendingPull = plan;
+            pendingPullDs = pullDs;   // 写库时还得知道往哪个库写
             return reply(id, true, {
               header: res.header,
               adds: plan.adds.map(pullBrief),
@@ -1918,7 +1931,9 @@ export function createToolBridge(
             if (!pendingPull) return reply(id, false, "没有待写入的结果 —— 先点「拉取」");
             const plan = pendingPull;
             pendingPull = null;
-            const r = await applyPull(plan);
+            const applyDs = pendingPullDs;
+            pendingPullDs = "";
+            const r = await applyPull(plan, applyDs);
             return reply(id, true, r);
           }
 
